@@ -1,0 +1,248 @@
+#+TITLE: 标准IO库
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-15 周五 19:03]
+#+OPTIONS: ^:{}
+
+* 流与FILE对象
+** 流定向
+标准IO文件流可用于单字符或多字符字符集. 流的定向(orientation)决定了所读,写的字符是单字符还是多字符的.
+
+当一个流被最初创建时,它并没有定向. 
+
+如果在未定向的流上使用一个多字节IO函数(<wchar.h>),则将该流的定向设置为宽定向的.
+
+如果在未定向的流上使用一个单字节IO函数,则流的定向设置为单字节定向.
+
+*** fwide函数:设置流的定向
+#+BEGIN_SRC C
+  #include <stdio.h>
+  #include <wchar.h>
+
+  /* 若mode参数值为负,fwide尝试将流设置为单字节定向 */
+  /* 若mode参数值为正,fwide尝试将流设置为多字节定向 */
+  /* 若mode参数值为0,fwide不设置定向,只是返回该流的定向 */
+  int fwide(FILE* fp, int mode);  /*  返回值表示流的定向,正为宽定向,负为但定向,0为未定向*/
+#+END_SRC
+
+注意:
++ fwide并不改变已定向流的定向
++ fwide无出错返回. 只能根据errno的值来判断流是否无效
+
+*** freopen函数:清除一个流的定向
+
+** 打开流
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  FILE* fopen(const char* path,const char* type);
+  FILE* freopen(const char* path,const char* type,FILE* fp);
+  FILE* fdopen(int filedes,const char* type);
+#+END_SRC
+
++ fopen打开一个指定的文件,返回新的流
+
++ freopen在一个指定的流上打开一个指定的文件. 
+
+  若该流已被打开,则关闭该流.
+
+  若该流以及定向,则清除该定向
+
+  该函数一般将一个指定的文件打开为一个预定义的流:stdin,stdout,stderr
+
++ fdopen将一个标准IO流与文件描述符相结合.
+
+  该函数一般用于将PIPE/SOCKET返回的描述符与标准IO流结合,因为这些特殊类型的文件不能用fopen函数打开.
+
++ 当以读写类型打开文件时,具有如下限制:
+  - 如果中间没有fflush,fseek,fsetops或rewind,则输出的后面不能直接跟随输入
+
+  - 如果中间没有fseek,fsetpos或rewind或一个输入操作没有到达文件尾部,则再输入操作之后不能直接跟随输出.
+
+** 读写流
+
+*** 一次一个字符的IO
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int getc(FILE* fp);
+  int fgetc(FILE* fp);
+  int getchar();
+  int ungetc(int c,FILE* fp);
+
+  int putc(int c,FILE* fp);
+  int fputc(int c,FILE* fp);
+  int putchar(int c);
+#+END_SRC
+其中getc和fgetc的区别为,getc可能为宏,而fgetc一定是函数. 即
++ getc的参数不应当是具有副作用的表达式
++ fgetc一定可以得到其地址,从而作为参数传递给另一个参数.
++ fgetc调用时间可能会长于getc,因为调用函数所需的时间通常长于调用宏.
++ ungetc压回的字符, *可以不是刚读出的字符*
+
+putc和fputc的区别类似于getc和fgetc的区别.
+*** 一次一行的IO
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  char* fgets(char* buf,int n,FILE* fp);
+  char* gets(char* buf);
+  int fputs(const char* str,FILE* fp);
+  int puts(const char* str);
+#+END_SRC
+注意:
++ gets不能指定缓冲区的长度, *且gets并不将换行符存入缓冲区内*.
++ fgets读取时会保持换行符
++ fputs输出时,指数出str的内容,而不会添加换行符
++ *puts输出时,会添加换行符*.
+*** 二进制直接IO
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  size_t fread(void* ptr,size_t size,size_t ntimes,FILE* fp);
+  size_t fwrite(const void* ptr,size_t size,size_t ntimes,FILE* fp);
+#+END_SRC
++ 这两个函数,常用于从二进制文件中读/写一个结构
+
+** 定位流
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  long ftell(FILE* fp);
+  int fseek(FILE* fp,long offset,int whence);
+  void rewind(FILE* fp);
+
+  off_t ftello(FILE* fp);
+  int fseeko(FILE* fp,off_t offset,int whence);
+
+  int fgetpos(FILE* fp,fpos_t* pos);
+  int fsetpos(FILE* fp,const fpos_t* pos);
+#+END_SRC
+
+** 错误判断
+读取出错或到达文件结尾,读取函数的返回值都是同一个值. 为了区分这两种不同的情况,必须调用ferror或feof
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int ferror(FILE* fp);
+  int feof(FILE* fp);
+
+  void clearerr(FILE* fp);
+#+END_SRC
+
+** fileno:获取流对应的文件描述符
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int fileno(FILE* fp);
+#+END_SRC
+* 缓冲
+标准IO提供了2种类型的缓冲
+
+** 全缓冲
+填满IO缓冲区才进行实际的IO操作
+
+对于驻留在磁盘上的文件,通常是由标准IO库实施全缓冲.
+
+** 行缓冲
+当输入和输出中遇到换行符时,标准IO库执行IO操作
+
+当流涉及一个终端时,通常使用行缓冲.
+
+** 缓冲的惯例
+一般标准IO缓冲的惯例为:标准出错不带缓冲,打开至终端设备的流是行缓冲,其他流是全缓冲.
+
+** 更改缓冲类型
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  void setbuf(FILE* fp,char* buf);
+  int setvbuf(FILE* fp,char* buf,int mode,size_t size);
+#+END_SRC
+
+*** setbuf函数:打开/关闭缓冲机制
+当为打开缓冲机制时,这里参数buf必须为一个长度为BUFSIZ的缓冲区(BUFSIZ定义在stdio.h中)
+
+若要关闭缓冲机制,参数buf为NULL
+
+*** setvbuf函数:精确指定缓冲类型
++ 参数mode可以为:
+  | _IOFBF | 全缓冲 |
+  | _IOLBF | 行缓冲 |
+  | _IONBF | 无缓冲 |
+
++ 参数buf无长度限制,因为有参数size指定缓冲大小.
+
+  *若流设置为带缓冲的,而buf为NULL,则表示IO自动为该流分配适当长度的缓冲区(一般为BUFSIZ大小)*
+
+  一般而言,应由系统选择缓冲区的长度,并自动分配缓冲区.
+
+*** fflush函数:强制将缓冲区内容写入磁盘
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int fflush(FILE* fp);
+#+END_SRC
+* 标准输入,标准输出和标准出错
+<stdio.h>中预定义了三个文件指针:stdin,stdout和stderr
+一般来说,stderr不带缓冲,stdin和stdout为行缓冲
+* 产生临时文件
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  char* tmpnam(char* ptr);
+  char* tempnam(const char* directory,const char* prefix);
+
+  FILE* tmpfile();
+  int mkstemp(char* template);
+#+END_SRC
++ tmpnam函数产生一个临时文件的名字字符串,最多能调用TMP_MAX次
+
++ 参数ptr可以为NULL,则产生的路径名存放在一个静态区域,下一次调用时被覆盖.
+
++ 若ptr不为NULL,则数组长度应该不少于L_tmpnam
+
++ tmpfile创建一个临时的二进制文件. 关闭该文件或程序结束后会 *自动删除该文件*.
+
++ tempnam与tmpnam的不同在于它允许调用者为所产生的临时文件路径指定目录和前缀. 其按如下顺序选择目录
+  1. *环境变量TMPDIR* (此时忽略参数directory的值!)
+
+  2. 参数directory
+
+  3. <stdio.h>中的字符串P_tmpdir(通常为/tmp)
+
+  4. 本地目录
+
++ tempnam中的prefix参数最多只能包含5个字符.
+
++ mkstemp的参数template必须为一个路径名,且 *最后6个字符设置为XXXXXX*
+
++ mkstemp产生的 *临时文件不会自动被删除*
+
+* 线程安全的方式管理FILE对象
+PSOXI.1提供了以线程安全的方式管理FILE文件的方法. 可以使用`flockfile'和`ftrylockfile'获取与FILE对象关联的锁,且这个锁为递归锁.
+
+所有操作FILE对象的标准IO函数,都需要表现的好像内部调用了flockfile和funlockfile一样,即不能出现多个线程同时写入同一FILE对象时出现乱序的情况.
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int ftrylockfile(FILE* fp);
+
+  void flockfile(FILE* fp);
+
+  void funlockfile(FILE* fp);
+#+END_SRC
+通过这些函数,我们可以把多个标准IO函数的调用组合成一个原子序列.
+
+若标准IO函数每次操作都获取自己的锁再释放,那么在进行单字符的IO操作时,会消耗大量的性能到加解锁中,因此就有了 *不加锁的基于字符的标准IO函数*
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  int getchar_unlocked();
+  int getc_unlocked(FILE* fp);
+
+  int putchar_unlocked(int c);
+  int putc_unlocked(int c,FILE* fp);
+#+END_SRC
+*请保证这四个函数调用时包含在flockfile/ftrylockfile和funlockfile中*
+

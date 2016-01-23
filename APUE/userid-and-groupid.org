@@ -1,0 +1,34 @@
+#+TITLE: 用户ID与组ID
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-20 周三 08:50]
+#+OPTIONS: ^:{}
+* 实际ID,有效ID与保存的设置ID
+* 更改用户/组ID函数
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  int setuid(uid_t uid);
+  int setgid(gid_t gid);
+
+  /* 同时设置实际/有效ID */
+  int setreuid(uid_t ruid,uid_t euid);
+  int setregid(gid_t rgid,gid_t egid);
+
+  /* 只更改有效ID */
+  int seteuid(uid_t uid);
+  int setegid(gid_t gid);
+#+END_SRC
+1. 若进程具有root权限,则setuid函数 *将实际用户ID,有效用户ID及保存的设置用户ID设置为uid*
+2. 若root权限进程要只设置实际用户ID或有效用户ID,则需使用setreuid/seteuid函数.
+3. 若进程无root权限,但uid等于 *实际用户ID或保存的设置用户ID*,则setuid只将 *有效用户ID* 设置为uid. *不改变实际用户ID和保存的设置用户ID*
+4. 若上面条件都不满足,则将errno设置为EPERM,并返回-1
+** 关于设置用户ID的规则说明
+1. 只有超级用户进程可以更改实际用户ID
+2. 只有当程序文件设置了`设置用户ID位'时,exec函数才会设置有效用户ID为程序文件的所有者. 否则有效用户ID为实际用户ID.
+3. `保存的设置用户ID'是由exec函数复制`有效用户ID'得来的. 即这两个用户ID的值在刚exec时是一致的,但有效用户ID可能在后期被设置为实际用户ID.
+4. 非超级用户进程,其实际用户ID和`保存的设置用户ID'一经exec设置完毕后,就不能更改. 能更改的只有有效用户ID.
+5. 若非root权限,当设置有效用户ID时,uid的值只能为实际用户ID或`保存的设置用户ID'
+** 关于设置组ID的规则说明
+1. 组ID的规则类似用户ID的规则
+2. 附加组ID不受setgid,seetregid或setegid函数的影响.

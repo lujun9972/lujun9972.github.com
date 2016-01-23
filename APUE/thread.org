@@ -1,0 +1,843 @@
+#+TITLE: 线程
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-28 周四 12:48]
+#+OPTIONS: ^:{}
+
+* 线程的好处
++ 通过为每个事件类型的处理分配单独的线程,能够简化处理异步事件的代码,同步编程模式比异步编程模式简单得多
++ 进程所有信息对该进程的所有线程都是共享的,包括 *可执行的程序文本,程序的全局内存和堆内存,栈以及文件描述符*,而多进程必须通过操作系统的复杂机制才能实现
++ 交互式的程序可以使用多线程改善程序响应.
+
+* 线程的组成部分
+** 线程ID
+线程ID只在所属的进程环境中有效,其使用pthread_t数据类型来表示. 
+
+线程获取自己线程ID的函数是pthread_self
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  pthread_t pthread_self();
+#+END_SRC
+
+由于pthread_t的实现方式可能为结构体,因此需要使用专门的pthread_equal来比较两个pthread_t是否相等.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 若相等返回非0,否则返回0 */
+  int pthread_equal(pthread_t tid1,pthread_t tid2);
+#+END_SRC
+
+*用结构表示pthread_t数据类型的一个不好的后果是:不能用一种可移植的方式打印该数据类型的值*
+** 一组寄存器值
+** 栈
+** 调度优先级
+** 策略
+** 信号屏蔽字
+** errno变量
+** 线程私有数据
+* 线程的创建
+** pthread_create
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 成功返回0,否则返回错误编号 */
+  int pthread_create(pthread_t* tidp,const pthread_attr_t* attr,void* (*start_rtn)(void*),void* arg)
+#+END_SRC
++ tidp所指向的pthread_t数据结构被设置为新创建线程的线程ID
++ attr参数指定新线程的属性,NULL表示默认属性
++ start_rtn函数指针指明了新线程调用哪个函数,该函数只有一个void*参数arg,因此若需要向start_rtn函数传递的参数不止一个,则需要 *把参数放到一个结构中*.
++ 新创建的线程继承调用线程的浮点环境和信号屏蔽字, *但该线程的未决信号集被清除*
++ 由于可能在主线程的pthread_create函数返回前就运行新线程了,因此在新线程中不能安全的使用tidp的值.
+* 线程终止
+线程终止有4种方法:
++ 调用exit,_Exit或_exit,但会使 *整个进程终结*
++ 线程从启动函数中返回, *返回值即为线程退出码*
++ 线程被同一进程的其他线程取消
++ 线程调用pthread_exit函数.
+** pthread_exit函数说明
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  void pthread_exit(void* rtn_val);
+#+END_SRC
+其中参数rtn_val为线程退出的返回值. 其他进程可以使用`pthread_join'函数访问 *这个指针*.
+
+实际使用时,rtn_val不一定就是指针类型,也可能被强制转换为整型. 
+但若rtn_val为指针类型,则需要保证 *指针所指的内容在调用者完成调用后仍然有效(全局变量或在堆上分配空间)*
+#+BEGIN_SRC C :exports both :results raw
+  #include <pthread.h>
+  #include <stdio.h>
+
+  void* thread_func1(void* arg)
+  {
+    printf("thread running. ");
+    return ((void*) 1);           /* 这里将整型强制转换为指针 */
+  }
+
+  void* thread_func2(void* arg)
+  {
+    printf("thread running. ");
+    char* rtn = malloc(sizeof("I am thread 2") + 1);
+    strcpy(rtn,"I am thread 2");
+    return ((void*) rtn);           /* 这里返回一个指向字符数组的指针 */
+  }
+  int main()
+  {
+    pthread_t tid;
+    void* thread_rtn;
+
+    pthread_create(&tid,NULL,thread_func1,NULL);
+    pthread_join(tid,&thread_rtn);
+    printf("thread returns %d\n",(int)thread_rtn);
+
+    pthread_create(&tid,NULL,thread_func2,NULL);
+    pthread_join(tid,&thread_rtn);
+    printf("thread returns %s\n",(char*)thread_rtn);
+    free((char*)thread_rtn);
+    return 0;
+  }
+#+END_SRC
+
+#+RESULTS:
+thread running. thread returns 1
+thread running. thread returns I am thread 2
+
+** pthread_join函数说明
+默认情况下(非DETACH的情况下),线程终止后并不会自动释放线程所占用的资源,需要其他线程调用pthread_join函数来同步终止并释放资源(使指定线程变为DETACH状态).
+
+pthread_join类似进程间的wait函数.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_join(pthread_t thread,void** rtn_val_p);
+#+END_SRC
++ 调用的线程会一直阻塞,直到指定的线程退出.
++ 若参数rtn_val_p为非NULL,则会获得pthread_exit的返回指针. 即*rtn_val_p = rtn_val
++ 但若指定的线程被取消运行,则*rtn_val_p == PTHREAD_CANCELD
++ 若指定的线程已经处于分离状态,则pthread_join会调用失败,返回EINVAL.
+
+** pthread_cancel
+pthread_cancel函数用来 *请求(并不能强制)* 取消同一进程中的其他线程
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 成功返回0,否则返回错误编号 */
+  int pthread_cancel(pthread_t tid);
+#+END_SRC
+默认情况下,pthread_cancel函数会使得指定线程的行为表现如同调用了`pthread_exit(PTHREAD_CANCELED)'. 但,线程可以选择 *忽略取消,或采用其他的取消方式*
+#+BEGIN_SRC C :exports both :results drawer
+  #include <pthread.h>
+  #include <stdio.h>
+
+  void* thread_func(void* arg)
+  {
+    printf("thread running");
+    sleep(10);
+    return (void*) 100;
+  }
+
+  int main()
+  {
+    pthread_t tid;
+    void* thread_rtn;
+
+    pthread_create(&tid,NULL,thread_func,NULL);
+    pthread_cancel(tid);
+    pthread_join(tid,&thread_rtn);
+    if(thread_rtn == PTHREAD_CANCELED)
+      {
+        printf("thread returned PTHREAD_CANCELED");
+      }
+    else
+      {
+        printf("thread returned %d",(int)thread_rtn);
+      }
+    return 0;
+  }
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+thread runningthread returned PTHREAD_CANCELED
+:END:
+
+另外需要注意的是, *默认情况下, 线程在取消请求发出后并不会立即退出,而是会继续运行,直到线程到达某个取消点*. 取消点常在线程调用某些函数时出现.
+
+若应用程序在很长时间内都不会调用到产生取消点的函数,则可以调用`pthread_testcancel'函数在程序中自己添加取消点.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  void pthread_testcancel();
+#+END_SRC
+** 线程清理函数
+类似进程,线程也可以安排它退出时要调用的函数. 这些类似atexit的函数被称为线程清理处理函数.
+
+线程也可以建立多个清理处理函数,它们的指向顺序与注册顺序相反.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 注册清理函数,及参数 */
+  void pthread_cleanup_push(void (*clean_func)(void*),void* arg);
+
+  /* 删除上次注册的清理函数,参数execute表示删除前知否执行这些清理函数 */
+  void pthread_cleanup_pop(int execute);
+#+END_SRC
+在 *pthread_cleanup_push和pthread_cleanup_pop间的代码段* 中若有终止动作(包括被取消),都将执行pthread_cleanup_push()所注册的清理函数.
+
+*pthread_cleanup_push和pthread_cleanup_pop必须成对出现!*
+#+BEGIN_SRC C :exports both :results drawer
+  #include <pthread.h>
+  #include <stdio.h>
+
+  void cleanup(void* arg)
+  {
+    printf("cleanup:%s\n",(char*)arg);
+  }
+
+  void* thread_func(void* arg)
+  {
+    pthread_cleanup_push(cleanup,(void*)"thread first cleanup handler");
+    pthread_cleanup_push(cleanup,(void*)"thread second cleanup handler");
+    printf("running thread\n");
+    pthread_cleanup_pop(1);      /* 没有退出,但execute为1表示弹出第2个处理函数时也要执行该函数 */
+    if(arg == NULL)
+      {
+        pthread_exit(arg);
+        /* return arg; */
+      }
+    pthread_cleanup_pop(0);
+    return arg;
+  }
+
+  int main()
+  {
+    pthread_t tid;
+    void* rtn_value;
+
+    pthread_create(&tid,NULL,thread_func,(void*)NULL);
+    pthread_join(tid,&rtn_value);
+
+    pthread_create(&tid,NULL,thread_func,(void*)1);
+    pthread_join(tid,&rtn_value);
+
+    return 0;
+  }
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+running thread
+cleanup:thread second cleanup handler
+cleanup:thread first cleanup handler
+running thread
+cleanup:thread second cleanup handler
+:END:
+
+** pthread_detach(pthread_t tid)
+pthread_detach可以让指定线程处于分离状态,若线程已经处于分离状态,则线程的低层存储资源会在线程终止时自动立即回收.
+因此,并不能对分离的线程调用pthread_join函数
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_detach(pthread_t tid);
+#+END_SRC
+* 线程同步
+** 互斥量
+*** 互斥量的初始化与销毁
+互斥量用于保证同一时间是由一个线程访问数据. 互斥变量的数据类型为pthread_mutex_t
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_mutex_init(pthread_mutex_t* mutex,const pthread_mutexattr_t* attr);
+
+  int pthread_mutex_destroy(pthread_mutex_t* mutex);
+#+END_SRC
++ 使用互斥量之前需要调用pthread_mutex_init对它进行初始化.
++ pthread_mutex_init的参数attr指明了初始化互斥量时的属性,NULL表示默认属性
++ 但对于静态分配的互斥量可以直接赋值为常量`PTHREAD_MUTEX_INITIALIZER',而无需pthread_mutex_init初始化
++ 如果是在堆上分配的互斥量(malloc或new产生的),那么释放内存前 *需要调用pthread_mutex_destroy*
+*** 互斥量的加锁与解锁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 以阻塞的方式对mutex加锁 */
+  int pthread_mutex_lock(pthread_mutex_t* mutex);
+
+  /* 以非阻塞的方式对mutex加锁,若加锁成功返回0,失败返回EBUSY */
+  int pthread_mutex_trylock(pthread_mutex_t* mutex);
+
+  /* 对mutex解锁 */
+  int pthread_mutex_unlock(pthread_mutex_t* mutex);
+#+END_SRC
+*** 避免死锁
++ 线程内不要对一个互斥量加锁两次
++ 小心地空值多个线程间使用一致的顺序来避免死锁的发生
++ 使用pthread_mutex_trylock接口避免死锁,并且在超出一段时间未能获取到互斥量后,考虑先释放已占用锁,过段事件后再重试
+*** 对互斥量的一个简单C++封装
+#+BEGIN_SRC C++
+  // .h文件
+  class CMutex
+  {
+  public:
+          CMutex();
+          ~CMutex();
+
+          int tryLock();
+          int lock();
+          int unLock();
+
+          pthread_mutex_t m_Mutex;
+  };
+
+  class CScopeLock
+  {
+  public:
+          CScopeLock(CMutex& cMutex, bool IsTry = false);
+          virtual ~CScopeLock(void);
+
+  private:
+          CMutex& m_Mutex;
+  };
+
+  // .cpp文件
+  CMutex::CMutex()
+  {
+          pthread_mutex_init(&m_Mutex, NULL);
+  }
+
+  CMutex::~CMutex()
+  {
+          pthread_mutex_destroy(&m_Mutex);
+  }
+
+  int CMutex::lock()
+  {
+          return pthread_mutex_lock(&m_Mutex);
+  }
+
+  int CMutex::tryLock()
+  {
+          return pthread_mutex_trylock(&m_Mutex);
+  }
+
+  int CMutex::unLock()
+  {
+          return pthread_mutex_unlock(&m_Mutex);
+  }
+
+  CScopeLock::CScopeLock(CMutex& cMutex, bool IsTry): m_Mutex(cMutex)
+  {
+          if(IsTry)
+          {
+                  m_Mutex.tryLock();
+          }
+          else
+          {
+                  m_Mutex.lock();
+          }
+  }
+
+  CScopeLock::~CScopeLock()
+  {
+          m_Mutex.unLock();
+  }
+
+#+END_SRC
+** 读写锁(共享/独占锁)
+读写锁有三个状态:加读锁,加写锁和不加锁.
+
+一次只能有一个线程可以加写锁,但可以有多个线程同时加读锁
+
+对一个有写锁的资源上不能加任何锁. 对一个有读锁的资源上可以加读锁,但不能加写锁.
+在实际的实现中,当 *有加写锁请求被阻塞后,随后的加读锁请求也会被阻塞*,这样是为了避免读锁长期占用,而等待的加写锁请求一直得不到满足
+
+由于读写锁对读锁和写锁的这种处理,读写锁非常适合于对数据结构的读次数远大于写的情况.
+*** 读写锁的初始化与销毁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_rwlock_init(pthread_rwlock_t* rwlock,const pthread_rwlockattr_t* attr);
+
+  int pthread_rwlock_destroy(pthread_rwlock_t* rwlock);
+#+END_SRC
++ 参数attr为NULL表示使用默认的属性
+*** 读写锁的加锁与解锁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 以阻塞方式加读锁 */
+  int pthread_rwlock_rdlock(pthread_rwlock_t* rwlock);
+  /* 以非阻塞方式加读锁 */
+  int pthread_rwlock_tryrdlock(pthread_rwlock_t* rwlock);
+
+  /* 以阻塞方式加写锁 */
+  int pthread_rwlock_wrlock(pthread_rwlock_t* rwlock);
+  /* 以非阻塞方式加写锁 */
+  int pthread_rwlock_trywrlock(pthread_rwlock_t* rwlock);
+
+  /* 解锁 */
+  int pthread_rwlock_unlock(pthread_rwlock_t* rwlock);
+#+END_SRC
++ 某些实现对加读锁的时候,可能会对锁的数量进行限制,因此需要检查加锁的返回值是否正确.
++ 加写锁和解锁的函数,只有在不正确地使用读写锁时才回有错误返回,因此如果 *锁设计合理的话,可以不需要检查返回值*
+** 条件变量
+条件变量是利用线程间共享的全局变量进行同步的一种机制,主要包括两个动作:
++ 多个线程在某个条件不为真时调用`pthread_cond_wait'函数而被阻塞
++ 另一个线程处理完后,改变条件状态,并通过`pthread_cond_signal'唤醒等待该条件变量的其他线程. 其他线程重新计算条件是否满足并决定是继续阻塞还是运行
+
+条件变量与互斥量一起使用时,运行线程以无竞争的方式等待特定的条件发生
+
+条件变量本身需要互斥量的保护,即 *线程在改变条件变量时必须先锁住互斥量*
+
+条件变量的数据类型为pthread_cond_t
+*** 条件变量的初始化与销毁
+静态分配的条件变量可以直接赋值为常量PTHREAD_COND_INITIALIZER.
+
+动态分配的条件变量必须使用pthread_mutex_destroy函数进行初始化
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_cond_init(pthread_cond_t* cond,pthread_condattr_t* attr);
+
+  int pthread_cond_destroy(pthread_cond_t* cond);
+#+END_SRC
+参数attr为NULL,表示创建一个默认属性的条件变量
+*** 等待条件变量变为真
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_cond_wait(pthread_cond_t* cond,pthread_mutex_t* mutex);
+
+  /* 若超过时间未等到条件变量为真,则返回ETIMEOUT */
+  int pthread_cond_timedwait(pthread_cond_t* cond,pthread_mutex_t* mutex,const struct timespec* timeout);
+
+  struct timespec{
+    time_t tv_sec;                /* 秒 */
+    long tv_nsec;                 /* 纳秒 */
+  };
+#+END_SRC
+传递給等待函数的mutex变量应该由 *多个等待同一条件变量的线程所共享*,且必须 *由本线程加锁后再传递給等待函数*. 
+
+函数内部将调用线程记入等待条件变量的线程列表中,然后对互斥量解锁.即线程在阻塞期间,mutex变量是被解锁的,可以被其他线程再加锁.
+
+函数内部将件检查和线程进入休眠状态等待条件变化这两个操作实现为原子操作,即两个操作间无等待时间,这样线程就不会错过条件的任何变化.
+
+pthread_cond_wait返回时,互斥量再次被锁定.
+
+*需要注意的是,从等待函数返回后,线程需要重新计算条件是否满足要求,因为其他的线程可能在运行期间改变了条件,因此等待函数一般在while循环中*
+*** 唤醒线程函数
+某线程改变条件状态后,需要再唤醒其他阻塞的线程,让它们重新计算一次条件是否变得满足要求.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_cond_signal(pthread_cond_t* cond);
+
+  int pthread_cond_broadcast(pthread_cond_t* cond);
+#+END_SRC
++ pthread_cond_signal函数唤醒具体等待条件变量的某个线程
+
++ pthread_cond_broadcast函数唤醒等待条件变量的所有线程,一般采用这种方式.
+** 使用pthread_once函数保证函数只执行一次
+若某个函数(多为初始化函数)在多个线程中都出现,但只需要在某个线程中执行一次即可,则可以使用`pthread_once'函数来保证.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* initflag必须为非本地变量,即全局变量或静态变量 */
+  pthread_once_t initflag = PTHREAD_ONCE_INIT;
+
+  /* 成功返回0,失败返回错误编号 */
+  int pthread_once(pthread_once_t* initflag,void(init_func)(void));
+#+END_SRC
++ 由于initflag必须給多个线程共用,因此它必须为非本地变量,即全局变量或静态变量
++ initflag的初始化值必须是PTHREAD_ONCE_INIT
++ 每个线程都调用pthread_once,就能保证init_func只被执行一次.
+
+* 线程限制
+可以使用`sysconf'获取系统实现中线程相关的限制
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  long int sysconf(int Name);
+#+END_SRC
+其中参数Name可以是:
++ _SC_THREAD_DESTRUCTOR_ITERATIONS :: 线程退出时,操作系统试图销毁线程私有数据的最大次数
++ _SC_THREAD_KEYS_MAX :: 进程创建key的最大数目
++ _SC_THREAD_STACK_MIN :: 一个线程栈可用的最小字节数
++ _SC_THREAD_THREADS_MAX :: 进程可以创建的最大线程数
+* 线程属性
+可以使用pthread_attr_t结构修改线程默认属性,并把这些属性与创建的线程联系起来.
+** 初始化/销毁线程属性
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_attr_init(pthread_attr_t* attr);
+
+  int pthread_attr_destory(pthread_attr_t* attr);
+#+END_SRC
+调用pthread_attr_init以后,pthread_attr_t结构所包含的内容就是操作系统实现支持的线程所有属性的默认值.
+** 线程属性的获取与修改
+*** detachstate(线程的分离状态属性)
+如果在创建线程时就知道不需要了解线程的终止状态,则可以修改pthread_attr_t结构中的detachstate线程属性,让线程以分离状态启动.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 获取线程属性分离状态 */
+  int pthread_attr_getdetachstate(const pthread_attr_t* attr,int* detachstate);
+
+  int pthread_attr_setdetachstate(pthread_attr* attr,int detachstate);
+#+END_SRC
+其中detachstate的可选值为:
++ PTHREAD_CREATE_DETACHED :: 以分离状态启动线程
++ PTHREAD_CREATE_JOINABLE :: 正常启动线程
+*** statcsize(线程栈的大小)
+可以在编译期间查看是否定义_POSIX_THREAD_ATTR_STACKSIZE来判断系统是否支持该线程属性.
+
+对于多线程的进程来说,由于有多个线程栈共享一个进程的虚拟地址空间.
++ 若应用程序使用了太多的线程,会导致线程栈的累计大小超过了可用的虚拟地址空间,这时就需要减少线程默认的栈大小.
++ 若线程调用的函数分配了大量的自动变量,或调用的函数涉及很深的栈帧,则可能需要增加线程栈的大小.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_attr_getstacksize(const pthread_attr_t* attr,size_t* stacksize);
+
+  int pthread_attr_setstacksize(pthread_attr_t* attr,size_t stacksize);
+#+END_SRC
+若希望改变线程栈的默认大小,但又不想自己处理线程栈的分配问题,这时使用pthread_attr_setstacksize函数就非常有用.
+*** stackaddr(线程栈的最低地址)
+可以在编译阶段使用是否定义了_POSIX_THREAD_ATTR_STACKADDR来判断系统是否支持该线程栈属性
+
+若进程的虚拟地址空间被用尽,可以使用malloc来在堆空间上为新线程栈分配空间,并用`pthread_attr_setstack'函数来改变新建线程的栈位置.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_attr_getstack(const pthread_attr_t* attr,void** statckaddr,size_t* stacksize);
+
+  int pthread_attr_setstack(const pthread_attr_t* attr,void* stackaddr,size_t* stacksize);
+#+END_SRC
+这两个函数实际上即用于管理stackaddr线程属性,也用于管理stacksize线程属性.
+
+*参数stackaddr线程属性被定义为栈的内存单位的最低地址,但不必然是栈的开始位置*. 对某些处理器结构来说,栈是从高地址向低地址防线伸展的,那么stackaddr线程属性就是栈的结尾地址而不是开始地址.
+*** guardsize(线程栈末尾的警戒缓冲区大小)
+线程属性guardsize控制着线程栈末尾之后用以避免栈溢出的扩展内存的大小. 这个属性默认值为PAGESIZE.
+
+若将guardsize线程属性设为0,则表示不提供警戒缓冲区.
+
+*若对线程属性stackaddr做了修改,系统假设由我们自己管理栈,不管guardsize线程属性是什么,都会使警戒栈缓冲区机制无效*
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_attr_getguardsize(const pthread_attr_t* attr,size_t* guardsize);
+
+  int pthread_attr_setguardsize(pthread_attr_t* attr,size_t guardsize);
+#+END_SRC
++ 操作系统实际设置警戒缓冲区大小时,可能不一定就是参数guardsize的大小,有可能会修改为页大小的整数倍.
++ 如果线程的栈指针溢出到警戒区域,应用程序就可能通过信号接收到出错信息.
+*** 可取消状态
+可取消状态决定了线程在接收到`pthread_cancel'请求后是否退出.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_setcancelstate(int new_state,int* old_state);
+#+END_SRC
+其中参数state的可选值为:
++ PTHREAD_CANCEL_ENABLE :: 响应pthread_cancel请求,退出
++ PTHREAD_CANCEL_DISABLE :: 挂起pthread_cancel请求,不退出. *等下次取消状态改为ENABLE状态时再响应该请求*.
+*** 可取消类型
+可取消类型决定了对`pthread_cancel'请求做出响应后,什么时候退出. 
+
+默认情况下是延迟取消,即等到下一个取消点出现时才退出. 但也可以通过`pthread_setcanceltype'设置为异步取消,即不用等退出点,立即退出.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread setcanceltype(int new_type,int* old_type);
+#+END_SRC
+type参数可以为:
++ PTHREAD_CANCEL_DEFERRED :: 延迟取消
++ PTHREAD_CANCEL_ASYNCHRONOUS :: 异步取消
+*** 并发度
+并发度控制着用户级线程可以映射到内核线程或进程的数量. 因为有些操作系统让多个用户级线程映射为一个内核级线程/进程,这时增加给定时间内可运行的用户级线程数,可能会改善性能.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_getconcurrency();
+
+  int pthread_setconcurrency(int level);
+#+END_SRC
++ 若没改过并发度,则pthread_getconcurrency函数返回0
++ pthread_setconcurrency函数设定的并发度只是一个对系统的提示,不一定会被采用
++ 給pthread_setconcurrency函数中的参数level设为0,表示采用系统默认的值.
+* 同步属性
+** 互斥量属性
+*** 互斥量属性的初始化/销毁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 使用默认的互斥量属性初始化pthread_mutexattr_t结构 */
+  int pthread_mutexattr_init(pthread_mutexattr_t* attr);
+
+  int pthread_mutexattr_destroy(pthread_mutexattr_t* attr);
+#+END_SRC
+*** 互斥量的共享属性
+默认情况下,mutex变量只能是同一进程的不同线程之间才能访问,这时互斥量的共享属性为默认的PTHREAD_PROCESS_PRIVATE
+
+但存在某些机制,允许相互独立的多个进程共享同一内存区域,即有时需要多个进程之间同步共享数据,这时需要把互斥量的共享属性设置为PTHREAD_PROCESS_SHARED.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_mutexattr_getpshared(const pthread_mutexattr_t* attr,int* pshared);
+
+  int pthread_mutexattr_setshared(pthread_mutexattr_t* attr,int pshared);
+#+END_SRC
+*** 互斥量的类型属性
+互斥量的类型属性控制着互斥量的特性. POSIX.1定义了四种类型的互斥量
++ PTHREAD_MUTEX_NORMAL :: 标准的互斥量类型,不做任何特殊的错误检查或死锁检测
++ PTHREAD_MUTEX_ERRORCHECK :: 互斥量进行错误检查
++ PTHREAD_MUTEX_RECURSIVE :: 允许同一线程对互斥量进行重复加锁,但 *只有在解锁和加锁次数相同的情况下才会释放锁*
++ PTHREAD_MUTEX_DEFUALT :: 用于请求的默认语义,操作系统可以把他实现为上面三种类型的任意一种.
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_mutexattr_gettype(const pthread_mutexattr_t* attr, int* type);
+
+  int pthread_mutexattr_settype(pthread_mutexattr_t* attr,int type);
+#+END_SRC
+由于`pthread_cond_wait'函数中只会对mutex变量解一次锁,因此当传递递归互斥量到`pthread_cond_wait'时要注意它应该只被加锁一次.
+
+#+TABLE: 互斥量类型行为说明
+| 互斥量类型               | 没有解锁时重复加锁 | 解锁其他线程加锁的互斥量 | 对已解锁的互斥量进行解锁 |
+|--------------------------+--------------------+--------------------------+--------------------------|
+| PTHREAD_MUTEX_NORMAL     | 死锁               | 未定义                   | 未定义                   |
+| PTHREAD_MUTEX_ERRORCHECK | 返回错误           | 返回错误                 | 返回错误                 |
+| PTHREAD_MUTEX_RECURSIVE  | 允许               | 返回错误                 | 返回错误                 |
+| PTHREAD_MUTEX_DEFAULT    | 未定义             | 未定义                   | 未定义                      |
+
+** 读写锁属性
+*** 读写锁初始化/销毁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_rwlockattr_init(pthread_rwlockattr_t* attr);
+
+  int pthread_rwlockattr_destroy(pthread_rwlockattr* attr);
+#+END_SRC
+*** 进程共享属性
+类似互斥量的进程共享属性
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_rwlockattr_getpshared(const pthread_rwlockattr_t* attr,int* pshared);
+
+  int pthread_rwlockattr_setshared(pthread_rwlockattr_t* attr,int pshared);
+#+END_SRC
+** 条件变量属性
+*** 条件变量初始化/销毁
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_condattr_init(pthread_condattr_t* attr);
+
+  int pthread_condattr_destroy(pthread_condattr* attr);
+#+END_SRC
+*** 进程共享属性
+类似互斥量的进程共享属性
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  int pthread_condattr_getpshared(const pthread_condattr_t* attr,int* pshared);
+
+  int pthread_condattr_setshared(pthread_condattr_t* attr,int pshared);
+#+END_SRC
+* 多线程环境下的信号处理
+每个线程都有自己的信号屏蔽字,但 *必须共享同一个信号处理函数*. 
+
+*当主线程创建新线程时,新线程会继承现有的信号屏蔽字*
+
+进程中产生的信号只能传递給某一个线程中,而无法一次性发送給多个线程. 如果信号与硬件或计时器超时有关,该信号就被发送到引起该事件的线程中去, *其他信号则发送到任意一个线程*.
+** 多线程与进程中使用信号机制的区别.
+在进程环境中,使用信号的机制为先调用sigaction注册信号处理函数,当信号异步发生时,调用信号处理函数来处理信号,它是完全异步的.
+
+而多线程环境中,信号处理的机制是将信号灯的异步处理转换为同步处理. 即使用一个线程专门来同步等待信号的到来(sigwait函数),然后检测到来的信号执行响应的处理. 而其他线程不受信号的影响.
+** 设置线程的信号屏蔽字
+进程用于设置信号屏蔽字的函数`sigprocmask'的行为在多线程环境中并未定义,多线程环境中必须使用`pthread_sigmask'代替
+#+BEGIN_SRC C
+  #include <signal.h>
+
+  /* 成功返回0,失败直接返回错误编号 */
+  int pthread_sigmask(int how,const sigset_t* set,sigset_t* old_set);
+#+END_SRC
+`pthread_sigmask'函数与`sigprocmask'函数基本相同,除了pthread_sigmask工作在线程中,并且失败时直接返回错误码,而不是像`sigprocmask'那样返回-1,再设置errno
+** 线程等待信号发生
+线程通过调用`sigwait'等待一个或多个信号发生
+#+BEGIN_SRC C
+  #include <signal.h>
+
+  /* 成功返回0,否则返回错误编号 */
+  int sigwait(const sigset_t* set,int* sig)
+#+END_SRC
+参数set为线程等待的信息集合. 
+参数sig为等到的信号编号
+
+为了避免信号在线程调用sigwait之前发生从而照成信号丢失,在线程调用sigwait之前,必须阻塞哪些它正在等待的信号. 
+*sigwait函数会自动取消信号集的阻塞状态,并在等待信号返回前,恢复线程的信号屏蔽字*
+
+*若多个线程调用sigwait等待同一个信号时,只有一个线程能收到信号,从而从sigwait中返回*
+
+*如果即用sigaction注册了信号处理函数,线程又正在sigwait调用中等待同一信号,那么谁捕获到信号由操作系统决定*.
+** 发送信号給线程
+#+BEGIN_SRC C
+  #include <signal.h>
+
+  /* 若成功返回0,否则返回错误编号 */
+  int pthread_kill(pthread_t thread,int signo);
+#+END_SRC
++ 可以通过将signo设为0来检测线程是否存在
++ 若信号默认处理动作为终止进程,那么即使是发送信号給某个线程, *也会杀掉整个进程*
++ *闹铃定时器是进程资源,由多个线程共享*
+* 多线程环境下的fork
+父进程fork出的子进程会继承父进程的所有互斥量,读写锁和条件变量的状态,但是却只有线程,即父进程中调用fork的那个线程.
+
+因此若父进程中的那些同步变量被其他线程占用,则子进程同样占有这些锁,但同时子进程并没有占有锁的其他线程存在,所以子进程需要在fork的同时清理掉那些被其他线程占用的锁(若子进程立即exec则无此必要)
+
+要清除锁状态,需要在父进程中调用`pthread_atfork'函数创建fork处理程序.
+#+BEGIN_SRC C 
+  #include <pthread.h>
+
+  /* 成功返回0,否则返回错误编号 */
+  int pthread_atfork(void (*prepare)(void),
+                     void (*parent)(void),
+                     void (*child)(void));
+#+END_SRC
+
++ 参数prepare会在父进程fork子进程前被调用,它的任务是获取父进程中 *所有线程中* 定义的 *所有锁*
++ 参数parent会在fork创建子进程后,但在fork返回前在 *父进程环境* 中调用的,它的任务是对prepare中获得的锁进行解锁
++ 参数child会在fork创建子进程后,但在fork返回前在 *子进程环境* 中调用,它的任务也是对prepare中获得的锁进行解锁
++ 若参数为NULL,则表示不设置该函数
+#+BEGIN_SRC C :exports both :results drawer
+  #include <stdio.h>
+  #include <pthread.h>
+  #include <unistd.h>
+
+  pthread_mutex_t lock1 = PTHREAD_MUTEX_INITIALIZER;
+  pthread_mutex_t lock2 = PTHREAD_MUTEX_INITIALIZER;
+
+  void prepare()
+  {
+    printf("preparing locks...\n");
+    pthread_mutex_lock(&lock1);   /* 获取锁1 */
+    pthread_mutex_lock(&lock2);   /* 获取锁2 */
+  }
+
+  void parent()
+  {
+    printf("parent unlocking locks...\n");
+    pthread_mutex_unlock(&lock1); /* 释放锁1 */
+    pthread_mutex_unlock(&lock2); /* 释放锁2 */
+  }
+
+  void child()
+  {
+    printf("child unlocking locks...\n");
+    pthread_mutex_unlock(&lock1); /* 释放锁1 */
+    pthread_mutex_unlock(&lock2); /* 释放锁2 */
+  }
+
+  void* thread_func(void* arg)
+  {
+    printf("thread started...\n");
+    pause();
+    return 0;
+  }
+
+  int main()
+  {
+    pthread_atfork(prepare,parent,child);
+    pthread_t tid;
+    pthread_create(&tid,NULL,thread_func,0);
+    sleep(2);
+    printf("parent about to fork...\n");
+    pid_t pid;
+    if((pid = fork())< 0)
+      printf("fork failed\n");
+    else if(pid == 0)
+      printf("child returned from fork\n");
+    else
+      printf("parent returned from fork\n");
+
+    return 0;
+  }
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+thread started...
+parent about to fork...
+preparing locks...
+child unlocking locks...
+child returned from fork
+thread started...
+parent about to fork...
+preparing locks...
+parent unlocking locks...
+parent returned from fork
+:END:
+
+可以多次调用pthread_at函数从而设置多套fork处理函数,但是每个参数被调用的顺序是不同的:
++ parent和child函数以它们注册的顺序进程调用
++ prepare处理函数的调用顺序与注册时的顺序相反
+** 多线程环境下fork的问题
++ 虽然`pthread_atfork'函数可以用来注册清理锁状态,但是条件变量的清理动作却是未定义的,有的操作系统实现不需要清理条件变量,有的操作系统实现fork之后无法再使用条件变量.
++ 许多库函数的内部实现都用到了锁机制(例如malloc),对于这些库函数而言,`pthread_atfork'函数基本没用
+* 线程的私有数据(Thread-specific Data)
+线程私有数据常用于模拟线程私有的全局变量,即这个变量的值在不同线程中是不同,但可以被同一个线程中的多个函数所共享.
+
+关于线程私有数据(TSD)的一个明显例子就是errno,每个线程都有自己的errno的值,但线程内部的函数共享一个errno的值
+** pthread_key_create
+在分配线程私有数据之前,需要创建与该数据相关联的键. 这个键将用于获取对线程私有函数的访问权. 使用`pthread_key_create'创建一个键
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 若成功返回0,否则返回错误编号 */
+  int pthread_key_create(pthread_key_t* key,void (*destructor)(void*))
+#+END_SRC
++ 参数key为新创建的键,这个key可以被进程中的所有线程使用,但每个线程都会为这个key与不同的线程私有数据地址相关联. 即不同进程对同一个键对应的数据是不同的.
++ 刚新创建的key,每个线程中与之相关联的数据地址为NULL
++ 析构函数参数destructor若为非NULL,则在线程正常退出时(*调用pthread_exit或线程执行返回为正常退出. 调用exit,_exit,_Exit,abort为非正常退出*)会用 *与该键关联的数据地址为参数来被调用*
++ 线程通常使用malloc为线程私有数据分配内存空间,并与键相关联. 析构函数通常用于释放已分配的内存
++ 操作系统实现中能创建的最大键数为PTHREAD_KEYS_MAX
++ 由于`pthread_key_create'在多个线程中只需要执行一次就行,因此一般会使用`pthread_once'函数来确保.
+  #+BEGIN_SRC C
+    void destructor(void*);
+
+    pthread_key_t key;
+    pthread_once_t init_done = PTHREAD_ONCE_INIT;
+
+    void thread_init()
+    {
+      pthread_key_create(&key,destructor);
+    }
+
+    int thread_func(void* arg)
+    {
+      pthread_once(&init_done,thread_init);
+    }
+  #+END_SRC
+** pthread_key_delete
+对所有的线程,都可以通过调用`pthread_key_delete'来取消key与线程私有数据的关联. 但需要注意的是: *调用`pthread_key_delete'并不会触发与之关联的析构函数*
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  /* 成功返回0,否则返回错误编号 */
+  int pthread_key_delete(pthread_key_t* key);
+#+END_SRC
+** pthread_setspecific/pthread_getspecific
+键一旦创建,就可以
++ 通过调用pthread_setspecific函数把key和线程私有数据关联起来.
++ 通过调用pthread_getspecific函数获得与key关联的线程私有数据地址
+#+BEGIN_SRC C
+  #include <pthread.h>
+
+  void* pthread_getspecific(pthread_key_t key);
+
+  int pthread_setspecific(pthread_key_t key,const void* value);
+#+END_SRC

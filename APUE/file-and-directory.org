@@ -1,0 +1,311 @@
+#+TITLE: 文件和目录
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-14 周四 09:48]
+#+OPTIONS: ^:{}
+
+* stat,fstat和lstat函数
+stat系列函数返回与文件相关的信息结构
+#+BEGIN_SRC c
+  #include <sys/stat.h>
+
+  int stat(const char* path,struct stat* buf);
+  int fstat(int filedes,struct stat* buf);
+  int lstat(const char* path,struct stat* buf);
+#+END_SRC
+
+其中fstat通过文件描述符来获取文件信息.
+
+lstat在读取符号连接文件时,获取符号连接文件本身的属性.
+
+* UNIX中的文件类型
++ 普通文件 :: S_ISREG(st_mode)判断
++ 目录文件 :: S_ISDIR(st_mode)判断
++ 块特殊文件 :: S_ISCHR(st_mode)判断
++ 字符特殊文件 :: S_ISBLK(st_mode)判断
++ FIFO命名管道文件 :: S_ISFIFO(st_mode)判断
++ socket套接字文件 :: S_ISLNK(st_mode)判断
++ 符号链接文件 :: S_ISSOCK(st_mode)判断
++ 消息队列 :: S_TYPEISMQ(stat*)判断
++ 信号量 :: S_TYPEISSEM(stat*)判断
++ 共享存储对象 :: S_TYPEISSHM(stat*)判断
+* 关于文件的访问权限
+** 用户ID与组ID
+*** 与一个进程相关联的ID有:
+| 实际用户ID       | 我们实际上是谁?      |
+| 实际组ID         |                      |
+| 有效用户ID       | 用于文件访问权限检查 |
+| 有效组ID         |                      |
+| 附加组ID         |                      |
+| 保存的设置用户ID | 由exec函数保存的有效用户ID |
+| 保存的设置组ID   |  由exec函数保存的有效用户组ID                  |
+** 访问权限与测试宏
+| 意义      | st_mode宏 |
+|-----------+-----------|
+| 用户-读   | S_IRUSR   |
+| 用户-写   | S_IWUSR   |
+| 用户-执行 | S_IXUSR   |
+| 组-读     | S_IRGRP   |
+| 组-写     | S_IWGRP   |
+| 组-执行   | S_IXGRP   |
+| 其他-读   | S_IROTH   |
+| 其他-写   | S_IWOTH   |
+| 其他-执行 | S_IXOTH   |
+** 关于访问权限的一些说明
++ 目录的读权限允许我们获得在该目录中所有文件名的列表,但要访问其中的文件时,则需要有该目录的 *执行* 权限.
++ 必须对目录具有 *写和执行* 权限,才能增加/删除目录下的文件
++ 删除一个文件,不需要对文件本身具有读写权限
++ 若某进程时文件的所有者,则只会根据用户权限判断对文件的操作是否合法, *而不会查看组访问权限和其他访问权限*. 类似的若进程属于文件的某个组,则根据组权限判断对文件的操作是否合法, *而不去判断*
++ 当用进程取创建新文件/目录时,文件/目录的用户ID为进程的 *有效用户ID*
++ 当用进程取创建新文件/目录时,文件/目录的组ID为 *进程的有效组ID* 或 *所在目录的组ID*
+** access函数:使用实际权限执行权限测试
+默认情况下,进程使用有效用户ID/有效组ID来执行对文件的权限测试. 但也可以使用access函数来让进程根据 *实际用户/组权限* 进行测试:
+#+BEGIN_SRC c
+  #include <unistd.h>
+  int access (const char* path,int mode)
+#+END_SRC
+
+其中mode的可选值为:
+| mode | 说明       |
+|------+------------|
+| R_OK | 测试读权限 |
+| W_OK | 测试写权限 |
+| X_OK | 测试执行权限 |
+| F_OK | 测试文件是否存在     |
+** umask函数:为进程设置创建文件权限的屏蔽字
+umask函数为进程设置文件模式创建屏蔽字,并返回以前的值
+#+BEGIN_SRC c
+  #include <sys/stat.h>
+
+  mode_t umask(mode_t cmask);
+#+END_SRC
+其中cmask为访问权限那9个st_mode常量中的一个或多个的"或"构成
+
+当使用create/open函数创建新文件时,即使mode参数中有设置某个参数,但若使用umask设置了屏蔽该权限,则创建的新文件也不会有该参数.
+
+*但umask可能会也可能不会修改由内核直接产生的core文件*
+** chmod/fchmod函数:更改现有文件的访问权限
+#+BEGIN_SRC c
+  #include <sys/stat.h>
+
+  int chmod(const char* path,mode_t mode);
+
+  int fchmod(int filedes,mode_t mode);
+#+END_SRC
+
+chmod函数在指定文件上进程操作,而fchmod函数则对已打开的文件进行操作
+
+为了改变文件权限,进程的 *有效ID* 必须等于文件的所有者ID,或进程具有超级用户权限
+
+| 意义             | st_mode宏 |
+|------------------+-----------|
+| 用户-读          | S_IRUSR   |
+| 用户-写          | S_IWUSR   |
+| 用户-执行        | S_IXUSR   |
+| 组-读            | S_IRGRP   |
+| 组-写            | S_IWGRP   |
+| 组-执行          | S_IXGRP   |
+| 其他-读          | S_IROTH   |
+| 其他-写          | S_IWOTH   |
+| 其他-执行        | S_IXOTH   |
+| 执行时设置用户ID | S_ISUID   |
+| 执行时设置组ID   | S_ISGID   |
+| 设置粘住位       | S_ISVTX   |
+
+注意:由于新建文件的组ID可能时父目录的组ID,因此新创建的组ID可能并不是调用进程所示的组. 因此,为了安全,当新文件的组ID不属于进程的有效组ID或进程附加组ID中的一个,或进程没有超级用户权限时,那么设置组ID位会自动被关闭. 这就防止了用户创建一个设置组ID文件,而该文件是由并非该用户所属的组所拥有的.
+** 关于粘住位的说明
+若对一个可执行文件设置了粘住位,则该程序第一次执行并结束后,其程序的指令部分仍然会保存在交换区中,由于交换区占用连续的磁盘空间,因此下次载入该程序会更快一些.
+
+若对一个目录设置了粘住位,则只有对该目录具有写权限的用户满足以下之一的条件时才允许或更名该目录下的文件
++ 拥有此文件
++ 拥有此目录
++ 是超级用户
+
+对目录设置粘住位的一个典型目录是/tmp目录,任何人都能够在其目录下创建文件,但用户不能删除/更名其他用户的文件.
+** chown/fchown/lchown函数更改文件的用户ID和组DI
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  int chown(const char* path,uid_t owner,gid_t group)
+  int fchown(int filedes,uid_t owner,gid_t group)
+  int lchown(const char* path,uid_t owner,gid_t group)
+#+END_SRC
+
+三者的区别类似stat,fstgat和lstat
+
+若参数owner/group为-1,则表示对应ID不变.
+* 关于文件长度
++ 对于普通文件,文件长度为文件内容的多少(包括文件中的空洞)
++ 对于目录,文件长度通常是一个数(例如16或512)的倍数
++ 对于符号链接,文件长度是链接所指向的 *文件名长度* (注意,因为符号链接文件长度总是由st_size表示,所以它并不包含通常C语言中用作字符串结尾的null字符)
+** 文件中的空洞
+空洞是由所设置的偏移量超过文件尾端,并写了数据后照成了. 
+
+文件中的空洞可能占有也可能不占用磁盘空间,但当复制该文件时,那么新文件会填满这些空洞.
+** truncate函数:截断文件
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  int truncate(const char* path,off_t len);
+  int ftruncate(int filedes,off_t len);
+#+END_SRC
+
+若原文件的长度大于参数len,则超过len之前的数据就不能再访问.
+
+若原文件的长度小于len,则实现效果与系统相关.
+* 关于文件操作
+** link函数:创建指向现有文件的链接
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  int link(const char* exist_path,const char *new_path);
+#+END_SRC
+** unlink函数:删除指向文件的链接
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  int unlink(const char* path)
+#+END_SRC
+
+该函数删除目录项,并将由path所引用的文件的链接计数减1. 
+
+只有当链接计数为0时,该文件的内容才正真被删除.(注意: *若有进程打开了该文件,则即使该文件的链接计数为0,也不会真正释放磁盘空间. 只有当关闭该文件后,内核检查其链接数为0,才删除该文件内容.* )
+
+unlink的这种特性,可以用来创建临时文件: 进程创建临时文件后,立刻调用unlink. 该文件因为是打开的,所以内容不会被删除,但当进程退出时,该文件的内容被删除.
+
+一般来说,参数path指向的是一个 *文件* ,但若是超级用户权限,则参数path可以指向一个目录. 但通常应该使用rmdir函数代替.
+** remove函数:删除一个对文件或目录的链接
+#+BEGIN_SRC c
+  #include <stdio.h>
+
+  int remove(const char* path)
+#+END_SRC
+
+若path为文件路径,则remove与unlink类似.
+
+若path为目录路径,则remove与rmdir类型.
+** remove函数:对文件进行改名
+#+BEGIN_SRC c
+  #include <stdio.h>
+
+  int rename(const char* oldname,const chaar* newname);
+#+END_SRC
+
++ oldname和newname要么同时指向文件,要么同时指向目录, *不能一个为文件,一个为目录*
++ 若newname为目录,则必须是空目录.
++ 若oldname和newname为符号链接,则处理的是符号链接本身,而不是它所引用的文件
++ 若oldname和newname指向同一个文件,则函数不作任何更改返回成功.
+* 符号链接
+用open打开文件时,如果传递给open函数的路径指定了一个符号链接,那么open跟随链接找到所指向的文件. 若符号链接所指向的文件并不存在,则open返回出错.
+
+** symlink函数:创建符号链接
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  int symlink(const char* actual_path,const char* sym_path)
+#+END_SRC
+
+创建一个指向actual_path的符号链接sym_path. *并不要求acutal_path已近存在*
+
+** readlink函数:读取符号链接本身
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  ssize_t readlink(const char* pathname,char* buf,size_t bufsize)
+#+END_SRC
+*open函数会跟随符号链接打开其指向的实际文件* 若要打开链接本身,则需要使用readlink函数
+
+* 文件的时间
+
+** 三个时间属性的意义
+每个文件都保持有三个时间属性,它们的意义为:
+| 字段     | 说明                    | 例子        | ls命令选项 |
+|----------+-------------------------+-------------+------------|
+| st_atime | 文件数据的最后访问时间  | read        | -u         |
+| st_mtime | 文件数据的最后修改时间  | write       | 默认       |
+| st_ctime | i节点状态的最后更改时间 | chmod,chown | -C         |
+
+注意:系统并不保存对一个i节点的最后一次访问时间.
+
+** utime函数:修改文件数据的访问时间和修改时间
+#+BEGIN_SRC C
+  #include <utime.h>
+
+  int utime(const char* path,const struct utimbuf* times);
+
+  struct utimbuf{
+    time_t actime;                /* access time */
+    time_t modtime;               /* modification time */
+  }
+#+END_SRC
++ 如果times参数为一个空指针,则访问时间和修改时间都设置为当前时间.
+
+  此时要求进程的有效用户ID必须等于文件的所有者ID,或进程对文件具有写权限
+
++ 如果times是非空指针,则访问时间和修改时间被设置为times所指向结构中的值.
+
+  此时,进程的有效ID必须等于文件的所有者ID,或者进程为超级用户进程. *对文件只具有写权限是不够的*
+
++ *我们不能对更改i节点状态时间st_ctime指定一个值,当调用utime函数时,该字段自动更新*
+
+* 目录操作
+
+** mkdir:创建目录
+#+BEGIN_SRC c
+  #include <sys/stat.h>
+
+  int mkdir(const char* path,mode_t mode);
+#+END_SRC
+
+指定的文件访问权限mode参数,会收到进程的文件模式创建屏蔽字的修改.
+
+需要注意的是:对于目录, *一般至少要设置一个执行权限位* ,以允许访问该目录的文件名.
+
+** rmdir:删除目录
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  int rmdir(const char* path);
+#+END_SRC
+
+被删除的目录必须为空
+
+** 读目录参数
+#+BEGIN_SRC C
+  #include <dirent.h>
+
+  DIR *opendir(const char* pathname);
+  struct dirent* readdir(DIR* dp);
+  void rewinddir(DIR* dp);
+  int closedir(DIR* dp);
+  long telldir(DIR* dp);
+  void seekdir(DIR* dp,long loc);
+
+  struct dirent{
+    ino_t d_ino;
+    char d_name[NAME_MAX + 1];
+  }
+#+END_SRC
+
+使用readdir读取目录中的目录项,目录中的各目录项的顺序与实现有关,它们通常并不按照字母顺序排列.
+
+** chdir/fchdir:修改进程的当前工作目录
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  int chdir(const char* path);
+
+  int chdir(int filedes);
+#+END_SRC
+
+** getcwd:获取当前工作目录
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  char* getcwd(char* buf,size_t size);
+#+END_SRC
+
+* 设备特殊文件
++ 可以使用major和minor宏来获取dev_t中的主设备号和次设备号
++ 系统中与每个文件名关联的st_dev值是文件系统的设备号,该文件设备包含了这一文件名以及与其对应的i节点
++ 只有字符特殊文件和块特殊文件才有st_rdev值,该值为实际设备的设备号.

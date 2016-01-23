@@ -1,0 +1,474 @@
+#+TITLE: 进程间通讯
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-06-04 周四 10:52]
+#+OPTIONS: ^:{}
+
+
+* 管道
+
+** 管道的局限性
++ 管道只能保证是半双工的(即数据只能在一个方向流动),虽然有些系统提供了全双工管道
++ 管道只能在具有公共祖先的进程之间使用. 通常管道由父进程创建,以实现父子进程之间的通讯
+
+** pipe函数创建管道
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  /*  成功返回0,出错返回-1 */
+  int pipe(int* fd);
+#+END_SRC
+该函数通过参数fd返回两个文件描述符,其中fd[ 0 ]为读而打开,fd[ 1 ]为写而打开, *且fd[ 1 ]的输出为fd[ 0 ]的输入*
+
+单进程中的管道几乎没有任何用处,因为进程内部的数据交换根本不需要通过管道来进行. 通常调用pipe的进程会接着fork一个子进程,并在父进程和子进程两端分别关闭读或写的文件描述符,通过这种方式就能实现父子进程间的通讯了.
+#+BEGIN_SRC C :exports both :results drawer
+  #include <unistd.h>
+  #include <fcntl.h>
+  #include <stdio.h>
+  #include <sys/wait.h>
+
+  int main()
+  {
+    int fd[2];
+    pipe(fd);
+
+    pid_t pid = fork();
+    if(pid >0)                    /* 父进程 */
+      {
+        printf("parent running\n");
+        fflush(stdout);
+        close(fd[0]);             /* 关闭读fd,父进程负责发送消息 */
+        write(fd[1],"this is a messae from parent\n",255);
+        close(fd[1]);
+        waitpid(pid,NULL,0);
+      }
+    else
+      {
+        printf("child running\n");
+        fflush(stdout);
+        close(fd[1]);
+        if(dup2(fd[0],STDIN_FILENO) != STDIN_FILENO)
+          {
+            printf("dup2 error\n");
+            return -1;
+          }
+        close(fd[0]);
+        if(execl("/bin/echo_from_stdin.sh","/bin/echo_from_stdin.sh",(char*)0) < 0)
+          {
+            printf("exec echo failed\n");
+          }
+        /* char s[255+1]=""; */
+        /* printf("%s\n",gets(s)); */
+      }
+    return 0;
+  }
+#+END_SRC
+
+#+RESULTS:
+:RESULTS:
+child running
+parent running
+
+this is a messae from parent
+:END:
+
+** 对管道的读写说明
++ 读取一个写端已关闭的管道时,在所有剩余数据被读取后,read返回0,
++ 若写一个读端已关闭的管道时,则产生信号SIGPIPE. 若忽略该信号或捕捉该信号并从其处理函数返回,则write返回-1,errno设为EPIEP
++ 写管道(或FIFO)时,常量PIPE_BUF规定了内核中管道缓冲区的大小. 若对管道调用write的字节<=PIPE_BUF,则可以保证 *该操作不会与其他进程对同一管道或FIFO的write操作穿插到一起*. 否则写的数据可能穿插.
+
+** popen/pclose函数
+这两个函数用于进程用system运行外部命令,并创建管道与该外部命令子进程进行交流
+#+BEGIN_SRC C
+  #include <stdio.h>
+
+  /* 若type为"r",则返回连接到cmd标准输出的FILE* */
+  /* 若type为"w",则返回连接到cmd标准输入的FILE* */
+  FILE* popen(const char* cmd,const char* type);
+
+  /* 关闭标准IO留,等待popen中cmd运行结束,再返回其终止状态,出错则返回-1 */
+  int pclose(FILE* fp);
+#+END_SRC
++ *popen只能连接到子进程的标准输入或标准输出,而无法通过type="rw"实现同时连接输入和输出*
+上面pipe的例子可以改写为:
+#+BEGIN_SRC C
+  #include <unistd.h>
+  #include <fcntl.h>
+  #include <stdio.h>
+  #include <sys/wait.h>
+
+  int main()
+  {
+    FILE* fp = popen("/bin/echo_from_stdin.sh","w");
+    fputs("message from parent\n",fp);
+    pclose(fp);
+    return 0;
+  }
+
+#+END_SRC
+
+#+RESULTS:
+: message from parent
+
+** 使用管道时的注意事项
+当用标准IO读写管道时,一定要注意 *标准IO的缓冲机制*. 缓冲很容易造成读写管道时的阻塞,甚至引起死锁.为此经常要用`setvbuf'函数更改缓冲类型.
+  
+当有多个进程同时对一个管道进行写操作时, *若一次写入的字节数大于PIPE_BUF,则可能会乱序写入*.
+* FIFO
+FIFO又叫命名管道,它与pipe的不同在于:pipe只能由共同祖先进程创建,然后通过fork函数在多个子进程之间使用. 而通过FIFO,无共同祖先进程的进程也能交换数据.
+
+FIFO也是一种文件类型,stat结构中的st_mode可以标明文件是否为FIFO类型. 可以用S_ISFIFO宏对此进行测试.
+** FIFO的局限性
+FIFO只能保证是半双工的.
+
+** 创建FIFO
+创建FIFO的类似于创建文件.
+#+BEGIN_SRC C
+  #include <sys/stat.h>
+
+  /* mode参数说明与open函数相同 */
+  int mkfifo(const char* fifo_path,mode_t mode);
+#+END_SRC
+
+** 使用FIFO
+一旦用mkfifo创建了fifo,就可以使用open,close,read,write,unlink对其像处理文件一样使用FIFO.
+
+但使用open打开FIFO时,非阻塞标志(O_NONBLOCK)的意义有点不同:
++ 若打开FIFO时未指定非阻塞标志,则只读open会阻塞到其他进程为写而打开次FIFO. 类似的,只写open会阻塞到其他进程为读而打开它.
++ 若打开FIFO时指定了非阻塞表示,则 *只读open立即返回*,但若 *没有进程已经为读而打开FIFO,只写open会立即返回-1,errno为ENXIO*.
+
+** 对FIFO的读写说明
++ 若用write写一个尚无进程为读而打开的FIFO,则产生信号SIGPIPE
++ 若某个FIFO的最后一个写进程关闭了该FIFO,则读取该FIFO会生产一个eof
++ 类似pipe,常量PIPE_BUF说明了可被原子地写到FIFO的最大数据量.
+
+* XSI IPC
+XSI IPC包括三种IPC:信息队列,信号量,共享存储器. 它们之间有许多相似之处.
+** 共同特征
+*** 标识符和键
+每种XSI IPC结构中都有一个非负整数作为标识符. 但该标识符仅为IPC对象内部使用,其对外与一个键(key)相连.
+
+创建IPC结构时都需要指定一个键(key_t),该键由内核变换为IPC结构的标识符.
+
+多个进程共享同一个IPC结构一般有如下几种方法:
++ 某进程指定键为IPC_PRIVATE以创建一个新IPC结构,并将返回的标识符存放在数据库或文件中,以便其他进程取用.
++ 定义一个多个进程间都认可的键,然后进程使用该键来生成或获取IPC结构.
++ 通过函数`ftok'可以指定一个路径和一个id,并根据这个路径及id生成一个键值,多个进程间约定同一个路径和id以产生一个一致的IPC键,共享IPC结构.
+  #+BEGIN_SRC C
+    #include <sys/ipc.h>
+
+    key_t fork(const char* path,int id);
+  #+END_SRC
+  - 参数path必须是一个已存在的文件.
+
+  - 产生键时,只使用 *id参数的低8位*
+
+  - *如果参数id一致,即使不同的path参数也可能产生相同的键*
+*** 权限结构
+XSI IPC为每个IPC结构都设置了一个ipc_perm结构, 该结构规定了权限和所有者. 它至少包括下列成员:
+#+BEGIN_SRC C
+  #include <sys/ipc.h>
+
+  struct ipc_perm{
+    uid_t uid;                    /* 所有者的有效用户id */
+    gid_t gid;                    /* 所有者的有效组id */
+    uid_t cuid;                   /* 创建者的有效用户id */
+    git_t cgid;                   /* 创建者的有效组id */
+    mode_t mode;                  /* access mode */
+    /* 其他成员 */
+  };
+#+END_SRC
++ mode成员类似文件的mode,但不存在执行权限.
+*** XSI IPC的优缺点:
+IPC的缺点有:
++ IPC结构是系统范围内都可访问,且即使读写的进程终止,消息与队列依然存在
++ IPC没有被抽象为一个文件,因此无法用IO函数操作它,也因此新增了十几条系统调用(msgget,semop,shmat等)
++ 由于IPC不使用文件描述符,因此无法对他们使用多路转接IO函数(select和poll). 这就难于一次使用多个IPC结构,以及在文件或设备IO中使用IPC结构.
+
+IPC的优点有:
++ 可靠,因为这些IPC被限制在只能单机使用
++ 流是受控的,即当系统资源短缺(缓冲区满了),或接收进程能再接收更多消息,则发送进程会休眠. 当流控制条件消失,发送进程自动被唤醒
++ 面向记录
++ 可以用非先进先出方式处理.
+** 消息队列(*不推荐使用*)
+消息队列是消息的链接表,该链接表存放在内核中并由消息队列标识符标识.
+*** 打开/创建新消息队列
+msgget用于创建一个新队列或打开一个现存的队列.
+#+BEGIN_SRC C
+  #include <sys/msg.h>
+
+  /* 成功则返回消息队列的ID,出错则返回-1 */
+  int msgget(key_t key,int flag);
+#+END_SRC
+
+每个消息队列都有一个msgid_ds结构体与之关联,用于说明队列的当前状态
+#+BEGIN_SRC C
+  struct msqid_ds{
+    struct ipc_perm msg_perm;     /* ipc的权限说明 */
+    msgqnum_t msg_qnum;           /* 队列中的消息个数 */
+    msglen_t msg_qbytes;          /* 队列中能存储的消息最大容量 */
+    pid_t msg_lspid;              /* 最后一次在该队列上调用msgsnd()的进程id */
+    pid_t msg_lrpid;              /* 最后一次在该队列上调用msgrcv()的进程id */
+    time_t msg_stime;             /* 最后一次在该队列上调用msgsnd()的时间 */
+    time_t msg_rtime;             /* 最后一次在该队列上调用msgrcv()的时间 */
+    time_t msg_ctime;             /* 最后一次在该队列发生变化的事件 */
+    /* 其他结构成员 */
+  }
+#+END_SRC
+
+*** 操作消息队列
+msgctl函数对消息队列执行队中操作
+#+BEGIN_SRC C
+  #include <sys/msg.h>
+
+  int msgctl(int queueid,int cmd,struct msgid_ds* buf);
+#+END_SRC
+其中cmd参数说明了对queueid指定的队列要执行的命令:
++ IPC_SET
+
+  按buf结构中的值,设置与消息队列msqid_ds结构中的下列四个字段:
+
+  - msg_perm.uid
+
+  - msg_perm.gid
+
+  - msg_perm.mode
+
+  - msg_qbytes
+
+  执行该命令的进程,其有效用户ID必须等于msg_perm.cuid或msg_perm.uid或超级用户.
+
+  只有超级用户才能增加msg_qbyes的值
+
++ IPC_RMID
+
+  删除消息队列中的所有消息.
+
+  执行该命令的进程,其有效用户ID必须等于msg_perm.cuid或msg_perm.uid或超级用户.
+
++ IPC_STAT 
+
+  取此消息队列的msgid_ds结构,并放在buf所指向的结构中
+  #+BEGIN_SRC C :exports both :results drawer
+    #include <sys/msg.h>
+    #include <sys/ipc.h>
+
+    void show_queue_ds(const struct msqid_ds* queue_ds)
+    {
+      printf("msg_qnum=%d\n",queue_ds->msg_qnum);
+      printf("msg_qbytes=%d\n",queue_ds->msg_qbytes);
+      printf("msg_lspid=%d\n",queue_ds->msg_lspid);
+      printf("msg_lrpid=%d\n",queue_ds->msg_lrpid);
+
+    }
+    int main(int argc, char *argv[])
+    {
+      int queueid = msgget(IPC_PRIVATE,IPC_CREAT);
+      struct msqid_ds queue_ds;
+      msgctl(queueid,IPC_STAT,&queue_ds);
+      show_queue_ds(&queue_ds);
+      return 0;
+    }
+
+  #+END_SRC
+
+  #+RESULTS:
+  :RESULTS:
+  msg_qnum=1630404681
+  msg_qbytes=1627419888
+  msg_lspid=1628099819
+  msg_lrpid=192
+  :END:
+
+*** 收发消息
+msgsnd将新消息添加到队列尾端.
+#+BEGIN_SRC C
+  #include <sys/msg.h>
+
+  /* 参数flag可以为0或IPC_NOWAIT. */
+  int msgsnd(int msqid,const msgbuf* ptr,size_t nbytes,int flag);
+
+  struct msgbuf
+  {
+    long mtype;                   /* 消息类型 */
+    char mtext[TEXTSIZE];                /* 信息数据,TEXTSIZE需要比msgsnd中的参数nbytes大 */
+  }
+#+END_SRC
+默认情况下,若消息队列已满,msgsnd函数会阻塞直到有空间要发送,或该队列被删除(返回EIDRM),或捕捉到一个信号,从信号捕捉函数返回(返回EINTR)
+但若参数flag设置为IPC_NOWAIT,则msgsnd会立即出错返回EAGAIN.
+
+msgrcv用于从队列中取消息.
+#+BEGIN_SRC C
+  #include <sys/msg.h>
+
+  /* 成功返回消息的数据部分的长度,出错返回-1 */
+  ssize_t msgrcv(int msqid,msgbuf* ptr,size_t nbytes,log type,int flag);
+#+END_SRC
+参数type指明了我们想获得哪种类型的消息
+| type == 0 | 返回队列中的第一个消息               |
+| type > 0  | 返回队列中消息类型为type的第一个消息 |
+| type < 0  | 返回队列中消息类型<=type绝对值的消息,类型值最小的消息优先(可作为优先级来用) |
+
+参数flag控制了msgrcv的行为
+| flag的值    | 说明                                                                |
+|-------------+---------------------------------------------------------------------|
+| MSG_NOERROR | 若消息大于nbytes,则消息被截断,否则会出错返回E2BIG(消息仍留在队列中) |
+| IPC_NOWAIT  | 操作不阻塞,若找不到指定类型的消息,则返回-1,errno设置为ENOMSG        |
+|             |                                                                     |
+** 信号量集合
+信号量是一个计数器,用于标明多进程间共享资源的剩余数量.
+
+每个信号量集合由一个无名结构体表示
+#+BEGIN_SRC C
+  struct {
+    unsigned short semval;        /* 信号量的值 */
+    pid_t sempid;                 /* 上次操作该信号量的进程id */
+    unsigned short semncnt;       /* 等待semval>curval的进程数 */
+    unsigned short semzcnt;       /* 等待semval == 0的进程数 */
+    /* 可能还有其他成员 */
+  };
+#+END_SRC
+
+*** 新建/获取信号量集合
+#+BEGIN_SRC C
+  #include <sys/sem.h>
+
+  int semget(key_t key,int sem_num,int flag);
+#+END_SRC
++ 若创建新信号量集合,则参数sem_num表示该信号量集合中包含了多少个信号量(编号从0到max_num-1)
++ 若获取一个现存的信号量,则将sem_num设置为0
+
+*** 操作信号量
++ semctl函数
+  #+BEGIN_SRC C
+    #include <sys/sem.h>
+
+    /* 返回值的意义根据cmd的不同而不同 */
+    int semctl(int semid,int semnum,int cmd);
+    int semctl(int semid,int semnum,int cmd,union semun arg);
+
+    union semnum{
+      int val;                      /* cmd为SETVAL时 */
+      struct semid_ds* buf;         /* cmd为IPC_STAT或IPC_SET时 */
+      unsigned short* array;        /* cmd为GETALL或SETALL时 */
+    };
+
+    struct semid_ds
+    {
+      struct ipc_perm sem_perm;   /* ipc权限 */
+      unsigned short sem_nsems;   /* 信号量集合中信号量的个数 */
+      time_t sem_otime;           /* 最后执行semop()的时间 */
+      time_t sem_ctime;           /* 最后改变semid_ds结构体的时间 */
+      /* 其他成员 */
+    };
+  #+END_SRC
+  cmd参数说明
+  | IPC_STAT | 取当前信号量集合的semid_ds结构,存放在arg.buf中                                                                                                           |
+  | IPC_SET  | 根据arg.buf中的值,更新该信号量集合的sem_perm.uid,sem_perm.gid或sem_perm.mode. 执行该函数的进程其有效用户ID必须为sem_perm.cuid/sem_perm.uid或超级用户权限 |
+  | IPC_RMID | 立即删除该信号量集合.执行该函数的进程其有效用户ID必须为sem_perm.cuid/sem_perm.uid或超级用户权限                                                          |
+  | GETVAL   | 返回信号量集合中第semnum个信号量的值                                                                                                                     |
+  | SETVAL   | 设置信号集合中第semnum个信号量的值,该值由arg.val指定                                                                                                     |
+  | GETPID   | 返回上次操作信号量的进程PID                                                                                                                              |
+  | GETNCNT  | 返回信号量集合中第semnum个信号量的semncnt的值                                                                                                            |
+  | GETZCNT  | 返回信号量集合中第semnum个信号量的semzcnt的值                                                                                                            |
+  | GETALL   | 获取信号量集合中所有信号量的值,并将它们存放在arg.array中                                                                                                |
+  | SETALL   | 根据arg.array中的值设置信号量集合中所有信号量的值                                                                                                                            |
+
++ semop函数
+  semop提供了操作信号量集合上各信号量值的原子操作
+  #+BEGIN_SRC C
+    #include <sys/sem.h>
+
+    /* 成功返回0,失败返回-1 */
+    int semop(int semid,struct sembuf semop_array[],size_t npos);
+
+    struct sembuf
+    {
+      unsigned short sem_num;       /* 指明操作的是信号量集合中的第几个信号量 */
+      short sem_op;                 /* 是何种操作,可以为负数,0或正数 */
+      short sem_flg;                /* IPC_NOWAIT,SEM_UNDO */
+    };
+  #+END_SRC
++ 参数npos指明了只按照semop_array中操作的数量.
++ sem_op的值说明:
+  | sem_op的值 | 说明                                                        |
+  |------------+-------------------------------------------------------------|
+  |         >0 | *表示资源要释放资源*. 增加信号量sem_op的值 |
+  |         <0 | *表示进程要占用资源*. 减少信号量值, *若信号量不够减,则操作被阻塞* |
+  |          0 | 表示进程等待信号量变为0. 不为0则该操作被阻塞                                    |
++ sem_flg的值说明
+  | sem_flg的值 | 说明                                   |
+  |-------------+----------------------------------------|
+  | IPC_NOWAIT  | 不阻塞,若操作无法完成,则直接返回EAGAIN |
+  | SEM_UNDO    | 修改进程的 *信号量调整值*. 进程在退出时,内核会根据该调整值释放资源. *推荐使用* |
+
+** 共享存储器
+共享存储器运行多个进程共享同一块存储区,由于数据不需要在进程间复制,所以这是最快的一种IPC. 
+
+由于不同进程要对同一块存储区操作,因此通常会使用记录锁或信号量来实现对共享存储区访问的同步.
+
+内核为每个共享存储段设置了一个shmid_ds结构
+#+BEGIN_SRC C
+  struct shmid_ds{
+    struct ipc_perm shm_perm;     /* IPC权限说明 */
+    size_t shm_segsz;             /* 共享存储的大小 */
+    pid_t shm_lpid;               /* 最后执行shmop()的进程ID */
+    pid_t shm_cpid;               /* 创建该共享存储的进程ID */
+    shmatt_t shm_nattch;          /* 当前attach到该共享内存的数量 */
+    time_t shm_atime;             /* 最后一次attach的时间 */
+    time_t shm_dtime;             /* 最后一次detach的时间 */
+    time_t shm_ctime;             /* 最后一次更改shmid_ds结构的时间 */
+    /* 其他成员 */
+  }
+#+END_SRC
+
+*** 创建/获取共享存储
+#+BEGIN_SRC C
+  #include <sys/shm.h>
+
+  /* 成功返回共享存储ID,出错返回-1 */
+  int shmget(key_t key,size_t size,int flag);
+#+END_SRC
++ 若创建的共享存储,则参数size指明了共享存储的大小,通常需要我诶系统页长的整数倍, *否则最后一页的余下部分是不可用的*
++ 若获取原共享存储,则参数设置为0
++ 创建新的共享存储后,会自动初始化存储内容为0
+
+*** 操作共享存储段
+#+BEGIN_SRC C
+  #include <sys/shm.h>
+
+  int shmctl(int shmid,int cmd,struct shmid_ds* buf);
+#+END_SRC
+cmd参数说明:
+| cmd参数    | 说明                                                                                        |
+|------------+---------------------------------------------------------------------------------------------|
+| IPC_STAT   | 去该段的shmid_ds结构,存放在buf所指的结构中                                                  |
+| IPC_SET    | 根据buf中的值设置该共享存储的shm_perm.uid,shm_perm.gid和shm_perm.mode                       |
+| IPC_RMID   | 从系统中删除该存储段. *共享存储有一个计数器,只有当最后一个进程删除该共享存储后才回实际删除* |
+| SHM_LOCK   | 不让该共享存储交换到swap中                                                                  |
+| SHM_UNLOCK | 允许共享存储交换到swap中                                                                            |
+
+*** 使用共享内存
++ attach共享内存
+  #+BEGIN_SRC C
+    #include <sys/shm.h>
+
+    /* 成功则返回指向共享存储的指针,出错返回-1 */
+    void* shmat(int shmid,const void* addr,int flag);
+  #+END_SRC
+  - 若addr==0,则该共享存储连接到内核选择的第一个可用地址上 *推荐使用*
+
+  - addr非0,flag没有指定SHM_RND,则该共享存储连接到addr指定的地址上.
+
+  - addr为0,flag指定了SHM_RND,则会该addr取整处理,再将该共享内存挂到取整后的地址上
+
+  - flag指定了SHM_RDONLY则表示以只读方式挂载共享内存,默认为读写方式.
+
++ detach共享内存
+  进程对共享存储段的操作结束后,调用shmdt脱节该段. 若成功,则shmdt会将shmid_ds结构体重的shm_nattach计数器减少1
+  #+BEGIN_SRC C
+    #include <sys/shm.h>
+
+    int shmdt(void* addr);
+  #+END_SRC
+* 

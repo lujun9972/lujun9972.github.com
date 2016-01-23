@@ -1,0 +1,214 @@
+#+TITLE: 进程环境
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-18 周一 09:11]
+#+OPTIONS: ^:{}
+
+* 进程的中止
+** 中止的方式
+有5种方式正常终止
++ 从main返回
++ 调用exit
++ 调用_exit或_Exit
++ 最后一个线程从其启动历程返回, *但是该线程的返回值不会用作进程的返回值,改进程以终止状态0返回*
++ 最后一个线程调用pthread_exit, *这时,进程的终止状态也为0,而以pthread_exit的参数无关*
+
+有3种方式异常终止
++ 调用abort
++ 接到一个线号终止
++ 最后一个线程对取消请求做出响应
+** exit函数
+#+BEGIN_SRC C
+  #include <stdlib.h>
+
+  void exit(int status);
+
+  void _Exit(int status);
+
+  #include <unistd.h>
+
+  void _exit(int status);
+#+END_SRC
+
++ exit函数会先执行清理动作(调用执行各终止处理程序,关闭标准IO流),然后进入内核
++ _exit和_Exit则会立即进入内核
++ 当进程从main函数返回时,会立刻调用exit函数. 
+  #+BEGIN_SRC C
+    exit(main(argc,argv));
+  #+END_SRC
+** atexit函数
+进程退出时,可以注册至少32个函数由exit函数自动调用,这些函数被称为终止处理函数. 
+
+需要使用atexit函数来注册这些函数
+#+BEGIN_SRC C
+  #include <stdlib.h>
+
+  int atexit(void (*func)(void));
+#+END_SRC
+  
++ exit调用这些函数的顺序与它们注册时的顺序相反.
++ 同一函数若登录多次,则也会被调用多次.
++ 进程退出时,先调用注册的终止处理函数,然后再执行清理动作,最后进入内核
+* 环境变量表
+每个进程都有一个字符指针数组,指向一张存储了环境变量的列表. 
+
+*可以通过全局变量environ引用到该字符指针数组*:
+#+BEGIN_SRC C
+  extern char **environ;
+#+END_SRC
+
++ 一般来说,环境变量字符串的格式为`name=value'
++ 我们通常不直接使用environ变量,而是使用getenv和putenv函数来访问/设置指定的环境变量
+** 获取环境变量值
+#+BEGIN_SRC C
+  #include <stdlib.h>
+
+  char* getenv(const char* name);
+#+END_SRC
++ getenv函数返回一个指针,该指针指向`name = value'字符串中的value
+** 修改函数变量值
+#+BEGIN_SRC C
+  #include <stdlib.h>
+
+  int putenv(char* str);
+
+  int setenv(const char* name,const char* value,int rewrite);
+
+  int unsetenv(const char* name);
+#+END_SRC
++ putenv中的参数str需为格式`name = value'的字符串. 它添加环境变量,若环境变量已存在,则会覆盖之
++ 有些实现中,putenv直接将str的值放入环境表中,因此,若str存放于函数栈中,则可能会发生错误.
++ setenv将name设置为value,参数rewrite表示当name已存在时,是否覆盖原值(非0表示覆盖,0表示不覆盖)
++ unsetenv删除name的定义. 即使不存在这种定义也不出错.
++ 当向环境变量表中增加一个环境变量时,会调用malloc为新的环境变量表分配空间,并将原来的环境变量表复制到新分配空间中. 例如:
+  #+BEGIN_SRC C :exports both
+    #include <stdio.h>
+    #include <stdlib.h>
+
+    extern char** environ;
+    int main(int argc, char *argv[])
+    {
+            printf("before set env:%x\n",environ);
+            setenv("Hello","World",1);
+            printf("after set env:%x\n",environ);
+            return 0;
+    }
+
+  #+END_SRC
+
+  #+RESULTS:
+  | before | set | env:20010100 |
+  | after  | set | env:20020258 |
+
+  
+* 存储器分配
+有三个用于存储空间动态分配的函数
+#+BEGIN_SRC C
+  #include <stdlib.h>
+
+  void* malloc(size_t size);
+  void* calloc(size_t nobj,size_t size_of_obj);
+  void* realloc(void* ptr,size_t newsize);
+  char* alloca(int size);
+
+  void free(void* ptr);
+#+END_SRC
++ calloc为指定数量的指定长度的对象分配存储空间,其与malloc的不同之处在于该空间的每一位都初始化为0
++ 这三个分配函数所返回的指针一定是适当对齐的,使其可用于任何数据对象
++ 注意不要释放已经释放了的块
++ alloca与malloc的不同在于,它在当前函数的栈上分配存储空间,而不是在堆中. 其优点在于当函数返回时,会自动释放它所使用的栈空间.
+
+* setjmp和longjump
+C中的goto是不能跨越函数的,要跨越函数的跳转只能通过`setjmp'和`longjmp'来实现.
+
+这两个函数常用于处理发生在深层嵌套函数的出错情况.
+#+BEGIN_SRC C
+  #include <setjmp.h>
+
+  int setjmp(jmp_buf env);
+
+  void longjmp(jmp_buf env,int val);
+#+END_SRC
++ setjmp中的参数env和longjmp中的参数env需要是同一个对象,因此比较常用的处理方式是将 *env变量设置为全局变量*
++ longjmp函数跳转回setjmp函数处时, *并不确定是否回滚自动变量(auto int)和寄存器变量(register int)的值*. 但 *带有volatile的变量,全局变量和静态变量(static int)并不回滚原来的值.
+  #+BEGIN_SRC C :exports both
+    #include <stdio.h>
+    #include <stdlib.h>
+    #include <setjmp.h>
+
+    static void f1(int,int,int,int);
+    static void f2();
+
+    static jmp_buf jmpbuffer;
+    static int globval = 1;
+
+    int main()
+    {
+            int autoval = 2;
+            register int regival = 3;
+            volatile int volaval = 4;
+            static int statval = 5;
+
+            if(setjmp(jmpbuffer) != 0)
+            {
+                    printf("after_longjmp:\n");
+                    printf("globval=%d,autoval=%d,regival=%d,volaval=%d,statval=%d\n",globval,autoval,regival,volaval,statval);
+                    exit(0);
+            }
+
+            globval = 95;
+            autoval = 96;
+            regival = 97;
+            volaval = 98;
+            statval = 99;
+            f1(autoval,regival,volaval,statval);
+            exit(0);
+    }
+
+    static void f1(int i ,int j,int k,int l)
+    {
+            printf("in_f1():\n");
+            printf("globval=%d,autoval=%d,regival=%d,volaval=%d,statval=%d\n",globval,i,j,k,l);
+            f2();
+    }
+
+    static void f2()
+    {
+            longjmp(jmpbuffer,1);
+    }
+
+    /* 输出结果为 */
+    /* in f1(): */
+    /* globval = 95,autoval = 96,regival = 97,volaval = 98,statval = 99 */
+    /* after longjmp: */
+    /* globval = 95,autoval = 2,regival = 3,volaval = 98,statval = 99 */
+  #+END_SRC
+
+  #+RESULTS:
+  | in_f1():                                               |
+  | globval=95,autoval=96,regival=97,volaval=98,statval=99 |
+  | after_longjmp:                                         |
+  | globval=95,autoval=96,regival=3,volaval=98,statval=99  |
+
+
++ 有些系统的设计原则是:存放在内存中的变量不会回滚longjmp前的值,而存放在CPU和浮点寄存器中的变量则恢复为调用setjmp时的值.
+
+* 资源限制
+每个进程都有一组资源限制,其中一些可以使用getrlimit和setrlimit函数来查询或更改
+#+BEGIN_SRC C
+  #include <sys/resource.h>
+
+  int getrlimit(int resouce,struct rlimit* rlptr);
+
+  int setrlimit(int resource,const struct rlimit*rlptr);
+
+  struct rlimit{
+    rlim_t rlim_cur;              /* 软限制 */
+    rlim_t rlim_max;              /* 硬限制 */
+  }
+#+END_SRC
++ 任何进程都可以将一个软限制值更改为小于或等于其硬限制值
++ 任何一个进程都可以降低其硬限制值,但它必须大于或等于其软限制值. 且 *这种降低是不可逆的*
++ 只有超级用户进程可以提高硬限制值.
++ 常量RLTM_INFINITY表示unlimited
++ 资源限制影响到调用进程,并由其子进程继承

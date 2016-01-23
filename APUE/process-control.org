@@ -1,0 +1,180 @@
+#+TITLE: 进程控制
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-18 周一 21:29]
+#+OPTIONS: ^:{}
+* fork与vfork函数
+UNIX提供了两个函数用于创建新进程
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  pid_t fork();                   /* 子进程中返回0,父进程中返回子进程ID,出错返回-1 */
+
+  pid_t vfork();                  /* 子进程中返回0,父进程中返回子进程ID,出错返回-1 */
+#+END_SRC
+** fork出来的子进程有几点要注意:
++ 子进程与父进程分别持有相同的文件描述符,这些文件描述符共用核心中的同一个文件项
++ 父进程设置的文件锁不会被子进程继承
++ 子进程的未处理的闹钟(alarm)被清除
++ 子进程的未处理信号集设置为空集
++ 当子进程终止时,内核会向父进程发送SIGCHLD信号,但对该信号,系统的默认动作是忽略它.
++ 子进程会继承父进程的信号处理方式. 因为子进程在开始时复制了父进程的存储映像,随意信号捕捉函数的地址在子进程中是有意义的
+** fork与vfork的区别在于
++ 在子进程调用exec或exit之前,vfork并不会将父进程的地址空间复制到子进程中,即 *子进程在父进程的空间中运行,因此子进程运行的结果会影响到父进程!*
++ vfork保证子进程先运行,在它调用exec或exit之后,父进程才可能被调度运行.
+* wait和waitpid函数
+#+BEGIN_SRC C
+  #include <sys/wait.h>
+
+  /* 若成功则返回进程ID,0,若出错则返回-1 */
+  pid_t wait(int* status);
+  pid_t waitpid(pid_t pid,int* status,int options);
+#+END_SRC
++ 如果所有子进程还在运行,则阻塞
++ 如果一个子进程已终止,则父进程获取其终止状态并返回子进程pid
++ 如果父进程没有任何子进程,则 *报错返回*
++ waitpid可以通过设置选项,使得调用者不阻塞
+** 参数status说明
++ 参数status可以为空指针,表示不关心终止状态
++ 在<sys/wait.h>中有定义四个宏来获取进程终止的原因
+  - WIFXITED(status)
+
+    子进程是否正常终止. 
+    
+    若为真,则可以通过宏WEXITSTATUS(status)来获取退出的状态码
+
+  - WIFSIGNALED(status)
+
+    子进程是否因收到一个不可捕获的信号而异常退出.
+
+    若为真,可以通过WTERMSIG(status)获取信号编号
+
+    某些系统可以通过WCOREDUMP(status)判断是否产生core文件
+
+  - WIFSTOPPED(status)
+
+    子进程是否处于stop状态
+
+    若为真,则可以通过WSTOPSIG(status)来获取使子进程暂停的信号编号
+
+  - WIFCONTINUED(status)
+
+    子进程是否处于continue状态
+** 参数pid的说明
++ pid == -1,等待任一子进程,此时waitpid与wait等效
++ pid > 0,等待进程id与pid相等的子进程
++ pid == 0,等待组ID等于调用进程组ID的任一子进程
++ pid < -1,等待其组ID等于pid绝对值的任一子进程
+** 参数optioins说明
+通过设置options参数,waitpid不一定等到子进程退出来能获取子进程的状态. 也能在子进程处于stop或continue状态时返回子进程的状态.
++ WNOHANG
+
+  waitpid不阻塞
+
++ WUNTRACED
+
+  若子进程处于stop状态,且该stop状态尚未报告时,返回其状态
+
++ WCONTINUED
+
+  若子进程处于continue状态,且该continue状态尚未报告时,返回其状态.
+* waitid函数
+waitid可以指定要监控的子进程的哪些状态变化
+#+BEGIN_SRC C
+  #include <sys/wait.h>
+
+  int waitid(idtype_t idtype,id_t id,siginfo_t* infop,int options);
+#+END_SRC
+
++ 参数idtype_t指定了要等待的子进程的类型
+
+  - P_PID :: 等待一个特定的进程
+
+  - P_PGID :: 等待一个特定进程组中的任一子进程
+
+  - P_ALL :: 等待任一子进程,此时忽略参数id的值
+  
++ 参数id的作用则跟idtype的值相关
+
++ 参数options指定关注子进程的哪些状态变化
+
+  - WNOHANG :: 非阻塞等待
+
+  - WNOWAIT :: 不破坏子进程的退出状态,该状态可由后续wait,waitid或waitpid调用获取
+
+  - WSTOPPED :: 等待一个尚未报告的STOP状态的子进程
+
+  - WCONTINUED :: 等待一个尚未报告的CONTINUE状态的子进程
+
+  - WEXITED :: 等待已退出的子进程
+* exec系列函数
++ 由于exec一个新程序后,信号处理函数的地址已经失效了,因此exec函数将原先设置为要捕获的信号都更改为它们的默认动作
+** exec系列函数的区分
++ 字母p表示该函数可以为不带目录的文件名,则会从PATH环境变量中搜索可执行文件
++ 字母l表示该函数的参数要一个一个的在函数签名中列出来,最后以一个(char*)0结尾表示参数终结
++ 字母v表示该函数取一个argv[]数组作为传递給新进程的参数
++ 字母e表示该函数接收一个envp[]数组,可以分配不同于当前环境的新环境
+** exec后的新进程与原进程的关系
++ 新进程保持
+  - 原pid和ppid
+  - 原实际用户id和实际组id
+  - 附加组ID
+  - 进程组ID
+  - 会话ID
+  - 控制终端
+  - alarm尚存留的事件
+  - 当前工作目录
+  - 根目录
+  - 文件模式创建屏蔽字
+  - 文件锁
+  - 进程信号屏蔽
+  - 未处理信号
+  - 资源限制
+  - tms_utime,tms_stime,tms_cutime及tms_cstime
++ 是否关闭原进程打开的文件与该文件描述符的close-on-exec标志有关.
+  - 若设置了该标志,则指向exec时会关闭该描述符
+  - 若没设置该标准,则保持描述符打开
+  - 除非特地用fcntl设置了该标志,否则系统的默认为关闭该标志
++ exec时 *明确会关闭打开的目录流(opendir)*
+** 当exec调用一个带`#! 解析器程序 可选参数项'的脚本文件时:
+1. exec实际执行的并不是该脚本文件,而是脚本文件第一行`#! 解析器程序 可选参数项'中的 *解析器程序*
+2. exec传递给该解析器程序的参数顺序为,解析器地址,可选参数,脚本文件地址,除argv0外的由exec函数传入的其他参数.
+   #+BEGIN_SRC C
+     /*
+       /tmp/testinterp的内容为:
+       #! /usr/bin/echo.exe args:
+     ,*/
+
+     #include <unistd.h>
+
+     int main()
+     {
+       execl("/tmp/testinterp","testinterp","myarg1","MY ARG2",(char*) 0);
+     }
+   #+END_SRC
+
+   #+RESULTS:
+   : args: /tmp/testinterp myarg1 MY ARG2
+* 进程会计
+大多数UNIX系统都提供了一个选项以进行进程会计(process accounting)处理. 启用该选项后,每当进程结束时,内核就写一个会计记录.
+
+*会计记录是在fork时产生而不是exec时产生* 但exec会改变响应记录中的命令名,而且AFORK标志也会被清除.
+
+会计记录一般为二进制格式的,且结构各个系统实现的都不一样. 一般可以在<sys/acct.h>中查到struct acct
+
+root用户可以使用`accton 命令行'来对`命令行'开启进程会计选项.
+* 进程时间
+任何进程都可以通过调用times函数获得自己的运行时间,用户态CPU时间和内核态CPU时间.
+#+BEGIN_SRC C
+  #include <sys/times.h>
+
+  /* 若成功返回进程相对上一次运行times函数的运行时间,单位为时钟滴答数,若出错返回-1 */
+  clock_t times(struct tms* buf); 
+
+  struct tms{
+    clock_t tms_utime;            /* user CPU time */
+    clock_t tms_stime;            /* system CPU time */
+    clock_t tms_cutime;           /* user CPU tim, terminated children */
+    clock_t tms_cstime;           /* system CPU time, terminated children */
+  }
+#+END_SRC

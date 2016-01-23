@@ -1,0 +1,656 @@
+#+TITLE: 文件IO
+#+AUTHOR: DarkSun
+#+CATEGORY: AUPE
+#+DATE: [2015-05-13 周三 16:36]
+#+OPTIONS: ^:{}
+
+* 基本文件IO操作函数
+** open函数
+** create函数
+** close函数
+** lseek函数
+** read函数
+** write函数
+* 文件共享
+** 内核是如何表示打开的文件的?
+内核使用三种数据结构表示打开的文件,它们之间的关系决定了在文件共享方面一个进程对另一个进程可能产生的影响.
++ 每个进程在进程表中都有一个记录项,记录项中包含有一张打开文件描述符的表. 
+
+  每个文件描述符符与一个指向文件表项的指针相关联. 而文件表项保持在内核中
+
++ 内核为所有打开的文件维护一张文件表. 其中每个文件表项包括:
+
+  - 文件状态标志(读,写,添写,同步,非阻塞...)
+
+  - 当前文件偏移量
+
+  - 指向表示该文件的v节点表项的指针
+
++ 每个打开的文件(或设备)都有一个v节点结构.
+  
+  v节点包含了文件类型和对此文件进行各种操作的函数的指针.
+
+  对于大多数文件,v节点还包含了该文件的i节点信息.
+
+** 当多个进程打开同一个文件时,发生了什么?
+一般来说,多个进程打开同一个文件时,会分别在不同的文件描述符上打开该文件. 不同的文件描述符指向不同的文件表项. 但不同的文件表项指向了同一个v节点.
+
+即,每个文件都有自己独立的文件描述符和文件表项,但共用同一个文件v节点.
+
+但当使用dup函数或fork时,也可能出现多个文件描述符项指向同一个文件表项
+
+** 多个进程打开同一个文件带来的影响是什么?
+多个进程读取同一个文件时,由于各个进程都由自己的文件表项,也就有自己的当前文件偏移符,因此多个进程读取同一个文件时很正常.
+
+但当多个进程写入同一个文件时,由于各自不同的文件偏移符,所以可能出现写入内容相互覆盖的情况.
+
+解决多个进程写入同一个文件的一个方法是,在打开文件时设置O_APPEND标志. 这种情况下,内核每次对该文件进行写之前,都将该进程的当前偏移量设置到文件的尾端.
+
+XSI扩展还定义了pread和pwrite函数用于将定位搜索和执行IO统一为一个原子操作:
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  /* 先lseek到offset处,然后读取文件内容 */
+  ssize_t pread(int filedes,void* buf,size_t n,off_t offset);
+
+  /* 先lseek到offset处,然后写入buf内容 */
+  ssize_t pwrite(int filedes,const void* buf,size_t n,off_t offset);
+#+END_SRC
+
+** dup和dup2函数
+可以用dup和dup2函数来复制一个现存的文件描述符,复制出来的文件描述符与原文件描述符共享同一个文件表项,即它们共享同一个文件标志状态及文件偏移量:
+#+BEGIN_SRC c++
+  #include <unistd.h>
+
+  // dup返回的新文件描述符是当前可用文件描述符的最小数值
+  int dup(int filedes);
+
+  // dup2可以用filedes2参数指定新描述符的数值.
+  // 如果filedes2已经打开,则先关闭它.
+  // 如果filedes == filedes2,则dup2直接返回filedes2,而不关闭它
+  int dup2(int filedes,int filedes2);
+#+END_SRC
+
+除了dup和dup2外,也可以使用fcntl函数来复制描述符.
+#+BEGIN_SRC c++
+  dup(filedes);
+  // 类似于
+  fcntl(filedes,F_DUPFD,0);
+
+  dup2(filedes,filedes2);
+  // 类似于
+  close(filedes2);fcntl(filedes,F_DUPFD,filedes2);
+#+END_SRC
+
+* sync,fsync和fdatasync
+传统UNIX实现在内核中设置了缓冲区,当数据写入文件时,内核现将数据复制到一个缓冲区中,而不立即将其排入输出队列.
+
+UNIX系统提供了sync,fsync和fdatasync三个函数用于通知内核将数据立即排入输出队列中:
+#+BEGIN_SRC c
+  #include <unistd.h>
+
+  /* 将filedes指定的文件内容写入磁盘,该函数等待写磁盘操作结束后才返回,并同步更新文件属性 */
+  int fsync(int filedes);
+
+  /* 类似fsync,但不更新文件属性 */
+  int fdatasync(int filedes);
+
+  /* sync只是将所有修改过的块缓冲区排入写队列,然后就返回,而并等待实际写磁盘操作结束 */
+  void sync(void)
+#+END_SRC
+
+* fcntl函数
+fcntl函数可以改变已打开的文件属性,该函数常用于修改由shell代为打开的文件描述符的属性.
+#+BEGIN_SRC c
+  #include <fcntl.h>
+
+  int fcntl(int filedes,int cmd);
+  int fcntl(int filedes,int cmd,long arg);
+  int fcntl(int filedes,int cmd,struct flock* lock);
+
+  struct flock
+  {
+    short int l_type;             /* 锁类型:F_RDLCK,F_WRLCK,F_UNLCK */
+    short int l_whence;           /* 决定l_start的位置:SEEK_SET,SEEK_CUR,SEEK_END */
+    off_t l_start;                /* 锁定区域的开头位置 */
+    off_t l_len;                  /* 锁定区域的大小 */
+    pid_t l_pid;                  /* 锁定操作的进程 */
+  }
+#+END_SRC
+
+其中fcntl支持的cmd操作有:
++ 复制一个现有的文件描述符(F_DUPFD)
++ 获得/设置文件描述符标记(F_GETFD/F_SETFD)
++ 获得/设置文件状态标记(F_GETFL/F_SETFL)
++ 获得/设置异步IO所有权(F_GETOWN/F_SETOWN)
+  拥有IO所有权的进程,会收到在该描述符上产生的信号.
++ 获得/设置记录锁(F_GETLK/F_SETLK/F_SETLKW)
+
+* ioctl函数
+每个驱动程序都定义了它自己的专门的一组ioctl命令,而系统提供一个统一的ioctl函数来调用这些专门的命令.
+#+BEGIN_SRC c
+  #include <unistd.h>             /* System V */
+  #include <sys/ioctl.h>          /* BSD and Linux */
+  #include <stropts.h>            /* XSI STREAMS */
+
+  int ioctl(int filedes,int request,...);
+#+END_SRC
+
+* /dev/fd
+新UNIX系统一般都提供了名为/dev/fd的目录,其中包含0,1,2等文件. 打开文件/dev/fd/n等效于复制描述符n.
+#+BEGIN_SRC c
+  fd = open("/dev/fd/n",mode);
+  /* 等效于 */
+  fd = dup(n);
+#+END_SRC
+
+/dev/fd的主要作用其实时提供给shell使用,它允许使用文件路径名为参数的程序也能处理标准输入输出
+=======
+** 参数filedes
+filedes参数为待设置的文件描述符
+
+** 参数cmd
+cmd参数表示欲操作的指令
+| F_DUPFD  | 寻找大于或等于参数arg的最小未使用文件描述符,并复制参数filedes的文件描述符,类似dup2的功能                         |
+| F_GETFD  | 获取close-on-exec标志. 若标志为0,表示调用exec相关函数时文件不关闭                                                |
+| F_SETFD  | 设置close-on-exec标志                                                                                            |
+| F_GETFL  | 取得文件描述符状态标志,这个标志为open的flag参数                                                                  |
+| F_SETFL  | 设置文件描述符的新状态标志. 但只运行修改 *O_APPEND,O_NONBLOCK,O_ASYNC*                                           |
+| F_GETLK  | 取得文件锁状态                                                                                                   |
+| F_SETLK  | 设置文件锁状态,其中flock.l_type必须是 *F_RDLCK,F_WRLCK或F_UNLCK*, 若无法锁定,则立即返回-1,errno为EACCESS或EAGAIN |
+| F_SETLKW | 与F_SETLK类似,但若无法建立锁定,则该调用会一直阻塞至成功为止.                                                                            |
+* 非阻塞IO
+非阻塞IO使得我们在调用open,read和write这样的IO操作时,若操作不能完成,则直接返回错误提示,而不是阻塞.
+
+** 指定非阻塞IO的方法
++ 调用open获得描述符时,指定`O_NONBLOCK'标志
++ 使用fcntl对 *已打开描述符* 修改O_NONBLOCK文件状态标志.
+
+* 记录锁
+所谓记录锁,更合适的术语应该叫`字节范围锁'. 它的功能是,当进程读取或修改文件的 *某个部分时*,阻止其他进程修改 *同一文件区域*.
+
+** fcntl记录锁
+#+BEGIN_SRC C
+  #include <fcntl.h>
+
+  int fcntl(int fieldes,int cmd,struct flock* lock);
+
+  struct flock
+  {
+    short int l_type;             /* 锁类型:F_RDLCK(读锁),F_WRLCK(写锁),F_UNLCK(解锁) */
+    short int l_whence;           /* 决定l_start的位置:SEEK_SET,SEEK_CUR,SEEK_END */
+    off_t l_start;                /* 锁定区域的开头位置 */
+    off_t l_len;                  /* 锁定区域的大小 */
+    pid_t l_pid;                  /* 锁定操作的进程 */
+  };
+#+END_SRC
+fcntl的锁分读锁和写所,其规则类似线程的rwlock,但它只能影响不同进程提出的锁请求.
+
+如果一个进程对一个文件区间加了一把锁,后来该进程又在 *同一个文件区间* 再加锁,则 *新锁替代旧锁*
+
+加读锁时,该文件描述符必须是读打开的. 加写锁时,该文件描述符是写打开的.
+
+*在设置/释放文件上的锁时,系统会按要求组合或风儿锁区块*. 
+例如:一开始对第100--199字节加了锁
+若又对第150位字节解锁,则内核需要维持两个锁:100-149和151-199. 
+若又对150位字节加锁,则系统又合并相邻的三个加锁区为一个区
+*** cmd操作说明
+fcntl中与记录锁相关的cmd操作是`F_GETLK',`F_SETLK',`F_SETLKW'. 且第三个参数为flock类型的指针
++ F_GETLK
+  
+  判断原lock参数描述的区域,是否有一把锁. (*但不能用于测试自己进程所加的锁*)
+
+  锁信息会修改原lock参数. 
+
+  若不存在锁则会将原lock参数中的l_type设为F_UNLCK,lock参数中的其他信息保存不变.
+
++ F_SETLK
+
+  尝试加由参数lock所描述的锁,若无法加锁,则立即出错返回,且errno设置为EACCES或EAGAIN.
+
+  若参数lock的l_type为F_UNLCK,则表示解锁
+
++ F_SETLKW
+
+  这时F_SETLK的阻塞版本.
+
+
+需要注意的是, *F_GETLK和F_SETLK/F_SETLKW两个调用之间完全有可能有另一个进程创建了相关锁*.
+*** flock结构说明
++ flock结构中的l_type标明了锁的类型
+
++ 要加锁或解锁区域的起始字节偏移量由l_start和l_whence共同决定,类似于lseek函数
+
++ 起始字节偏移量 *可以为文件尾端或越过文件尾端,但不能在文件起始位置之前开始*
+
++ 加锁/解锁的字节长度由l_len表示,但0表示锁的区域 *无穷大*
+
++ 持有锁的进程由l_pid表示
+** 关于锁的释放与继承
+*** 锁的释放
++ 当进程终止时,该进程所建立的锁全部释放
+
++ 当关闭一个文件描述符时,所有与该文件描述符 *指向同一个文件* 的相关锁全部被释放. 即
+  #+BEGIN_SRC C
+    fd1 = open(pathname,...);
+    fd2 = dup(fd1);                 /* fd1和fd2指向同一个文件 */
+    close(fd2);                     /* 此时,fd1上设置的锁也会被释放 */
+
+
+    fd1 = open(pathname,...);
+    fd2 = open(pathname,...);       /* fd1和fd2也是指向同一个文件 */
+    close(fd2);                     /* 此时,fd1上设置的锁也会被释放 */
+  #+END_SRC
+*** 锁的继承
++ fork产生的子进程不继承父进程所设置的锁.
+
+  因为子进程已经是另一个进程了.
+
++ *执行exec后,进程继承原程序的锁*
+
+  因此exec后,进程id没变.
+
+  但若文件描述符设置了close-on-exec标志,则由于exec时会关闭文件标识符,因此对应文件的锁都会被释放
+** 建议性锁和强制性锁
+一个文件加锁时是使用建议性锁还是强制性锁,是由文件本身的权限决定的. 若文件打开了其设置组ID位并关闭了组的执行位,则表示文件开启的是强制性锁机制(之所以这样设计是因为当组执行位关闭时,设置组ID位不再有意义).
+
+当使用建设性锁时,它无法阻止其他进程直接对文件进行读写. 它的实现有赖于其他进程在读写前自我的对锁进行检测.
+
+而强制锁使内核对任何open,read和write系统调用进行检查. *但强制锁对unlink函数无影响!*
+** flock文件锁
+flock只能对锁定整个文件而无法锁定某个区域
+#+BEGIN_SRC C
+  #include <sys/file.h>
+
+  int flock(int fd,int operatioon);
+#+END_SRC
+参数operatiion可以为:
++ LOCK_SH :: 共享锁
++ LOCK_EX :: 排它锁
++ LOCK_UN :: 解锁
++ LOCK_NB :: 无法加锁时,立即返回不阻塞.
+
+*当使用dup()或fork()时,文件描述符不会继承这种锁定*
+* IO多路转换
+IO多路转换需要先构造一张描述符的列表,然后调用一个函数,该函数直到这些描述符中的一个已经准备好IO时,才返回.
+
+poll,pselect和select这三个函数使得我们能够执行IO多路转换,并返回哪些描述符已经准备好进行IO了.
+** select
+传给select的参数告诉内核:
++ 我们关心哪些描述符
++ 对于每个描述符,我们所关心的条件是什么(想读?想写?发生异常条件?)
++ 原意等待多久(一直等待,等待某个时间段,不等待)
+
+select返回时的到的消息包括:
++ 已准备好的描述符的总数量
++ 对于读,写或异常这3个条件中的每一个,分别有哪些描述符准备好了.
+
+#+BEGIN_SRC C
+  #include <sys/select.h>
+
+  /* 返回准备就绪的描述符数目,若超时则返回0,若出错返回-1 */
+  /* 若不同fd_set中包含同一个就绪的fd,则返回值会重复累加 */
+  int select(int maxfdp,fd_set* readfds,fd_set* writefds,fd_set* exceptfds,struct timeval* tvptr);
+#+END_SRC
+*** 时间参数tvptr意义说明:
+select函数等待tvptr时间,若时间内有描述符准备好则返回准备好描述符的数量. 若超时则返回0.
+
+若捕捉到一个信号,则select返回-1,errno设置为EINTR.
+
+tvptr == NULL表示无限等待.
+
+*select返回后,有可能会修改tvptr表示超时时间未到期的剩余时间值*
+*** fd_set数据类型说明
+使用fd_set数据类型,唯一可进行的处理就是同类型之间的变量进行赋值,或者使用一下四个函数修改数据值
+#+BEGIN_SRC C
+  #include <sys/select.h>
+
+  /* 判断fd是否在fd_set中 */
+  int FD_ISSET(int fd,fd_set* fdset);
+
+  /* 从fd_set中删除调fd */
+  void FD_CLR(int fd,fd_set* fdset);
+
+  /* 添加fd到fd_set中 */
+  void FD_SET(int fd,fd_set* fdset);
+
+  /* 清空fset */
+  void FD_ZERO(fd_set* fdset);
+#+END_SRC
+*** fd_set*三个参数说明
+select函数会修改各fd_set值,使得他们只保留准备好的fd.
+
+*即使莫描述符上的文件指针已经到达尾部,但select依然认为该描述符是可读的,只不过read会返回0而已* (很多人错误第认为,当到达文件尾端时,select会指示一个异常条件)
+
+fd_set*的参数值可以为NULL,表表示不关心响应条件
+
+*三个指针可以都是NULL,则select提供了比sleep更精确的定时器(sleep精确到秒,select精确到微秒)*
+*** 参数maxfdp说明
+该参数一般为三个fd_set中最大fd的值+1(加1的原因在于描述符编号从0开始). 它的意义在于提供給select函数一个搜索fd的范围. 使得内核不用搜索fd_Set中数百个无用的fd.
+
+一般<sys/select.h>中定义了一个常量FD_SETSIZE,该常量的值表示允许的最大描述符.
+** pselect
+#+BEGIN_SRC C
+  #include <sys/select.h>
+
+  /* 返回就绪的描述符总数,超时则返回0,出错则返回-1 */
+  int pselect(int maxfdp,
+              fd_set* readfds,
+              fd_set* writefds,
+              fd_set* exceptfds,
+              const struct timespec*tsptr,
+              const sigset_t* sigmask);
+
+#+END_SRC
+
+*** pselect与select的不同之处
++ select用timeval结构指定超时,而pselect用timespec结构指定超时. timespec能提供更精确的超时时间
+
++ pselect的超时值为const,这保证了pselect不会改变次值
+
++ 若参数sigmask为非NULL,则pselect可以原子操作的方式安装该信号屏蔽字,返回时恢复以前的信号屏蔽字.
+
+** 函数poll
+#+BEGIN_SRC C
+  #include <poll.h>
+
+  /* 返回准备就绪的描述符数目,若超时返回0,出错则返回-1 */
+  int poll(struct pollfd fdarray[],nfds_t nfds,int timeout);
+#+END_SRC
+poll函数的作用类似select,但poll并不是为每个条件(读,写,异常)构造一个描述符集合. 
+
+poll是构造一个pollfd结构的数组. 每个pollfd结构体指定了一个描述符编号以及我们对描述符感兴趣的条件
+#+BEGIN_SRC C
+  struct pollfd
+  {
+    int fd;                       /* 要检测的文件描述符 */
+    short events;                 /* 关注文件描述符上的哪些事件 */
+    short revents;                /* 函数返回时,被修改为该描述符发生了哪些事件 */
+  }
+#+END_SRC
+
+*** poll中的事件说明
+| 标志名     | 是否可设置为events | 是否可设置为revents | 说明                                 |
+|------------+--------------------+---------------------+--------------------------------------|
+| POLLIN     | 是                 | 是                  | 可以不阻塞地读高优先级数据以外的数据 |
+| POLLRDNORM | 是                 | 是                  | 可以不阻塞地读普通数据               |
+| POLLRDBAND | 是                 | 是                  | 可以不阻塞地读优先级数据             |
+| POLLPRI    | 是                 | 是                  | 可以不阻塞地读高优先级数据           |
+|------------+--------------------+---------------------+--------------------------------------|
+| POLLOUT    | 是                 | 是                  | 可以不阻塞第写普通数据               |
+| POLLWRNORM | 是                 | 是                  | 与POLLOUT相同                        |
+| POLLWRBAND | 是                 | 是                  | 可以不阻塞第写优先级数据             |
+|------------+--------------------+---------------------+--------------------------------------|
+| POLLERR    | 否                 | 是                  | 已出错                               |
+| POLLHUP    | 否                 | 是                  | 已挂断(制解调器被挂断)                    |
+| POLLNVAL   | 否                 | 是                  | 描述符没有引用一个打开文件.                     |
+
+*** timeout说明
++ timeout == -1表示一直等待
++ timeout == 0表示不等待
++ timeout > 0表示等待timeout *毫秒*
+
+* POSIX异步IO
+执行IO操作时,如果还有其他事务需要处理而不想被IO操作阻塞,就可以使用异步IO.
+
+异步IO接口使用AIO控制块来描述IO操作. aiocb定义了AIO控制块
+#+BEGIN_SRC C
+  struct aiocb
+  {
+    int aio_fildes;               /* 文件描述符 */
+    off_t aio_offset;             /* IO操作时的文件偏移量 */
+    volatile void* aio_buffer;    /* IO操作用的缓冲区 */
+    size_t aio_nbytes;            /* IO操作传输的字节数 */
+    int aio_reqprio;              /* 优先级 */
+    struct sigevent aio_sigevent; /* IO完成后通知进程的方式 */
+    int aio_lio_opcode;           /* 调用lio_listio函数时使用 */
+  };
+
+#+END_SRC
++ aio_fields字段表示被打开用来读或写的文件描述符
++ 读或写的操作从aio_offset指定的偏移量开始.
++ *异步I/O操作必须显式地指定偏移量,异步I/O接口并不影响由操作系统维护的文件偏移量,但若使用异步IO接口向一个O_APPEND模式打开的文件写入数据,则aio_offset字段会被系统忽略*
++ 读写时的缓冲区由aio_buf指定,aio_nbytes字段表明了要读/写的字节数
++ aio_sigevent字段控制IO事件完成后,如何通知应用程序.
+  #+BEGIN_SRC C
+    struct sigevent
+    {
+      int sigev_notify;             /* 通知的类型 */
+      int sigev_signo;              /* 信号编码 */
+      union sigval sigev_value;     /* 传递给通知函数的参数 */
+      void (*sigev_notify_function)(union sigval); /* 通知函数 */
+      pthread_attr_t* sigev_notify_attributes;     /* 调用通知函数的线程属性,默认会在分离状态下的线程中调用通知函数 */
+    };
+  #+END_SRC
+  
+  其中sigev_notify字段控制通知的类型,取值可能是一下3个中的一个:
+  - SIGEV_NONE
+
+    异步IO请求后不通知进程
+
+  - SIGEV_SIGNAL
+
+    异步IO完成后产生 *sigev_signo* 字段指定的信号.
+
+  - SIGEV_THREAD
+
+    异步IO完成后,在单独的线程中执行sigev_notify_function字段指定的函数.
+
+    sigev_value字段为该函数的唯一参数.
+
+    sigev_notify_attribute字段表示调用通知函数线程的属性,为NULL,则通知函数在 *分离状态* 下的一个i额单独的线程中执行.
+
+** 异步读写操作
+在进行异步IO之前需要先初始化AIO控制块,然后调用aio_read函数进行异步读操作,或调用aio_write函数来进行异步写操作
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  /* 成功返回0,出错返回-1 */
+  int aio_read(struct aiocb* aiocb);
+
+  /* 成功返回0,出错返回-1 */
+  int aio_write(struct aiocb* aiocb);
+#+END_SRC
+*这些函数的返回仅表示IO请求已经被操作系统放入等待处理的队列中了,而与实际IO操作结果没有任何关系*
+
+*在IO操作等待期间,需保证AIO控制块与其定义的缓冲区的内容不会被更改!!*,除非IO操作完成,否则不能被复用.
+
+lio_listio函数既能以同步的方式来使用,也能以异步的方式来使用. 该函数会提交一系列由一个AIO控制块列表描述的IO请求.
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  int lio_listio(int mode,struct aiocb* const list[],int n,struct sigevent* sigev);
+#+END_SRC
++ mode参数决定了IO是否为异步的.
+  - LIO_WAIT :: 函数将在所有由列表指定的IO操作完成后返回,这是sigev参数将被忽略
+  - LIO_NOWAIT :: 函数将在IO请求入队后立即返回.
++ sigev参数指定了异步IO操作完成后如何被异步地通知. 若不想被通知可以设为NULL
+  每个AIO控制块本身也有操作完后的异步通知模式, *被sigev参数之i都能过的异步通知是在此之外另加的,且只会在所有的IO操作都完成后才发送*
++ list参数指向一个AIO控制块指针的数组,该列表指定了要运行的IO操作. list中可以包含NULL指针,这些条目将被忽略
++ 每个AIO操作块中的aio_lio_opcode字段指明了要进行的操作
+  - LIO_READ :: 读操作
+  - LIO_WRITE :: 写操作
+  - LIO_NOP :: 空操作
+
+
+** 强制同步
+要强制等待中的异步操作立即同步到存储中,可以设立一个AIO控制块,并调用aio_fsync函数
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  int aio_fsync(int op,struct aiocb* aiocb);
+#+END_SRC
+AIO控制块中的aio_fildes字段指明了其异步写操作被同步的文件.
+
+若op参数为D_SYNC,那么类似于fdatasync. 若op参数为O_SYNC,那么类似于fsync
+
+类似aio_read和aio_write,aio_fsync *仅仅表示同步请求已经被操作系统放入等待处理的队列中了*. 在异步同步操作完成前,数据不会真正的写入存储中. AIO控制块也控制了我们被通知的方式.
+
+** 获取异步读,写,同步操作的完成状态
+为了获取一个异步读,写或同步操作的完成状态,需要调用aio_error函数
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  int aio_error(const struct aiocb* aiocb);
+#+END_SRC
+关于返回值的说明为:
++ 0 :: 异步操作成功完成,需要调用aio_return函数获取操作返回值
++ -1 :: 对aio_error的调用失败,可以通过errno了解失败原因
++ EINPROGRESS :: 异步读,写或同步操作仍在等待.
++ 其他情况 :: 相关异步操作失败返回的错误码
+
+如果异步操作成功,可以调用aio_return函数来获取异步操作的返回值
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  /* aio_return函数本身失败返回-1,并设置errno.
+     否则返回异步操作的结果*/
+  ssize_t aio_return(const struct aiocb* aiocb);
+#+END_SRC
++ 异步操作完成之前,都要小心不要调用aio_return函数. 此时的结果是未定义的.
++ 对每个异步操作 *仅调用一次aio_return*. 一旦调用该函数,操作系统就可能释放掉包含IO操作返回值的记录.
+
+** 异步操作管理
+若完成要操作的事务后,还有异步操作未完成,可以调用aio_suspend函数来 *阻塞进程*.直到操作完成
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  /* 若该函数被信号终端,则返回-1,且errno为EINTR */
+  /* 若timeout时间内没有任何IO操作完成,则返回-1,且errno为EAGAIN */
+  /* 若timeout时间内,list数组中有任何一个异步操作完成,则返回0 */
+  /* 若调用aio_suspend操作时,所有的异步IO操作都已完成,那么aio_suspend将在不阻塞的情况下直接返回 */
+  int aio_suspend(const struct aiocb* const list[],int nent,const struct timespec* timeout);
+#+END_SRC
++ list参数是一个指向AIO控制块数组的指针,nent参数指明了检查数组中的几个AIO控制块.
++ *若list数组中有NULL元素,则检查时会被跳过*
+  
+若我们不想再完成等待中的异步IO,可以使用aio_cancel函数取消之
+#+BEGIN_SRC C
+  #include <aio.h>
+
+  /* AIO_ALLDONE:所有操作在尝试取消他们前就已经完成 */
+  /* AIO_CANCELED:所有要求的操作已经被取消 */
+  /* AIO_NOTCANCELED:至少有一个要求的操作没有被取消 */
+  /* -1 : 对aio_cancel调用失败,错误码存储在errno中 */
+  int aio_cancel(int fd,struct aioch* aiocb);
+#+END_SRC
++ 参数fd指定了那个未完成的异步IO操作的文件描述符
++ 若参数aiocb参数为NULL,系统会尝试取消所有该文件上未完成的异步IO操作
++ 其他情况下,系统将尝试取消由AIO控制块描述的单个异步IO操作.
+
+* 散布读(scatter read)和聚集写(gather write)
+#+BEGIN_SRC C
+  #include <sys/uio.h>
+
+  /* 返回所有已读的字节数 */
+  ssize_t readv(int fd,const struct iovec* iov,int iovcnt);
+
+  /* 返回所有已写的字节数 */
+  sszie_t writev(int fd,const struct iovec* iov,int iovcnt);
+
+  struct iovec
+  {
+    void* iov_base;               /* 缓冲区的地址 */
+    size_t iov_len;               /* 缓冲区的大小 */
+  };
+#+END_SRC
++ readv允许一次从一个文件中读取内容存放到多个缓冲区中. 此为散布读
+
++ writev允许一次将多个缓冲区中的内容写入到一个文件中. 此为聚集写
+
++ iov数组内的元素数由iovcnt指定,其最大值为IOV_MAX
+
+* 存储映射IO
+存储映射IO能将一个磁盘文件映射到内存的一个缓冲区中,这样从缓冲区中读取数据就相当于读文件中的相应字节. 将数据存入缓冲区时,相应字节就自动写入文件. 这样就可以在不使用read和write的情况下执行IO
+
+** 将文件映射到缓冲区
+#+BEGIN_SRC C
+  #include <sys/mman.h>
+
+  /* 若成功,返回映射区的起始地址;若出错返回MAP_FAILED */
+  void* mmap(void* addr,size_t len,int prot,int flag,int fd,off_t off);
+#+END_SRC
++ addr参数用于指定映射缓冲区的地址,NULL表示由系统选择
++ fd参数指定了要被映射文件的描述符, *在文件映射前必须先打开该文件*
++ len参数指定了要映射的字节数
++ off参数为要映射字节在文件中的起始偏移量
++ prot参数指定了映射缓冲区的保护要求
+  | prot       | 说明           |
+  |------------+----------------|
+  | PROT_READ  | 映射区可读     |
+  | PROT_WRITE | 映射区可写     |
+  | PROT_EXEC  | 映射区可执行?? |
+  | PROT_NONE  | 映射区不可访问 |
+
+  可见prot参数指定为PROT_NONE,也可指定为PROT_READ,PROT_WRITE,PROT_EXEC的任意组合,但 *并不能超过文件open时的模式访问权限*
++ flag参数影响映射缓冲区时的多种属性
+  - MAP_FIXED
+
+    映射的缓冲区地址必须为参数addr表示的地址,不利于可移植性,所以不鼓励使用该标志.
+
+    如果未指定此标志,且addr非NULL,则内核实际只是把addr视为在何处设置映射区的一种 *建议*
+
+  - MAP_SHARED
+
+    该标志说明对缓冲区作的修改也会映射回原文件. 但这种修改并不会立即写回文件中,具体的时间由系统决定. 且写回时是 *整个页* 被写回.
+
+    mmap函数必须指定MAP_SHARED或MAP_PRIVATE标志,但不能同时指定两者
+
+  - MAP_PRIVATE
+
+    该标志说明,对映射区的存储操作只是创建原映射文件的一个副本,所有后来对该映射区的引用都是引用该副本.(即任何修改只影响副本,而不影响原文件,常用于调试)
+
+** 更改映射权限
+调用mprotect函数可以更改一个现有映射的权限
+#+BEGIN_SRC C
+  #include <sys/mman.h>
+
+  /* 成功返回0,出错返回-1 */
+  int mprotect(void* addr,size_t len,int prot);
+#+END_SRC
+其中prot参数的说明与mmap函数中的说明一样
+
+** 写回修改到源文件
+
+如果缓冲区是通过MAP_SHARED标志打开的,则对缓冲区的修改并不会立即写回文件中,具体的时间由系统决定. 
+
+那么可以调用msync将修改强制写回原文件.
+#+BEGIN_SRC C
+  #include <sys/mman.h>
+
+  /* 若成功,返回0;若出错,返回-1 */
+  int msync(void* addr ,size_t len,int flags);
+#+END_SRC
+
+*** flags参数说明
++ MS_ASYNC 
+
+  采用异步的方式写入原文件,即不用等待写操作完成就返回,必须要指定MS_ASYNC和MS_SYNC中的其中一个.
+
++ MS_SYNC
+
+  采用同步的方式写入原文件,只有写操作完成后函数才返回,必须要指定MS_ASYNC和MS_SYNC中的其中一个.
+
++ MS_INVALIDATE
+
+  MS_INVALIDATE asks to invalidate other mappings of the same file (so that they can be updated with the fresh values just written).
+
+** 解除映射
+当进程终止时,会自动解除存储映射区的映射,或者直接调用munmap函数也可以解除映射区. 
+但 *关闭映射存储区使用的文件描述符并不解除映射区*
+#+BEGIN_SRC C
+  #include <sys/mman.h>
+
+  int munmap(void* addr,size_t len);
+#+END_SRC
+*调用munmap并不会使映射区的内容写到磁盘文件上*
+
+** 相关信号
+与映射区相关的信号有SIGSEGV和SIGBUS.
+
+SIGSEGV信用通常用于表明进程试图访问不可用的存储区,或尝试对只读存储区进行写操作.
+
+当映射区的某个部分在访问时(原文件被其他进程截断)已不存在,则产生SIGBUS信号.
+
+** 关于子进程的共享问题
+子进程能通过fork继承存储映射区,但exec后则存储映射区被重置

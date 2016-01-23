@@ -1,0 +1,97 @@
+#+TITLE: 日志syslog
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-06-02 周二 16:36]
+#+OPTIONS: ^:{}
+
+* 产生日志消息的方法
+1. 内核程序可以调用log函数记日志. 任何用户进程可以打开并读取/dev/klog设备读取这些消息
+2. 大多数用户进程,调用syslog函数产生日志消息. 这使得消息发送到UNIX域数据报套接字/dev/log
+3. 用户进程发送日志消息到UDP端口514
+
+* 日志消息存放地址
+通常syslogd守护进程会读取一个配置文件(/etc/syslog.conf)来决定不同类型的消息应该送到何处.
+
+* syslog相关函数
+#+BEGIN_SRC C
+  #include <syslog.h>
+
+  void openlog(const char* ident,int option,int facility);
+
+  void syslog(int priority,const char* format,...);
+
+  void vsyslog(int priority,const char* format,va_list arg);
+
+  void closelog();
+
+  /* 返回旧的日志优先级屏蔽值 */
+  int setlogmask(int maskpriority);
+#+END_SRC
+
+** openlog说明
++ 调用openlog是可选择的,若不调用openlog则第一次调用syslog时自动调用syslog
++ 参数ident一般为程序名称.可以用来表示是哪个进程发送的消息日志,openlog会将它加到每则日志消息中
++ option参数是指定许多选项的位屏蔽
+  | options    | 说明                                                        |
+  |------------+-------------------------------------------------------------|
+  | LOG_CONS   | 若无法将信息发送到syslogd,则直接输出到控制台                |
+  | LOG_NDELAY | 立即打开与syslogd的连接,默认为第一次写日志时才建立连接      |
+  | LOG_ODELAY | 在就第一条消息时才建立与syslogd的连接                                      |
+  | LOG_PERROR | 输出到stderr中                                              |
+  | LOG_NOWAIT | syslog记录日志时可能会fork子进程,该选项表示不wait子进程退出 |
+  | LOG_PID    | 每条消息都记录下进程ID                                                |
++ 参数facility说明
+
+  参数facility指明了默认的消息种类. 消息种类会根据syslogd的配置文件来分发到不同位置
+  | facility                 | 说明                                      |
+  |--------------------------+-------------------------------------------|
+  | LOG_AUTH                 | 认证相关的信息,入login,su,getty产生的信息 |
+  | LOG_CRON                 | 由cron或at产生的信息                      |
+  | LOG_DAEMON               | 系统守护进程产生的消息                    |
+  | LOG_FTP                  | FTP守护进程产生的消息                     |
+  | LOG_KERN                 | 内核产生的消息                            |
+  | LOG_LOCAL0 -- LOG_LOCAL7 | 保留本地使用                              |
+  | LOG_LPR                  | 行打印系统产生的消息                      |
+  | LOG_MAIL                 | 邮件系统产生的消息                        |
+  | LOG_NEWS                 | Usenet网络新闻系统产生的消息              |
+  | LOG_SYSLOG               | syslogd本身产生的消息                     |
+  | LOG_USER                 | 来自其他用户进程的消息(默认)              |
+  | LOG_UUCP                 | UUCP系统产生的消息                        |
+
+** syslog函数豁免
+参数priority可以用来指明消息的 *种类* 和 *等级*
+
+即priority的可选择同时包含了openlog中facility参数的可选择和level可选值
+| facility                 | 说明                                      |
+|--------------------------+-------------------------------------------|
+| LOG_AUTH                 | 认证相关的信息,入login,su,getty产生的信息 |
+| LOG_CRON                 | 由cron或at产生的信息                      |
+| LOG_DAEMON               | 系统守护进程产生的消息                    |
+| LOG_FTP                  | FTP守护进程产生的消息                     |
+| LOG_KERN                 | 内核产生的消息                            |
+| LOG_LOCAL0 -- LOG_LOCAL7 | 保留本地使用                              |
+| LOG_LPR                  | 行打印系统产生的消息                      |
+| LOG_MAIL                 | 邮件系统产生的消息                        |
+| LOG_NEWS                 | Usenet网络新闻系统产生的消息              |
+| LOG_SYSLOG               | syslogd本身产生的消息                     |
+| LOG_USER                 | 来自其他用户进程的消息(默认)              |
+| LOG_UUCP                 | UUCP系统产生的消息                        |
+|                          |                                           |
+| LOG_EMERG                | 紧急状态(系统不可用)                      |
+| LOG_ALTERT               | 必须立即修复的状态                        |
+| LOG_CRIT                 | 严重状态(例如硬件故障)                    |
+| LOG_ERR                  | 出错信息                                  |
+| LOG_WARNING              | 警告信息                                  |
+| LOG_NOTICE               | 正常,但重要的消息                         |
+| LOG_INFO                 | 消息性质的信息                            |
+| LOG_DEBUG                | 调试信息                                      |
+
+** closelog说明
+closelog也是可选的,只有在调用openlog后才需要调用. 它用于关闭曾被用于与syslogd守护进程通信的描述符
+
+** setlogmask
+setlogmask函数用于设置进程的日志优先级屏蔽字.
+
+只有在记录的消息优先级高于屏蔽字中的级别才会被记录下来.
+
+*设置屏蔽字为0,并不产生任何作用*

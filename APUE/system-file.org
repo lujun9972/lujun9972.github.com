@@ -1,0 +1,321 @@
+#+TITLE: 系统文件
+#+AUTHOR: DarkSun
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-16 周六 14:09]
+#+OPTIONS: ^:{}
+
+* passwd文件
+<pwd.h>中定义了passwd结构体,并提供了获取指定passwd项的函数
+#+BEGIN_SRC C
+  #include <pwd.h>
+
+  /* 根据uid获取passwd项 */
+  struct passwd *getpwuid(uid_t uid);
+  /* 根据用户名获取passwd项 */
+  struct passwd *getpwname(const char* name);
+
+  struct passwd{
+    char* pw_name;                /* 用户名 */
+    char* pw_passwd;              /* 加密密码 */
+    uid_t pw_uid;                 /* 数值用户ID */
+    git_t pw_gid;                 /* 数值组ID */
+    char* pw_gecos;               /* 注释字段 */
+    char* pw_dir;                 /* 初始工作目录 */
+    char* pw_shell;               /* 初始shell */
+    char* pw_class;               /* 用户访问类 */
+    time_t pw_change;             /* 下次更改密码时间 */
+    time_t pw_expire;             /* 账户到期时间 */
+  }
+
+#+END_SRC
+
+下面三个函数,则提供了遍历获取passwd项的函数
+#+BEGIN_SRC C
+  #include <pwd.h>
+
+  /* 若未打开passwd文件则打开passwd文件,并将读指针放到第一条记录处 */
+  void setpwent();
+  /* 若未打开passwd文件则打开passwd文件,并读取下一条passwd项*/
+  struct passwd* getpwent();
+  /* 关闭passwd文件 */
+  void endpwent();
+#+END_SRC
+需要注意的是:
++ setpwent会自动检查是否已经打开了passwd文件,若打开了,则不会重复打开.
++ getpwent会自动在未调用setpwent打开passwd文件的情况下,自动打开该passwd.
++ 使用getpwent查看完passwd文件后,一定要调用endpwent关闭这些文件.
+
+* shadow文件
+类似passwd相关函数
+#+BEGIN_SRC C
+  #include <shadow.h>
+
+  /* 根据用户名获取shadow项 */
+  struct spwd* getspnam(const char* name);
+
+  struct spwd{
+    char* sp_namp;                /* 用户登录名 */
+    char* sp_pwdp;                /* 加密口令 */
+    int sp_lstchg;                /* 上次更改密码以来经过的时间 */
+    int sp_min;                   /* 经过多少天后允许更改密码 */
+    int sp_max;                   /* 多少天后要求更改密码 */
+    int sp_warn;                  /* 密码到期警告天数 */
+    int sp_inact;                 /* 账户失效前天数 */
+    int sp_expire;                /* 账户到期天数 */
+    unsigned int sp_flag;         /* 保留 */
+  }
+
+  /* 若未打开shadow文件则打开shadow文件,将读指针放到第一条记录处 */
+  void setspent();
+  /* 若未打开shadow文件则打开shadow文件,读取下一条shadow记录*/
+  struct spwd* getspent();
+  /* 关闭shaodw文件 */
+  void endspent();
+#+END_SRC
+
+* group文件
+#+BEGIN_SRC C
+  #include <grp.h>
+
+  /* 根据gid获取group项 */
+  struct group* getgrgid(gid_t gid);
+  /* 根据组名称,获取group项 */
+  struct group* getgrnam(const char* name);
+
+  struct group{
+    char* gr_name;                /* 组名 */
+    char* gr_passwd;              /* 加密口令 */
+    int gr_gid;                   /* 组id */
+    char** gr_mem;                /* 组成员名称列表 */
+  };
+  /* 下面三个函数用于遍历group项 */
+
+  /* 若未打开group文件则打开group文件,将读指针放到第一条记录 */
+  void setgrent();
+  /* 若未打开group文件则打开group文件,读取下一条group项*/
+  struct group* getgrent();
+  /* 关闭group文件 */
+  void endgrent();
+#+END_SRC
+
+但与passwd不同的是,UNIX具有附加组的概念. 为了获取和设置附加组ID,提供了下列三个函数:
+#+BEGIN_SRC C
+  #include <grp.h>
+  #include <unistd.h>
+
+  /* 获取当前用户的附加组列表,返回用户附加组的个数,出错则返回-1 */
+  int getgroups(int group_array_size,gid_t group_size[]);
+
+  /* 为当前进程设置附加组 */
+  int setgroups(int group_array_size,gid_t group_size[]);
+
+  /* 为进程附加组设置为username的附加组 */
+  int initgroups(const char* username,gid_t base_gid);
+#+END_SRC
++ setgroups只可由超级用户调用,且参数group_array_size不能大于NGROUPS_MAX
++ initgroups函数会调用setgroups来设置进程的附加组,因此也只能由超级用户调用.
+  
+  
+* 其他数据文件
+对于hosts,networks,protocols,services等系统文件,UNIX也提供了与passwd类似的函数.
+#+TABLE: 存取系统文件的相关函数
+| 系统文件说明 | 数据路径       | 头文件    | 结构体   | 附加的关键字查找函数            |
+|--------------+----------------+-----------+----------+---------------------------------|
+| 主机         | /etc/hosts     | <netdb.h> | hostent  | gethostbyname,gethostbyaddr     |
+| 网络         | /etc/networks  | <netdb.h> | netent   | getnetbyname,getnetbyaddr       |
+| 协议         | /etc/protocols | <netdb.h> | protoent | getprotobyname,getprotobynumber |
+| 服务         | /etc/services  | <netdb.h> | servent  | getservbyname,getservbyport     |
+
+一般情况下,每个数据文件都会有三个函数:
++ set函数
+
+  若尚未打开数据文件,则打开数据文件,并将读指针放到第一条记录处
+
++ get函数
+
+  若尚未打开数据文件,则打开数据文件,并读取下一条数据项.
+
+  *当到达文件尾端则返回空指针*
+
+  *大多数get函数返回指向一个静态结构的指针,如果要保存该内容,则需要复制它*
+
++ end函数
+
+  关闭响应数据文件.
+
+** hosts文件
+本机信息存放在/etc/hosts中,可以通过调用gethostent查找本机主机信息
+#+BEGIN_SRC C
+  #include <netdb.h>
+
+  /* 获取主机信息 */
+  struct hostent* gethostent();
+
+  struct hostent{
+    char* h_name;                 /* 主机名称 */
+    char** h_aliases;             /* 主机别名列表 */
+    int h_addrtype;               /* 地址类型 */
+    int h_length;                 /* length in bytes of address */
+    char** h_addr_list;           /* 网络地址列表 */
+    /* 其他成员 */
+  };
+
+  /* 打开主机文件,重置记录指针 */
+  void sethostent(int stayopen);
+
+  /* 关闭主机文件 */
+  void endhostent();
+
+  struct hostent* gethostbyname(const char* name);
+
+  /* 参数len为参数addr的长度,type表示是IPv4还是IPv6 */
+  struct hostent* gethostbyaddr(const char* addr,int len,int type);
+#+END_SRC
++ gethostent返回/etc/hosts文件中的下一个条目, *若文件没打开,gethostent还会打开它*
+  #+BEGIN_SRC C
+    #include <unistd.h>
+    #include <netdb.h>
+    #include <stdio.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+
+    void show_hostent(const struct hostent* h)
+    {
+      printf("h_name=[%s]\n",h->h_name);
+      int i = 0;
+      char* alias=NULL;
+      for(alias = h->h_aliases[i];alias !=NULL;++i){
+        printf("h_alias=[%s]\n",alias);
+      }
+      printf("h_addrtype=[%d]",h->h_addrtype);
+      printf("h_length=[%d]",h->h_length);
+      /* fflush(stdout); */
+      /* if(h->h_addrtype == AF_INET) { */
+      /*   for(i = 0;i < h->h_length;++i){ */
+      /*     struct in_addr** addresses = (struct in_addr**)h->h_addr_list; */
+      /*     printf("h_addr=[%d]",addresses[i]->s_addr); */
+      /*   } */
+      /* } */
+    }
+
+    int main()
+    {
+      struct hostent* h = gethostent();
+      show_hostent(h);
+      return 0;
+    }
+
+  #+END_SRC
++ sethostent会打开文件并重置记录指针,参数stayopen为非0时,调用gethostent之后,文件将依然是打开的.
++ endhostent关闭主机文件.
+
+** networks文件
+我们使用以下函数获得网络名字和网络编号
+#+BEGIN_SRC C
+  #include <netdb.h>
+
+  struct netent* getnetbyaddr(uint32_t net,int type);
+
+  struct netent* getnetbyname(const char* name);
+
+  struct netent* getnetent();
+
+  void setnetent(int stayopen);
+
+  void endnetent();
+
+  struct netent
+  {
+    char* n_name;                 /* 网络名称 */
+    char** n_aliases;             /* 网络别名列表 */
+    int n_addrtype;               /* 地址类型,如AF_INET */
+    uint32_t n_net;               /* 网络编号,按网络字节序返回 */
+    /* 其他成员 */
+  };
+#+END_SRC
+
+** protocols文件
+我们可以使用以下函数在协议名字和协议编号之间进行映射
+#+BEGIN_SRC C
+  #include <netdb.h>
+
+  struct protoent* getprotobyname(const char* name);
+
+  struct protoent* getprotobynumber(int proto);
+
+  struct protoent* getprotoent();
+
+  void setprotoent(int stayopen);
+
+  void endprotoent();
+
+  struct protoent
+  {
+    char* p_name;                 /* 协议名称 */
+    char** p_aliases;             /* 协议别名列表 */
+    int p_proto;                  /* 协议编号 */
+    /* 其他成员 */
+  };
+#+END_SRC
+
+** services文件
+服务由地址的端口号部分表示,每个服务由一个唯一的总所周知的端口号来表示
+#+BEGIN_SRC C
+  #include <netdb.h>
+
+  /* proto指明了使用的网络协议 */
+  struct servent* getservbyname(const char* name,const char* proto);
+
+  struct servent* getservbyport(int port,const char* proto);
+
+  struct getservent();
+
+  void setservent(int stayopen);
+
+  void endservent();
+
+  struct servent
+  {
+    char* s_name;                 /* 服务名称 */
+    char** p_aliases;             /* 协议别名列表 */
+    int p_proto;                  /* 服务使用的网络协议编号,如TCP,UDP等 */
+  };
+#+END_SRC
+* 登录账户记录
+大多数UNIX系统都提供下面两个数据文件:
++ utmp文件 :: 记录当前登录进系统的各个用户
++ wtmp文件 :: 跟踪各个登录和注销事件
+
+每次写入这两个文件的是包含以下结构的二进制记录:
+#+BEGIN_SRC C
+  struct utmp{
+    char ut_line[8];              /* tty编号 */
+    char ut_name[8];              /* 登录名,注销时为空 */
+    long ut_time;                 /* 登录/注销事件 */
+  }
+#+END_SRC
+
+* 系统标识
+
+** uname函数:获取当前主机与操作系统相关信息
+#+BEGIN_SRC C
+  #include <sys/utsname.h>
+
+  int uname(struct utsname* name);
+
+  struct utsname{
+    char sysname[];               /* 操作系统名称 */
+    char nodename[];              /* 节点名称 */
+    char release[];               /* 操作系统的发布型号 */
+    char version[];               /* 操作系统发布版本 */
+    char machine[];               /* 硬件类型 */
+  };
+#+END_SRC
+
+** gethostname函数:只返回主机名
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  ing gethostname(char* name,int bufsize);
+#+END_SRC
++ 最大主机名长度为HOST_NAME_MAX

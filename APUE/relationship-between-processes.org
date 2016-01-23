@@ -1,0 +1,159 @@
+#+TITLE: 进程关系
+#+AUTHOR: Administrator
+#+CATEGORY: Programming, AUPE
+#+DATE: [2015-05-20 周三 10:52]
+#+OPTIONS: ^:{}
+
+* 终端登录过程
+1. init进程针对每个tty frok并exec一个getty子进程
+
+   - init进程会读取/etc/rc中的脚本来启动基本服务
+   
+2. getty程序在每个tty设备上打开stdin,stdout,stderr套接字
+
+3. getty输出"login:"等待用户输入用户名,密码
+
+4. getty exec login程序,并传递用户名,密码到login程序
+   #+BEGIN_SRC C
+     execle("/bin/login","login","-p",username,(char*)0,envp);
+   #+END_SRC
+   - 由于exec并不更改进程ID,因此getty,login的进程ID一样,且父进程为都为init,该init进程的PID为`1'
+   - 若用户输入几次用户名,密码错误,则login程序调用`exit 1',父进程init收到login退出后会接着创建子进程getty,并重复上面过程.
+
+5. login将当前工作目录更改为该用户的起始目录
+
+6. login调用chown改变终端所有权为登录用户
+
+7. login将对该终端设备的访问权限改为用户可读写
+
+8. login调用setgid和initgroups设置进程的组ID
+
+9. login用login所得到的信息初始化环境变量:起始目录(HOME),shell(SHELL),用户名(USER,LOGNAME),系统默认路径(PATH)
+
+10. login进程设置自己的三个用户id为登录用户id,并exec该用户的登录shell
+
+    - shell退出后,init会得到通知,重复上述fork并exec getty的过程.
+
+11. 登录shell读取其配置文件
+
+* 网络登录过程
+
+网络登录过程与终端登录过程不同点在于网络登录过程不过是一种网络服务.
+
+系统使用了一种称为伪终端的软件驱动来实现终端操作与网络操作之间的映射.
+
+网络服务进程会取代getty的作用将stdin,stdout,stderr与伪终端相连接,并exec login程序,随后的过程与终端登录过程类似
+
+* 进程组
+每个进程除了有一个进程ID外,还属于一个进程组.
+
+多个用管道线连接起来的进程属于同一个进程组. 例如:
+#+BEGIN_SRC sh
+  ls |more
+#+END_SRC
+中ls与more属于同一个进程组
+
+同一进程组的多了进程会接收到来自同一终端的各种信号. 即在终端中输入的信号会被所有进程都接收到.
+
+每个进程组都有一个唯一的进程组ID,并也用pid_t数据类型存储
+
+每个进程组都可以有一个组长进程,其进程ID等于进程组ID
+
+组长进程可以创建一个进程组,创建进程组中的进程. 
+
+进程组中只要有一个进程存在,则该进程组就存在,与其组长进程是否终止无关.
+
+** 获取进程的所属进程组
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  pid_t getpgrp();
+
+  /* 若pid == 0,则返回调用进程的进程组ID */
+  pid_t getpgid(pid_t pid);
+#+END_SRC
+
+** 加入现有的/创建新进程组
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  int setpgid(pid_t pid,pid_t pgid);
+#+END_SRC
++ 若pid为0,表示使用调用者的进程ID
++ pgid为0,表示使用参数pid的值
++ 一个进程只能为它自己或它的子进程设置进程组ID. 且 *在其子进程调用exec函数后,就不能再更改该子进程的进程组ID了*
++ 一般的操作是,在fork后,父,子进程都调用setpgid函数设置子进程的进程组ID, *这样做是为了保证无论父子进程哪个优先运行,都正确地设置了进程组*
+
+* 会话
+会话是一个或多个进程组的集合. 这些进程组可以分成一个前台进程组和多个后台进程组.
+
+会话ID即为会话首进程的进程ID,所谓会话首进程是指调用setsid函数创建会话的进程.
+
+一个会话可以有一个控制终端,该终端可能为实际的终端设备或者伪终端
+
+如果一个会话有一个控制终端,则它有一个前台进程组,会话中的其他进程为后台进程组
+
+在终端中输入的中断键和退出键,其产生的信号会发送到前台进程组中的 *所有进程*
+
+建立与控制终端连接的会话首进程被称为控制进程
+
+如果终端接口断开连接,则挂断信号会发送給控制进程(会话首进程,一般为shell或sshd,telnetd等服务进程)
+
+** setsid创建新会话
+进程调用setsid函数建立一个新会话和新进程组
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  pid_t setsid();                 /* 成功则返回进程组ID,否则返回-1 */
+#+END_SRC
+
+调用该函数的进程 *不能是* 一个进程组的组长,否则会报错. 
+
+该函数创建一个 *新会话和新进程组*,其结果是发生三件事
+1. 改进程变成新会话的首进程. 此时该进程是新会话中唯一的进程.
+2. 该进程称为一个新进程组的组长进程,新进程组ID是该调用进程的进程ID
+3. 该进程没有控制终端.(即使调用setsid之前该进程有控制终端,此时这种联系也会中断)
+** getsid获取会话ID
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  pid_t getsid(pid_t pid);        /* 若成功返回会话ID,否则返回-1 */
+
+  #include <termios.h>
+
+  /* 返回tty_filedes相关终端对应的会话ID,出错返回-1 */
+  pid_t tcgetsid(int tty_filedes);
+#+END_SRC
++ 处于安全考虑,若参数pid并不属于调用者所在的会话ID,则会出错.
+  #+BEGIN_SRC C :exports both drawer
+    #include <unistd.h>
+    #include <stdio.h>
+
+    int main()
+    {
+      printf("本进程所属会话ID为%d\n",getsid(getpid()));
+      printf("进程1所属会话ID为%d\n",getsid(1));
+      return 0;
+    }
+      
+  #+END_SRC
+
+  #+RESULTS:
+  | 本进程所属会话ID为5992 |
+  | 进程1所属会话ID为-1    |
+* 前后台进程组
+** 设置/获取前台进程组
+需要有一种方法来通知内核哪一个进程组是前台进程组,这样终端设备驱动程序就能了解将终端输入和终端产生的信号送到何处
+#+BEGIN_SRC C
+  #include <unistd.h>
+
+  /* 返回与tty_filedes相关联的终端的前台进程组ID,失败则返回-1 */
+  pid_t tcgetpgrp(int tty_filedes);
+
+  /* 设置与tty_filedes相关联的终端的前台进程组,成功返回0,失败返回-1 */
+  int tcsetpgrp(int tty_filedes,pid_t pgrpid);
+#+END_SRC
+** 后台作业的IO处理
+若后台作业试图读取终端,则终端驱动程序将检测到这种情况,并且向后台作业发送一个特定信号SIGTTIN. 该信号通常会暂停此后台作业,而shell向有关用户发出作业被暂停的通知.
+
+若后台作业试图输出到终端,则根据终端的设置,可能马上输出,也可能等到后台作业切换到前台后才输出. 若设置为禁止输出,则当后台作业尝试输出时,驱动程序会向该作业发送SIGTTOU信号,该信号通常也会暂停该后台作业,而shell向有关用户发出作业被暂停的通知.
