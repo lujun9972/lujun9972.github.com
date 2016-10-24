@@ -1,0 +1,47 @@
+#+TITLE:       用mpg123播放https协议的URL MP3
+#+AUTHOR:      lujun9972
+#+EMAIL:       lujun9972@lujun9972-desktop
+#+DATE:        2016-10-24 一
+
+#+URI:         /linux和它的小伙伴/%y/%m/%d/%t/ Or /linux和它的小伙伴/%t/
+#+TAGS:        mpg123, https, mp3
+
+#+LANGUAGE:    zh
+#+OPTIONS:     H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+mpg123本身是支持URL MP3的,可惜它只支持http协议的url mp3.
+
+好在mpg123还支持从standard input中读取MPEG data,这样以来我们可以通过组合curl与mpg123来实现播放https协议的URL MP3.
+
+#+BEGIN_SRC sh
+  #!/bin/bash
+
+  # play https mp3 using mpg123
+
+  function https_url_p ()
+  {
+      local url=$1
+      echo $url |egrep "^https://" >/dev/null
+  }
+
+  uri=$1
+  if https_url_p $uri;then
+      curl -L $uri | mpg123 -
+  else
+      mpg123 $curi
+  fi
+#+END_SRC
+
+原理很简单:
+
+先判断一个文件是否以 =https://= 开头,若是的话,则认为是https url mpg3,那么通过curl将其内容取出来,通过管道发给mpg123来播放.
+
+事实上,curl支持超多的网络协议,你可以很容易的扩展到file,ftp,ftps,rtmp等各种网络协议上.
+
+不过要一个一个判断网络协议的种类就太麻烦了,可以简化成这样:
+
+#+BEGIN_SRC sh
+  mpg123 $1 || curl -L $1 |mpg123 -
+#+END_SRC
+
+先尝试用mpg123直接播放,失败的话再听过curl获取MPEG DATA交给mpg123来播放.
