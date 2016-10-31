@@ -1,0 +1,44 @@
+#+TITLE: 使用Emacs ediff作为git merge工具
+#+AUTHOR: lujun9972
+#+DATE: [2016-10-31 一 22:21]
+#+URI:         /Emacs之怒/%y/%m/%d/%t/ Or /Emacs之怒/%t/
+#+TAGS:        emacs, ediff, git, mergetool
+#+DESCRIPTION: 使用Emacs ediff作为git diff工具
+#+LANGUAGE:    zh-CN
+#+OPTIONS:     H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+之前讲了[[ego-link:%E4%BD%BF%E7%94%A8Emacs%20ediff%E4%BD%9C%E4%B8%BAgit%20diff%E5%B7%A5%E5%85%B7.org][使用Emacs Ediff作为git diff工具]]，现在来说说如何用Emacs ediff作为git merge工具
+
+1. 创建一个脚本来帮助你调用Ediff进行文件比较。
+   #+BEGIN_SRC sh
+     #!/bin/bash
+
+     base=$1
+     local=$2
+     remote=$3
+     merged=$4
+
+     if [ -r $base ];then
+         emacsclient -a "" -c -n --eval "(require 'ediff)" --eval "(ediff-merge-with-ancestor \"$local\" \"$remote\" \"$base\" nil \"$merged\")"
+     else
+         emacsclient -a "" -c -n --eval "(require 'ediff)" --eval "(ediff-merge \"$local\" \"$remote\" nil \"$merged\")"
+     fi
+   #+END_SRC
+     
+     注意我这里使用了emacsclient ，避免每次都要打开一个Emacs进程。
+
+     emacsclient后面的 =-a= 参数表示如果没有启动Emacs daemon的话，则自动启动一个。 所以你无需事先启动Emacs daemon。
+
+2. 用git config配置mergetool
+   
+   这里假设上一步创建的脚本为 =~/bin/ediff_merge.sh=,那么可以这么配置
+
+   #+BEGIN_SRC sh
+     git config --global merge.tool ediff
+     git config --global mergetool.ediff.cmd "~/bin/ediff_merge.sh \"$BASE\" \"\$LOCAL\" \"\$REMOTE\" \"$MERGED\""
+     git config --global mergetool.prompt false
+     # git config --global mergetool.ediff.trustExitCode true
+   #+END_SRC
+
+OK，这就搞定了，试试运行 =git mergetool= 看看效果吧。
+   
