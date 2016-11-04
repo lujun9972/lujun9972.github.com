@@ -1,0 +1,66 @@
+#+TITLE:       判断Emacs是否在图形环境中的正确方法
+#+AUTHOR:      lujun9972
+#+EMAIL:       lujun9972@lujun9972-desktop
+#+DATE:        2016-11-04 五
+
+#+URI:         /Emacs之怒/%y/%m/%d/%t/ Or /Emacs之怒/%t/
+#+TAGS:        emacs, elisp
+#+DESCRIPTION: <Add description here>
+
+#+LANGUAGE:    zh-CN
+#+OPTIONS:     H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有些时候我们会需要判断Emacs是运行在图形环境下还是纯文本环境下的。
+
+我之前用的方法都是通过调用 =(display-graphic-p)= 来判断的，然而最近发现这种方案在处理 =emacs --daemon= 时是有问题的。
+
+我们可以做个实验。
+
+在图形环境中启动 =emacs --daemon=， 这时尚未有frame存在，我们在terminator中执行
+#+BEGIN_SRC sh
+  emacsclient --eval '(display-graphic-p)'
+#+END_SRC
+会发现结果为nil
+
+然后我们运行 =emacsclient -c -n= 启动一个emacsclient frame，再次执行 
+#+BEGIN_SRC sh
+  emacsclient --eval '(display-graphic-p)'
+#+END_SRC
+会发现结果为t
+
+其实这种情况也好理解，用 =C-h f display-graphic-p= 查看该函数的说明如下：
+#+BEGIN_QUOTE
+display-graphic-p is a compiled Lisp function in ‘frame.el’.
+
+(display-graphic-p &optional DISPLAY)
+
+Return non-nil if DISPLAY is a graphic display.
+Graphical displays are those which are capable of displaying several
+frames and several different fonts at once.  This is true for displays
+that use a window system such as X, and false for text-only terminals.
+DISPLAY can be a display name, a frame, or nil (meaning the selected
+frame’s display).
+#+END_QUOTE
+
+也就是说，DISPLAY为nil时会返回当前frame的显示属性，然而刚启动 =emacs --daemon= 时,会产生一个frame，且这个frame是处于纯文本环境中的
+#+BEGIN_SRC sh
+  $ emacsclient --eval '(frame-list)'
+  # (#<frame F1 0xc4bed0>)
+  $ emacsclient --eval '(display-graphic-p (car (frame-list)))'
+  # nil
+#+END_SRC
+
+不过比较奇怪的是，我试着执行 
+#+BEGIN_SRC emacs-lisp
+  (display-graphic-p ":0")
+#+END_SRC
+发现会提示错误"Display :0.0 does not exist".
+
+不过，其实当我们跳出Emacs来考虑这个问题，问题就变得简单了。
+
+启动X时，一般都会设置环境变量 =DISPLAY=,而纯文本环境下这个环境变量的值一般为空,所以我们可以通过判断 =DISPLAY= 的值来确定当前环境是否为图形环境。
+#+BEGIN_SRC emacs-lisp
+  (defun graphic-p ()
+    "判断当前环境是否为图形环境"
+    (getenv "DISPLAY"))
+#+END_SRC
