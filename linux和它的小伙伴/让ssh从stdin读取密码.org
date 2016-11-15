@@ -1,0 +1,31 @@
+#+TITLE: 让ssh从stdin读取密码
+#+AUTHOR: lujun9972
+#+TAGS: ssh,python,stdin
+#+DATE: [2016-11-15 二 21:17]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+执行像ssh,scp这类secure command时,必须手工输入密码,而且它们是直接从/dev/tty而不是stdin中读取密码的,这也意味着无法通过重定向IO的方式传送密码給这些程序. 
+
+万幸的是,python自带一个名为 pty 的modual,它有一个 spawn 函数,manual中对它的描述是:
+
+#+BEGIN_QUOTE
+    pty.spawn(argv[, master_read[, stdin_read]]) Spawn a process, and connect its controlling terminal with the current process’s standard io. This is often used to baffle programs which insist on reading from the controlling terminal. 
+#+END_QUOTE
+
+这就好办了,我们只要创建一个名为”pty-process.py”脚本,在这个脚本中用pty.spawn调用secure command,然后再通过写入该脚本stdin的方式就可以变相地給这些secure command发送密码了.
+
+pty-process.py脚本的实现如下:
+
+#+BEGIN_SRC python
+  #!/bin/env python3
+  import pty
+  import sys
+
+  pty.spawn(sys.argv[1:])
+#+END_SRC
+
+借助于这个pty-process.py我们可以这样执行secure command了
+#+BEGIN_SRC sh
+  echo $passwd |pty-process.py ssh $usr@$remote $command
+#+END_SRC
