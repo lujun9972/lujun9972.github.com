@@ -1,0 +1,257 @@
+#+TITLE: Emacs中那些不常用的行操作命令
+#+AUTHOR: lujun9972
+#+CATEGORY: emacs
+#+DATE: [2016-11-18 周五 09:49]
+#+OPTIONS: ^:{}
+
+* 显示并编辑符合条件的行
+Emacs内建occur命令,可以让你只显示buffer中匹配某正则表达式的行.
+
+使用 =occur= 的方式很简单,你只需要执行 =M-x occur= 然后输入要匹配的正则表达式,occur就会创建一个名为 =*Occur*= 的buffer,里面列出了所有匹配的行内容以及对应的行数.
+
+通过点击 =*Occur*= 中的行,能够把光标定位到原buffer相应行的位置,方便你编辑.
+
+执行 =occur= 后,你可以在全局环境中,通过 =M-g M-n= 快速跳转到原buffer中下一个匹配行的位置,通过 =M-g M-p= 快速跳转到原buffer中上一个匹配行的位置.
+
+** 显示上下文
+
+有些时候,光显示匹配的行的内容还不够,你可能还需要同时显示上下几行的内容,这时你可以配置变量 =list-matching-lines-default-context-lines=.
+
+该变量的值为负数表示同时显示匹配行上面几行的内容. 而正数则表示同时显示匹配行上面和下面几行的内容. 默认情况下该变量的值为0表示不显示上下行.
+
+** occur-mode的常用快捷键
+
+=*Occur*= buffer的major mode为 =occur-mode=. 它有一些常见的快捷键如下所示:
+
++ M-n :: 跳转到下一个匹配行的位置
++ M-p :: 跳转到上一个匹配行的位置
++ < :: 跳转到 =*occur*= buffer的开始位置
++ > :: 跳转到 =*occur*= buffer的结束位置
++ 点击匹配行或在匹配行上按回车 :: 跳转到原buffer中匹配行的位置
++ g :: 刷新 =*occur*= buffer中的搜索结果. 常用于原buffer修改之后.
++ e :: 进入occur的编辑状态
++ C-c C-c :: 退出occur的编辑状态,并将修改应用到原buffer中
++ q :: 退出 =*occur*= buffer
+
+** 编辑occur buffer
+
+=*occur*= buffer本来是只读的,但是当你按下 =e= 后会发现buffer会变成可编辑的了.
+
+并且神奇的是,你在 =*occur*= buffer中修改的变动也会反映到原buffer中去. (注意,只有对匹配行做出的修改会反映到原buffer中去,对上下文行的修改不会改变原buffer)
+
+修改完后,按下 =C-c C-c=, =*occur*= 就又变回只读模式了.
+
+** Multi-Occur
+若要在多个buffer上同时使用occur,则你需要用 =multi-occur=. 有两种方式调用 =multi-occur=:
+
+一种方式是用 =M-x multi-occur-in-matching-buffers=. 该命令会让你输入一个正则表达式来匹配要在哪些buffer上调用 =occur=.
+
+另一种方式是直接运行 =M-x multi-occur=, 该命令则需要你明确地选择在哪几个buffer上调用 =occur=.
+* 删除重复行
+
+选中一个区域后,运行 =M-x delete-duplicate-lines= 就能删除调该区域中的重复行. *而且它与命令行工具 =uniq= 不同的是,这些重复行无需预先进行排序*.
+
+你还可以通过给 =delete-duplicate-lines= 提供不同的prefix argument的方式来改变删除重复行的方式:
+
+| prefix argument | 效果                                  |
+|-----------------+---------------------------------------|
+| Without         | 从上往下扫描重复行,保留最上面的重复行 |
+| C-u             | 从下往上扫描重复行,保留最下面的重复行 |
+| C-u C-u         | 只删除相邻的重复行                    |
+| C-u C-u C-u     | 不要删除相邻的重复行                  |
+
+* 删除/保留符合条件的行
+
+若你想根据某个正则表达式来删除匹配的行,那么你可以使用 =M-x flush-lines=.
+
+选中一个region后,执行 =M-x flush-lines=,Emacs会提示你输入一个正则表达式,随后整个region中所有匹配该正则表达式的行都会被删除.
+
+若你执行 =M-x flush-lines= 之前没有选中region,则表示作用于从光标当前位置到buffer结尾这部分的区域.
+
+相应的,如果你想只保留匹配某个正则表达式的行,那么可以使用 =M-x keep-lines=. 它的用法与 =flush-lines= 一样,只不过它删除的是所有不匹配该正则表达式的行.
+
+=flush-lines= 和 =keep-lines= 常用于查看日志文件时用于剔除非重要的信息.
+
+* 行排序
+** sort-lines
+最简单的行排序方法是调用 =M-x sort-lines=,它会将region内的行按从小到大的顺序进行排序. 
+
+若你想按照从大到小的顺序进行排序,则可以给它传递一个prefix argment: =C-u M-x sort-lines=.
+
+类似的,若你执行 =M-x sort-lines= 之前没有选中region,则表示作用于从光标当前位置到buffer结尾这部分的区域.
+
+它的作用类似于不带任何参数调用 =sort=
+
+** sort-fields / sort-numeric-fields
+如果你想根据行中第N个域的值来排序,那么你需要用的命令就是 =sort-fields= 和 =sort-numeric-fields= 了.
+
+这两个命令的使用方式是一样的. 都是通过传递一个numeric argument来指定根据哪个域(从1开始计数)的值来进行排序.
+例如,要根据第3个域的内容,以数字的方式进行排序,则执行 =C-3 sort-numeric-fields=.
+
+=sort-fields= 和 =sort-numeric-fields= 只能根据某一个域的值进行排序,而且域与域之间肯定是以空格未做分隔的.
+
+它的作用类似于 =sort -kN= 和 =sort -kN -n=
+
+** sort-columns
+
+=sort-columns= 可以让你指定根据那几列的值进行排序,方法是先mark一个region在执行 =M-x sort-columns=.
+这个region的高指定了要对哪些行进行排序,region的宽则指定了根据那些列的值进行排序.
+
+** sort-regexp-fields
+
+=sort-regexp-fields= 使用起来很麻烦. 它需要你输入两个正则表达式.
+
+第一个正则表达式叫做RECORD-REGEXP,用来标识一行中的哪些内容将会被重新排序. 只有匹配该表达式的内容会被重排,不匹配该表达式的部分则保持原内容不变.
+
+第二个正则表达式叫做KEY-REGEXP,用来从每行内容中抽取出key的,Emacs就是使用这个key的值来进行排序的.
+
+详细的关于RECORD-REGEXP与KEY-REGEXP的说明请参见 =C-h f sort-regexp-fields= 的说明
+
+下面是一个取自"mastering-emacs"的例子:
+
+假设你又一个cvs文件内容为
+#+BEGIN_EXAMPLE
+  Price,Product
+  $3.50,Cappuccino
+  $4.00,Caramel Latte
+  $2.00,Americano
+  $2.30,Macchiato
+#+END_EXAMPLE
+
+你现在需要让它按照价格进行排序. 那么你执行
+#+BEGIN_EXAMPLE
+  M-x sort-regexp-fields
+  Record: ^\([^,]+\),\([^,]+\)$
+  Key: \1
+#+END_EXAMPLE 
+
+注意,由于你想要对整个行的内容都进行排序,因此RECORD-REGEXP需要将这个行的内容都匹配进来.
+
+KEY-REGEXP为 =\1= 则表示使用RECORD-REGEXP中第1个元组的内容作为key. 你还可以使用 =\&= 来表示整个RECORD-REGEXP匹配的内容.
+
+最后排序的结果就成了
+#+BEGIN_EXAMPLE
+  Price,Product
+  $2.00,Americano
+  $2.30,Macchiato
+  $3.50,Cappuccino
+  $4.00,Caramel Latte
+#+END_EXAMPLE
+
+如果上面例子中RECORD-REGEXP的值改成 =^\([^,]+\)=,注意,此时RECORD-REGEXP的匹配范围只覆盖了第一个域的部分,则排序的结果会是
+#+BEGIN_EXAMPLE
+  $2.00,Cappuccino
+  $2.30,Caramel Latte
+  $3.50,Americano
+  $4.00,Macchiato
+#+END_EXAMPLE
+
+也就是说只有第一列排序了,第二列还是保持原顺序不变.
+
+* 行对齐
+** align及align-current
+一般来说,要对代码进行对齐只需要选中一个region,然后运行 =M-x align= 就行了. Emacs会自动根据 =align-rules-list= 中定义的规则自动进行对齐操作.
+
+如果觉得先要选中region太麻烦的话,Emacs提供了一个 =M-x align-current= 命令. 该命令会先看当前行符合哪个重排规则,然后尝试下一行是否符合该重排规则,若符合该重排规则则进行重排然后再检查下一行,一直到某一行不符合该重排规则为止.
+
+例如: 假设有这么一段C代码,光标在它的第一行位置.
+#+BEGIN_SRC c
+  #define bufsize 512
+  #define pathsize 512
+  #define xx 51
+
+  int a=1;
+  int ab=2;
+#+END_SRC
+
+执行 =M-x align-current= 后结果变成
+#+BEGIN_SRC c
+  #define bufsize  512
+  #define pathsize 512
+  #define xx       51
+
+  int a=1;
+  int ab=2;
+#+END_SRC
+可以看到只有第一段代码对齐了.
+
+而先用 =C-x h= 选中整个buffer后,再运行 =align= 的结果则是
+#+BEGIN_SRC c
+  #define bufsize  512
+  #define pathsize 512
+  #define xx       51
+
+  int a  = 1;
+  int ab = 2;
+#+END_SRC
+所有的代码都重排了.
+
+** align-regexp
+align-regexp允许你自定义自己的对齐方式. 它有两种模式,新手模式和复杂模式.
+*** 新手模式
+直接运行 =align-regexp= 会进入新手模式.
+
+在新手模式下,你只需要输入一个表示对齐标识的正则表达式就可以了.
+
+例如下面是一个从"mastering-emacs"中截取的例子:
+
+假设原始文档是这样的
+#+BEGIN_EXAMPLE
+  Cappuccino $2.00
+  Caramel Latte $2.30
+  Americano $3.50
+  Macchiato $4.00
+#+END_EXAMPLE
+
+我们想要让它按照$对齐,那么可以这样,运行 =M-x align-regexp=,然后在"Align regexp:"中输入 =\$=
+
+最终的结果是:
+#+BEGIN_EXAMPLE
+  Cappuccino    $2.00
+  Caramel Latte $2.30
+  Americano     $3.50
+  Macchiato     $4.00
+#+END_EXAMPLE
+
+
+*** 复杂模式
+当你要对多列进行对齐时,就必须要使用复杂模式了,进入的方式是给它一个prefix argument: =C-u M-x align-regexp=
+
+在复杂模式下,Emacs会以此要求你输入一个表示对齐标识的正则表达式,且这个正则表达式中必须包含至少一个分组. 一个常见的分组就是 =\\(\\s-*\\)= 表示任意多个空白字符.
+
+随后Emacs会询问你可以修改第几个分组中的内容来进行对齐.
+
+再然后Emacs问你会询问你要用对齐后两个域之间最少间隔多少个空白,默认是 =align-default-spacing= 中的值. 
+
+最后Emacs会询问你是否重复应用此规则于多列,当需要多列对齐时,往往需要选择 =yes=
+
+下面还是一个从"mastering emacs"中的例子:
+
+假设有这么段文字
+#+BEGIN_EXAMPLE
+  Price,Product,Qty Sold
+  $2.00,Cappuccino,289
+  $2.30,Caramel Latte,109
+  $3.50,Americano,530
+  $4.00,Macchiato,20
+#+END_EXAMPLE
+
+我们想让它按照逗号对齐,由于涉及到多列对齐,因此需要使用 =C-u M-x align-regexp= 进入复杂模式.
+
+我们要根据逗号进行对齐,且空格应该插入到逗号的后面,因此"Complex align using regexp: "的值应该输入",\(\s-*\)" 其中逗号后面的分组就是插入空格的位置.
+
+由于我们要修改的是表达式中第一个分组的位置,因此"Parenthesis group to modify (justify if negative):" 的值我们输入 =1=
+
+我们可以让每个对齐列之间分隔的间距大一点,这里"Amount of spacing (or column if negative): " 我们输入 =5=,表示最少间距是5个空格
+
+最后我们要对齐多个列,因此"Repeat throughout the line: "我们输入 =yes=.
+
+最终的结果是:
+
+#+BEGIN_EXAMPLE
+  Price,     Product,           Qty Sold
+  $2.00,     Cappuccino,        289
+  $2.30,     Caramel Latte,     109
+  $3.50,     Americano,         530
+  $4.00,     Macchiato,         20
+#+END_EXAMPLE

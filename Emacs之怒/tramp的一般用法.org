@@ -1,1 +1,58 @@
-/home/lujun9972/我的笔记/emacs/tramp的一般用法.org
+#+TITLE: tramp的一般用法
+#+AUTHOR: lujun9972
+#+CATEGORY: emacs,tramp
+#+DATE: [2016-11-17 周四 12:38]
+#+OPTIONS: ^:{}
+
+* 使用tramp编辑远程文件
+借助TRAMP,你可以像编辑本地文件一样来编辑远程文件. 
+
+tramp的用法很简单,只要你在 =C-x C-f= 选择文件时使用一种特殊的语法格式来标示文件就行了. 
+
+tramp标示文件的语法为: 
+
+#+BEGIN_EXAMPLE
+  /[protocol]:[user@]hostname[#port]:path-to-file 
+#+END_EXAMPLE
+
+例如 =/ssh:cnaps2@10.8.6.10:~/tmp/t.log= 会通过ssh协议,以cnaps2用户登录10.8.6.10这台机,并访问上面的~/tmp/t.log文件.
+
+当你用tramp打开remote文件时,会在modeline上显示一个 =@10.8.6.10= 这样的标识,说明这个是一个10.8.6.10上的远程文件.
+
+tramp支持通过多种协议来编辑远程文件(具体tramp支持哪些协议,请参见 =tramp-methods=).
+不过目前最常用的协议是 =ssh=, =scp= 以及 =plink= (适合于windows用户)
+
+你也可以省略protocol,这样的话,tramp会使用 =tramp-default-method= 中设置的协议方式来进行连接.
+* Tramp与其他命令的整合
+Tramp对其他命令来说几乎都是透明的. 下面是一些与tramp实现无缝结合的常用命令:
+
++ dired :: 你可以使用dired管理远程服务器上的文件,甚至你还能够在本地与远程服务器之间相互拷贝文件!
++ compile :: Emacs会在远程服务器上运行编译命令,并捕获编译结果
++ rgrep :: Emacs会在远程环境运行find和grep. 甚至点击结果中的文件链接还能正确地打开远程文件
++ shell :: Emacs会在远程服务器上开启shell
++ eshell :: 在eshell中你可以直接cd到远程服务器上的目录中,随后执行的命令皆为在服务器环境上执行的命令.
++ bookmark :: 你可以将远程文件记录为书签,当打开书签时,Emacs会自动连接上远程服务器打开服务器上的文件.
+* 其他用法
+** 用户切换
+除了编辑远程文件外,tramp还能让你以另一个客户的身份来打开文件,方法是使用 =sudo= 或 =su= 协议.
+
+例如 =/sudo:root@localhost:/etc/fstab= 就会以root用户的身份打开本地/etc/fstab文件.
+
+我们也可以省略其中的 =root@= 这是它的默认值. 所以上面的例子可以缩写为 =/sudo:localhost:/etc/fstab=
+** 多重跳转
+若连接远程主机时需要通过一个中间跳板机,则需要使用tramp的多重跳转格式了.
+
+tramp的多重跳转格式为
+#+BEGIN_EXAMPLE
+  /protocol:user@hop1|protocol:user@hop2|protocol:user@dest-host:/path-to-file
+#+END_EXAMPLE
+
+例如 =/ssh:cnaps2@10.8.6.10|ssh:cnaps2@10.8.6.9:/tmp/t.log= 会先以cnaps2连接10.8.6.10,然后再以cnaps2连接上10.8.6.9并访问上面的/tmp/t.log文件.
+
+另外,由于sudo/su理论上也是一个新的链接,因此你也可以将其用在多重跳转中.
+
+例如 =/ssh:homer@powerplant|sudo:powerplant:/root/salary.txt= 会先以homer用户连接上powerplant主机,然后再通过sudo以root身份打开/root/salary.txt
+
+需要注意的是, *上例中sudo后面的主机名 =powerplant= 需要重复输入*
+
+如果经常需要通过代理访问远程主机上的文件的话,还可以通过配置变量 =tramp-default-proxies-alist= 来指定通过哪个代理来访问user@host. 
