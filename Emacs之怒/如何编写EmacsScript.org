@@ -195,8 +195,53 @@ Emacs为了遵循shell script的shebang标准,特意将第一行内容中的的 
 
 1. Emacs读取并执行EmacsScript中的内容
 2. Emacs遍历 =command-line-args-left= 中的参数,对于 =command-switch-alist= 中的参数调用对应的函数,对于不在 =command-switch-alist= 中的参数依次调用 =command-line-functions= 中的函数
-3. 倘若 =command-line-functiions= 中没有定义函数,或者有一个参数在依次调用 =command-line-functions= 中的函数后所有函数都返回nil的话,那么该参数交由emacs本身处理.
+3. 倘若 =command-line-functiions= 中没有定义函数,或者某参数在依次调用 =command-line-functions= 中的函数后所有函数都返回nil的话,那么该参数交由emacs本身处理.
 
 * 标准输出,标准错误与标准输入
 
+在interactive模式下编写EmacsLisp函数时,我们习惯于用 =message= 函数来输出内容,然而在batch模式下,我们就不能再用 =message= 来输出内容了,因为 =message= 实际上会把内容输出到stderr上.
+
+作为替代,若是要想将内容输出到stdout,你需要使用 [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Output-Functions.html#index-print][print]], [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Output-Functions.html#index-prin1][prin1]], [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Output-Functions.html#index-princ][princ]] 等这一系列的函数来输出内容. 然而这一类的函数本身并没有格式化输出的功能,因此你一般还需要用 =format= 函数预先将要输出的内容格式化成字符串.
+
+那么如何从标准输入读取内容呢? 只需要跟interactive模式下一样使用 =read-xxx= 系列函数就行了. 在batch模式下,原先从minbuffer读取内容的函数会改成从stdin中读取内容.
+
+唯一需要注意的是:Emacs24及其之前的版本的Emacs在batch模式下用 =read-passwd= 从标准输出读取密码时,会在终端上显示出密码的内容. Emacs25版本的 =read-passwd= 则解决了这个问题.
+
 * 获取外部命令的运行结果
+
+在shell编程中,可以使用 =$()= 来捕获命令的运行结果, EmacsScript不支持这种语法,但可以通过函数 =shell-command-to-string= 来代替. 比如
+
+假设有这么一个脚本:
+#+BEGIN_SRC emacs-lisp :tangle "/tmp/test6.el" :tangle-mode 755
+  #!/bin/sh
+  ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+  (princ "捕获ls的内容:\n")
+  (princ (shell-command-to-string "ls -l"))
+#+END_SRC
+
+那么执行该脚本的结果是:
+#+BEGIN_SRC sh :exports both :results org
+    /tmp/test6.el
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+捕获ls的内容:
+总用量 60
+-rw-rw-r-- 1 lujun9972 lujun9972  9213 11月 22 22:29 Emacs查看日志常用命令.org
+-rw-rw-r-- 1 lujun9972 lujun9972 10881 11月 22 22:29 Emacs中那些不常用的行操作命令.org
+-rw-rw-r-- 1 lujun9972 lujun9972  5507 11月 22 22:29 Emacs作为图片浏览器.org
+-rw-rw-r-- 1 lujun9972 lujun9972  3226 11月 22 22:29 tramp的一般用法.org
+-rw-rw-r-- 1 lujun9972 lujun9972  2522 11月 22 22:29 判断Emacs是否在图形环境中的正确方法.org
+-rw-rw-r-- 1 lujun9972 lujun9972  9725 11月 28 20:41 如何编写EmacsScript.org
+-rw-rw-r-- 1 lujun9972 lujun9972  1524 11月 22 22:29 使用Emacs ediff作为git diff工具.org
+-rw-rw-r-- 1 lujun9972 lujun9972  1791 11月 22 22:29 使用Emacs ediff作为git merge工具.org
+#+END_SRC
+
+当然,如果你愿意,完全可以使用底层的 =call-process= 与 =start-process=,这两个函数能让你更细致地控制子进程.
+
+* 加速EmacsScript的启动过程
+
+=--script= 选项会阻止Emacs启动时加载用户的初始化文件,但是依然会加载global site初始化文件.
+
+若因此而拖慢了EmacsScript的启动速度,那么可以考虑添加 =--quick= 选项来明确禁止global site的初始化.
