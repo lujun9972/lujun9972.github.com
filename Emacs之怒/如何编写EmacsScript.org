@@ -1,0 +1,202 @@
+#+TITLE: 如何编写EmacsScript
+#+AUTHOR: lujun9972
+#+CATEGORY: Emacs之怒
+#+DATE: [2016-11-28 周一 15:23]
+#+OPTIONS: ^:{}
+
+Emacs作为一款文本编辑器已经为大家所熟知,但是可能比较少人会想到它还能用来像python,ruby一样作为一门脚本语言来用.
+
+注意: EmacsScript的坑超级多,强烈推荐阅读这篇文章:[[http://www.lunaryorn.com/posts/emacs-script-pitfalls.html][emacs-script-pitfalls]]
+
+* --script选项
+
+Emacs提供了一个 =--script= 选项可以让Emacs运行在batch模式下,并运行指定文件中的elisp代码. 
+
+在batch模式下emacs完全作为一个elisp语言解释器来运行,并在执行完所有的elisp代码后直接退出. 在elisp代码执行期间,那些输出到echo area中的内容会输出到stdout或stderr中,那些从minibuffer读取内容的函数会变成从stdin读取内容.
+
+Emacs为了遵循shell script的shebang标准,特意将第一行内容中的的 =#!= 当初注释符号来处理,因此你的EmacsScript一般是这样的:
+#+BEGIN_SRC sh
+  #!/usr/bin/emacs --script
+  (message "Hello world")
+#+END_SRC
+
+当然,这种写法是不具有可移植性的,比较不是所有的emacs路径都是 =/usr/bin/emacs=. 真正具有可移植性的写法应该是:
+#+BEGIN_SRC emacs-lisp
+  #!/bin/sh
+  ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+  (message "Hello world")
+#+END_SRC
+
+* 处理命令行参数
+
+注意:对于EmacsScript来说,参数与选项是截然不同的两个东西. 而且选项不能放在参数最后,否则Emacs会提示"emacs: Option '-f' requires an argument"
+
+在EmacsLisp中,与处理命令行参数有关的常用变量有这么几个:
+
++ command-line-args-left
+
+  尚未处理的command-line argument列表. 
+  
+  假设有这么一个"/tmp/test1.el"的脚本:
+  #+BEGIN_SRC emacs-lisp :tangle "/tmp/test1.el" :tangle-mode 755
+    #!/bin/sh
+    ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+    (princ (format "command-line-args-left=%s" command-line-args-left))
+  #+END_SRC
+
+  那么执行该脚本的结果是:
+  #+BEGIN_SRC sh :exports both :results org
+    /tmp/test1.el a b c
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  command-line-args-left=(a b c)
+  #+END_SRC
+  
++ command-line-args
+
+  传递给Emacs的完整command-line argument列表,但是这个变量一般很少用,但它可以用于获取script脚本本身的名字.
+
+  假设有这么一个"/tmp/test2.el"的脚本:
+  #+BEGIN_SRC emacs-lisp :tangle "/tmp/test2.el" :tangle-mode 755
+    #!/bin/sh
+    ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+    (princ (format "command-line-args=%s\n" command-line-args))
+    (princ (format "$0=%s" (nth 2 command-line-args)))
+  #+END_SRC
+
+  那么执行该脚本的结果是:
+  #+BEGIN_SRC sh :exports both :results org
+    /tmp/test2.el a b c
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  command-line-args=(emacs -scriptload /tmp/test2.el a b c)
+  $0=/tmp/test2.el
+  #+END_SRC
+  
+  可以用 =(nth 2 command-line-args)= 来获取脚本名称.
+
++ command-switch-alist
+
+  Emacs在执行完EmacsScript中的语句之后,会检查 =command-line-args-left= 中是否包含有以 =-= 开头的选项,并在该变量中查找并运行对应的handler-function. 每处理完一个选项之后,就将该参数从 =command-line-args-left= 中删除掉.
+
+  该变量是素为`(option . handler-function)'的alist. 这里
+
+  - option为command-line argument中的`-option'参数(*带-*),为字符串格式
+
+  - handler-function为相应的处理函数名,它接收option为唯一参数
+
+  若command line option后还带了其他参数,则在handler-function中可以通过变量`command-line-args-left'来获取剩余的命令行参数.
+
+  例如有这么一个脚本:
+
+  #+BEGIN_SRC emacs-lisp :tangle "/tmp/test3.el" :tangle-mode 755
+    #!/bin/sh
+    ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+    (defun print-option-value (option)
+      (princ (format "command-line-args-left=%s\n" command-line-args-left))
+      (princ (format "value of %s is %s\n" option (car command-line-args-left)))
+      (pop command-line-args-left))
+
+    (add-to-list 'command-switch-alist '("-f" . print-option-value))
+
+  #+END_SRC
+
+  那么执行该脚本的结果是:
+  #+BEGIN_SRC sh :exports both :results org
+    /tmp/test3.el a -f filename b c
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  command-line-args-left=(filename b c)
+  value of -f is filename
+  #+END_SRC
+
++ command-line-functions
+
+  该变量是一系列函数的列表,这些函数用来处理无法识别的command-line参数.
+
+  每次处理一个没有特殊意义的command line argument时,该变量中的函数都会被依次调用, *直到有一个函数返回非nil的值*
+
+  *这些函数被调用时并不传递参数,但在这些函数内可以通过变量`argi'获取当前待处理的command-line argument. 可以通过变量`command-line-args-left'获取尚未被处理的command line arguments*. 
+
+  *若某函数除了当前待处理的函数,同时也把后面的参数給处理过了,则需要把后面那些被处理过的参数从`command-line-args-left'中删除*
+
+  *若某函数已经处理了当前代处理的参数,则一定记得返回非nil值*. *若所有的函数都返回nil,该参数会被认为是Emacs要打开的文件名称*
+  
+  例如有这么一个脚本:
+
+  #+BEGIN_SRC emacs-lisp :tangle "/tmp/test4.el" :tangle-mode 755
+    #!/bin/sh
+    ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+    (defun print-option ()
+      (princ (format "command-line-args-left=%s\n" command-line-args-left))
+      (princ (format "option is %s\n" argi)))
+
+    (add-to-list 'command-line-functions  #'print-option)
+  #+END_SRC
+
+  那么执行该脚本的结果是:
+  #+BEGIN_SRC sh :exports both :results org
+    /tmp/test4.el a -p filename b
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  command-line-args-left=(-p filename b)
+  option is a
+  command-line-args-left=(filename b)
+  option is -p
+  command-line-args-left=(b)
+  option is filename
+  command-line-args-left=nil
+  option is b
+  #+END_SRC
+  
+  我们可以在脚本中同时使用 =command-switch-alist= 与 =command-line-functions=. 它们的调用顺序是按照传递给EmacsScript的参数顺序来进行的.
+  
+  例如有这么一个脚本:
+
+  #+BEGIN_SRC emacs-lisp :tangle "/tmp/test5.el" :tangle-mode 755
+    #!/bin/sh
+    ":"; exec emacs --script "$0" "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+    (defun print-option ()
+      (princ (format "option is %s\n" argi)))
+    (add-to-list 'command-line-functions  #'print-option)
+
+    (defun print-option-value (option)
+      (princ (format "value of option %s is %s\n" option (pop command-line-args-left))))
+    (add-to-list 'command-switch-alist '("-f" . print-option-value))
+  #+END_SRC
+
+  那么执行该脚本的结果会是:
+  #+BEGIN_SRC sh :exports both :results org
+    /tmp/test5.el a -f f -p p
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  command-line-args-left=(-f f -p p)
+  option is a
+  value of option -f is f
+  command-line-args-left=(p)
+  option is -p
+  command-line-args-left=nil
+  option is p
+  #+END_SRC
+
+* EmacsScript的执行顺序
+
+从上面命令行参数的说明中,大致可以推断出EmacsScript的执行顺序为:
+
+1. Emacs读取并执行EmacsScript中的内容
+2. Emacs遍历 =command-line-args-left= 中的参数,对于 =command-switch-alist= 中的参数调用对应的函数,对于不在 =command-switch-alist= 中的参数依次调用 =command-line-functions= 中的函数
+3. 倘若 =command-line-functiions= 中没有定义函数,或者有一个参数在依次调用 =command-line-functions= 中的函数后所有函数都返回nil的话,那么该参数交由emacs本身处理.
+
+* 标准输出,标准错误与标准输入
+
+* 获取外部命令的运行结果
