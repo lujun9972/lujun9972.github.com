@@ -1,0 +1,101 @@
+#+TITLE: 使用tput创建屏幕输出
+#+AUTHOR: Administrator
+#+CATEGORY: linux和它的小伙伴
+#+DATE: [2016-11-30 周三 14:27]
+#+OPTIONS: ^:{}
+
+* 转义序列与控制码
+
+* tput的常用语法
+
++ tput capname [parameters] :: 这是tput最常用的方式,具体用法见下一章.
++ tput init :: 初始化终端,在使用tput前一般会先执行该命令
++ tput reset :: 重置终端属性为默认值
++ tput clear :: 清屏
++ tput -S :: 从stdin中读取指令,可以支持一次性设置多个指令,但必须保证一个指令一行.
+
+* tput的使用
+tput一般用于作三件事情: 设置终端属性,获取终端属性以及判断终端是否支持某项能力.
+
+但请记住,tput并不支持设置颜色!
+
+另外,在使用tput的输出值时,请一定先保证tput的返回值为0!
+
+** 设置终端属性
+tput主要是通过输出控制码字符串来实现一些特殊终端效果的. 
+
++ bel :: 警铃
++ blink :: 进入闪烁模式
++ bold :: 进入粗体模式
++ civis :: 隐藏鼠标
++ cnorm :: 取消隐藏鼠标
++ clear :: 清屏
++ cup $r $c :: 将光标移动到第$r行,第$c列
++ el :: 清除到行尾
++ ell :: 清除到行首
++ smso :: 进入凸出模式
++ rmso :: 退出凸出模式
++ smul :: 进入下划线模式
++ rmul :: 退出下划线模式
++ sc :: 保存光标当前位置
++ rc :: 回复光标最后保存的位置
++ rev :: 进入反转模式
++ sgr0 :: 回复正常屏幕
+     
+下面是一个例子
+#+BEGIN_SRC sh :tangle "/tmp/test.sh" :tangle_mode 755
+  #!/bin/bash
+
+  BOLD=$(tput bold)
+  REV=$(tput rev)
+  NORMAL=$(tput sgr0)
+  CURSOR_OFF=$(tput civis)
+  CURSOR_ON=$(tput cnorm)
+
+  tput init
+
+  tput clear
+  echo $CURSOR_OFF
+  tput cup 2 15
+  echo -e "${BOLD}粗体效果{NORMAL}\n"
+  echo  "${REV}反转效果${NORMAL}"
+  echo $CURSOR_ON
+#+END_SRC
+
+** 获取终端属性
+tput会输出一个数字,表示该属性的值.
+
++ cols :: 获取终端一行有多少列字符
++ lines :: 获取终端一列有多少行字符
++ it :: 终端的TAB相当于几个空格
+     
+下面是一个例子
+#+BEGIN_SRC sh :exports both :results org
+  echo "The terminal is $(tput cols) x $(tput lines)"
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+The terminal is 80 x 24
+#+END_SRC
+
+** 判断终端是否存在某项能力
+tput会通过返回值来表示是否具有这项能力(0表示true,1表示false).
+
++ chts :: 光标是否不可见
++ hs :: 终端是否具有状态行
+   
+下面是一个例子:
+#+BEGIN_SRC sh :exports both :results org
+  if tput hs;then
+      echo "your terminal has a status lne"
+  else
+      echo "your terminal has NO status line"
+  fi
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+your terminal has NO status line
+#+END_SRC
+
