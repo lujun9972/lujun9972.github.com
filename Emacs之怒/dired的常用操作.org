@@ -1,3 +1,4 @@
+# -*- org-src-preserve-indentation: t; -*-
 #+TITLE: dired的常用操作
 #+AUTHOR: Administrator
 #+CATEGORY: Emacs之怒
@@ -23,13 +24,86 @@
 
 + 若使用了 =ido=,或者 =helm= 这样的插件,那么在用 =C-x C-f= 打开文件时按下 =C-d= 就会进入所在的目录了.
 
-* 文件管理
+* 常用操作
+
+** 导航操作
+在dired buffer中可以用 =n=, =p=, =C-n=, =C-p=, =<down>=, =<up>= 将光标在各文件/目录间跳转.
+
+当在目录上按下回车键后,会用dired新打开那个目录,而若是在文件上按下回车,则表示用Emacs打开该文件.
+
+除了在 =..= 目录上按下回车这种方式可以跳转到上层目录外,dired还提供了一个 =^= 快捷键可以快速地跳转到上层目录中.
+
+另外,在dired buffer中,也能像在普通buffer中那样,使用Emacs的搜索命令来快速定位到指定文件处,这对在含有大量文件的目录中查找指定文件时非常有用.
+
+若你用dired打开某个目录后又手工在Emacs之外对该目录进行了一些操作,比如新增或删除一些文件,dired默认并不会自动刷新内容,这时你可以按下 =g= 键来强制刷新dired buffer.
+
+** mark
+
+在dired中,若你需要一次性操作操作文件或者目录,那么你往往需要先mark那些文件/目录,然后再按下对应的操作快捷键对这些文件进行操作.
+
+常见的mark命令有这么几个:
+
++ m :: mark光标所偶再的文件/目录,并将光标下移一行
++ DEL :: 删除上一行的mark标记,并将光标上移一行
++ u :: unmark光标所偶再的文件/目录
++ U :: unmark所有文件/目录
++ d :: 对于要删除的文件/目录进行标记比较特殊,需要用d键来为该文件添加flag,并将光标下移一行
++ t :: 反选所有文件的mark标记
++ * m :: mark选中区域中的所有文件/目录
++ * u :: unmark选中区域中的所有文件/目录
++ * t :: 反选区域内文件的mark标记
++ % m :: mark所有匹配正则表达式的文件
++ % d :: 为所有匹配正则表达式的文件添加待删除的flag
+
+** 操作文件/目录
+*由于在dired中的操作并不严格区分文件和目录,因此下面统一用文件代替*
+
+当按下操作快捷键时,dired会根据是否有mark的文件来决定该操作是针对光标所在文件进行(当没有mark文件时)的还是针对那些被makr的文件的.
+
+当操作是针对那些被mark的文件时,Emacs一般会列出受影响的文件并提示是否继续该操作.
+
+dired中对文件的常用的操作有:
+
++ + :: 创建一个子目录
++ C :: 拷贝文件
++ R :: 重命名文件,或者说是移动文件
++ D :: 删除文件
++ O :: 更改文件所有者,chown
++ G :: 更改文件所属组,chgrp
++ M :: 更改文件的属性,chmod
++ T :: 更改文件时间戳
++ x :: 删除那些被加了删除flag的文件
++ c :: 压缩文件,Emacs会根据 =dired-compress-files-alist= 中配置的压缩包后缀名来决定该怎么压缩
+
+除了明确mark出要操作的文件外,还可以使用正则表达式来操作一批文件. 这类使用正则表达式来批量操作的命令一般以 =%= 号开头:
+
++ % C :: 拷贝正则匹配的文件
++ % R :: 移动正则匹配的文件
++ % m :: mark正则匹配的文件
++ % d :: 给正则匹配的文件添加待删除的flag
++ % H :: 为正则匹配的文件添加硬链接
++ % S :: 为正则匹配的文件添加软链接
++ % g :: 标记那些内容中包含正则表达式内容的文件
+ 
+这其中比较特殊的是 =% g=, 该命令是根据 *文件内容而不是文件名称* 来决定是否mark该文件的.
+
+有时,我们可能需要在多个文件中进行搜索/替换操作,那么可以使用如下操作:
+
++ M-s a C-s :: 使用isearch逐一搜索mark的那些文件
++ Q :: 对mark的那些文件逐一进行正则替换
+     
+dired还允许你调用外部命令来操作文件,这提供了莫大的灵活性:
+
++ ! :: 以同步的方式调用shell命令来操作文件
++ & :: 以异步的方式调用shell命令来操作文件
+     
+在输入shell命令操作文件时,可以使用 =*= 来代替文件列表,这时 =*= 被替换成被操作的文件,每个文件用空格分隔.
+
+在输入shell命令操作文件时,还可以使用 =.= 来代替单个文件,这时 =.= 被替换成被操作的单个文件,且针对每个文件都会执行一条shell命令.
 
 
 
 * 书签
-
-* 打开文件
 
 * 压缩文件
 
@@ -37,4 +111,102 @@
 
 * 文件夹的比较与同步
 
-* 插件
+* dired-x插件
+dired-x为dired增加了大量的操作命令:
+
++ * . :: mark指定后缀名的文件
++ F :: 打开mark的那些文件,每个文件一个window
++ C-u F :: 在后台打开mark的那些文件
+
+此外dired-x也会增强原dired已有的功能:
+
+在没有mark文件的情况下使用 =!= 或 =&=,则Emacs会依据变量 =dired-guess-shell-alist-default= 中定义的规则来猜测你要对该文件作什么操作.
+
+例如,针对tar文件按下 =!=, 它会自动帮你填上 =tar xvf= 命令.
+* 其他高级用法
+** 排序
+** 过滤
+** 分色
+** 跨目录操作
+若同时想对多个目录下的文件进行操作该怎么办呢?
+
+在目录上按下 =i= 快捷键就能将该子目录的内容插入到当前同一个dired buffer中.
+
+例如: 假设我有这么一个文件夹:
+#+BEGIN_SRC dired
+    /home/Administrator/lujun9972.github.com:
+    总用量 117
+    drwxr-xr-x+ 1 Administrator None     0 十二  8 15:50 .
+    drwxrwxrwx+ 1 Administrator None     0 十二  8 15:50 ..
+    drwxr-xr-x+ 1 Administrator None     0 十二  8 15:29 .git
+    -rw-r--r--  1 Administrator None   187 十一 24 17:36 .travis.yml
+    -rw-r--r--  1 Administrator None    80 十一 24 17:36 about.org
+    drwxr-xr-x+ 1 Administrator None     0 十二  8 15:48 Emacs之怒
+    drwxr-xr-x+ 1 Administrator None     0 十二  5 12:58 linux和它的小伙伴
+    -rw-r--r--  1 Administrator None   238 十一 24 17:36 README
+    -rw-r--r--  1 Administrator None 61440 十二  8 15:18 test.tar
+    drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 编程之旅
+    lrwxrwxrwx  1 Administrator None    36 十一 24 17:36 读书笔记 -> /home/lujun9972/我的笔记/Reading
+    drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 时间管理
+    drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 无主之地
+#+END_SRC
+
+当我将光标移动到 =Emacs之怒= 上然后按下 =i= 键时,就变成了:
+#+BEGIN_SRC dired
+  /home/Administrator/lujun9972.github.com:
+  总用量 117
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 15:50 .
+  drwxrwxrwx+ 1 Administrator None     0 十二  8 15:50 ..
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 15:29 .git
+  -rw-r--r--  1 Administrator None   187 十一 24 17:36 .travis.yml
+  -rw-r--r--  1 Administrator None    80 十一 24 17:36 about.org
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 15:48 Emacs之怒
+  drwxr-xr-x+ 1 Administrator None     0 十二  5 12:58 linux和它的小伙伴
+  -rw-r--r--  1 Administrator None   238 十一 24 17:36 README
+  -rw-r--r--  1 Administrator None 61440 十二  8 15:18 test.tar
+  drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 编程之旅
+  lrwxrwxrwx  1 Administrator None    36 十一 24 17:36 读书笔记 -> /home/lujun9972/我的笔记/Reading
+  drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 时间管理
+  drwxr-xr-x+ 1 Administrator None     0 十一 24 17:36 无主之地
+
+  /home/Administrator/lujun9972.github.com/Emacs之怒:
+  总用量 77
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 16:03 .
+  lrwxrwxrwx  1 Administrator None    33 十二  8 16:03 .#dired的常用操作.org -> Administrator@PC201505171055.5772
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 15:50 ..
+  -rw-r--r--  1 Administrator None  6981 十二  8 16:02 dired的常用操作.org
+  -rw-r--r--  1 Administrator None  9213 十一 24 17:36 Emacs查看日志常用命令.org
+  -rw-r--r--  1 Administrator None 10881 十一 24 17:36 Emacs中那些不常用的行操作命令.org
+  -rw-r--r--  1 Administrator None  5507 十一 24 17:36 Emacs作为图片浏览器.org
+  -rw-r--r--  1 Administrator None  3226 十一 24 17:36 tramp的一般用法.org
+  -rw-r--r--  1 Administrator None  2522 十一 24 17:36 判断Emacs是否在图形环境中的正确方法.org
+  -rw-r--r--  1 Administrator None 11115 十一 29 11:30 如何编写EmacsScript.org
+  -rw-r--r--  1 Administrator None  1524 十一 24 17:36 使用Emacs ediff作为git diff工具.org
+  -rw-r--r--  1 Administrator None  1791 十一 24 17:36 使用Emacs ediff作为git merge工具.org
+#+END_SRC
+
+这样一来你就可以同时操作多个目录中的文件了.
+
+你还可以使用 =$= 来将目录折叠起来,dired中的那些命令会忽略调折叠起来的内容.
+
+例如我在 =lujun9972.github.com= 目录内容中的任意位置处按下 =$=,则会发现dired buffer变成了
+#+BEGIN_SRC dired
+  /home/Administrator/lujun9972.github.com:...
+  /home/Administrator/lujun9972.github.com/Emacs之怒:
+  总用量 77
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 16:03 .
+  lrwxrwxrwx  1 Administrator None    33 十二  8 16:03 .#dired的常用操作.org -> Administrator@PC201505171055.5772
+  drwxr-xr-x+ 1 Administrator None     0 十二  8 15:50 ..
+  -rw-r--r--  1 Administrator None  6981 十二  8 16:02 dired的常用操作.org
+  -rw-r--r--  1 Administrator None  9213 十一 24 17:36 Emacs查看日志常用命令.org
+  -rw-r--r--  1 Administrator None 10881 十一 24 17:36 Emacs中那些不常用的行操作命令.org
+  -rw-r--r--  1 Administrator None  5507 十一 24 17:36 Emacs作为图片浏览器.org
+  -rw-r--r--  1 Administrator None  3226 十一 24 17:36 tramp的一般用法.org
+  -rw-r--r--  1 Administrator None  2522 十一 24 17:36 判断Emacs是否在图形环境中的正确方法.org
+  -rw-r--r--  1 Administrator None 11115 十一 29 11:30 如何编写EmacsScript.org
+  -rw-r--r--  1 Administrator None  1524 十一 24 17:36 使用Emacs ediff作为git diff工具.org
+  -rw-r--r--  1 Administrator None  1791 十一 24 17:36 使用Emacs ediff作为git merge工具.org
+#+END_SRC
+
+你会发现 =lujun9972.github.com= 中的内容被简化成了 =...=
+** 使用外部程序打开文件
