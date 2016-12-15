@@ -1,0 +1,32 @@
+#+TITLE: 如何修改新版gnome-terminal的标题
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2016-12-15 四 21:15]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天有位朋友询问如何修改gnome-panel上的标题.
+
+找了一下网上的资料,发现都是说通过修改PROMPT_COMMAND,将它的值设置成 =ehco -ne \"\033]0;标题名称 \007\"= 这样来实现的.
+
+然而这个方法在新版的gnome-terminal中已经无效了.
+
+不过经过尝试,发现直接在shell中执行 =ehco -ne "\033]0;标题名称 \007";read= 是有效果的,只不过按下回车之后又回复了原标题.
+
+然后继续测试将PROMPT_COMMAND设置为 =echo "COMMAND DONE"=, 发现每次执行完命令之后,确实都会显示 =COMMAND DONE=,这说明PROMPT_COMMAND的机制是生效的.
+
+考虑到PROMPT_COMMAND是在显示PS1和PS2之前执行的,怀疑是PS1或PS2覆盖了原修改标题的效果.
+
+尝试将PS1设置成"",发现这一次通过修改PROMPT_COMMAND的方式能够成功地修改标题了. 因此可以确认是PS1覆盖了原修改标题的效果.
+
+知道原因后,要防止修改标题的效果被PS1覆盖就很简单了,我们直接在PS1后面添加内容 =\033]0;标题名称 \007= 就行了.
+
+也可以编写一个简单的函数来实现这一功能:
+
+#+BEGIN_SRC shell
+  function set_title()
+  {
+      ORIGN_PS1=${ORIGN_PS1:=$PS1}
+      export PS1="$ORIGN_PS1\033]0;$*\007"
+  }
+#+END_SRC
