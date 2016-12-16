@@ -1,0 +1,208 @@
+#+TITLE: 创建Emacs版的notify-sender
+#+AUTHOR: Administrator
+#+CATEGORY: Emacs之怒
+#+DATE: [2016-12-16 周五 09:12]
+#+OPTIONS: ^:{}
+
+
+
+* Desktop Notificatino
+
+   若Emacs编译时开启了D-Bus支持,则通过加载`notifications'库,Emacs可以给某些操作系统发送"通知"
+
+   * (notifications-notify &rest params)
+
+	 通过D-Bus,使用Freedesktop notification protocol发送通知,该函数返回一个整数作为通知的id
+
+	 参数params可以是如下keyword参数
+
+	 * :bus BUS
+
+	   D-Bus bus. 该参数只有在bus不是`:session'时使用
+
+	 * :title TITLE
+
+	   通知的标题
+
+	 * :body TEXT
+
+	   通知的内容. 某些notification server甚至支持HTML标签
+
+	 * :app-name NAME
+
+	   发送通知的应用程序名称. 默认为`notifications-application-name'
+
+	 * :replaces-id ID
+
+	   表示该通知要替代指定id的原先通知. ID必须是之前`notifications-notify'调用的返回值
+
+	 * :app-icon ICON-FILE
+
+	   通知的图标文件. 若ICON-FILE为nil则不显示图标. 默认为`notifications-application-icon'
+
+	 * :actions (KEY TITLE KEY TITLE...)
+
+	   一系列要应用的动作. KEY和TITLE都是字符串. 其中TITLE会在通知上以按钮的形式展现.
+
+	   若要设置默认动作(通常该动作在点击notification时触发)的key为"default".
+
+	 * :timeout TIMEOUT
+
+	   显示多少毫秒后自动关闭. 默认值-1表示超时时间遵照notification server的设置. 0表示无限时间
+
+	 * :urgency URGENCY
+
+	   紧急的级别. 可以是'low,'normal或'critical
+
+	 * :action-items
+
+	   若设置了该关键字,则TITLE string of the action也被解释为icon name
+
+	 * :category CATEGORY
+
+	   通知的类型,字符串格式
+
+	 * :desktop-entry FILENAME
+
+	   This specifies the name of the desktop filename representing the calling program, like `"emacs"'.
+
+	 * :image-data (WIDTH HEIGHT ROWSTRIDE HAS-ALPHA BITS CHANNELS DATA)
+
+	   这是一个raw data 图像格式描述了宽,高,rowstride,是否有alpha通道,每个sample的比特数,通道和图像数据
+
+	 * :image-path PATH
+
+	   PATH为一个URI(目前只支持"file"类型)或"$XDG_DATA_DIRS/icon"目录下的某个icon theme的名称
+
+	 * :sound-file FILENAME
+
+	   弹出通知时,播放声音文件
+
+	 * :sound-name NAME
+
+	   "$XDG_DATA_DIRS/sound"目录下定义的sound theme
+
+	 * :suppress-sound
+
+	   若设置了,则不播放任何声音.
+
+	 * :resident
+
+	   若设置了该参数,则即使对该通知做了动作,该通知也不会自动关闭,除非明确的对该通知发出关闭操作
+
+	 * :transient
+
+	   若设置了该参数,则server会认为该通知是暂时的,而忽略server的持久化能力(?When set the server will treat the notification as transient and by-pass the server's persistence capability, if it should exist?)
+
+	 * :x POSITION / :y POSITION
+
+	   定义通知在屏幕上的显示位置
+
+	 * :on-action FUNCTION
+
+	   当按下了表示action的按钮时,会调用该函数. 该函数接受两个参数:notification id和action key
+
+	 * :on-close FUNCTION
+
+	   当通知因为超时或人为关闭时调用该函数. 该函数接受两个参数:notification id和关闭的REASON.
+
+	   函数中的REASON参数可以是:
+
+	   * 'expired
+
+		 由于超时而关闭
+
+	   * 'dismissed
+
+		 被人为关闭
+
+	   * 'close-notification
+
+		 通过调用`notifications-close-notification'函数来关闭
+
+	   * 'undefined
+
+		 notification server未告知原因
+
+	   #+BEGIN_SRC emacs-lisp
+       (defun my-on-action-function (id key)
+       (message "Message %d, key \"%s\" pressed" id key))
+       ;; => my-on-action-function
+
+       (defun my-on-close-function (id reason)
+       (message "Message %d, closed due to \"%s\"" id reason))
+       ;; => my-on-close-function
+
+       (notifications-notify
+       :title "Title"
+       :body "This is <b>important</b>."
+       :actions '("Confirm" "I agree" "Refuse" "I disagree")
+       :on-action 'my-on-action-function
+       :on-close 'my-on-close-function)
+       ;; => 22
+
+       这时会弹出一个message window. 按下 "I agree"
+       ;; => Message 22, key "Confirm" pressed
+       ;;    Message 22, closed due to "dismissed"
+	   #+END_SRC
+
+	 * (notifications-close-notification notification-id &optional bus)
+
+	   关闭指定id的通知. 参数BUS可以是一个表示D-Bus连接的字符串.默认为:session
+
+	 * (noifications-get-capabilities &optional bus)
+
+	   返回notification server支持的特性的列表. 
+
+       它的返回值是一个由sybmol组成的list:
+
+	   * :actions
+
+		 The server will provide the specified actions to the user
+
+	   * :body
+		 
+		 支持定义Body的内容
+
+	   * :body-hyperlinks
+
+		 body中支持超链接
+
+	   * :body-images
+
+		 body中支持嵌入图片
+
+	   * :body-markup
+
+		 支持在body中嵌入标记
+
+	   * :icon-muti
+
+		 server会把图片数组中的每帧整合成一个动画
+
+	   * :icon-static
+
+		 server只显示图片数组中的地一个帧图片,该参数与:icon-multi互斥
+
+	   * persistence
+
+		 支持通知的持久化
+
+	   * :sound
+
+		 支持播放声音
+
+	 * (notifications-get-server-information)
+	   
+	   以字符串列表的形式返回notification server的信息. 
+
+       返回值的格式为'(NAME VENDOR VERSION SPEC-VERSION). 其中:
+
+	   * NAME 为server的产品名称
+
+	   * VENDOR 为vendor名称. 常见的有"KDE"和"GNOME"
+
+	   * VERSION 为server的版本号
+
+	   * SPEC-VERSION 为The specification version the server is compliant with
+	
