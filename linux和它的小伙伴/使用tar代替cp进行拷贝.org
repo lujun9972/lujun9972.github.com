@@ -1,0 +1,31 @@
+#+TITLE: 使用tar代替cp进行拷贝
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2016-12-21 三 22:48]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+一般来说我们都是使用cp进行拷贝的,然而使用cp拷贝时会修改被拷贝文件的创建日期,修改日期以及所有权.
+
+另外,如果一个文件是另一个文件的硬链接的话,这个文件在拷贝时也会被复制成一个完全独立的新文件.
+
+为了解决这些问题,可以使用tar来代替cp进行拷贝. 像这样:
+#+BEGIN_SRC shell
+  tar cvf - * | (cd /dest/dir && tar xvfp -)
+#+END_SRC
+
+这里第一个tar将文件打包后写入标准输出,然后通过管道传递给第二个tar,由第二个tar进行解压. 注意到第二个tar里面使用了 =-p=, 以保证文件权限不会被更改.
+
+使用这种方式的好处除了可以保持文件的硬连接,创建时间,修改时间以及所有权以外,还可以做到 *通过ssh复制到远程服务器上*!
+
+#+BEGIN_SRC shell
+  tar -cvf - * | ssh remote_host 'cd /dest;tar xvfp -'
+#+END_SRC
+
+这在没有rsync或scp时非常好用(不过这种情况应该很少见吧^_^).
+
+当然,这种技巧也可以与find命令相结合
+#+BEGIN_SRC shell
+  find . -depth |xargs tar cvf - | (cd ../tar_cp/ && tar xvfp -)
+#+END_SRC
