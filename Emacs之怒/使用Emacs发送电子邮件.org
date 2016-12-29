@@ -1,0 +1,131 @@
+#+TITLE: 使用Emacs发送电子邮件
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2016-12-29 Thu 21:11]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Emacs自带了SMTP库,这使的Emacs无需任何第三方软件的帮助就能通过第三方邮件服务商发送电子邮件.
+
+* 配置
+在写邮件之前,推荐先配置一下 =user-full-name= 与 =user-mail-address= 这两个变量. 
+在编写新邮件时,Emacs会使用这两个变量来形成邮件中的 =From= header域的值.
+#+BEGIN_SRC emacs-lisp
+  (setq user-full-name "lujun9972")
+  (setq user-mail-address "lujun9972@sina.com")
+#+END_SRC
+
+此外,Emacs提供了多种方式用来发送电子邮件. 具体使用那种发送方式由变量 =send-mail-function= 决定,它可以有以下几个值:
+
++ sendmail-query-once :: 第一次发送邮件时咨询你要选择哪种发送方式,之后就用这种方式发送后面的邮件.
++ smtpmail-send-it :: 使用外部邮件服务商提供的SMTP邮件服务器来发送邮件. smtp的信息可以存入变量 =smtpmail-smtp-server= , =smtpmail-smtp-user= , =smtpmail-smtp-service= , =smtpmail-stream-type= 和文件 =~/.authinfo= 中. 详情可以查看 =Emacs SMTP Library= 的说明
++ sendmail-send-it :: 使用外部默认的邮件发送程序来发送,一般来说改程序为 =sendmail=
++ mailclient-send-it :: 使用外部的邮件客户端来发送邮件
++ feedmail-send-it :: 类似 =sendmail-send-it=,但允许你延迟一段时间稍候发送. 详情参见文件 =feedmail.el= 中的注释.
+     
+可以看到其中后面3中发送方式都依赖于第三方的程序,唯一不依赖第三方程序的只有 =smtpmail-send-it=,所以我们可以直接这么设置:
+#+BEGIN_SRC emacs-lisp
+  (setq send-mail-function 'smtpmail-send-it)
+#+END_SRC
+
+如果我们明确总是使用某一个smtp服务器来发送电子邮件的话,我们还可以预先配置好  =smtpmail-smtp-server= , =smtpmail-smtp-user= , =smtpmail-smtp-service= , =smtpmail-stream-type= 这几个变量,省得到时候发送时手输.
+#+BEGIN_SRC emacs-lisp
+  (setq smtpmail-smtp-server "smtp.sina.com")
+  (setq smtpmail-smtp-user "lujun9972")
+  (setq smtpmail-smtp-service 25)
+  (setq smtpmail-stream-type 'starttls)
+#+END_SRC
+
+* 编写新邮件
+按下 =C-x m= 或者直接执行 =M-x compose-mail= 就会弹出一个 =*unsent mail*= 的buffer,看起来大概是这样的:
+#+BEGIN_SRC message
+  To: 
+  Subject: 
+  From: lujun9972 <lujun9972@sina.com>
+  --text follows this line--
+
+#+END_SRC
+
+在buffer的最上方是一系列的header域,用于指明电子邮件的接受人,标题等信息. 
+
+而像 =Date= , =Message-Id= 这样的header,一般不会显示出来,这些header的值是在发送邮件时由emacs自动填写的.
+
+理论上,你可以随意创建header域,但某些header域有其约定俗成的意义:
+
++ From :: 该域指定了邮件发送者是谁. 需要注意的是: *有些smtp服务商会校验From域地址,比如sina,因此最好填写一个真是的邮件地址*
++ To :: 邮件要发送给谁,可以指定多个地址,每个地址之间用逗号隔开
++ Subject :: 邮件的标题
++ CC :: 抄送人
++ BCC :: 密送人,这部分的地址不会在邮件的haader中被记录
++ FCC :: 该域指定的是一个文件路径. Emacs会将邮件内容以mbox的格式(或babyl格式)添加到该文件中. 若需要指定多个文件,则需要有多个FCC域,每个域一个文件
++ Reply-to :: 指定对方回复的地址,当你的 =From= 地址无法接受回复时特别有用
+
+=--text follows this lines--= 这一行用于分割mail的header和body. 在其上的是header,在其下的是邮件内容.
+
+填写完header域以及邮件内容之后,按下 =C-c C-c= 后再输入密码就能将电子邮件发送出去了.
+
+若你不希望每次都手工输入密码,则可以将密码保存到 =~/.authinfo= 文件中,一个.authinfo文件的格式大概是这样的:
+#+BEGIN_EXAMPLE
+machine smtp服务器地址 login 用户名 port 端口号 password 密码
+#+END_EXAMPLE
+
+* 添加附件
+按下 =C-c C-a (mml-attach-file)=  就能为邮件添加附件. Emacs会依次提示输入附件路径,类型,描述以及整合方式.
+
+不过插入附件并不会真的把附件的内容添加到邮件内容中,相反它只会在邮件内容中插入一个 <#part> 的引用,像这样:
+#+BEGIN_SRC message
+  To: 29464846@qq.com
+  Subject: 使用Emacs发送电子邮件实验
+  From: lujun9972 <lujun9972@sina.com>
+  --text follows this line--
+  这是内容
+
+  <#part type="text/x-org" filename="/home/lujun9972/github/lujun9972.github.com/Emacs之怒/使用Emacs发送电子邮件.org" disposition=attachment description=使用Emacs发送电子邮件.org>
+  <#/part>
+#+END_SRC
+
+* 设置mail address的别名
+一个别名可以代表一个或多个邮件地址.
+
+别名的定义保存在一个文件中,该文件由变量 =mail-personal-alias-file= 指定,默认为 =~/.mailrc=. 文件的格式如下:
+#+BEGIN_SRC text
+  alias 别名 邮件地址
+  或
+  alias 别名 邮件地址1 邮件地址2 ...
+  或
+  source FILENAME
+#+END_SRC
+
+注意到当别名表示多个邮件地址时,各邮件地址之间用空格分割,而不是用逗号. 也因此,若邮件地址中带有空格,需要用引号将之括起来,像这样:
+#+BEGIN_SRC text
+  alias jsmith "John Q. Smith <none@example.com>"
+#+END_SRC
+
+而 =source= 命令则可以引用其他的别名文件.
+
+定义好别名文件后,在 =To=, =From=, =CC=, =BCC= 以及 =Reply-to= 这些域中输入别名后会自动扩展成邮件地址.
+
+但若想在其他域中也插入别名对应的邮件地址,则需要手工执行命令 =M-x mail-abbrev-insert-alias= 
+
+* 添加签名
+变量 =message-signature= 的值决定了Emacs如何处理你的邮件签名, 它支持以下几种值:
+
++ t :: 会从 =message-signature-file= 指定的文件中读取并插入邮件签名,默认该文件为 =~/.signature=
++ 字符串 :: 该字符串就是邮件签名,直接插入
++ nil :: Emacs不会帮你自动插入邮件签名,需要手工执行 =C-c C-w (message-insert-signature)= 才能插入
+     
+按惯例,签名一般是以 =--= 开头的,因此若你设置的签名没有该前缀的话, Emacs会自动昂你添加该前缀.
+
+使用函数 =(fortune-file &optional FILE)= 可以使用fortune程序为你声称一个签名, 你可以为每个邮件插入不同的fortune cookie message:
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'mail-setup-hook 'fortune-to-signature)
+#+END_SRC
+
+* 调试
+在发送邮件的过程中如果出现问题想调试,可以开启smtpmail的调试功能:
+#+BEGIN_SRC emacs-lisp
+  (setq smtpmail-debug-info t)
+  (setq smtpmail-debug-verb t)
+#+END_SRC
+之后与SMTP协议交互的每一个过程都会被记录在一个名为 =*trace of SMTP session to xxxxxx*= 的buffer中.
+
