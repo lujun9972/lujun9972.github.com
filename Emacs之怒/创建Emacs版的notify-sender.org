@@ -5,204 +5,209 @@
 #+OPTIONS: ^:{}
 
 
+最近对EmacsScript颇有兴趣,刚好翻看Emacs Lisp Manual的时候看到"Desktop Notifications"这一章,于是突发奇想,尝试实现一个Emacs版的notify-send.
 
-* Desktop Notificatino
+* notify-send
+notify-send是一个可以用来发送桌面通知的命令, 我经常在脚本中用它来通知一些值得关注的消息.
+关于notfiy-send的使用说明可以参见[[ego-link:../linux%E5%92%8C%E5%AE%83%E7%9A%84%E5%B0%8F%E4%BC%99%E4%BC%B4/%E4%BD%BF%E7%94%A8notify-send%E5%8F%91%E9%80%81%E6%A1%8C%E9%9D%A2%E9%80%9A%E7%9F%A5.org][使用notify-send发送桌面通知.org]]
 
-   若Emacs编译时开启了D-Bus支持,则通过加载`notifications'库,Emacs可以给某些操作系统发送"通知"
+简单起见,我们这次只实现notify-send常用的那几个选项:
 
-   * (notifications-notify &rest params)
+| -t | 设置超时时间 |
+| -u | 设置通知级别 |
+| -i | 设置显示图标 |
 
-	 通过D-Bus,使用Freedesktop notification protocol发送通知,该函数返回一个整数作为通知的id
+* EmacsLisp的notification库
+若Emacs编译时开启了D-Bus支持,则通过加载`notifications'库,Emacs可以给某些操作系统发送"通知"
 
-	 参数params可以是如下keyword参数
+(notifications-notify &rest params)
 
-	 * :bus BUS
+通过D-Bus,使用Freedesktop notification protocol发送通知,该函数返回一个整数作为通知的id
 
-	   D-Bus bus. 该参数只有在bus不是`:session'时使用
+参数params可以是如下keyword参数
 
-	 * :title TITLE
++ :bus BUS
 
-	   通知的标题
+  D-Bus bus. 该参数只有在bus不是`:session'时使用
 
-	 * :body TEXT
++ :title TITLE
 
-	   通知的内容. 某些notification server甚至支持HTML标签
+  通知的标题
 
-	 * :app-name NAME
++ :body TEXT
 
-	   发送通知的应用程序名称. 默认为`notifications-application-name'
+  通知的内容. 某些notification server甚至支持HTML标签
 
-	 * :replaces-id ID
++ :app-name NAME
 
-	   表示该通知要替代指定id的原先通知. ID必须是之前`notifications-notify'调用的返回值
+  发送通知的应用程序名称. 默认为`notifications-application-name'
 
-	 * :app-icon ICON-FILE
++ :replaces-id ID
 
-	   通知的图标文件. 若ICON-FILE为nil则不显示图标. 默认为`notifications-application-icon'
+  表示该通知要替代指定id的原先通知. ID必须是之前`notifications-notify'调用的返回值
 
-	 * :actions (KEY TITLE KEY TITLE...)
++ :app-icon ICON-FILE
 
-	   一系列要应用的动作. KEY和TITLE都是字符串. 其中TITLE会在通知上以按钮的形式展现.
+  通知的图标文件. 若ICON-FILE为nil则不显示图标. 默认为`notifications-application-icon'
 
-	   若要设置默认动作(通常该动作在点击notification时触发)的key为"default".
++ :actions (KEY TITLE KEY TITLE...)
 
-	 * :timeout TIMEOUT
+  一系列要应用的动作. KEY和TITLE都是字符串. 其中TITLE会在通知上以按钮的形式展现.
 
-	   显示多少毫秒后自动关闭. 默认值-1表示超时时间遵照notification server的设置. 0表示无限时间
+  若要设置默认动作(通常该动作在点击notification时触发)的key为"default".
 
-	 * :urgency URGENCY
++ :timeout TIMEOUT
 
-	   紧急的级别. 可以是'low,'normal或'critical
+  显示多少毫秒后自动关闭. 默认值-1表示超时时间遵照notification server的设置. 0表示无限时间
 
-	 * :action-items
++ :urgency URGENCY
 
-	   若设置了该关键字,则TITLE string of the action也被解释为icon name
+  紧急的级别. 可以是'low,'normal或'critical
 
-	 * :category CATEGORY
++ :action-items
 
-	   通知的类型,字符串格式
+  若设置了该关键字,则TITLE string of the action也被解释为icon name
 
-	 * :desktop-entry FILENAME
++ :category CATEGORY
 
-	   This specifies the name of the desktop filename representing the calling program, like `"emacs"'.
+  通知的类型,字符串格式
 
-	 * :image-data (WIDTH HEIGHT ROWSTRIDE HAS-ALPHA BITS CHANNELS DATA)
++ :desktop-entry FILENAME
 
-	   这是一个raw data 图像格式描述了宽,高,rowstride,是否有alpha通道,每个sample的比特数,通道和图像数据
+  This specifies the name of the desktop filename representing the calling program, like `"emacs"'.
 
-	 * :image-path PATH
++ :image-data (WIDTH HEIGHT ROWSTRIDE HAS-ALPHA BITS CHANNELS DATA)
 
-	   PATH为一个URI(目前只支持"file"类型)或"$XDG_DATA_DIRS/icon"目录下的某个icon theme的名称
+  这是一个raw data 图像格式描述了宽,高,rowstride,是否有alpha通道,每个sample的比特数,通道和图像数据
 
-	 * :sound-file FILENAME
++ :image-path PATH
 
-	   弹出通知时,播放声音文件
+  PATH为一个URI(目前只支持"file"类型)或"$XDG_DATA_DIRS/icon"目录下的某个icon theme的名称
 
-	 * :sound-name NAME
++ :sound-file FILENAME
 
-	   "$XDG_DATA_DIRS/sound"目录下定义的sound theme
+  弹出通知时,播放声音文件
 
-	 * :suppress-sound
++ :sound-name NAME
 
-	   若设置了,则不播放任何声音.
+  "$XDG_DATA_DIRS/sound"目录下定义的sound theme
 
-	 * :resident
++ :suppress-sound
 
-	   若设置了该参数,则即使对该通知做了动作,该通知也不会自动关闭,除非明确的对该通知发出关闭操作
+  若设置了,则不播放任何声音.
 
-	 * :transient
++ :resident
 
-	   若设置了该参数,则server会认为该通知是暂时的,而忽略server的持久化能力(?When set the server will treat the notification as transient and by-pass the server's persistence capability, if it should exist?)
+  若设置了该参数,则即使对该通知做了动作,该通知也不会自动关闭,除非明确的对该通知发出关闭操作
 
-	 * :x POSITION / :y POSITION
++ :transient
 
-	   定义通知在屏幕上的显示位置
+  若设置了该参数,则server会认为该通知是暂时的,而忽略server的持久化能力(?When set the server will treat the notification as transient and by-pass the server's persistence capability, if it should exist?)
 
-	 * :on-action FUNCTION
++ :x POSITION / :y POSITION
 
-	   当按下了表示action的按钮时,会调用该函数. 该函数接受两个参数:notification id和action key
+  定义通知在屏幕上的显示位置
 
-	 * :on-close FUNCTION
++ :on-action FUNCTION
 
-	   当通知因为超时或人为关闭时调用该函数. 该函数接受两个参数:notification id和关闭的REASON.
+  当按下了表示action的按钮时,会调用该函数. 该函数接受两个参数:notification id和action key
 
-	   函数中的REASON参数可以是:
++ :on-close FUNCTION
 
-	   * 'expired
+  当通知因为超时或人为关闭时调用该函数. 该函数接受两个参数:notification id和关闭的REASON.
 
-		 由于超时而关闭
+  函数中的REASON参数可以是:
 
-	   * 'dismissed
+  - 'expired
 
-		 被人为关闭
+     由于超时而关闭
 
-	   * 'close-notification
+  - 'dismissed
 
-		 通过调用`notifications-close-notification'函数来关闭
+     被人为关闭
 
-	   * 'undefined
+  - 'close-notification
 
-		 notification server未告知原因
+     通过调用`notifications-close-notification'函数来关闭
 
-	   #+BEGIN_SRC emacs-lisp
-       (defun my-on-action-function (id key)
-       (message "Message %d, key \"%s\" pressed" id key))
-       ;; => my-on-action-function
+  - 'undefined
 
-       (defun my-on-close-function (id reason)
-       (message "Message %d, closed due to \"%s\"" id reason))
-       ;; => my-on-close-function
+    notification server未告知原因
 
-       (notifications-notify
-       :title "Title"
-       :body "This is <b>important</b>."
-       :actions '("Confirm" "I agree" "Refuse" "I disagree")
-       :on-action 'my-on-action-function
-       :on-close 'my-on-close-function)
-       ;; => 22
+  #+BEGIN_SRC emacs-lisp
+  (defun my-on-action-function (id key)
+  (message "Message %d, key \"%s\" pressed" id key))
+  ;; => my-on-action-function
 
-       这时会弹出一个message window. 按下 "I agree"
-       ;; => Message 22, key "Confirm" pressed
-       ;;    Message 22, closed due to "dismissed"
-	   #+END_SRC
+  (defun my-on-close-function (id reason)
+  (message "Message %d, closed due to \"%s\"" id reason))
+  ;; => my-on-close-function
 
-	 * (notifications-close-notification notification-id &optional bus)
+  (notifications-notify
+  :title "Title"
+  :body "This is <b>important</b>."
+  :actions '("Confirm" "I agree" "Refuse" "I disagree")
+  :on-action 'my-on-action-function
+  :on-close 'my-on-close-function)
+  ;; => 22
 
-	   关闭指定id的通知. 参数BUS可以是一个表示D-Bus连接的字符串.默认为:session
+  这时会弹出一个message window. 按下 "I agree"
+  ;; => Message 22, key "Confirm" pressed
+  ;;    Message 22, closed due to "dismissed"
+  #+END_SRC
 
-	 * (noifications-get-capabilities &optional bus)
+* 实现
+有了notifications库,实现起来就异常的简单了,基本上只需要调用 =notifications-notify= 这个函数就OK了.
 
-	   返回notification server支持的特性的列表. 
+首先是固定的起手式:
+#+BEGIN_SRC emacs-lisp :tangle "~/bin/notify-send.el"
+  #!/bin/sh
+  ":"; exec emacs --quick --script "$0" -- "$@" # -*- mode: emacs-lisp; lexical-binding: t; -*-
+  (pop command-line-args-left)            
+#+END_SRC
 
-       它的返回值是一个由sybmol组成的list:
+使用 =notifications-notify= 前当然是要先加载notifications库了:
+#+BEGIN_SRC emacs-lisp :tangle "~/bin/notify-send.el" 
+  (require 'notifications)
+#+END_SRC
 
-	   * :actions
+现在开始需要将传递给命令行的参数转换成传递给 =notifications-notify= 函数的参数.
 
-		 The server will provide the specified actions to the user
+#+BEGIN_SRC emacs-lisp :tangle "~/bin/notify-send.el"
+  (defvar notify-send-args nil
+    "存放传递给notification-notify函数的参数")
 
-	   * :body
-		 
-		 支持定义Body的内容
+  (defvar notify-send-map '(("-t" . :timeout)
+                            ("-u" . :urgency)
+                            ("-i" . :app-icon))
+    "命令行参数与notifications-notify参数的对应关系")
 
-	   * :body-hyperlinks
+  ;; 将命令行参数转换成对应的函数参数
+  (catch :DONE
+    (while command-line-args-left
+      (let ((arg (pop command-line-args-left)))
+        (cond ((assoc arg notify-send-map)
+               (let ((arg (cdr (assoc arg notify-send-map)))
+                     (val (pop command-line-args-left)))
+                 (when (eq arg :timeout)
+                   (setq val (string-to-number val)))
+                 (setq notify-send-args `(,arg ,val ,@notify-send-args) )))
+              ((string= arg "--")
+               (let ((title (pop command-line-args-left))
+                     (body (pop command-line-args-left)))
+                 (setq notify-send-args `(:title ,title :body ,body ,@notify-send-args))
+                 (throw :DONE :DONE)))
+              (t
+               (let ((title arg)
+                     (body (pop command-line-args-left)))
+                 (setq notify-send-args `(:title ,title :body ,body ,@notify-send-args))
+                 (throw :DONE :DONE)))))))
 
-		 body中支持超链接
+  ;; 调用notifications-notify发送消息
+  (apply #'notifications-notify notify-send-args)
+#+END_SRC
 
-	   * :body-images
-
-		 body中支持嵌入图片
-
-	   * :body-markup
-
-		 支持在body中嵌入标记
-
-	   * :icon-muti
-
-		 server会把图片数组中的每帧整合成一个动画
-
-	   * :icon-static
-
-		 server只显示图片数组中的地一个帧图片,该参数与:icon-multi互斥
-
-	   * persistence
-
-		 支持通知的持久化
-
-	   * :sound
-
-		 支持播放声音
-
-	 * (notifications-get-server-information)
-	   
-	   以字符串列表的形式返回notification server的信息. 
-
-       返回值的格式为'(NAME VENDOR VERSION SPEC-VERSION). 其中:
-
-	   * NAME 为server的产品名称
-
-	   * VENDOR 为vendor名称. 常见的有"KDE"和"GNOME"
-
-	   * VERSION 为server的版本号
-
-	   * SPEC-VERSION 为The specification version the server is compliant with
-	
+最后将 =command-line-args-left= 清空,防止报错.
+#+BEGIN_SRC emacs-lisp  :tangle "~/bin/notify-send.el"
+  (setq command-line-args-left nil)
+#+END_SRC

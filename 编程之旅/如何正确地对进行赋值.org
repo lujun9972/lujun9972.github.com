@@ -1,0 +1,107 @@
+#+TITLE: 如何正确地对$@进行赋值
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2017-01-01 日 21:20]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+=$@= 比较特殊,跟一般的 =$VAR= 都不一样. 当进行赋值时通常需要把 =$@= 赋值给数组变量,否则在处理由引号括起来的带空格的参数时就可能会有问题了.
+
+下面是举几个例子作为演示:
+
+1. 遍历 "$@" 的效果:
+   #+BEGIN_SRC shell :results org :exports both
+     function test
+     {
+         for var in "$@";do
+             echo $var
+         done
+     }
+
+     test 1 "2 3" 4
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   1
+   2 3
+   4
+   #+END_SRC
+
+2. 用一般变量commands保存 "$@",并遍历 "$commands"
+   #+BEGIN_SRC shell :results org :exports both
+     function test
+     {
+         commands="$@"
+         for var in "$commands";do
+             echo $var
+         done
+     }
+
+     test 1 "2 3" 4
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   1 2 3 4
+   #+END_SRC
+
+   发现所有参数都合并成一行 =1 2 3 4=
+   
+3. 用一般变量commands保存 "$@",并遍历 $commands
+   #+BEGIN_SRC shell :results org :exports both
+     function test
+     {
+         commands="$@"
+         for var in $commands;do
+             echo $var
+         done
+     }
+
+     test 1 "2 3" 4
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   1
+   2
+   3
+   4
+   #+END_SRC
+
+   发现只输出中把参数 =2 3= e拆分开了.
+
+4. 用数组变量commands保存 "$@",并遍历 "$commands"
+   #+BEGIN_SRC shell :results org :exports both
+     function test
+     {
+         commands=("$@")
+         for var in "${commands[@]}";do
+             echo $var
+         done
+     }
+
+     test 1 "2 3" 4
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   1
+   2 3
+   4
+   #+END_SRC
+
+   这次的结果总算是正确的了.
+
+总结起来,要正确地对 =$@= 进行赋值要注意以下几点:
+
+1. 使用数组变量保存 =$@= 的值: 
+   #+BEGIN_SRC shell
+     commands=("$@")
+   #+END_SRC
+
+2. 便利数组变量时,需要使用带引号的@进行遍历
+   #+BEGIN_SRC shell
+     for var in "${commands[@]}";do
+     done
+   #+END_SRC
