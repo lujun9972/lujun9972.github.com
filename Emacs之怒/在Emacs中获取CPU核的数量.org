@@ -1,0 +1,62 @@
+#+TITLE: 在Emacs中获取CPU核的数量
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2017-02-28 二 10:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 [[http://nullprogram.com/blog/2015/10/14/][Counting Processor Cores in Emacs]] 这里看到的,记录一下
+
+* 在linux/cygwin下获取CPU核的数量
+linux/cygwin提供了 =/proc= 虚拟文件系统可以获取系统信息,具体来说,在 =/proc/cpuinfo= 中会列出所有CPU核的信息
+#+BEGIN_SRC emacs-lisp
+  (when (file-exists-p "/proc/cpuinfo")
+    (with-temp-buffer
+      (insert-file-contents "/proc/cpuinfo")
+      (how-many "^processor[[:space:]]+:")))
+#+END_SRC
+
+#+RESULTS:
+: 2
+
+* 在Windows下获取CPU核的数量
+Windows提供了一个名为 =NUMBER_OF_PROCESSORS= 的环境变量,里面存的就是核的数量
+#+BEGIN_SRC emacs-lisp
+  (let ((number-of-processors (getenv "NUMBER_OF_PROCESSORS")))
+    (when number-of-processors
+      (string-to-number number-of-processors)))
+#+END_SRC
+
+* 在BSD/OSX下获取CPU核的数量
+需要调用 =sysctl= 来获取
+#+BEGIN_SRC emacs-lisp
+  (with-temp-buffer
+    (ignore-errors
+      (when (zerop (call-process "sysctl" nil t nil "-n" "hw.ncpu"))
+        (string-to-number (buffer-string)))))
+#+END_SRC
+
+* 综合起来
+通过变量 =system-type= 可以获得操作系统的类型,不同操作系统调用不同的方法来获取CPU核的数量
+#+BEGIN_SRC emacs-lisp
+  (defun numcores ()
+    "Return number of cores"
+    (case system-type
+      ((gnu/linux cygwin)
+       (when (file-exists-p "/proc/cpuinfo")
+         (with-temp-buffer
+           (insert-file-contents "/proc/cpuinfo")
+           (how-many "^processor[[:space:]]+:")))
+       )
+      ((gnu/kfreebsd darwin)
+       (with-temp-buffer
+         (ignore-errors
+           (when (zerop (call-process "sysctl" nil t nil "-n" "hw.ncpu"))
+             (string-to-number (buffer-string)))))
+       )
+      ((windows-nt)
+       (let ((number-of-processors (getenv "NUMBER_OF_PROCESSORS")))
+         (when number-of-processors
+           (string-to-number number-of-processors)))
+       )))
+#+END_SRC
