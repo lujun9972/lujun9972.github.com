@@ -55,15 +55,15 @@ is nil.
 #+END_QUOTE
 
 这样一来,我们可以把注册的对象作为value,并用一个一定存在的值(比如t/nil)作为key值来创建一个只包含唯一键值对的弱引用hashtable.
-hashtable存在则说明一定注册了某个对象,弱该对象没有被回收则使用key值应该能从该hashtable中取出值来,弱对象被销毁,则使用该key值就不能从该hashtable中取出值来了,也就是回返回nil.
+hashtable存在则说明一定注册了某个对象,若该对象没有被回收则使用key值应该能从该hashtable中取出值来,若对象被销毁,则使用该key值就不能从该hashtable中取出值来了,也就是返回nil.
 #+BEGIN_SRC emacs-lisp
   (defun weak-ref (thing)
-    "创建一个弱应用关系"
+    "创建一个弱引用关系"
     (let ((ref (make-hash-table :size 1 :weakness 'value :test 'eq)))
       (setf (gethash t ref) thing)
       ref))
   (defun deref (ref)
-    "弱ref中的value被回收,则deref函数回返回nil,否则返回该value"
+    "ref中的value被回收,则deref函数会返回nil,否则返回该value"
     (gethash t ref))
 #+END_SRC
 
@@ -85,9 +85,9 @@ hashtable存在则说明一定注册了某个对象,弱该对象没有被回收�
   (add-hook 'post-gc-hook #'try-finalize)
 #+END_SRC
 
-当然上面的代码只是为了说明方案的,还远远不够完美. 
-比如在调用 =post-gc-hook= 函数时不会出发垃圾回收机制,因此要小心在函数中不要使用太多的内存,而 =cl-remove-if= 就会产生大量的新cons cell.
-又比如,当以此调用各个析构函数时,要保证即使其中一个析构函数执行时发生error,也不能因此而中断对其他析构函数的调用.
+当然上面的代码只是为了说明方案的原理的,还远远不够完美. 
+比如在调用 =post-gc-hook= 函数时不会触发垃圾回收机制,因此要小心在函数中不要使用太多的内存,而 =cl-remove-if= 就会产生大量的新cons cell.
+又比如,当依次调用各个析构函数时,要保证即使其中一个析构函数执行时发生error,也不能因此而中断对其他析构函数的调用.
 
 最后, [[http://nullprogram.com/blog/2014/01/27/][Emacs Lisp Object Finalizers]] 的作者已经开发出了一个package用于实现该回收机制了,我们只要直接用就好了:
 地址是: https://github.com/skeeto/elisp-finalize
