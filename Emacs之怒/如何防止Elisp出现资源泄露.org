@@ -1,0 +1,44 @@
+#+TITLE: 如何防止Elisp出现资源泄露
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2017-03-02 四 15:49]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+对于一些基础类型的对象,例如list,vector,string等,Elisp都能够帮你自动进行垃圾回收.
+然而对于process和buffer这两类对象,只能由你手工kill.
+
+一般来说,为了防止使用者忘了主动kill这些对象,Elisp预先提供了一些 =with-XXXX= 的宏以供使用.
+这些宏的内部一般使用 =unwind-protect= 来保证body执行完后会回收资源.
+
+例如
+#+BEGIN_SRC emacs-lisp
+  (with-temp-buffer
+    (insert-file-contents "foo.txt" nil 0 10)
+    (buffer-string))
+#+END_SRC
+
+实际会扩展成
+#+BEGIN_SRC emacs-lisp
+  (let ((temp-buffer (generate-new-buffer "*temp*")))
+    (with-current-buffer temp-buffer
+      (unwind-protect
+          (progn
+            (insert-file-contents "foo.txt" nil 0 10)
+            (buffer-string))
+        (and (buffer-live-p temp-buffer)
+             (kill-buffer temp-buffer)))))
+#+END_SRC
+
+但是使用 =with-XXXX= 宏,或者说使用 =unwind-protect= 有一个受到约束的地方,那就是无法用在需要异步调用的情况中.
+例如,当使用 =url-retrieve= 时,这个API会创建一个buffer用于存放url的内容,但是销毁这个buffer的工作需要交由它的回调函数来负责.
+
+[[http://nullprogram.com/blog/2014/01/27/][Emacs Lisp Object Finalizers]] 这篇文中提出了一种解决方案.
+它允许你将一个析构函数与一个普通对象相关联,当这个普通对象被Elisp的垃圾回收器回收时,同时会调用相对应的析构函数,从而回收process/buffer对象.
+
+Emacs本身提供了一个 =post-gc-hook=,当垃圾回收完成后就会调用该hook中的函数.
+我们要做的就是在这个函数中检查我们注册的普通对象是否被回收了,如果回收了的话就调用对应的机构函数.
+
+
+
