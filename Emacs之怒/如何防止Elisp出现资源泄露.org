@@ -40,5 +40,54 @@
 Emacs本身提供了一个 =post-gc-hook=,当垃圾回收完成后就会调用该hook中的函数.
 我们要做的就是在这个函数中检查我们注册的普通对象是否被回收了,如果回收了的话就调用对应的机构函数.
 
+那么现在问题来了,我怎么知道我们注册的普通对象被回收了呢,还是根本就没有注册该对象呢?
+这就的用到hashtable的弱引用属性了.
 
+使用 =make-hash-table= 创建hashtable时,有一个 =:weakness= 属性,关于它的说明是这样的:
+#+BEGIN_QUOTE
+:weakness WEAK -- WEAK must be one of nil, t, ‘key’, ‘value’,
+‘key-or-value’, or ‘key-and-value’.  If WEAK is not nil, the table
+returned is a weak table.  Key/value pairs are removed from a weak
+hash table when there are no non-weak references pointing to their
+key, value, one of key or value, or both key and value, depending on
+WEAK.  WEAK t is equivalent to ‘key-and-value’.  Default value of WEAK
+is nil.
+#+END_QUOTE
 
+这样一来,我们可以把注册的对象作为value,并用一个一定存在的值(比如t/nil)作为key值来创建一个只包含唯一键值对的弱引用hashtable.
+hashtable存在则说明一定注册了某个对象,弱该对象没有被回收则使用key值应该能从该hashtable中取出值来,弱对象被销毁,则使用该key值就不能从该hashtable中取出值来了,也就是回返回nil.
+#+BEGIN_SRC emacs-lisp
+  (defun weak-ref (thing)
+    "创建一个弱应用关系"
+    (let ((ref (make-hash-table :size 1 :weakness 'value :test 'eq)))
+      (setf (gethash t ref) thing)
+      ref))
+  (defun deref (ref)
+    "弱ref中的value被回收,则deref函数回返回nil,否则返回该value"
+    (gethash t ref))
+#+END_SRC
+
+现在我们可以把这个普通对象与析构函数组合在一起了
+#+BEGIN_SRC emacs-lisp
+  (defvar finalizable-objects ())
+  (defun register (object destructor)
+    (push (cons (weak-ref object) destructor) finalizable-objects))
+#+END_SRC
+
+这里我们用变量 =finalizable-objects= 来将所有注册的对象都给收集起来,这样在 =post-gc-hook= 函数中,只需要遍历该变量,找出其中被回收的普通变量然后调用对应的析构函数就OK了.
+#+BEGIN_SRC emacs-lisp
+  (defun try-finalize ()
+    (let ((alive (cl-remove-if-not #'deref finalizable-objects :key #'car))
+          (dead (cl-remove-if #'deref finalizable-objects :key #'car)))
+      (setf finalizable-objects alive)
+      (mapc #'funcall (mapcar #'cdr dead))))
+
+  (add-hook 'post-gc-hook #'try-finalize)
+#+END_SRC
+
+当然上面的代码只是为了说明方案的,还远远不够完美. 
+比如在调用 =post-gc-hook= 函数时不会出发垃圾回收机制,因此要小心在函数中不要使用太多的内存,而 =cl-remove-if= 就会产生大量的新cons cell.
+又比如,当以此调用各个析构函数时,要保证即使其中一个析构函数执行时发生error,也不能因此而中断对其他析构函数的调用.
+
+最后, [[http://nullprogram.com/blog/2014/01/27/][Emacs Lisp Object Finalizers]] 的作者已经开发出了一个package用于实现该回收机制了,我们只要直接用就好了:
+地址是: https://github.com/skeeto/elisp-finalize
