@@ -1,0 +1,144 @@
+#+TITLE: Duck Typing vs Type Erasure
+#+AUTHOR: lujun9972
+#+TAGS: 英文必须死
+#+DATE: [2017-03-07 二 16:25]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文URL: http://nullprogram.com/blog/2014/04/01/                              
+
+假设有这么一个 C++ 类.
+
+#+BEGIN_SRC c++
+  #include <iostream>
+
+  template <typename T>
+  struct Caller {
+    const T callee_;
+    Caller(const T callee) : callee_(callee) {}
+    void go() { callee_.call(); }
+  };
+#+END_SRC
+
+Caller可以接受任何类型的参数,只要该参数有 =call()= 方法就成.
+比如,定义两个类 =Foo= 和 =Bar=:
+
+#+BEGIN_SRC c++
+  struct Foo {
+    void call() const { std::cout << "Foo"; }
+  };
+
+  struct Bar {
+    void call() const { std::cout << "Bar"; }
+  };
+
+  int main() {
+    Caller<Foo> foo{Foo()};
+    Caller<Bar> bar{Bar()};
+    foo.go();
+    bar.go();
+    std::cout << std::endl;
+    return 0;
+  }
+#+END_SRC
+
+这段代码可以正常编译,运行后会显示“FooBar”. 
+这就是所谓的鸭子类型(Duck Typing) — 也就是说, “如果它看起来像鸭子,游起来像鸭子,叫起来像鸭子,那你就认为它是鸭子.”
+=Foo= 和 =Bar= 是完全无关的两个类型. 他们并没有继承自同一个类,但是只要他们都提供了需要的接口,就都能被 =Caller= 所用.
+这是一种很不一样的多态.
+
+鸭子类型一般在动态语言中比较常见. 不过通过模板,像 C++ 这样的静态强类型语言也能使用鸭子类型,而无需损害其保障类型安全的能力. 
+without sacrificing any type safety.
+
+* Java Duck Typing
+
+让我们再试试Java的泛型.
+
+#+BEGIN_SRC java
+  class Caller<T> {
+      final T callee;
+      Caller(T callee) {
+          this.callee = callee;
+      }
+      public void go() {
+          callee.call();  // compiler error: cannot find symbol call
+      }
+  }
+
+  class Foo {
+      public void call() { System.out.print("Foo"); }
+  }
+
+  class Bar {
+      public void call() { System.out.print("Bar"); }
+  }
+
+  public class Main {
+      public static void main(String args[]) {
+          Caller<Foo> f = new Caller<>(new Foo());
+          Caller<Bar> b = new Caller<>(new Bar());
+          f.go();
+          b.go();
+          System.out.println();
+      }
+  }
+#+END_SRC
+
+The program is practically identical, but this will fail with a compile-time
+error. This is the result of type erasure. Unlike C++’s templates, there will
+only ever be one compiled version of Caller, and T will become Object. Since
+Object has no call() method, compilation fails. The generic type is only for
+enabling additional compiler checks later on.
+
+C++ templates behave like a macros, expanded by the compiler once for each
+different type of applied parameter. The call symbol is looked up later, after
+the type has been fully realized, not when the template is defined.
+
+To fix this, Foo and Bar need a common ancestry. Let’s make this Callee.
+
+#+BEGIN_SRC java
+  interface Callee {
+      void call();
+  }
+#+END_SRC
+
+Caller needs to be redefined such that T is a subclass of Callee.
+
+#+BEGIN_SRC java
+  class Caller<T extends Callee> {
+      // ...
+  }
+#+END_SRC
+
+This now compiles cleanly because call() will be found in Callee. Finally,
+implement Callee.
+
+#+BEGIN_SRC java
+  class Foo implements Callee {
+      // ...
+  }
+
+  class Bar implements Callee {
+      // ...
+  }
+#+END_SRC
+
+This is no longer duck typing, just plain old polymorphism. Type erasure
+prohibits duck typing in Java (outside of dirty reflection hacks).
+
+* Signals and Slots and Events! Oh My!
+
+Duck typing is useful for implementing the observer pattern without as much
+boilerplate. A class can participate in the observer pattern without 
+[[http://raganwald.com/2014/03/31/class-hierarchies-dont-do-that.html][inheriting from some specialized class]] or interface. For example, see [[http://en.wikipedia.org/wiki/Signals_and_slots][the]]
+[[http://en.wikipedia.org/wiki/Signals_and_slots][various signal and slots systems for C++]]. In constrast, Java [[http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html][has an]]
+[[http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html][EventListener type for everything]]:
+
+  * KeyListener
+  * MouseListener
+  * MouseMotionListener
+  * FocusListener
+  * ActionListener, etc.
+
+A class concerned with many different kinds of events, such as an event
+logger, would need to inherit a large number of interfaces.
