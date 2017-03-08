@@ -43,11 +43,11 @@ Caller可以接受任何类型的参数,只要该参数有 =call()= 方法就成
 #+END_SRC
 
 这段代码可以正常编译,运行后会显示“FooBar”. 
-这就是所谓的鸭子类型(Duck Typing) — 也就是说, “如果它看起来像鸭子,游起来像鸭子,叫起来像鸭子,那你就认为它是鸭子.”
+这就是所谓的"鸭子类型"(Duck Typing) — 也就是说, “如果它看起来像鸭子,游起来像鸭子,叫起来像鸭子,那你就认为它是鸭子.”
 =Foo= 和 =Bar= 是完全无关的两个类型. 他们并没有继承自同一个类,但是只要他们都提供了需要的接口,就都能被 =Caller= 所用.
 这是一种很不一样的多态.
 
-鸭子类型一般在动态语言中比较常见. 不过通过模板,像 C++ 这样的静态强类型语言也能使用鸭子类型,而无需损害其保障类型安全的能力. 
+"鸭子类型"一般在动态语言中比较常见. 不过通过模板,像 C++ 这样的静态强类型语言也能使用"鸭子类型",而无需损害其保障类型安全的能力. 
 without sacrificing any type safety.
 
 * Java Duck Typing
@@ -84,17 +84,15 @@ without sacrificing any type safety.
   }
 #+END_SRC
 
-The program is practically identical, but this will fail with a compile-time
-error. This is the result of type erasure. Unlike C++’s templates, there will
-only ever be one compiled version of Caller, and T will become Object. Since
-Object has no call() method, compilation fails. The generic type is only for
-enabling additional compiler checks later on.
+这几乎就是上一个程序的翻版, 但是该程序在编译时会由于类型擦除(type erasure)而报错. 
+与C++的模板不同,这里 =Caller= 编译后只会产生一个版本的类, 其中 =T= 会变成 =Object=. 
+由于Object类型并没有 =call()= 方法,因此编译会失败.
+这里泛型的作用只是推迟了编译器对类型的检查而已.
 
-C++ templates behave like a macros, expanded by the compiler once for each
-different type of applied parameter. The call symbol is looked up later, after
-the type has been fully realized, not when the template is defined.
+C++模板有点类似于宏, 它由编译器负责进行扩展,每一个类型的参数都会产生不同版本的实现.
+检查 =call= 方法的时机实在类型已经完全确认之后,而不是在模板刚定义的时候.
 
-To fix this, Foo and Bar need a common ancestry. Let’s make this Callee.
+为了解决这个问题, =Foo= 和 =Bar= 需要公用同一个祖先. 假设我们定义这个祖先为 =Callee=.
 
 #+BEGIN_SRC java
   interface Callee {
@@ -102,7 +100,7 @@ To fix this, Foo and Bar need a common ancestry. Let’s make this Callee.
   }
 #+END_SRC
 
-Caller needs to be redefined such that T is a subclass of Callee.
+在 =Caller= 的实现中需要声明T为 =Callee= 的子类.
 
 #+BEGIN_SRC java
   class Caller<T extends Callee> {
@@ -110,8 +108,8 @@ Caller needs to be redefined such that T is a subclass of Callee.
   }
 #+END_SRC
 
-This now compiles cleanly because call() will be found in Callee. Finally,
-implement Callee.
+现在编译可以通过了,因为 =Callee= 中有 =call()= 方法. 
+最后实现接口 =Callee=.
 
 #+BEGIN_SRC java
   class Foo implements Callee {
@@ -123,16 +121,14 @@ implement Callee.
   }
 #+END_SRC
 
-This is no longer duck typing, just plain old polymorphism. Type erasure
-prohibits duck typing in Java (outside of dirty reflection hacks).
+这已经不能算是"鸭子类型"了, 只是普通的多态而已. 类型擦除机制使得在Java中无法实现"鸭子类型"(除非使用反射机制).
 
 * Signals and Slots and Events! Oh My!
 
-Duck typing is useful for implementing the observer pattern without as much
-boilerplate. A class can participate in the observer pattern without 
-[[http://raganwald.com/2014/03/31/class-hierarchies-dont-do-that.html][inheriting from some specialized class]] or interface. For example, see [[http://en.wikipedia.org/wiki/Signals_and_slots][the]]
-[[http://en.wikipedia.org/wiki/Signals_and_slots][various signal and slots systems for C++]]. In constrast, Java [[http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html][has an]]
-[[http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html][EventListener type for everything]]:
+"鸭子类型" 在是现在观察者模型时非常有用,它无需让你定义那么多的模板(boilerplate). 
+它并不要求一个类必须 [[http://raganwald.com/2014/03/31/class-hierarchies-dont-do-that.htmlL][继承自特定的类]] 或者实现特定的接口(interface).
+这里有一个很好的例子: [[http://en.wikipedia.org/wiki/Signals_and_slots][the various signal and slots systems for C++]]. 
+相比之下Java [[http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html][需要让所有的类型都实现EventListener接口]]:
 
   * KeyListener
   * MouseListener
@@ -140,5 +136,4 @@ boilerplate. A class can participate in the observer pattern without
   * FocusListener
   * ActionListener, etc.
 
-A class concerned with many different kinds of events, such as an event
-logger, would need to inherit a large number of interfaces.
+如果一个类涉及到多种类型的事件的话,比如说想实现一个时间记录器,那么就需要实现多个接口了.
