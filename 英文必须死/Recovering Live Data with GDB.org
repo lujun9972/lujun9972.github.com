@@ -1,0 +1,113 @@
+#+TITLE: Recovering Live Data with GDB
+#+AUTHOR: lujun9972
+#+TAGS: 英文必须死
+#+DATE: [2017-03-08 三 10:57]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文地址: http://nullprogram.com/blog/2015/09/15/
+
+我最近遇到个问题, 有一个 [[https://github.com/skeeto/reddit-related][运行很长时间的程序]] ,它的输出被卡在一个C语言FILE变量的buffer中了. 
+这个程序已经运行两天了,它会把结果直接输出来,但是最后几k的内容要等到程序完成它的清理动作并退出后才能输出来.
+而这个清理动作耗时可能要花几天(甚至更多). 
+这个问题本身要修复很简单 — 这个清理的动作其实完全是没有必要的 — 但是我不想又要花两天的时间把结果重新再计算一遍.
+
+下面这段代码简单模拟一下这个问题. 第一个循环代表了长时间的运算过程,而后面的无限循环代表了那个无尽的清理动作.
+
+#+BEGIN_SRC c++
+  #include <stdio.h>
+
+  int
+  main(void)
+  {
+    /* Compute output. */
+    for (int i = 0; i < 10; i++)
+      printf("%d/%d ", i, i * i);
+    putchar('\n');
+
+    /* "Slow" cleanup operation ... */
+    for (;;)
+      ;
+    return 0;
+  }
+#+END_SRC
+
+* Buffered Output Review
+
+=printf= and =putchar= 这两个C库函数,都会以某种方式来缓存输出的内容. 这意味着不是每次调用这些函数都会实际输出数据.
+另一方面, POSIX定义的函数 =read= 和 =write= 则是不带buffer的系统调用.
+由于系统调用相对来说比较昂贵,因此一般会用带缓存的输入/输出来将大量针对小buffer的系统调用转换成一个针对大buffer的系统调用.
+
+一般来说,若程序的标准输出为终端的话,它是按行来缓存的. 毕竟当程序完成了一行的输出内容后,用户很可能立即就想看到输出结果.
+因此,若你编译该程序后是在终端上直接运行改程序的话,那么很可能在程序陷入无限循环之前就已经把结果输出来了.
+
+#+BEGIN_EXAMPLE
+  $ cc -std=c99 example.c
+  $ ./a.out
+  0/0 1/1 2/4 3/9 4/16 5/25 6/36 7/49 8/64 9/81
+#+END_EXAMPLE
+
+然而若把标准输出重定向到文件或管道中的话, 这个输出很有可能就会被缓存起来了,这个缓存大小一般为4KB.
+这样一来,不管你等多长时间,改程序的输出始终都为空. 
+真正的输出内容被卡在进程内存中的一个FILE对象的buffer中了.
+
+#+BEGIN_EXAMPLE
+  $ ./a.out > output.txt
+#+END_EXAMPLE
+
+修复这个问题的主流方法是调用 =fflush= 函数, 在开始一段耗时漫长而无输出结果的操作前可以用它来强行将buffer中的内容输出.
+可惜,我早在两天前并没有想到这一出.
+
+* Debugger to the Rescue
+
+Fortunately there is a way to interrupt a running program and manipulate its
+state: a debugger. First, find the process ID of the running program (the one
+writing to output.txt above).
+
+#+BEGIN_EXAMPLE
+  $ pgrep a.out
+  12934
+#+END_EXAMPLE
+
+Now attach GDB, which will pause the program’s execution.
+
+#+BEGIN_EXAMPLE
+  $ gdb ./a.out
+  Reading symbols from ./a.out...(no debugging symbols found)...done.
+  gdb> attach 12934
+  Attaching to program: /tmp/a.out, process 12934
+  ... snip ...
+  0x0000000000400598 in main ()
+  gdb>
+#+END_EXAMPLE
+
+From here I could examine the stdout FILE struct and try to extract the buffer
+contents by hand. However, the easiest thing is to do is perform the call I
+forgot in the first place: fflush(stdout).
+
+#+BEGIN_EXAMPLE
+  gdb> call fflush(stdout)
+  $1 = 0
+  gdb> quit
+  Detaching from program: /tmp/a.out, process 12934
+#+END_EXAMPLE
+
+The program is still running, but the output has been recovered.
+
+#+BEGIN_EXAMPLE
+  $ cat output.txt
+  0/0 1/1 2/4 3/9 4/16 5/25 6/36 7/49 8/64 9/81
+#+END_EXAMPLE
+
+* Why Cleanup?
+
+As I said, in my case the cleanup operation was entirely unnecessary, so it
+would be safe to just kill the program at this point. It was taking a really
+long time to tear down a humongous data structure (on the order of 50GB) one
+little node at a time with free. Obviously, the memory would be freed much
+more quickly by the OS when the program exited.
+
+Freeing memory in the program was only to satisfy [[http://valgrind.org/][Valgrind]], since it’s so
+incredibly useful for debugging. Not freeing the data structure would hide
+actual memory leaks in Valgrind’s final report. For the real “production” run,
+I should have disabled cleanup.
