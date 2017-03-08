@@ -60,16 +60,16 @@
 
 * Debugger to the Rescue
 
-Fortunately there is a way to interrupt a running program and manipulate its
-state: a debugger. First, find the process ID of the running program (the one
-writing to output.txt above).
+幸运的是,有一个东西可以暂停正在运行的程序并帮我们维护程序的状态:那就是调试器.
+
+第一步,找出进程号(上面输入 output.txt 的那个进程).
 
 #+BEGIN_EXAMPLE
   $ pgrep a.out
   12934
 #+END_EXAMPLE
 
-Now attach GDB, which will pause the program’s execution.
+现在让启动GDB,让它attach那个进程,这会暂停程序的运行.
 
 #+BEGIN_EXAMPLE
   $ gdb ./a.out
@@ -81,9 +81,8 @@ Now attach GDB, which will pause the program’s execution.
   gdb>
 #+END_EXAMPLE
 
-From here I could examine the stdout FILE struct and try to extract the buffer
-contents by hand. However, the easiest thing is to do is perform the call I
-forgot in the first place: fflush(stdout).
+到了这一步,我就可以手工检查 =stdout= 的FILE结构,并从中抽取出buffer中的内容了. 
+不过最简单的方法是执行我一开始忘掉的条语句 =fflush(stdout)=.
 
 #+BEGIN_EXAMPLE
   gdb> call fflush(stdout)
@@ -92,22 +91,9 @@ forgot in the first place: fflush(stdout).
   Detaching from program: /tmp/a.out, process 12934
 #+END_EXAMPLE
 
-The program is still running, but the output has been recovered.
+程序依旧还在执行,我们已经得到结果了.
 
 #+BEGIN_EXAMPLE
   $ cat output.txt
   0/0 1/1 2/4 3/9 4/16 5/25 6/36 7/49 8/64 9/81
 #+END_EXAMPLE
-
-* Why Cleanup?
-
-As I said, in my case the cleanup operation was entirely unnecessary, so it
-would be safe to just kill the program at this point. It was taking a really
-long time to tear down a humongous data structure (on the order of 50GB) one
-little node at a time with free. Obviously, the memory would be freed much
-more quickly by the OS when the program exited.
-
-Freeing memory in the program was only to satisfy [[http://valgrind.org/][Valgrind]], since it’s so
-incredibly useful for debugging. Not freeing the data structure would hide
-actual memory leaks in Valgrind’s final report. For the real “production” run,
-I should have disabled cleanup.
