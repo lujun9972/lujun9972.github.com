@@ -11,40 +11,29 @@
 也就是说可以在程序运行的同时修改和扩展程序. 对于那些非批处理(non-batch)的应用来说,交互式编程可以让测试和调优变得没那么无聊.
 直到上周为止,我都一直不知道如何进行交互式C语言编程. 我们怎么可能做到重定义正在运行的C程序中的函数呢?
 
-但是上周(21-25号),Casey Muratori为 [[http://handmadehero.org/][Handmade Hero]] 这一游戏引擎添加了交互式编程的能力.
+但是上周(21-25号),Casey Muratori为 [[http://handmadehero.org/][Handmade Hero]] 这一游戏的引擎添加了交互式编程的能力.
 交互式编程在游戏开发中特别的有用,因为开发者总是需要进行不停的调整(比如他可能需要为boss设置不同的战斗能力,看看效果),但是不想每次调整都需要重启整个游戏.
 现在(交互式编程)这一功能被实现了. 其秘密在于,将几乎所有的应用都构建成为共享库.
 
-This puts a serious constraint on the design of the program: it cannot keep
-any state in global or static variables, though this [[http://nullprogram.com/blog/2014/10/12/][should be avoided anyway]].
-Global state will be lost each time the shared library is reloaded. In some
-situations, this can also restrict use of the C standard library, including
-functions like malloc(), depending on how these functions are implemented or
-linked. For example, if the C standard library is statically linked, functions
-with global state may introduce global state into the shared library. It’s
-difficult to know what’s safe to use. This works fine in Handmade Hero because
-the core game, the part loaded as a shared library, makes no use of external
-libraries, including the standard library.
+这就对程序设计有了很严格的约束: 你不能把状态保存在全局变量或静态变量中,不是仅仅因为 [[http://nullprogram.com/blog/2014/10/12/][这本来就不是一个好的编程风格]]. 更为关键的是,每次重新加载共享库都会重置全局变量.
+甚至可能像 =malloc()= 这样的标准函数都不一定能用,这要看这些函数的具体实现和链接的方式.
+若是以静态链接的方式链接C标准库,那么那些会操作全局变量的函数也不能被使用. 这就很难区分哪些函数能用,哪些函数不能用了.
+而这种方法之所以能用在 =Handmade Hero= 中是因为该游戏的核心部分,同时也是作为动态库加载部分,并没有用到额外的库,包括标准库.
 
-Additionally, the shared library must be careful with its use of function
-pointers. The functions being pointed at will no longer exist after a reload.
-This is a real issue when combining interactive programming with [[http://nullprogram.com/blog/2014/10/21/][object]]
-[[http://nullprogram.com/blog/2014/10/21/][oriented C]].
+而且,在使用指向动态库中函数的函数指针时要特别小心,这些被指向的函数在重新加载动态库后就不再存在了.
+这使得你很难把把交互式编程与 [[http://nullprogram.com/blog/2014/10/21/][基于C的面向对象编程]] 整合起来用.
 
 * An example with the Game of Life
 
-To demonstrate how this works, let’s go through an example. I wrote a simple
-ncurses Game of Life demo that’s easy to modify. You can get the entire source
-here if you’d like to play around with it yourself on a Unix-like system.
+为了说明交互式编程的实现远离,我这里搞了个例子. 它是一个简单的基于 =ncurses= 实现的Life游戏. 你可以下载它的源代码并在类Unix系统上跑起来体验一下.
 
-  * [[https://github.com/skeeto/interactive-c-demo][https://github.com/skeeto/interactive-c-demo]]
++ [[https://github.com/skeeto/interactive-c-demo][https://github.com/skeeto/interactive-c-demo]]
 
 ** Quick start:
 
- 1. In a terminal run make then ./main. Press r randomize and q to quit.
- 2. Edit game.c to change the Game of Life rules, add colors, etc.
- 3. In a second terminal run make. Your changes will be reflected immediately
-    in the original program!
+1. 在终端下运行 =make= 编译代码, 然后运行 =./main= 启动程序. 按 =r= 生成随机的初始状态, 按 =q= 退出程序.
+2. 编辑 =game.c= 做一些修改.
+3. 在另一个终端运行 =make=. 你的修改就会立即在正在运行的程序中生效了.
 
     [[http://nullprogram.com/img/screenshot/live-c.gif]]
 
