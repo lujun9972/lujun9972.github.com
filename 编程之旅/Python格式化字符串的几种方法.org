@@ -1,0 +1,146 @@
+#+TITLE: Python格式化字符串的几种方法
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2017-03-24 五 17:09]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* %操作符(已经落伍了)
+最原始的方式应该就是用 =%= 操作符了. 
+
+=%= 操作符可以按位置替换格式化符的值:
+#+BEGIN_SRC python :results org
+  name = "earth"
+  return "hello %s" % name
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+hello earth
+#+END_SRC
+
+若有超过一个的值要格式化则需要把这些值组成一个元组:
+#+BEGIN_SRC python :results org
+  name = "earth"
+  age = 4600000000
+  return "%s is %d old" % (name,age)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+earth is 4600000000 old
+#+END_SRC
+
+不过 =%= 也可以按名字进行替换,这个时候 =%= 后面应该接一个dict:
+#+BEGIN_SRC python :results org
+  info = {"name": "earth", "age": 4600000000, "alias": "Gaia"}
+  return "%(name)s is %(age) old" % info
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+earth is  42213467000ld
+#+END_SRC
+
+注意到,使用字典格式化时并不要求字典里的元素个数与格式化符的个数一致.
+
+Python支持的格式化符可以在这里看到[[https://docs.python.org/3/library/stdtypes.html#old-string-formatting]]
+
+* 使用字符串的format方法
+字符串的format方法也支持按位置和按名字两种方式进行格式化:
+
+按位置进行格式化:
+#+BEGIN_SRC python :results org
+  name = "earth"
+  age = 4600000000
+  return "{} is {:f} old".format(name,age)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+earth is 4600000000.000000 old
+#+END_SRC
+
+其中 ={}= 表示变量替换的位置.
+
+按名字进行格式化:
+#+BEGIN_SRC python :results org
+  name = "earth"
+  age = 4600000000
+
+  return "{name} is {age:f} old".format(age=age,name=name)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+earth is 4600000000.000000 old
+#+END_SRC
+
+注意,它的格式化符是在 ={}= 中加上 =:x= 的后缀. 
+关于format方法的格式化符可以参见[[https://docs.python.org/3/library/string.html#string-formatting]]
+
+不仅如此,format的 ={}= 内还能有更复杂的东西:
+#+BEGIN_SRC python
+  return "{info[0]} is {info[1]} old".format(info=("earth",4600000000))
+#+END_SRC
+
+#+RESULTS:
+: earth is 4600000000 old
+
+* 模板字符串
+Python的标准库中提供了一个 =Template= 类,可以进行简单的内容替换.
+
+#+BEGIN_SRC python :results org
+  from string import Template
+  name = "earth"
+  age = 4600000000
+  templ = Template("$name is $age old")
+  return templ.substitute(name=name,age=float(age))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+earth is 4600000000.0 old
+#+END_SRC
+
+注意,模板字符串并别有格式化符这种东西,因此要让age以浮点型形式显示需要用float函数先转成浮点型.
+
+使用模板字符串的优点在于比较安全, 摘一个网络上的例子:
+
+使用format方法:
+#+BEGIN_SRC python :results org :results output
+  SECRET = 'this-is-a-secret'
+  class Error:
+      def __init__(self):
+          pass
+  err = Error()
+  user_input = '{error.__init__.__globals__[SECRET]}'
+  print(user_input.format(error=err))
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+this-is-a-secret
+#+END_SRC
+
+而使用模板字符,则会报错
+#+BEGIN_SRC python :results org :results output
+  from string import Template
+  SECRET = 'this-is-a-secret'
+  class Error:
+      def __init__(self):
+          pass
+  err = Error()
+  user_input = '${error.__init__.__globals__[SECRET]}'
+  try:
+      Template(user_input).substitute(error=err)
+  except ValueError as e:
+      print(e)
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+Invalid placeholder in string: line 1, col 1
+#+END_SRC
+
+* 
