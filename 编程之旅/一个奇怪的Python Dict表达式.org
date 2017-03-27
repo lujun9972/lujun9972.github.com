@@ -1,0 +1,61 @@
+#+TITLE: 一个奇怪的Python Dict表达式
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2017-03-27 一 10:59]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从[[https://dbader.org/blog/python-mystery-dict-expression]] 中看到了一个很奇怪的dict表达式:
+#+BEGIN_SRC python
+  {True: 'yes', 1: 'no', 1.0: 'maybe'}
+#+END_SRC
+
+你觉得这个表达式的最后结果会是什么?
+
+答案是 ={True: 'maybe'}= ! 有没有觉得很神奇?
+
+原因在于:
+
+1. 在Python中, =True= 和 =1= 和 =1.0= 是相等的:
+   #+BEGIN_SRC python :results org
+     return True == 1 == 1.0
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   True
+   #+END_SRC
+
+   值得一说的是,Python中的布尔类型其实就是整型的一个子集,它与整型唯一的不同就是当转换成字符串时会返回 ="True"= 或 ="False"=.
+
+2. 不仅如此, =True= 和 =1= 和 =1.0= 的hash值也是一样的:
+   #+BEGIN_SRC python :results org
+     return hash(True) == hash(1) == hash(1.0)
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   True
+   #+END_SRC
+
+3. 而对于dict来说,若两个key有相同的值和hashcode,那么这两个key认为是等价的.
+
+   以下摘自 https://docs.python.org/3/glossary.html#term-hashable 的说明:
+   #+BEGIN_QUOTE
+    An object is hashable if it has a hash value which never changes during its lifetime (it needs a __hash__() method), and can be compared to other objects (it needs an __eq__() method). Hashable objects which compare equal must have the same hash value.
+
+    Hashability makes an object usable as a dictionary key and a set member, because these data structures use the hash value internally.
+
+    All of Python’s immutable built-in objects are hashable, while no mutable containers (such as lists or dictionaries) are. Objects which are instances of user-defined classes are hashable by default; they all compare unequal (except with themselves), and their hash value is derived from their id().
+   #+END_QUOTE
+
+最后有一点需要说明的是,这个问题其实是可以通过 =flake8=, =pylint= 这类工具检查到的.
+
+比如用flake8来进行检查的话就会提示 =F601 dictionary key True repeated with defferent values=.
+
+#+BEGIN_EXAMPLE
+[lujun9972@F41 pythondocument]$ echo "{True: 'yes', 1: 'no', 1.0: 'maybe'}" |flake8 -
+stdin:1:2: F601 dictionary key True repeated with different values
+stdin:1:15: F601 dictionary key True repeated with different values
+stdin:1:24: F601 dictionary key True repeated with different values
+#+END_EXAMPLE
