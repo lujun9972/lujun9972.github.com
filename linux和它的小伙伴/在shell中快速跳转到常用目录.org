@@ -1,0 +1,40 @@
+#+TITLE: 在shell中快速跳转到常用目录
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2017-04-10 一 10:32]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在 [[http://jeroenjanssens.com/2013/08/16/quickly-navigate-your-filesystem-from-the-command-line.html][Quickly navigate your filesystem from the command-line]] 中发现了一种将目录加为书签实现快速跳转的好方法.
+
+其实原理很简单,就是将指向目标目录的软链接作为书签,统一存放在一个指定的位置,然后借助 =cd -P= 命令来跳转到软链接指向的实际目录.
+#+BEGIN_SRC shell :tangle "~/bin/autoload/jump.sh"
+  export MARKPATH=$HOME/.marks
+  function jump { 
+      cd -P "$MARKPATH/$1" 2>/dev/null || echo "No such mark: $1"
+  }
+  function mark { 
+      mkdir -p "$MARKPATH"; ln -s "$(pwd)" "$MARKPATH/$1"
+  }
+  function unmark { 
+      rm -i "$MARKPATH/$1"
+  }
+  function marks {
+      ls -l "$MARKPATH" | sed 's/  / /g' | cut -d' ' -f9- | sed 's/ -/\t-/g' && echo
+  }
+#+END_SRC
+
+代码很简单,使用 =mark 书签名= 将当前目录加为书签; 使用 =jump 书签名= 跳转到书签指向的目录; 
+使用 =marks= 会列出所有的书签及其所指向的目录; 使用 =unmark 书签名= 删除掉指定的书签.
+
+文章中还提供了一段在bash中按tab自动补全的代码,实在是太贴心了:
+#+BEGIN_SRC shell  :tangle "~/bin/autoload/jump.sh"
+  _completemarks() {
+      local curw=${COMP_WORDS[COMP_CWORD]}
+      local wordlist=$(find $MARKPATH -type l -printf "%f\n")
+      COMPREPLY=($(compgen -W '${wordlist[@]}' -- "$curw"))
+      return 0
+  }
+
+  complete -F _completemarks jump unmark
+#+END_SRC
