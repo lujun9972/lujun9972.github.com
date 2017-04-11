@@ -5,7 +5,7 @@
 #+LANGUAGE:  zh-CN
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
 
-在 [[ego-link:../linux%E5%92%8C%E5%AE%83%E7%9A%84%E5%B0%8F%E4%BC%99%E4%BC%B4/%E5%9C%A8shell%E4%B8%AD%E5%BF%AB%E9%80%9F%E8%B7%B3%E8%BD%AC%E5%88%B0%E5%B8%B8%E7%94%A8%E7%9B%AE%E5%BD%95.org][之前的文章中]] 提到一种把目录加为书签以实现快速跳转的方法. 这个功能十分好用, 然而由于我用Eshell比较多,所以就像把这个功能移植到Eshell中.
+我在之前的文章中提到一种把目录加为书签以实现快速跳转的方法. 这个功能十分好用, 然而由于我用Eshell比较多,所以就像把这个功能移植到Eshell中.
 
 如果只是把之前的shell脚本转换成elisp来做,其实蛮简单的,也已经有人这么做了: [[http://mbork.pl/2017-03-04_Bookmarking_directories_in_Eshell][Bookmarking directories in Eshell]].
 
@@ -90,3 +90,25 @@ unmark函数接受一个书签名做参数,然后删掉指定的书签:
 
 这就很简单了,直接使用 bookmark 库中的 =bookmark-delete= 函数就行了. 所以我这里只是用 =defalias= 为 =bookmark-delete= 定义个别名就OK了.
 
+* 补全
+最后是为jump函数添加补全功能. eshell使用pcomplete这个库来进行补全,至于怎么来写补全函数以后找时间再写另一片文章吧.
+#+BEGIN_SRC emacs-lisp
+  (defun pcmpl-bookmark-names (&optional name)
+    "Return a list of directory bookmark names"
+    (bookmark-maybe-load-default-file)
+    (let* ((name (or name ""))
+           (bookmarks (bookmark-maybe-sort-alist))
+           (directory-bookmarks (cl-remove-if-not (lambda (bookmark)
+                                                 (file-directory-p (bookmark-get-filename bookmark)))
+                                               bookmarks))
+           (bookmark-names (mapcar #'bookmark-name-from-full-record directory-bookmarks)))
+      (cl-remove-if-not (lambda (bookmark-name)
+                       (string-prefix-p name bookmark-name))
+                     bookmark-names)))
+
+  (defun pcomplete/jump ()
+    "completion for `jump'"
+    (while
+        (pcomplete-here
+         (pcmpl-bookmark-names (pcomplete-arg 'last)))))
+#+END_SRC
