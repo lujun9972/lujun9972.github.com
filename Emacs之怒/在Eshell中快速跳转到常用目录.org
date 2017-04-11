@@ -1,0 +1,115 @@
+#+TITLE: 在Eshell中快速跳转到常用目录
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2017-04-11 二 09:46]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在 [[ego-link:../linux%E5%92%8C%E5%AE%83%E7%9A%84%E5%B0%8F%E4%BC%99%E4%BC%B4/%E5%9C%A8shell%E4%B8%AD%E5%BF%AB%E9%80%9F%E8%B7%B3%E8%BD%AC%E5%88%B0%E5%B8%B8%E7%94%A8%E7%9B%AE%E5%BD%95.org][之前的文章中]] 提到一种把目录加为书签以实现快速跳转的方法. 这个功能十分好用, 然而由于我用Eshell比较多,所以就像把这个功能移植到Eshell中.
+
+如果只是把之前的shell脚本转换成elisp来做,其实蛮简单的,也已经有人这么做了: [[http://mbork.pl/2017-03-04_Bookmarking_directories_in_Eshell][Bookmarking directories in Eshell]].
+
+但实际上Emacs本身就已经有了一套书签系统了(bookmark.el), 把Eshell与这套书签系统对接起来才是像是Emacs的风格吧.
+
+现在我们就来尝试实现一下吧.
+
+* marks函数
+该函数用于列出所有的书签及其指向的目录:
+#+BEGIN_SRC emacs-lisp
+  (require 'bookmark)
+
+  (defun eshell/marks ()
+    (bookmark-maybe-load-default-file)
+    (let* ((bookmarks (bookmark-maybe-sort-alist))
+           (directory-bookmarks (remove-if-not (lambda (bookmark)
+                                                 (file-directory-p (bookmark-get-filename bookmark)))
+                                               bookmarks))
+           (show-bookmark-fn (lambda (bookmark)
+                               (let ((name (bookmark-name-from-full-record bookmark))
+                                     (filename (bookmark-get-filename bookmark)))
+                                 (format "%s	->	%s" name filename)))))
+      (mapconcat show-bookmark-fn directory-bookmarks "\n")))
+#+END_SRC
+
+首先是加载bookmark库
+
+然而第二句的 =(bookmark-maybe-load-default-file)= 是让bookmark加载之前已经保存的书签信息.
+
+在然后我们通过函数 =(bookmark-maybe-sort-alist)= 来获取书签列表,并只保留那些指向是目录的书签.
+
+最后我们以 "书签名	->	指向目录" 的格式输出书签信息就行了.
+
+这里有几点需要注意一下:
+
++ 在eshell中执行的内部命令,其实是调用名为 =eshell/命令= 的函数,比如在eshell下执行 =marks=,那么就会调用这里定义的 =eshell/marks= 函数了
+
++ =(bookmark-maybe-load-default-file)= 这一句是必不可少的,若没有这句话,那么在执行任何bookmark命令之前,书签列表都是为空的.
+
++ eshell会将函数返回的最后结果作为是命令的输出(*不是用message来输出的*),所以最后我们使用了 =mapconcat= 来将字符串列表拼接成一个完整的字符串.
+
+* jump函数
+jump函数接一个书签名作为参数,跳转到其指向的目录中:
+#+BEGIN_SRC emacs-lisp
+  (defun eshell/jump (bookmark-name)
+    (bookmark-maybe-load-default-file)
+    (let ((filename (bookmark-get-filename bookmark-name)))
+      (if (file-directory-p filename)
+          (eshell/cd filename)
+        (error "%s is not a directory" bookmark-name))))
+#+END_SRC
+
+第一步依然是用 =(bookmark-maybe-load-default-file)= 加载书签信息.
+
+然后使用 =bookmark-get-filename= 函数可以根据传入的书签名称找到所指向的路径.
+
+最后判断一下指向的路径是否是目录,如果是目录就调用 =eshell/cd= 进入所指向的目录,否则就提示错误.
+
+* mark函数
+mark函数接受一个书签名,并将当前目录加为书签:
+#+BEGIN_SRC emacs-lisp
+  (defun eshell/mark (&optional bookmark-name no-overwrite)
+    (let ((buffer-file-name default-directory))
+      (bookmark-set bookmark-name no-overwrite)))
+#+END_SRC
+
+mark函数这里其实做了点讨巧的事情.
+
+bookmark库本身提供了一个 =bookmark-set= 函数用于添加书签(问我怎么找到的? 用C-h k C-x r m 查出来的). 
+
+但是很可惜,若你在eshell中执行bookmark-set这个命令会发现出错了,错误提示为 "Buffer not visiting a file or directory".
+
+因为bookmark是用 =buffer-file-name= 作为书签的指向内容的, 而 eshell buffer中的 =buffer-file-name= 为 =nil=.
+
+不过这个问题也很好解决,用 =let= 临时指定 =buffer-file-name= 为 =defaullt-directory= 的指就好了(不得不说,动态作用域还是有好处的).
+
+* unmark函数
+unmark函数接受一个书签名做参数,然后删掉指定的书签:
+#+BEGIN_SRC emacs-lisp
+  (defalias 'eshell/unmark 'bookmark-delete)
+#+END_SRC
+
+这就很简单了,直接使用 bookmark 库中的 =bookmark-delete= 函数就行了. 所以我这里只是用 =defalias= 为 =bookmark-delete= 定义个别名就OK了.
+
+* 补全
+最后是为jump函数添加补全功能. eshell使用pcomplete这个库来进行补全,至于怎么来写补全函数以后找时间再写另一片文章吧.
+#+BEGIN_SRC emacs-lisp
+  (defun pcmpl-bookmark-names (&optional name)
+    "Return a list of directory bookmark names"
+    (bookmark-maybe-load-default-file)
+    (let* ((name (or name ""))
+           (bookmarks (bookmark-maybe-sort-alist))
+           (directory-bookmarks (remove-if-not (lambda (bookmark)
+                                                 (file-directory-p (bookmark-get-filename bookmark)))
+                                               bookmarks))
+           (bookmark-names (mapcar #'bookmark-name-from-full-record directory-bookmarks)))
+      (remove-if-not (lambda (bookmark-name)
+                       (string-prefix-p name bookmark-name))
+                     bookmark-names)))
+
+  (defun pcomplete/jump ()
+    "completion for `jump'"
+    (while
+        (pcomplete-here
+         (pcmpl-bookmark-names (pcomplete-arg 'last)))))
+#+END_SRC
+
