@@ -1,0 +1,59 @@
+#+TITLE: 使用gbkunzip解决linux下zip文件解压乱码问题
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2017-06-04 日 14:18]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+由于Windows下的文件名为GBK编码,而linux一般为UTF-8,因此当解压在Windows上生成的zip文件后,会发现解压出来的文件都是乱码的.
+
+网上有个解决方法是使用 =unzip= 的 =-O= 选项来指定编码格式,然而不知道为何,我在archlinux下的unzip并没有这个选项.
+
+好在找到了一个 =gbkunzip= 脚本,可以解决这个问题.
+
+在archlinux上,可以通过yaourt来安装 =gbkunzip=
+#+BEGIN_SRC shell
+  yaourt -S gbkunzip
+#+END_SRC
+
+安装后,直接执行 =gbkunzip zip文件= 就行了.
+
+gbkunzip实际上就是一段python代码,它其实就是对 =gbzip= module中 =ZipFile= 类的一个封装.
+
+#+BEGIN_SRC shell :exports both :results value code
+  cat $(whereis gbkunzip |awk '{print $2}')
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC shell
+#!/usr/bin/env python3
+# fileencoding=utf-8
+
+'''
+解压 zip 文件，其中的文件名是 GB18030 编码，但系统是 Unicode 编码
+'''
+
+import sys
+import os
+from gbzip import ZipFile
+from getpass import getpass
+
+def main():
+  try:
+    z = ZipFile(sys.argv[1])
+    while True:
+      try:
+        z.extractall()
+      except RuntimeError: # encrypted zipfile
+        passwd = getpass('Enter correct password: ').encode()
+        z.setpassword(passwd)
+      else:
+        break
+    print('Everything is ok.')
+  except IndexError:
+    sys.exit('give me exactly one zipfile to extract.')
+
+if __name__ == '__main__':
+  main()
+#+END_SRC
+
