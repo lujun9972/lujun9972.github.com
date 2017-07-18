@@ -1,0 +1,87 @@
+#+TITLE: 在archlinux中使用蓝牙耳机
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2017-07-18 二 14:10]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 安装必要的软件包
+#+BEGIN_SRC shell :dir /sudo::
+  pacman -S bluez bluez-utils pulseaudio-bluetooth pavucontrol pulseaudio-alsa
+#+END_SRC
+
+其中：
+
++ bluez软件包提供蓝牙协议栈
++ bluez-utils软件包提供bluetoothctl工具
++ pulseaudio-bluetooth则为bluez提供了PulseAudio音频服务,若没有安装则蓝牙设备在配对完成后,连接会失败,提示
++ pavucontrol则提供了pulseaudio的图形化控制界面
++ pulseaudio-alsa(可选)则使pulseaudio和alsa协同使用，之后就可以用alsamixer来管理蓝牙音频了
+
+* 启动蓝牙服务
+#+BEGIN_SRC shell :dir /sudo::
+  systemctl enable bluetooth
+  systemctl start bluetooth
+#+END_SRC
+
+* 启动pulseaudio服务
+#+BEGIN_SRC shell :dir /sudo::
+  pulseaudio -k                   # 确保没有pulseaudio启动
+  pulseaudio --start              # 启动pulseaudio服务
+#+END_SRC
+
+* 将用户加入lp用户组
+安装bluz后就应该会自动创建lp用户组了，因此无需自己再创建新组
+#+BEGIN_SRC shell :dir /sudo:: :var USER=(user-login-name)
+  usermod -a -G lp $USER
+#+END_SRC
+默认情况下，蓝牙仅为 lp 用户组中的用户启用 bnep0 设备。如果想要加入蓝牙系统，需确认已将用户加入该组。可以修改/etc/dbus-1/system.d/bluetooth.conf文件中相应的组配置来实现。
+
+* 配置蓝牙(摘自archwiki)
+启动bluetoothctl交互命令.可以输入 =help= 列出所有有效的命令.
+
++ 输入 =power on= 命令打开控制器电源。默认是关闭的。
++ 输入 =devices= 命令获取要配对设备的 MAC 地址。
++ 如果设备未在清单中列出，输入 =scan on= 命令设置设备发现模式。
++ 输入 =agent on= 命令打开代理。
++ 输入 =pair $MAC= 开始配对(支持 tab 键补全)。
++ 如果使用无 PIN 码设备，再次连接可能需要手工认证。输入 =trust $MAC= 命令。
++ 用 =connect $MAC= 命令建立连接。
+
+以下为一个交互实例：
+#+BEGIN_EXAMPLE
+  # bluetoothctl 
+  [NEW] Controller 00:10:20:30:40:50 pi [default]
+  [bluetooth]# agent KeyboardOnly 
+  Agent registered
+  [bluetooth]# default-agent 
+  Default agent request successful
+  [bluetooth]# scan on
+  Discovery started
+  [CHG] Controller 00:10:20:30:40:50 Discovering: yes
+  [NEW] Device 00:12:34:56:78:90 myLino
+  [CHG] Device 00:12:34:56:78:90 LegacyPairing: yes
+  [bluetooth]# pair 00:12:34:56:78:90
+  Attempting to pair with 00:12:34:56:78:90
+  [CHG] Device 00:12:34:56:78:90 Connected: yes
+  [CHG] Device 00:12:34:56:78:90 Connected: no
+  [CHG] Device 00:12:34:56:78:90 Connected: yes
+  Request PIN code
+  [agent] Enter PIN code: 1234
+  [CHG] Device 00:12:34:56:78:90 Paired: yes
+  Pairing successful
+  [CHG] Device 00:12:34:56:78:90 Connected: no
+  [bluetooth]# connect 00:12:34:56:78:90
+  Attempting to connect to 00:12:34:56:78:90
+  [CHG] Device 00:12:34:56:78:90 Connected: yes
+  Connection successful
+#+END_EXAMPLE
+
+* 设置自动启动蓝牙
+将 =/etc/bluetooth/main.conf= 最后的 =AutoEnable= 值修改为 =true=
+#+BEGIN_SRC shell :dir /sudo::
+  ansible localhost -m lineinfile -a "path=/etc/bluetooth/main.conf line='AutoEnable=true'"
+#+END_SRC
+
+* 指定使用蓝牙音频输出
+通过 =pavucontrol= 的"Playback"和"Pecording"标签页重定向音频的输入和输出
