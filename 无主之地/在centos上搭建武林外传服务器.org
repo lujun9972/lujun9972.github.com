@@ -1,0 +1,114 @@
+#+TITLE: 在centos上搭建武林外传服务器
+#+AUTHOR: lujun9972
+#+TAGS: 无主之地
+#+DATE: [2017-07-29 六 18:50]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 安装必要的软件
+** 安装mysql(mariadb)
+#+BEGIN_SRC shell
+  yum install mariadb mariadb-server
+#+END_SRC
+** 安装java
+#+BEGIN_SRC shell
+  yum install  java-1.8.0-openjdk
+#+END_SRC
+** 安装killall（stop脚本中会用到）
+#+BEGIN_SRC shell
+  yum install psmisc
+#+END_SRC
+** 安装32位支持
+#+BEGIN_SRC shell
+  yum install glibc.i686
+  yum install libxml2.so.2
+  yum install libstdc++.so.5
+#+END_SRC
+* 还原数据库内容
+** 启动mariadb服务
+#+BEGIN_SRC shell
+  systemctl start mariadb
+  systemctl enable mariadb
+#+END_SRC
+
+** 设置root用户密码为root
+刚安装好mariadb并无需密码就能登陆root
+#+BEGIN_SRC shell
+  mysql -uroot -p
+#+END_SRC
+
+然后使用下面语句更新root密码
+#+BEGIN_SRC sql
+  use mysql;
+  update user set password=password('root') where user='root';
+  flush privileges; 
+#+END_SRC
+
+** 还原zmwm数据库内容以及存储过程
+先在mysql中创建空的zmwm库
+#+BEGIN_SRC sql
+  create table zmwm;
+#+END_SRC
+
+然后下载wulin_sql.tar后解压，会有两个sql文件：zmwm_proc.sql和zmwm_table.sql。
+
+执行下面命令导入原数据
+#+BEGIN_SRC shell
+  mysql -uroot -proot zmwm <zmwm_proc.sql
+  mysql -uroot -proot zmwm <zmwm_table.sql
+#+END_SRC
+
+* 拷贝其他文件
+将下类内容添加到 =/etc/hosts= 中
+#+BEGIN_SRC conf
+  127.0.0.1       PW-Server
+  127.0.0.1       aumanager
+  127.0.0.1       manager
+  127.0.0.1       link1
+  127.0.0.1       game1
+  127.0.0.1       game2
+  127.0.0.1       delivery
+  127.0.0.1       database
+  127.0.0.1       backup
+  127.0.0.1       auth
+  127.0.0.1       audb
+  127.0.0.1       gmserver
+#+END_SRC
+
+下载 =authd.conf= 文件，然后将之拷贝到 =/etc/= 目录中
+#+BEGIN_SRC shell
+  cp authd.conf /etc
+#+END_SRC
+
+下载 =wulin_lib.tar.gz= 文件，将其中的 =libtask.so= 和 =libskill.so= 拷贝到 =/lib/= 目录下
+#+BEGIN_SRC shell
+  tar -zxvf wulin_lib.tar.gz
+  mv libtask.so libskill.so /lib
+#+END_SRC
+
+下载 =wulin_pwserver.tar.gz= 文件，将其中的内容解压到 =/root= 目录下
+#+BEGIN_SRC shell
+  cd /root
+  tar -zxvf wulin_pwserver.tar.gz
+#+END_SRC
+
+完成后， =/root= 目录下会有一个 =pwserver= 目录和一些管理脚本。
+
+其中执行 =my= 脚本会启动服务器,执行 =stop= 脚本会关闭服务器.
+
+* 配置客户端中的IP 
+从这里下载客户端
+链接: https://pan.baidu.com/s/1c8NhiY 密码: z5i2
+
+
+然后修改patcher\server\serverlist.txt和element\userdata\server\serverlist.txt中的IP
+
+例如
+#+BEGIN_EXAMPLE
+  体验活动区
+  体验电信	29000:139.159.246.231			645
+  体验网通	29000:139.159.246.231			646
+  跨服PK赛	29000:139.159.246.231			212
+#+END_EXAMPLE
+
+之后，直接运行 =element/elementclient.exe= 就能开始玩了。
