@@ -1,0 +1,170 @@
+#+TITLE: 使用shell编写打字游戏
+#+AUTHOR: lujun9972
+#+TAGS: work
+#+DATE: [2017-06-29 四 17:06]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 获取随机数的方式
+$RANDOM
+
+* 变量内容的截取
+${variable:position:length}
+
+* bash中的数组操作
+** 定义数组
+array_name=(value0 value1 value2 value3)
+
+declare -a array_name
+** 修改数组
+array_name[0]=value0
+array_name[1]=value1
+array_name[n]=valuen
+** 读取数组
+valuen=${array_name[n]}
+** 获取数组长度
+length=${#array_name[@]}
+** 删除数组
+unset array[1] # 删除数组中第一个元素
+unset array # 删除整个数组
+* read
+read -n 1 -t 2
+* 脚本
+:PROPERTIES:
+:header-args:shell:  :tangle "type_game.sh" :shebang #!/bin/bash
+:END:
+
+** 定义游戏参数
+#+BEGIN_SRC shell
+  width=70
+  height=10
+  interval=1
+
+  while getopts w:h:i: ARG
+  do
+      case $ARG in
+          w)
+              width=$OPTARG
+              ;;
+          h)
+              height=$OPTARG
+              ;;
+          i)
+              interval=$OPTARG
+              ;;
+          ,*)
+              echo "Unkown options"
+              exit 1
+      esac
+  done
+
+  shift $(($OPTIND-1))
+#+END_SRC
+
+** 定义初始内容
+#+BEGIN_SRC shell
+  for (( i=0;i<$width;i++ ))
+  do
+      blank_line="$blank_line "
+  done
+
+  for ((i=0;i<$height;i++))
+  do
+      lines[$i]=$blank_line        # 全局变量
+  done
+#+END_SRC
+** 生成随机的字符
+#+BEGIN_SRC shell
+  function generate_random_char()
+  {
+      full_chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+      char_position=$(($RANDOM%62))
+      char=${full_chars:$char_position:1}
+      echo $char
+  }
+
+  function insert_random_char_into_line()
+  {
+      local line=$1
+      local position=$2
+      local char=$3
+      prefix_line=${line:0:$position}
+      suffix_line=${line:$(($position+1))}
+      echo "$prefix_line$char$suffix_line"
+  }
+
+  function generate_new_line()
+  {
+      char=$(generate_random_char)
+      position=$(($RANDOM%$width))
+      new_line=$(insert_random_char_into_line "$blank_line" $position $char)
+      echo "$new_line"
+  }
+#+END_SRC
+
+** 显示界面
+#+BEGIN_SRC shell
+  function refresh_ui()
+  {
+      clear
+      for ((i=0;i<$height;i++))
+      do
+          echo "${lines[$i]}"
+      done
+  }
+#+END_SRC
+** 读取输入的字符
+#+BEGIN_SRC shell
+  function get_input()
+  {
+      local input
+      read -n 1 -t 0.1  input
+      echo $input
+  }
+#+END_SRC
+** 消除匹配的字符
+#+BEGIN_SRC shell
+  function remove_input_char() 
+  {
+      local char=$1
+      for((i=0;i<$height;i++))
+      do
+          line=${lines[$i]}
+          line=$(echo "$line"|sed -e "s/$char/ /g")
+          lines[$i]=$line
+      done
+  }
+
+#+END_SRC
+** 屏幕下移
+#+BEGIN_SRC shell
+  function screen_down()
+  {
+      for ((i=$(($height-1));i>0;i--))
+      do
+          lines[$i]=${lines[$(($i-1))]}
+      done
+      lines[0]=$(generate_new_line)
+      refresh_ui
+  }
+#+END_SRC
+** 整合起来
+#+BEGIN_SRC shell
+  refresh_ui
+  while :
+  do
+      old_date=$(date +"%s")
+      input=$(get_input)
+      if [ "$input" != "" ];then
+          remove_input_char $input
+          refresh_ui
+      fi
+      new_date=$(date +"%s")
+      if [ $(($new_date-$old_date)) -ge $interval ];then
+          screen_down
+      fi
+  done
+#+END_SRC
+* 注意要点:
+1. 读取数组元素的语法是${array[0]}而不能写成$array[0]
+2. 字符串变量作为参数时,请一定记得放在""里面,否则前面的空格会丢失
