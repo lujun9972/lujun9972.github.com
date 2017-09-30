@@ -1,0 +1,516 @@
+#+TITLE: Bash_Style_Guide_and_Coding_Standard
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2017-09-26 二 14:31]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Often, script programming is considered to generate only rapid and hardly to understand throw-
+away solutions which do not have to meet any specific quality requirements. However it is often
+ignored that there are many areas where long-living scripts are quite the rule: System management,
+start and configuration of operating systems, software installations, automation of user tasks and so
+on. And, of course, these solutions need to be maintained, extended and documented.
+When it comes to script programming therefore the same requirements have to be fulfilled than when
+programming in a production language (meeting the purpose, correctness of the solution, meeting the
+requirements, robustness, maintainability) and therefore the same standards have to be employed. A
+program can only be maintained, if its structure and effect can be understood easily by someone who
+has not written the program, so that successful changes can be executed in reasonable time. The way
+these requirements are met depends to a great part on the programming style used. The specifications
+dealt with here serve primarily for generating easily understandable and thus maintainable code and
+therefore must be observed.
+
+* Length of line
+The total length of a line (including comment) must not exceed more than
+88 characters . Thus searching in cross direction can be avoided and the file can be printed with the usual width of paper
+without lines being cut or line breaks. Instructions have to be split up, as applicable, texts can be
+made up as well.
+
+* Indentation
+The indentation of program constructions has to agree with the logic nesting depth. The indentation
+of one step usually is in line with the tabulator steps of the editor selected. In most cases 2, 4 or 8
+are chosen.
+
+
+* Comments
+
+** Introductory comments in files
+Every file must be documented with an introductory comment that provides information on the file
+name and its contents:
+
+#+BEGIN_SRC shell
+  #!/bin/bash
+  #===================================================================================
+  #
+  #         FILE:  stale-links.sh
+  #
+  #        USAGE:  stale-links.sh [-d] [-l] [-oD logfile] [-h] [starting directories]
+  #
+  #  DESCRIPTION:  List and/or delete all stale links in directory trees.
+  #                The default starting directory is the current directory.
+  #                Don’t descend directories on other filesystems.
+  #
+  #      OPTIONS:  see function ’usage’ below
+  # REQUIREMENTS:  ---
+  #         BUGS:  ---
+  #        NOTES:  ---
+  #       AUTHOR:  Dr.-Ing. Fritz Mehner (fgm), mehner.fritz@fh-swf.de
+  #      COMPANY:  FH Südwestfalen, Iserlohn
+  #      VERSION:  1.3
+  #      CREATED:  12.05.2002 - 12:36:50
+  #     REVISION:  20.09.2004
+  #===================================================================================
+#+END_SRC
+
+If required, additional information has to be added (e.g. copyright note, project assignment)
+
+** Line end comments
+Consecutive line end comments start in the same column. A blank will always follow the introductory
+character of the comment =#= to simplify the detection of the beginning of the word.
+
+#+BEGIN_SRC shell
+  found=0   # count links found
+  deleted=0 # count links deleted
+#+END_SRC
+
+** Section comments
+If several lines form a section with interlinked instructions, such section must be provided with a
+section comment.
+#+BEGIN_SRC shell
+  #----------------------------------------------------------------------
+  #  delete links, if demanded write logfile
+  #----------------------------------------------------------------------
+  if
+      [ "$action" == ’d’ ] ;
+  then
+      rm --force "$file" && ((deleted++))
+      echo "removed link :  ’$file’"
+      [ "$logfile" != "" ] && echo "$file" >> "$logfile"
+  fi
+#+END_SRC
+The depth of the indentation of the section comment is in accordance with the nesting depth of the
+subsequent instruction.
+
+** Function comments
+Each function is described by an introductory comment. This comment contains the function name,
+a short description and the description of the parameters (if any). The name of the author and the
+date of issue should be added in case of subsequent amendments.
+#+BEGIN_SRC shell
+  #===  FUNCTION  ================================================================
+  #         NAME:  usage
+  #  DESCRIPTION:  Display usage information for this script.
+  # PARAMETER  1:  ---
+  #===============================================================================
+#+END_SRC
+
+** Commenting style
+For the scope and style of the comments the following applies:
+#+BEGIN_QUOTE
+Short, concise and sufficiently accurate.
+#+END_QUOTE
+Comprehensive descriptions are a matter of external documentation. The structure or the trick used
+is described only in exceptional cases. For instructions the following applies:
+#+BEGIN_QUOTE
+The comment describes the purpose of the instruction.
+#+END_QUOTE
+The following comment is not particularly helpful as it repeats only what is indicated at the beginning
+of the line:
+#+BEGIN_SRC shell
+  [ "$logfile" != "" ] && $(> "$logfile") # variable $logfile empty ?
+#+END_SRC
+The comment below, however, states the intention concisely:
+#+BEGIN_SRC shell
+  [ "$logfile" != "" ] && $(> "$logfile") # empty an existing logfile
+#+END_SRC
+
+* Variables and constants
+
+** Use of variables
+For variables meaningful, self-documenting names have to be used (such as inputfile). In names the first 31 characters have to be different. Long names are structured by underscores to improve legibility.
+
+If a name is not self-documenting, the meaning and use must be described when it first occurs by a comment
+
+** Use of constants
+Principally, the following applies for all programming languages: *No constants must be included in the program text !*
+In particular numeral constants do not have another immediate meaning apart from their value. The meaning of the value will only become clear in the specific text context.
+In case of value changes of multiple occurring constants an automatic replacement in the editor is not
+possible, because the value might have been used in different meanings. Such program texts therefore
+are difficult to maintain. For the handling of constants - and of course also constant texts (such as
+file names) - the following recommendations apply:
+
++ Global constants and texts.
+
+  Global constants and texts (e.g. file names, replacement values for call parameters and the like) are collected in a separate section at the beginning of the script and commented individually, if the number is not too high.
+
+  #+BEGIN_SRC shell
+    startdirs=${@:-.} # default start directory: current directory
+    action=${action:-l} # default action is -l (list)
+  #+END_SRC
+
++ Long continuous texts.
+  Long continuous texts (e.g. descriptions, help for invocation options) can be described as =here= documents.
+  
+  #+BEGIN_SRC shell
+    cat
+    <<- EOT
+    List and/or delete all stale links in directory trees.
+    usage : $0 [-d] [-oD logfile] [-l] [-h] [starting directories]
+    -d    delete stale links
+    -l    list stale links (default)
+    -o    write stale links found into logfile
+    -D    delete stale links listed in logfile
+    -h    display this message
+    EOT
+  #+END_SRC
+
+  
+* Success verification
+** Command line options
+If there has to be a minimum number or a specified number of command line parameters, this number
+has to be verified. In case of an error, the script will be terminated with an error message and/or an
+indication of the required call parameters.
+
+The parameter values handed over have to be checked for validity as well. If, for example, the name
+of an entry file is handed over, it has to be checked before read access whether this file exists and can
+be read (e.g. with the test ~[ -r $inputfile ]~).
+
+** Variables, commands and functions
+Variables must have obtained a meaningful starting value before being used. This has to be checked:
+#+BEGIN_SRC shell
+  [ -e "$1" ] && expand --tabs=$number "$1" > "$1.expand"
+#+END_SRC
+This line checks whether the file exists whose name has been handed over in parameter =$1=. 
+Since the evaluation of logic terms is aborted, as soon as the result has been determined (the "short circuit evaluation") further processing is omitted if the prior condition is false. The return value of the last
+command is stored in the variable =$?= and can be used for further process control:
+
+#+BEGIN_SRC shell
+  mkdir "$new_directory"  2> /dev/null
+  if
+      [ $? -ne 0 ]
+  then
+      ...
+  fi
+#+END_SRC
+
+If it has not been possible to create a directory in this example, the return value of =mkdir= is not equal
+to zero. The variable =$?= is used also to check the return value of a function.
+
+** Execution and summary reports
+Scripts which will be used interactively should display a summary report. It tells whether the script
+ran properly and it can be used to check the plausibility of the results, e.g.
+#+BEGIN_SRC shell
+  mn4:~/bin # ./stale-links -o stale-links.log /opt
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  ... searching stale links ...
+  1. stale link:  ’/opt/dir link 23’
+  2. stale link:  ’/opt/file link 71’
+  3. stale link:  ’/opt/file link 7’
+        stale links   found : 3
+        stale links deleted : 0
+        logfile: ’stale-links.log’
+#+END_EXAMPLE
+
+Detailed execution reports are written into logfiles. They need also to be available to help diagnose failure
+
+* Files
++ File names
+
+  File names: For file names meaningful basic names have to be chosen. The file extensions should, if possible, indicate the contents (.dat , .log , .lst , .tmp etc.).
+
++ Temporary files
+
+  Temporary files for storing of comprehensive intermediate results are usually generated in the central directory =tmp= and removed again after their use. 
+  For generation of accidental names =mktemp= can be used (see man 1 mktemp):
+  
+  #+BEGIN_SRC shell
+    #-------------------------------------------------------------------------------
+    #  Cleanup temporary file in case of keyboard interrupt or termination signal.
+    #-------------------------------------------------------------------------------
+    function cleanup_temp {
+        [ -e $tmpfile ] && rm --force $tmpfile
+        exit 0
+    }
+
+    trap cleanup_temp  SIGHUP SIGINT SIGPIPE SIGTERM
+
+    tmpfile=$(mktemp) || {echo "$0: creation of temporary file failed!"; exit 1; }
+
+    # ... use tmpfile ...
+
+    rm --force $tmpfile
+  #+END_SRC
+
+The function =cleanup_temp= will be called if one of the specified signals is caught from the =trap= statement due to a premature termination of the script. 
+This function then deletes the temporary file.  The file survives a termination with =SIGKILL= because this signal can not be caught.
+
++ Backup copies
+
+  If several older copies of files have to be retained, the use of the date as a component of the file names of the copies is recommended: 
+  #+BEGIN_SRC shell
+    timestamp=$(date +"%Y%m%d-%H%M%S") # generate timestamp : YYYYMMDD-hhmmss
+    mv logfile logfile.$timestamp
+  #+END_SRC
+  The file =logfile= is now being renamed, e.g. in =logfile.20041210-173116=.
+  The components of date and time are organized in reversed order. 
+  The files named following this convention are listed in directory lists sorted chronologically.
+
++ Intermediate results
+
+  Intermediate results that are also written into the files can be output by the use of =tee= as well as to the default output. 
+  In this way they can serve for process control or for testing of the script:
+  #+BEGIN_SRC shell
+    echo $output_string | tee --append  $TMPFILE
+  #+END_SRC
+* Command line options
++ Invoking of external programs
+
+  Invoking of external programs: If system programs are invoked, =the long forms of command line options= should be used in a script, if these are available. 
+  The long names are mostly self-documenting and thus simplify reading and understanding a script.
+  In the following useradd-instruction the long forms of the commands =-c= , =-p= and =-m= are used:
+  #+BEGIN_SRC shell
+    useradd --comment "$full_name" \
+            --password "$encrypted_password"  \
+            --create-home \
+            $loginname
+  #+END_SRC
+  By means of carriage return (character =\= at line end) the generation of an overlong line is avoided. 
+  The table orientation increases legibility.
+
++ Command line options of own script
+
+  For the designation of own options (short form) letters that come to mind easily or that are commonly used must be selected (e.g. =-f= , with argument, for the indication of a file, or =-d= , with or without argument, for control of the extent of test outputs (debug)). For suggestions for long forms, see the =[[http://www.gnu.org/prep/standards.html][GNU Coding Standards]]= 
+
+* Use of Shell Builtin Commands
+If possible shell buitins should be preferred to external utilities.  
+Each call of =sed= , =awk= , =cut= etc. generates a new process. 
+Used in a loop this can extend the execution time considerably. 
+In the following example the shell parameter expansion is used to get the base name and the directory of a path:
+
+#+BEGIN_SRC shell
+  for
+      pathname in $(find $search - type f -name "*" -print)
+  do
+      basename=${pathname##*/} # replaces basename(1)
+      dirname=${pathname%/*} # replaces dirname(1)
+      ...
+  done
+#+END_SRC
+
+Pattern matching in strings can be done with the comparison operator =~ .
+#+BEGIN_SRC shell
+  metacharacter=’[~&|]’
+  if [[ "$pathname" =~ $metacharacter ]]
+  then
+      # treat metacharacter
+  fi
+#+END_SRC
+
+Using POSIX regular expressions (regex(7)) is possible.
+
+* Portability
+If POSIX compatibility is required ([POS13]), this can usually be ensured by using the =dash-shell= (Debian Almquist Shell). 
+A list of non-portable constructs and their portable counterparts can be found in [Bas13]. 
+
+* SUID/SGID-Scripts
+A shell script depends on user input, the process environment, the initialization files, the system
+utilities used etc. Shell languages are not well suited to write secure scripts because all of the above
+mentioned facilities (others as well) can be used to attack your system. Utilities may be vulnerable
+themselves.
+There are a number of precautions which should be taken to run a SUID/SGID script [GSS03 , Whe03].
+Here the most important without the claim for completeness:
+
++ Execute the script from a directory where it can not be changed unauthorized.
++ Check if the environment variable =BASH_ENV= is empty.
++ Set =umask= to 077.
++ Reset the environment variables =PATH= and =IFS= to secure values.
++ Change to a safe working directory and validate this change.
++ Use absolute path names for system utilities and data files.
++ Check all return codes from system utilities.
++ Signify the end of the option list with =--= .
++ Quote all command line parameters (e.g. ="$1"=).
++ Check the user input for shell metacharacters and other unwanted characters.
++ Check user supplied pathnames (absolute/relative).
++ Set the shell option =noclobber= to avoid overwriting existing files.
++ Create temporary files in a save directory. Use =mktemp= (See section 6)
+
+* Testing
+
+** Syntax check
+If a script with =Bash= call option =-n= is executed, the script commands are read but not executed:
+#+BEGIN_SRC shell
+  bash  -n  remove_ps.sh
+#+END_SRC
+
+Such call can be used for syntax check. However, only severe errors will be detected in this way. A mutilated key word (=cho= instead of =echo=) for example will not be detected, since it might also be the name of a program or a function.
+
+** Test scope
+In the development phase it is indispensable to organize a test environment with example files or example data of non-complex scope (e.g. in a directory tree organized for this purpose). 
+This increases the process speed of the scripts during the development process and decreases the danger of making unintended changes to important data.
+
+** Use of echo
+Commands causing a change, such as the deletion or renaming of files, should in test scope be first output as character strings by means of =echo= and checked.  
+This is particularly advisable, when wildcards or recursive directory patterns are used. The instructions
+#+BEGIN_SRC shell
+  for file in *.sh
+  do
+      rm  "$file"
+  done
+#+END_SRC
+
+will immediately delete all files with the extension =.sh= in the overall directory tree.  
+If the delete command is set initially into an =echo= instruction, the delete instructions are output in the same way as without =echo=.
+
+#+BEGIN_SRC shell
+  echo "rm  \"$file\""
+#+END_SRC
+
+After verification =echo= can be removed.
+
+** Testing using Bash options
+
+#+TABLE: Options supporting the search for errors
+| Command line option | set -o Option | Meaning                                                 |
+|---------------------+---------------+---------------------------------------------------------|
+| -n                  | noexec        | Commands are not executed, only syntax check (see 11.1) |
+| -v                  | verbose       | Outputs the lines of a script before execution.         |
+| -x                  | xtracd        | Outputs the lines of a script after replacements.       |
+
+If the lines
+#+BEGIN_SRC shell
+  TMPFILE=$( mktemp /tmp/example.XXXXXXXXXX ) || exit 1
+  echo "program output" >> $TMPFILE
+  rm --force $TMPFILE
+#+END_SRC
+are executed with the options =-xv= by means of
+#+BEGIN_SRC shell
+  bash -xv ./tempfile.sh
+#+END_SRC
+
+below output is generated:
+#+BEGIN_EXAMPLE
+  TMPFILE=$( mktemp /tmp/example.XXXXXXXXXX ) || exit 1
+  mktemp /tmp/example.XXXXXXXXXX
+  ++ mktemp /tmp/example.XXXXXXXXXX
+  + TMPFILE=/tmp/example.AVkuGd6796
+  echo "program output" >> $TMPFILE
+  + echo ’program output’
+  rm --force $TMPFILE
+  + rm --force /tmp/example.AVkuGd6796
+#+END_EXAMPLE
+The lines starting with =+= are generated by the =-x= option. 
+The number of plus signs reflects the level of replacements. 
+These options can be set in a script only for one section and then be reset again: 
+#+BEGIN_SRC shell
+  set -o xtrace # --- xtrace on ---
+  for
+      file in $list
+  do
+      rm  "$file"
+  done
+  set +o xtrace # --- xtrace off ---
+#+END_SRC
+
+** The use of PS4
+The shape of the output lines shown in section 11.4 and produced by using the option =-x= is determined by the shell variable =PS4=. 
+The default value of this variable is =’+’=. 
+The first (and here only) character in that string is repeated to show the call depth if necessary. 
+The value of the variable =PS4= can be changed in a script to give more information when the script runs under the option =’-x’=. 
+An example:
+#+BEGIN_SRC shell
+  # PS4 : position, line number, function name
+  # The following line avoids error messages due to an unset FUNCNAME[0] :
+  set +o nounset
+  # Treat unset variables not as an error
+  PS4='+|${BASH_SOURCE##*/} ${LINENO}${FUNCNAME[0]:+ ${FUNCNAME[0]}}|  '
+#+END_SRC
+Here some output lines:
+#+BEGIN_EXAMPLE
+  +| test.sh 41| for n in ’{1..4}’
+  +| test.sh 42|  function1
+  +| test.sh 30 function1| echo ’-- in function1 --’
+  -- in function1 --
+  +| test.sh 31 function1|  function2
+  +| test.sh 37 function2| echo ’-- in function2 --’
+  -- in function2 --
+  +| test.sh 32 function1| echo ’-- in function1 again --’
+  -- in function1 again --
+#+END_EXAMPLE
+The prompt =PS4= can also be used to output timestamps.
+#+BEGIN_SRC shell
+  # PS4 : timestamp; the current time in 24-hour HH:MM:SS format
+  PS4=’+[\t]  ’
+  # PS4 : timestamp; ’seconds.nanoseconds’ since 1970-01-01 00:00:00 UT
+  PS4=’+[$(date "+%s.%N")]  ’
+#+END_SRC
+
+#+TABLE: Pseudo signals
+| Pseudo signal | Trigger                           |
+| DEBUG         | The shell has executed a command. |
+| EXIT          | The shell terminates the script.  |
+
+
+** Testing by means of trap
+The =Bash= shell provides two pseudo signals which can be responded to by individual signal treatment.
+Figure 1 below shows the use of the two pseudo signals together with =trap= instructions. 
+Figure 2 shows the output generated by the monitored area.
+
+Figure 1: Example for the use of pseudo signals and =trap=
+#+BEGIN_SRC shell
+  #===  FUNCTION  ================================================================
+  # NAME:  dbgtrap
+  #  DESCRIPTION:  monitor the variable ’act_dir’
+  #===============================================================================
+  function dbgtrap ()
+  {
+      echo "act_dir = \"$act_dir\""}    # ----------  end of function dbgtrap  ----------
+  #-----------------------------------------------------------------------
+  #  traps
+  #-----------------------------------------------------------------------
+  trap ’ echo "On exit : act_dir = \"$act_dir\""’  EXIT
+  trap dbgtrap DEBUG
+  #-----------------------------------------------------------------------
+  #  monitoring ...
+  #-----------------------------------------------------------------------
+  act_dir=$(pwd)
+  cd ..
+  act_dir=$(pwd)
+  cd $HOME
+#+END_SRC
+
+
+Figure 2: Output of script in figure 1
+#+BEGIN_SRC shell
+  act_dir = ""
+  act_dir = "/home/mehner"
+  act_dir = "/home/mehner"
+  act_dir = "/home"
+  act_dir = "/home"
+  act_dir = "/home"
+  On exit : act_dir = "/home"
+#+END_SRC
+
+** The debugger bashdb
+The debugger =bashdb= works with =Bash= from version 3.0 and can be installed simply from the source package. 
+It can interact also with the graphic debugger front end ddd.
+
+* Further sources of information
+The most important source of information are the manuals for the actually installed version of the shell and the system utilities.
+
+Other style guides can be found in [Tea13] and [Ste13].  
+Occasionally technical journals publish articles on shell programming. Besides that there are a number of textbooks on shell programming.
+For questions concerning system programming and security a good point to start is [GSS03 , Whe03].
+There are many platform oriented internet sites on security issues and new developments.
+
+* References
+[Bas13] The Bash-Hackers Wiki. http://wiki.bash-hackers.org/scripting/nonportable , 2013
+[Bur04] Burtch , Ken O.: Linux Shell Scripting with Bash (Developer's Library). Sams, 2004.  -ISBN 0672326426. - As PDF freely available from the publisher.
+[Coo12] Cooper , Mendel: Advanced Bash-Scripting Guide. http://www.tldp.org/LDP/abs/html/, 2012.   Comprehensive tutorial with many examples, available in several formats. Well suited for additional online help and as reference work.
+[FSF10] FSF : Bash Reference Manual . Free Software Foundation : http://www.gnu.org, 12 2010.  - Bash shell, version 4.2. The official manual.
+[GSS03] Garfinkel , Simson ; Spafford , Gene ; Schwartz , Alan: Practical  Unix  &  Internet Security (3rd Edition) . O'Reilly Media, 2003.  -  ISBN 0596003234
+[Lhu13] Lhunath : BashGuide . http://mywiki.wooledge.org/BashGuide, 2013 
+[NR05] Newham , Cameron ; Rosenblatt , Bill: Learning the bash Shell (3rd Edition) . O'Reilly Media, 2005.  -  ISBN 0596009658.  -  Textbook; covers the features of Bash Version 3.0.
+[POS13] The Open Group Base Specifications Issue 7. http://pubs.opengroup.org/onlinepubs/9699919799/, 2013 
+[Ste13] Steven , Heiner: Heiner's SHELLdorado . http://shelldorado.com/goodcoding, 2013
+[Tea13] Team , Inquisitor: Coding style guidelines: Shell script. http://www.inquisitor.ru/doc/coding-style-shell.html, 2013 
+[Whe03] Wheeler , David A.: Secure Programming for Linux and Unix HOWTO . March 2003.  - Version v3.010 
