@@ -156,13 +156,13 @@ For the handling of constants - and of course also constant texts (such as file 
 参数的值也应该校验有效性. 例如，当传递一个文件为参数值时，在读该文件之前应该先测试一下文件是否存在且具有可读权限(例如. 使用 ~[ -r $inputfile ]~ 来进行测试).
 
 ** Variables, commands and functions
-变量在使用前必须先为之设置一个有意义的初始值. This has to be checked:
+变量在使用前必须先为之设置一个有意义的初始值. 像这样:
 #+BEGIN_SRC shell
   [ -e "$1" ] && expand --tabs=$number "$1" > "$1.expand"
 #+END_SRC
-This line checks whether the file exists whose name has been handed over in parameter =$1=. 
-Since the evaluation of logic terms is aborted, as soon as the result has been determined (the "short circuit evaluation") further processing is omitted if the prior condition is false. The return value of the last
-command is stored in the variable =$?= and can be used for further process control:
+它会先检查参数 =$1= 所代表的文件是否存在. 
+逻辑表达式会在左子句就能确定整个表达式结果的情况下终止对右子句的运行（即所谓的短路执行）,因此当前一个条件为假时，就不会进行进一步的处理.
+最后命令的返回值会存储在变量 =$?= 中，可以将之运用于后续的处理控制中:
 
 #+BEGIN_SRC shell
   mkdir "$new_directory"  2> /dev/null
@@ -173,12 +173,10 @@ command is stored in the variable =$?= and can be used for further process contr
   fi
 #+END_SRC
 
-If it has not been possible to create a directory in this example, the return value of =mkdir= is not equal
-to zero. The variable =$?= is used also to check the return value of a function.
+在本例中，若无法创建目录，则 =mkdir= 的返回值就不会是0. 另外,变量 =$?= 还可以用于检查函数的返回值.
 
 ** Execution and summary reports
-Scripts which will be used interactively should display a summary report. It tells whether the script
-ran properly and it can be used to check the plausibility of the results, e.g.
+交互式应用的脚本应该要显示一份汇总报告. 从这份报告中可以判断脚本是否运行正常，还能用于检查结果的可信度,例如.
 #+BEGIN_SRC shell
   mn4:~/bin # ./stale-links -o stale-links.log /opt
 #+END_SRC
@@ -193,17 +191,17 @@ ran properly and it can be used to check the plausibility of the results, e.g.
         logfile: ’stale-links.log’
 #+END_EXAMPLE
 
-Detailed execution reports are written into logfiles. They need also to be available to help diagnose failure
+有关细节的执行报告存在日志文件中. 这些日志文件中的内容也需要有助于诊断失败的原因.
 
 * Files
-+ File names
++ 文件名
 
-  File names: For file names meaningful basic names have to be chosen. The file extensions should, if possible, indicate the contents (.dat , .log , .lst , .tmp etc.).
+  主文件名应该是有意义的. 文件扩展名则应该尽可能的反应出文件的内容(比如.dat , .log , .lst , .tmp 等等.).
 
-+ Temporary files
++ 临时文件
 
-  Temporary files for storing of comprehensive intermediate results are usually generated in the central directory =tmp= and removed again after their use. 
-  For generation of accidental names =mktemp= can be used (see man 1 mktemp):
+  临时文件一般用于存放中间结果，并且这些文件一般统一放在 =tmp= 目录中，用完即删. 
+  可以使用 =mktemp= 来生成随机的文件名(参见 man 1 mktemp):
   
   #+BEGIN_SRC shell
     #-------------------------------------------------------------------------------
@@ -223,24 +221,24 @@ Detailed execution reports are written into logfiles. They need also to be avail
     rm --force $tmpfile
   #+END_SRC
 
-The function =cleanup_temp= will be called if one of the specified signals is caught from the =trap= statement due to a premature termination of the script. 
-This function then deletes the temporary file.  The file survives a termination with =SIGKILL= because this signal can not be caught.
+  若触发了 =trap= 语句中指定的其中一种信号，在终止脚本执行的同时，还会调用函数 =cleanup_temp=. 然后该函数就会清除临时文件了.
+  只有当脚本被 =SIGKILL= 信号终止运行的情况下才会保留临时文件，因为该信号无法被捕获.
 
-+ Backup copies
++ 备份文件
 
-  If several older copies of files have to be retained, the use of the date as a component of the file names of the copies is recommended: 
+  如果需要保留多个旧的文件副本，那么建议使用时间来进行区分: 
   #+BEGIN_SRC shell
     timestamp=$(date +"%Y%m%d-%H%M%S") # generate timestamp : YYYYMMDD-hhmmss
     mv logfile logfile.$timestamp
   #+END_SRC
-  The file =logfile= is now being renamed, e.g. in =logfile.20041210-173116=.
-  The components of date and time are organized in reversed order. 
-  The files named following this convention are listed in directory lists sorted chronologically.
+  文件 =logfile= 就会被重命名为类似 =logfile.20041210-173116= 这样.
+  文件名中的时间和日期是以逆序的形式来组织的(The components of date and time are organized in reversed order??什么意思). 
+  以这种方式命名的文件在目录中的排列会按照时间的自然顺序来排列的.
 
-+ Intermediate results
++ 中间结果
 
-  Intermediate results that are also written into the files can be output by the use of =tee= as well as to the default output. 
-  In this way they can serve for process control or for testing of the script:
+  通过使用 =tee= 命令,可以将中间结果同时写入文件和标准输出中. 
+  这样一来，你就可以使用中间结果来控制处理流程或者用于测试脚本:
   #+BEGIN_SRC shell
     echo $output_string | tee --append  $TMPFILE
   #+END_SRC
