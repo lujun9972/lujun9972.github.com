@@ -1,0 +1,37 @@
+#+TITLE: 为Linux安装杀毒软件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2017-12-01 五 23:22]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+现在Linux上的恶意软件也越来越多了，虽然还没到像Windows那么猖獗的地步，但也有必要装个杀毒软件防防毒了。
+
+通过搜索 =virus= 发现archliux官方仓库中有带有一个反病毒软件： =clamav=.
+=clamav= 本身是一个CLI程序，但它也有一个GUI的前端： =clamtk=.
+
+首先，让我们安装一下 =clamav= 以及 =clamtk= (注意：后面的操作都用root用户来操作)
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  pacman -S clamav clamtk --noconfirm
+#+END_SRC
+
+这个时候后台服务 =clamd= 还没有启动，我们来启动它并设置成自动启动
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  systemctl start clamd
+  systemctl enable clamd
+#+END_SRC
+
+再来，更新签名数据库
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  /usr/bin/freshclam
+#+END_SRC
+
+我们来设置一下，用crontab每天做一次更新签名数据库
+#+BEGIN_SRC shell :dir /sudo:: :results org
+ echo '/usr/bin/freshclam' > /etc/cron.daily/freshclam
+#+END_SRC
+
+为了保障安全，我们设置每天自动扫描一下
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  echo '/usr/bin/clamscan -i -r /home >> /var/log/ClamAV/daily_scan.log' >/etc/cron.daily/daily_scan
+#+END_SRC
