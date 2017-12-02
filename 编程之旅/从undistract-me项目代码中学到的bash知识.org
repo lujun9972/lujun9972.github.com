@@ -1,0 +1,95 @@
+#+TITLE: 从undistract-me项目代码中学到的bash知识
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2017-12-02 六 21:32]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天看到一个和有趣的项目 [[https://github.com/jml/undistract-me][undistract-me]]. 它可以在命令执行时间超过指定时间的情况下，在命令执行完毕后通过 =notify-send= 发送通知告诉你.
+
+我对它的实现很好奇，于是阅读了一下它的源代码。从它的代码中又学到了很多关于BASH的知识:
+
+1. 如何检查一个命令是否存在？
+
+   使用 =command -v 命令=. 根据 =man bash= 中的说法：
+   #+BEGIN_EXAMPLE
+     command [-pVv] command [arg ...]
+              运行   command   ，使用   args   作为参数，禁止通常的查找  shell
+              函数的过程。只有内建命令或者 PATH 中包含的命令可以执行。如果给出
+              -p         参数，         command         的查找是以        PATH
+              的默认值进行的。这样可以保证找到所有的标准工具。如果给出 -V 或者
+              -v      选项，关于      command      的说明将被打印出来。     -v
+              选项使得表述这个命令的词，或者要执行                     command
+              需要执行的文件显示出来；  -V  选项给出更详细的描述。如果给出  -V
+              或者 -v 选项，退出状态在找到了 command  的情况下0，没找到就是1。
+              如果没有提供选项，并且产生了错误或者                     command
+              没有找到，退出状态就是127。否则，  command  内建命令的退出状态是
+              command 的退出状态。
+   #+END_EXAMPLE
+
+2. 如何获取当前正在执行的shell函数名称
+
+   通过 =FUNCNAME= 可以获取到当前执行的shell函数名
+   #+BEGIN_EXAMPLE
+     函数执行时，   FUNCNAME   变量被设置为函数的名称。
+   #+END_EXAMPLE
+
+3. 如何获取当前执行shell函数所在的文件
+
+   =${BASH_SOURCE[0]}= 可以去的当前执行函数所在shell文件的路径
+   #+BEGIN_EXAMPLE
+     BASH_SOURCE
+                   An array variable whose members are the source  filenames  where
+                   the  corresponding  shell  function  names in the FUNCNAME array
+                   variable are defined.  The  shell  function  ${FUNCNAME[$i]}  is
+                   defined   in   the   file  ${BASH_SOURCE[$i]}  and  called  from
+                   ${BASH_SOURCE[$i+1]}.
+   #+END_EXAMPLE
+
+4. PROMPT_COMMAND 变量
+   
+   该变量中的值会在每次现实主提示符之前执行
+   #+BEGIN_EXAMPLE
+     PROMPT_COMMAND
+                   If set, the value is executed as a command prior to issuing each
+                   primary prompt.
+   #+END_EXAMPLE
+
+5. BASH_COMMAND
+   
+   =BASH_COMMAND= 变量存储的是正在执行的命令:
+   #+BEGIN_EXAMPLE
+     BASH_COMMAND
+                   The  command  currently  being executed or about to be executed,
+                   unless the shell is executing a command as the result of a trap,
+                   in  which  case  it  is the command executing at the time of the
+                   trap.
+   #+END_EXAMPLE
+
+6. 如何正确地获取最后一次执行的命令
+
+   #+BEGIN_SRC shell
+     local this_command=$(HISTTIMEFORMAT= history 1 | sed -e "s/^[ ]*[0-9]*[ ]*//g");  # 当带管道时，$BASH_COMMAND就不准确了
+   #+END_SRC
+
+   记得这里要把环境变量 =HISTTIMEFORMAT= 清空,因为它可能影响到 history的输出格式
+   #+BEGIN_EXAMPLE
+     HISTTIMEFORMAT
+                   If this variable is set and not null, its value  is  used  as  a
+                   format string for strftime(3) to print the time stamp associated
+                   with each history entry displayed by the  history  builtin.   If
+                   this  variable  is  set,  time stamps are written to the history
+                   file so they may be preserved across shell sessions.  This  uses
+                   the  history  comment  character  to distinguish timestamps from
+                   other history lines.
+   #+END_EXAMPLE
+
+7. undistract-me的实现原理
+
+   =undistract-me= 巧妙的利用了 DEBUG trap 和 =PROMPT_COMMAND= 变量.
+
+   首先，通过DEBUG trap，在每次命令执行前将要执行的命令,执行的时间以及执行命令时的窗口id号存储起来（通过history）
+
+   然后，通过变量 =PROMPT_COMMAND= 在出现主提示符（也就是命令执行完后）前计算一下当前时间和当前激活的窗口id号，
+   如果时间间隔超过指定时间并且激活的窗口改变了就调用 =notify-send= 来发送通知了。
+
