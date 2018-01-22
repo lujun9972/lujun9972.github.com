@@ -1,0 +1,124 @@
+#+TITLE: 在Archlinux上安装和使用Tripwire IDS
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-01-22 一 16:28]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* Tripwire是什么
+Tripwire是一款入侵检测软件，它通过为每个要监控的文件产生数字签名的方式来检测文件是否被篡改。
+* 安装Tripwire
+Tripwire在AUR中，可以通过 =yaourt= 来安装
+#+BEGIN_SRC shell
+  yaourt -S tripwire-git
+#+END_SRC
+
+安装好 =tripwire= 后，会新增4个命令：
+
++ tripwire :: 主要的应用程序，用来生成数据库和做完整性检查
++ twadmin :: tripwire的管理工具，可以用来管理Tripwire的策略，配置和key文件
++ twprint :: 以文本格式输出数据库和检查报告
++ siggen :: 显示文件hash值的工具
+            
+
+* 配置Tripwire
+** 创建keyfile
+安装完之后，还需要用 =twadmin= 生成 =site-keyfile= 和 =local-keyfile=
+#+BEGIN_SRC shell
+  twadmin --generate-keys --local-keyfile tw.localkey --site-keyfile tw.sitekey
+#+END_SRC
+
+按照提示需要输入sitekey和localkey的passphrase
+#+BEGIN_EXAMPLE
+  [lujun9972@F31 ~]$   twadmin --generate-keys --local-keyfile tw.localkey --site-keyfile tw.sitekey
+
+  (When selecting a passphrase, keep in mind that good passphrases typically
+  have upper and lower case letters, digits and punctuation marks, and are
+  at least 8 characters in length.)
+
+  Enter the site keyfile passphrase:
+  Verify the site keyfile passphrase:
+  Generating key (this may take several minutes)...Key generation complete.
+  Enter the local keyfile passphrase:
+  Verify the local keyfile passphrase:
+  Generating key (this may take several minutes)...Key generation complete.
+  [lujun9972@F31 ~]$ 
+#+END_EXAMPLE
+
+就会在当前目录生成两个key文件，分别为 =tw.localkey= 和 =tw.sitekey=
+** 生成配置文件
+Tripwire在安装时会在 =/etc/tripwire/= 目录中生成两个文件 =twcfg.txt= 和 =twpol.txt=,为tripwire默认的配置文件和策略文件的模板,我们直接使用它的默认模板
+
+在 =twcfg.txt= 中指定了 site keyfile和local keyfile的地址：
+#+BEGIN_EXAMPLE
+  [lujun9972@F31 tripwire]$ cat /etc/tripwire/twcfg.txt 
+  ROOT                   =/usr/sbin
+  POLFILE                =/etc/tripwire/tw.pol
+  DBFILE                 =/var/lib/tripwire/$(HOSTNAME).twd
+  REPORTFILE             =/var/lib/tripwire/report/$(HOSTNAME)-$(DATE).twr
+  SITEKEYFILE            =/etc/tripwire/site.key
+  LOCALKEYFILE           =/etc/tripwire/$(HOSTNAME)-local.key
+  EDITOR                 =/usr/bin/vi
+  LATEPROMPTING          =false
+  LOOSEDIRECTORYCHECKING =false
+  MAILNOVIOLATIONS       =true
+  EMAILREPORTLEVEL       =3
+  REPORTLEVEL            =3
+  MAILMETHOD             =SENDMAIL
+  SYSLOGREPORTING        =false
+  MAILPROGRAM            =/usr/sbin/sendmail -oi -t
+#+END_EXAMPLE
+
+我们将上一步生成的keyfile拷贝成 =SITEKEYFILE= 和 =LOCALKEYFILE= 中指定的文件名
+#+BEGIN_SRC shell
+  sudo cp tw.localkey /etc/tripwire/${HOSTNAME}-local.key
+  sudo cp tw.sitekey /etc/tripwire/site.key
+#+END_SRC
+
+然后使用 =twadmin --create-cfgfile= 生成配置文件:
+#+BEGIN_SRC shell
+  sudo twadmin --create-cfgfile  -S /etc/tripwire/site.key /etc/tripwire/twcfg.txt
+#+END_SRC
+
+再用 =twadmin --create-polfile= 生成策略文件:
+#+BEGIN_SRC shell
+  sudo twadmin --create-polfile /etc/tripwire/twpol.txt
+#+END_SRC
+* 生成并查看检查报告
+** 初始化数据库
+第一次运行tripwire时需要先初始化数据库
+#+BEGIN_SRC shell
+  sudo tripwire --init
+#+END_SRC
+
+第一次初始化时可能会出现很多警告，但是可以不用管
+#+BEGIN_EXAMPLE
+  [lujun9972@F31 tripwire]$ sudo tripwire --init
+  Please enter your local passphrase: 
+  Parsing policy file: /etc/tripwire/tw.pol
+  Generating the database...
+  ,*** Processing Unix File System ***
+  ### Warning: File system error.
+  ### Filename: /usr/sbin/fixrmtab
+  ### 没有那个文件或目录
+  ### Continuing...
+#+END_EXAMPLE
+** 生成检查报告
+运行 =tripwire --check= 会就会生成检查报告了，检查报告存放的地址参见配置文件中 =REPORTFILE= 定义的位置，默认为 =/var/lib/tripwire/report/$(HOSTNAME)-$(DATE).twr=
+#+BEGIN_SRC shell
+  sudo tripwire --check
+#+END_SRC
+** 查看检查报告
+tripwire生成的 =.twr= 文件是二进制的，无法直接查看，需要使用 =twprint= 来转换成可阅读的文本格式
+
+注意：由于普通用户无法访问 =/var/lib/tripwire= 目录，因此这一步需要切换root用户来操作
+#+BEGIN_SRC shell
+  sudo su - root
+  twprint --print-report --twrfile /var/lib/tripwire/report/F31-20180122-191715.twr >/tmp/report.txt
+  view /tmp/report.txt
+#+END_SRC
+
+* 如何获取帮助
+可以通过 =man twintro= 来查看关于 =tripwire= 的介绍。
+
+另外，tripwire的任意命令都支持 =--help= 参数，会输出关于该命令的简要说明。
