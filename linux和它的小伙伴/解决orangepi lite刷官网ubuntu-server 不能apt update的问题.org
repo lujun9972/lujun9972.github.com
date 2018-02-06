@@ -1,0 +1,36 @@
+#+TITLE: 解决orangepi lite刷官网ubuntu-server 不能apt update的方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-06 二 22:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+贪便宜买了个OrangePi Lite，结果发现刷了官网上提供的Ubuntu Server后无法apt update
+
+总是提示
+#+BEGIN_EXAMPLE
+  Reading package lists... Error!
+  E: Encountered a section with no Package: header
+  E: Problem with MergeList /var/lib/dpkg/status
+  E: The package lists or status file could not be parsed or opened.
+#+END_EXAMPLE
+
+根据网上说的用 =status.old= 替换成 =status= 结果也是不行。查看 =status= 文件发现文件头多了几行莫名其妙的文字，文件后面出现很多乱码，猜测是文件被损毁了。
+
+把 =status= 文件头和尾部的那一串东西删掉后，再运行 =apt update= 就可以了。
+
+然而，当我尝试通过 =apt-get dist-upgrade= 升级时又出现新的错误，提示
+#+BEGIN_EXAMPLE
+  dpkg: error: parsing file '/var/lib/dpkg/available' near line 2 package 'libustr-1.0-1':  value for `status' field not allowed in this context
+  E: Sub-process /usr/bin/dpkg returned an error code (2)
+#+END_EXAMPLE
+
+很明显 =available= 也被损坏了，而且使用 =available-old= 替代 =available= 也不行，不过这很好办
+
+用root用户执行
+#+BEGIN_SRC shell
+  dpkg --clear-avail
+  apt-get update
+#+END_SRC
+
+就可以了，然后运行 =apt-get dist-upgrade= 升级成功了
