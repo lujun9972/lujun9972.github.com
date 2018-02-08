@@ -1,0 +1,104 @@
+#+TITLE: 使用cryptmount创建加密镜像保存机密文件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-08 四 19:50]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+cryptmount是一个创建、挂载和卸载加密镜像的工具，你可以用它来创建一个加密镜像并挂载到文件系统中，然后将机密文件存入其中，再卸载这个镜像，这样就能做到神不知、鬼不觉地保存机密文件了。
+
+* 安装cryptmount
+cryptmount是archlinux中的aur仓库中，因此可以通过下面命令来安装
+#+BEGIN_SRC shell
+  yaourt -S cryptmount
+#+END_SRC
+
+但是在我在安装过程中会提示无法下载cryptmount的源码包，需要修改PKGBUILD中的 =source= 的地址。
+
+我将之改成了 =https://netix.dl.sourceforge.net/project/cryptmount/cryptmount/cryptmount-5.2/cryptmount-5.2.3.tar.gz=
+
+安装好后会在 =/usr/bin= 下多出一个 =cryptmount= 文件
+
+* 配置cryptmount
+使用root修改 =/etc/cryptmount/cmtab=,加入下面内容
+#+BEGIN_EXAMPLE
+  SecureImage {                               #配置项名称
+      dev=/home/lujun9972/SecureImage.img     #加密镜像的目录,必要
+      dir=/mnt/crypt                          #镜像挂载的路径
+      fstype=ext4                             #文件系统类型,必要
+      mountoptions=defaults                   #挂载选项
+      cipher=aes                              #加密算法
+      keyfile=/etc/cryptmount/SecureImage.key #密钥文件,必要
+      keyformat=builtin                       #密钥的管理策略
+  }
+
+#+END_EXAMPLE
+
+具体关于 =cmtab= 的格式说明，可以运行 =man 5 cmtab=
+
+* 创建镜像文件
+使用 =dd= 创建一个镜像文件:
+#+BEGIN_SRC shell
+  dd if=/dev/zero of=/home/lujun9972/SecureImage.img bs=1M count=128
+#+END_SRC
+
+这里我创建了一个128M的镜像文件，路径为 =/home/lujun9972/SecureImage.img=
+
+注意,镜像文件的路径跟 =cmtab= 中 =dev= 的值一致
+
+* 创建密钥文件 
+#+BEGIN_SRC shell
+  sudo cryptmount --generate-key 32 SecureImage
+#+END_SRC
+
+然后输入密码.
+
+注意这里的SecureImage是 =cmtab= 中的配置项名称
+
+cryptmount就根据 =cmtab= 中cmtab的 =keyfile= 生成对应的密钥文件了
+
+* 格式化镜像文件
+首先根据镜像文件来创建设备文件，运行:
+#+BEGIN_SRC shell
+  sudo cryptmount --prepare SecureImage
+#+END_SRC
+
+会创建一个设备文件: =/dev/maper/SecureImage=
+
+然后使用 =mke2fs= 来创建文件系统
+#+BEGIN_SRC shell
+  sudo mke2fs /dev/mapper/SecureImage
+#+END_SRC
+
+格式化完成后就可以释放该设备了
+#+BEGIN_SRC shell
+  sudo cryptmount --release SecureImage
+#+END_SRC
+
+* 挂载和卸载加密镜像
+首先当然是创建挂载点了:
+#+BEGIN_SRC shell
+  sudo mkdir -p /mnt/crypt
+#+END_SRC
+
+然后挂载加密镜像
+#+BEGIN_SRC shell
+  cryptmount -m SecureImage
+#+END_SRC
+
+然后输入密码就挂载成功了，注意这一步是无需root权限的哦~~
+
+不过这个时候你会发现挂载点 =/mnt/crypt= 的所有者是root了，你需要改一下所有者
+
+#+BEGIN_SRC shell
+  sudo chown lujun9972:lujun9972 /mnt/crypt/
+#+END_SRC
+
+这样下一次重新挂载则无需再修改所有者了.
+
+卸载加密镜像则执行
+#+BEGIN_SRC shell
+  cryptmount -u SecureImage
+#+END_SRC
+
+同样的，卸载加密镜像也是无需root权限的。
