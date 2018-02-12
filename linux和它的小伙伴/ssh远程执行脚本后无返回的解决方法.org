@@ -1,0 +1,47 @@
+#+TITLE: ssh远程执行脚本后无返回的解决方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-12 一 16:42]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天遇见一件很诡异的事情. 使用ssh远程执行脚本，脚本执行完毕后ssh却并没有返回.
+
+为了取数据库执行计划，我写了个取执行计划的脚本上传远程服务器，然后用ssh远程执行该脚本:
+#+BEGIN_SRC shell
+ssh mbinst1@10.8.252.12 ". ~/.profile;ksh /tmp/getDBSQLV10.sh"
+#+END_SRC
+
+脚本执行完毕后，ssh确不知为什么一直卡死，并没有返回。
+
+一开始以为是脚本陷入死循环无法终止，然而登陆服务器用ps命令查询，发现脚本已经执行完毕
+#+BEGIN_SRC shell
+  # 登陆服务器
+  ssh mbinst1@10.8.252.12
+  # 通过ps命令发现已经没有脚本进程了
+  $ ps -elf |grep get
+  200001 A  mbinst1 25231554 54460722   0  60 20 886180480   256 f1000a02000e12b8 15:52:58  pts/1  0:00 grep get
+#+END_SRC
+
+但是ssh连接依然存在
+#+BEGIN_SRC shell
+  $ ps -elf |grep ssh
+  40001 A  mbinst1 48103636 25559542   0  60 20 a46bac480  1584          15:44:46      -  0:00 sshd: mbinst1@notty
+  240001 A     root 62783664  2359730   0  60 20 e665ee480  1340 f1000e000ecd1cc8 15:52:48      -  0:00 sshd: mbinst1 [priv]
+  240001 A     root  2359730  1835420   0  60 20 e72764480  1324            Aug 28      -  0:00 /usr/sbin/sshd
+  240001 A     root 25559542  2359730   0  60 20 846e0c480  1228 f1000e005f718cc8 15:44:45      -  0:00 sshd: mbinst1 [priv]
+  200001 A  mbinst1 49283456 54460722   0  60 20 a86420480   256 f1000a02000e12b8 15:56:59  pts/1  0:00 grep ssh
+  40001 A  mbinst1 58458534 62783664   0  60 20 ec5a64480  1468          15:52:48      -  0:00 sshd: mbinst1@pts/1
+#+END_SRC
+
+从上面可以看出，一共存在两个ssh连接，其中 =sshd: mbinst1@pts/1= 就是当前正在操作的登陆会话，而 =sshd: mbinst1@notty= 为ssh远程执行命令的会话（这里@后面的是终端名，如果是本机登陆，则会显示为ttyN，如果是通过ssh远程登陆则会显示成pts/N,如果是通过sftp/scp/ssh远程执行命令创建的连接则会显示notty）
+
+猜想，出现这种情况的原因是不是跟没有分配伪终端有关，抱着试一试的态度把命令改成
+
+#+BEGIN_SRC shell
+  ssh -t mbinst1@10.8.252.12 ". ~/.profile;ksh /tmp/getDBSQLV10.sh"
+#+END_SRC
+
+强制让ssh分配伪终端，发现居然真的正常退出了。
+
+*目前还无法理解原理，求各位大神解释。*
