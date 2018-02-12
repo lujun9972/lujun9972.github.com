@@ -5,3 +5,92 @@
 #+LANGUAGE:  zh-CN
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
 
+当要在网站上输入大量内容时，常常会感叹于文本框编辑能力的简陋，用起来完全没有Emacs那种顺畅的感觉。
+要是能够使用Emacs来编辑浏览器中文本框的内容就好了。
+
+在github上搜索了一番，发现还真有两个插件可以做到这一点,一个是[[https://github.com/alpha22jp/atomic-chrome][atomic-chrome]]，另一个是[[https://github.com/stsquad/emacs_chrome][emacs_chrome]]。且两个插件都同时支持chrome和firefox
+
+* atomic-chrome
+** 给浏览器安装GhostText插件
+如果是firefox，点击[[https://addons.mozilla.org/en-US/firefox/addon/ghosttext/][这里]]安装GhostText
+
+如果是Chrome，点击[[https://chrome.google.com/webstore/detail/ghosttext/godiecgffnchndlihlpaajjcplehddca][这里]]安装GhostText
+
+
+** 在Emacs上安装atomic-chrome插件
+
+最简单的方法就是使用 =use-package= 
+
+在初始化文件中加入
+#+BEGIN_SRC emacs-lisp
+  (use-package atomic-chrome
+    :ensure t
+    :config (atomic-chrome-start-server))
+#+END_SRC
+
+** 使用
+1. 启动Emacs
+2. 将光标放到浏览器中的文本框中
+3. 点击工具栏上的GhostText，就会弹出一个Emacs窗口
+4. 在窗口上输入内容，会看到浏览器文本框中的内容也跟着变化
+5. 按下 =C-c C-c= 退出Emacs窗口
+
+** 配置
+默认情况下Emacs打开的buffer处于 =text-mode=,不过你可以通过设置 =atomic-chrome-default-major-mode= 来修改它:
+#+BEGIN_SRC emacs-lisp
+  (setq atomic-chrome-default-major-mode 'markdown-mode)
+#+END_SRC
+
+你甚至可以通过配置 =atomic-chrome-url-major-mode-alist= 来指定某个网站使用特定的major-mode
+#+BEGIN_SRC emacs-lisp
+  (setq atomic-chrome-url-major-mode-alist
+        '(("github\\.com" . gfm-mode)
+          ("redmine" . textile-mode)))
+#+END_SRC
+
+默认情况下atomic-chrome通过切分当前window的方式来在产生新window，并在新window中显示编辑buffer，而这就要求时时刻刻都要有一个Emacs Frame存在。
+
+然而我一般使用 daemon 的方式来运行Emacs，并不会经常保持一个frame存在，因此我把atomic-chrome打开编辑buffer的方式配置成创建新frame和window
+#+BEGIN_SRC emacs-lisp
+  (setq atomic-chrome-buffer-open-style 'frame)
+#+END_SRC
+* emacs_chrome
+** 给浏览器安装Edit-with-Emacs插件
+如果是firefox，点击[[https://addons.mozilla.org/en-US/firefox/addon/edit-with-emacs1/][这里]]安装
+
+如果是Chrome，点击[[https://chrome.google.com/webstore/detail/edit-with-emacs/ljobjlafonikaiipfkggjbhkghgicgoh][这里]]安装
+
+安装好后，进入插件配置页面，推荐选中 “Enable context menu item to invoke editor” 和 “Enable Alt-Enter Keyboard shortcut to invoke editor”
+
+这样就可以通过双击文本框或者 =Alt-Enter= 快捷方式来调用Emacs编辑
+** 在Emacs上安装edit-server
+我们依然使用use-package来安装
+
+在初始化文件中加入
+#+BEGIN_SRC emacs-lisp
+  (use-package edit-server
+    :ensure t
+    :config (edit-server-start))
+#+END_SRC
+** 使用
+1. 启动Emacs，推荐将Emacs以daemon方式启动
+2. 双击浏览器中的文本框，或者将光标放到文本框中后按下 =Alt-Enter=, 会弹出一个新Emacs窗口
+3. 在Emacs中输入内容，然后按下 =C-c C-c=. Emacs中输入的内容就填入文本框中了
+** 配置
+emacs_chrome要做到指定网站使用特定major-mode比较麻烦，需要通过 =edit-server-start-hook= 来实现
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'edit-server-start-hook
+            (lambda ()
+              (when (string-match "github.com" (buffer-name))
+                (markdown-mode))
+              (when (string-match "redmine.com" (buffer-name))
+                (textile-mode))))
+#+END_SRC
+* atomic-chrome VS emacs_chrome
+atomic-chrome的特点在于它能够实时同步浏览器中文本框中的内容，也就是说你在文本框中所做的修改能放映到Emacs中，而在Emacs中所作的修改也能实时反映到文本框中，可谓酷极。
+[[https://github.com/alpha22jp/atomic-chrome/raw/master/images/screencast.gif]]
+
+然而它只能通过点击toolbar上的图标来调用Emacs，不太方便。而且每次连接上Emacs/退出Emacs时都会有一个Connected/Disconnected的提示在浏览器上显示，感觉很累赘。
+
+
+相比之下，emacs_chrome可以通过直接双击文本框来调用Emacs，就要方便多。虽然没有像atomic-chrome那么酷，能同步文本框中的内容，但感觉更实用一些。
