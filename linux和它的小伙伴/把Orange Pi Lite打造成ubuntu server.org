@@ -1,0 +1,169 @@
+#+TITLE: 把Orange Pi Lite打造成ubuntu server
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-21 三 16:27]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 安装官方的ubuntu server
+Orange Pi官方有为Orange Pi Lite准备官方的Ubuntu Server镜像，下载下来用 =dd= 拷贝到TF卡上就行。
+
+1. 去 [[http://www.orangepi.cn/downloadresourcescn/orangepiLite/2017-05-10/oragepilite_7670e7e226e23fcbd4023e66.html][这里]] 下载ubuntu_server_For_OrangePi_Lite
+
+2. 解压下载下来的 xz 文件
+   #+BEGIN_SRC shell :dir ~/winxp
+     xz -d ubuntu_server_lite.img.xz
+   #+END_SRC
+
+3. 确定TF卡所属的磁盘设备
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo fdisk -l
+   #+END_SRC
+
+   结果为:
+   #+BEGIN_SRC org
+   Disk /dev/sda: 119.2 GiB, 128035676160 bytes, 250069680 sectors
+   Units: sectors of 1 * 512 = 512 bytes
+   Sector size (logical/physical): 512 bytes / 512 bytes
+   I/O size (minimum/optimal): 512 bytes / 512 bytes
+   Disklabel type: dos
+   Disk identifier: 0x18b918b8
+
+   Device     Boot     Start       End   Sectors  Size Id Type
+   /dev/sda1            2048  16779263  16777216    8G 82 Linux swap / Solaris
+   /dev/sda2        16779264 100665343  83886080   40G 83 Linux
+   /dev/sda3       100665344 250069679 149404336 71.2G 83 Linux
+
+
+   Disk /dev/sdb: 29.7 GiB, 31914983424 bytes, 62333952 sectors
+   Units: sectors of 1 * 512 = 512 bytes
+   Sector size (logical/physical): 512 bytes / 512 bytes
+   I/O size (minimum/optimal): 512 bytes / 512 bytes
+   Disklabel type: dos
+   Disk identifier: 0xdeee394b
+
+   Device     Boot  Start      End  Sectors  Size Id Type
+   /dev/sdb1        40960   172031   131072   64M  b W95 FAT32
+   /dev/sdb2       172032 62332928 62160897 29.7G 83 Linux
+   #+END_SRC
+
+   这里可以看到TF卡所属的磁盘文件为 =/dev/sdb=
+
+4. 写入镜像文件到TF卡
+   #+BEGIN_SRC shell :dir /sudo::/home/lujun9972/winxp 
+     sudo dd bs=1M if=ubuntu_server_lite.img of=/dev/sdb
+   #+END_SRC
+
+不过官方的Ubuntu Server其实是有问题的，需要做一番修改
+
+* 配置wifi
+写入镜像到TF卡后，你会发现TF卡被分成了两个分区，一个是BOOT分区，一个是linux分区。
+
+由于Orange Pi Lite只有wifi接口，因此还需要配置wifi才能让Orange Pi Lite连接上网络。
+
+挂载TF卡上的linux分区，这里由于我使用了 =udiskie= 来自动挂载可移动磁盘，因此系统自动将该分区挂载到了 =/var/media/$USER/linux= 下了
+
+1. 进入linux分区的挂载点
+   #+BEGIN_SRC shell
+     cd /var/media/lujun9972/linux
+   #+END_SRC
+
+2. 使用 =wpa_passphrase= 生成配置
+
+   #+BEGIN_SRC shell  :dir /var/media/lujun9972/linux
+     sudo wpa_passphrase $SSID $WIFIPWD |sudo tee etc/network/wpa_passphrase.conf
+   #+END_SRC
+   
+   注意这里用了 =sudo tee= 来将结果存入 =etc/network/NETGEAR90.conf= 中，而 不能直接用 =>= 来重定向。
+
+   可以配置多个wifi
+   #+BEGIN_SRC shell  :dir /var/media/lujun9972/linux
+     sudo wpa_passphrase MERCURY_6220_201 $WIFIPWD |sudo tee -a etc/network/wpa_passphrase.conf
+   #+END_SRC
+
+3. 将wlan加入 =etc/network/interfaces= 中
+   #+BEGIN_SRC shell
+     sudo cat <<EOF |sudo tee -a etc/network/interfaces
+     auto wlan1
+     iface wlan1 inet dhcp
+     wpa-conf /etc/network/wpa_passphrase.conf
+     EOF
+   #+END_SRC
+
+   至此wifi就设置好了,推出TF卡，插入Orange Pi Lite后通电，Orange Pi Lite就会自动连接上wifi了
+   
+   在路由器上查到Orange Pi Lite分配的IP后，通过ssh登陆
+   #+BEGIN_SRC shell
+     ssh root@orangepilite
+   #+END_SRC
+   
+   第一次登陆会看到提示,这时ubuntu server只会用到TF卡中的部分空间
+   #+BEGIN_EXAMPLE
+     [lujun9972@T520 ~]$ ssh root@192.168.1.8
+     root@192.168.1.8's password: 
+     Welcome to Ubuntu 14.04.3 LTS (GNU/Linux 3.4.39 armv7l)
+
+      ,* Documentation:  https://help.ubuntu.com/
+     Last login: Thu Jan  1 00:19:28 1970
+     ,****************************************
+     WARNING: TO RESIZE FILESYSTEM RUN:
+     sudo fs_resize
+     to remove this message run:
+     sudo rm /usr/local/bin/fs_resize_warning
+     ,****************************************
+   #+END_EXAMPLE
+   
+   按照提示运行
+   #+BEGIN_SRC shell
+     fs_resize 
+   #+END_SRC
+   
+   重启后,ubuntu server自动扩展到使用TF卡的所有空间
+   
+   *后面的操作都是通过ssh在Orange Pi Lite上执行*
+
+* 使用国内源
+#+BEGIN_SRC shell
+  sed -i  's/ports.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/' /etc/apt/sources.list
+#+END_SRC
+
+* 修正无法apt update的问题
+
+刷完官网上的Ubuntu Server后你会发现无法运行apt update,总是提示
+#+BEGIN_EXAMPLE
+  Reading package lists... Error!
+  E: Encountered a section with no Package: header
+  E: Problem with MergeList /var/lib/dpkg/status
+  E: The package lists or status file could not be parsed or opened.
+#+END_EXAMPLE
+
+这是因为官网Ubuntu Server上的 =/var/lib/dpkg/status= 和 =/var/lib/dpkg/available= 被损坏了。
+
+查看 =status= 文件发现文件头多了几行莫名其妙的文字，文件后面出现很多乱码，把这些乱七八糟的东西删掉。
+#+BEGIN_SRC shell
+  sed -i '3436,$d' /var/lib/dpkg/status
+  sed -i  '1,11d' /var/lib/dpkg/status
+#+END_SRC
+
+然后用root用户执行
+#+BEGIN_SRC shell
+  dpkg --clear-avail
+  apt-get update
+  apt-get install -f
+  apt-get dist-upgrade
+#+END_SRC
+
+升级成功
+
+* 升级Ubuntu Server 16.04
+1. 安装更新管理器核心 =update-manager-core=
+   #+BEGIN_SRC shell
+     apt-get install update-manager-core
+   #+END_SRC
+
+2. 编辑 =/etc/update-manager/release-upgrades= 配置文件，设置Prompt=lts
+
+3. 启动升级进程
+   #+BEGIN_SRC shell
+     sudo do-release-upgrade
+   #+END_SRC
