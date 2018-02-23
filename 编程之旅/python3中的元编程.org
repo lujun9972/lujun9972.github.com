@@ -1,0 +1,175 @@
+#+TITLE: python3中的元类
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2018-02-23 五 11:11]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+PROPERTY: header-args    :results output :results org :session metaprogramming
+
+* 元类(metaclass)
+Python元编程依赖于一种特别的类，叫做元类(metaclass). 根据 [[https://en.wikipedia.org/wiki/Metaclass][Wikipedia]] 的说法: "面向对象中的元类就是实例为类的类"
+
+metaclass可以为新类定义属性，比如，下面这个名为 =HelloMeta= 的元类，可以为每个使用该元类为模板的类添加一个 =hello= 属性，而无需这些类自己定义:
+#+BEGIN_SRC python
+  class HelloMeta(type):
+      # 定义一个 hello 方法
+      def hello(cls):
+          print("greetings from %s, a HelloMeta type class" % (type(cls())))
+
+      # 调用该metaclass的方法
+      def __call__(self, *args, **kwargs):
+          # 正常创建新类
+          cls = type.__call__(self, *args, **kwargs)
+
+          # 但是为每个创建的类添加一个hello方法
+          setattr(cls, "hello", self.hello)
+
+          # print('__call__() from HelloMeta',args,kwargs)
+          # 返回这个新建的类
+          return cls
+
+  class TryHello(object, metaclass=HelloMeta):
+      def greet(self):
+          self.hello()
+
+  # TryHello.hello()
+  greeter = TryHello()
+  greeter.hello()
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+greetings from <class '__main__.TryHello'>, a HelloMeta type class
+#+END_SRC
+
+你可以看到，虽然 =TryHello= 本身没有定义 =hello= 函数，但是由于使用了 =HelloMeta= 元类，因此也有了 =hello= 方法
+
+也就是说，元类能给我们带来修改代码本身的能力，因此被大量应用于框架中
+
+* Metaclass的工作原理
+在了解Metaclass的工作原理之前先需要了解Python中的类型(type).
+
+** 查看对象的类型
+我们可以使用 =type(object)= 来查看 =object= 的类型
+#+BEGIN_SRC python
+  obj="Hello"
+  print("obj的类型为", type(obj))
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+obj的类型为 <class 'str'>
+#+END_SRC
+
+** 查看类的类型
+
+上面可以看出变量 =obj= 的类型(type)为 =str= 类(class),那么 =str= 类本身的类型又是什么呢？让我们来看一下
+#+BEGIN_SRC python
+  print(type(str))
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+<class 'type'>
+#+END_SRC
+
+哦， =str= 类的类型为 =type= 类
+
+** type的类型又是什么呢
+那么你一定很好奇， =type= 的类似又是什么呢？让我们来看一下
+#+BEGIN_SRC python
+  print(type(type))
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+<class 'type'>
+#+END_SRC
+
+你会发现， =type= 的类型还是 =type= 类。
+
+也就是说 =type= 不仅是一般类（比如str，int）的元类，同时也是自己的元类。
+
+** 元类中的那些特殊方法
+=type= 类，作为Python中所有类（包括type本身）的默认元类，定义了一些特殊方法，可供自定义的元类覆盖，以完成特定的行为。
+
+常见的几个特殊方法有:
+
++ ~__new__(cls,name,base,attr)~ :: 元类中, ~__new__~ 会在你定义类的时候执行, 只执行一次
+
++ ~__init__(self, name, *args, **kwargs)~ :: 该元类的实例(也就是普通类)创建后被调用，用于为初始化实例的.
+
++ ~__call__(self, *args, **kwargs)~ :: 元类创建的实例(也就是普通类),构造普通类的对象时调用
+     
+
+#+BEGIN_SRC python :session none
+  class NewMeta(type):
+      def __new__(*args, **kwargs):
+          print('__new__() from NewMeta',args,kwargs)
+          return type.__new__(*args, **kwargs)
+
+      def __init__(self,name,*args,**kwargs):
+          print('__init__() from NewMeta',args,kwargs)
+          return type.__init__(self,name,*args,**kwargs)
+
+      def __call__(self, *args, **kwargs):
+          print('__call__() from NewMeta',args,kwargs)
+          return type.__call__(self, *args, **kwargs)
+
+
+  class Test(object,metaclass=NewMeta):
+      pass
+
+  print('---------------------------------')
+  Test()
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+__new__() from NewMeta (<class '__main__.NewMeta'>, 'Test', (<class 'object'>,), {'__module__': '__main__', '__qualname__': 'Test'}) {}
+__init__() from NewMeta ((<class 'object'>,), {'__module__': '__main__', '__qualname__': 'Test'}) {}
+---------------------------------
+__call__() from NewMeta () {}
+#+END_SRC
+
+
+* class语法的实质是什么
+
+要了解class语法的实质，首先要明白，python中的类其实也就是对象，只不过这个对象具有创建其他对象的能力而已。
+
+既然类是一个对象，因此你就可以:
+
++ 赋值给变量
+
++ 作为函数参数进行传递
+
++ 为它增加属性
+
++ 对它进行拷贝
+
+当解释器扫描到class语句后，根据整个class语句中找出定义该class的元类，该class继承的父类，以及class中包含的属性，然后通过执行
+
+#+BEGIN_SRC python
+  类=元类(类名,父类组成的元组,包含属性的字典)
+#+END_SRC
+来创建新类。
+
+比如:
+#+BEGIN_SRC python
+  class MyType(type):
+      pass
+
+  class Foo(metaclass=MyType):
+      hello=True
+
+  class Bar(Foo):
+      pass
+#+END_SRC
+
+
+其实就是
+#+BEGIN_SRC python
+  Foo=MyType('Foo', (), {'hello':True})
+
+  Bar=MyType('Bar', (Foo,), {})
+#+END_SRC
