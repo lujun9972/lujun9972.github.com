@@ -1,0 +1,95 @@
+#+TITLE: 应用inspect module和metaclass实现自初始化类
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2018-02-23 五 21:46]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+PROPERTY: header-args    :results output :results org :session self-initializing-classes
+
+从 https://www.codementor.io/predo/self-initializing-classes-gro3q9svt 中学到的技巧。
+
+我们在定义类的构造函数时经常会写出类似这样的代码
+#+BEGIN_SRC python
+  class Person ():
+    def __init__(self, first_name, last_name, birth_date, sex, address):
+        self.first_name = first_name
+        self.last_name  = last_name
+        self.birth_date = birth_date
+        self.sex        = sex
+        self.address    = address
+    def __repr__(self):
+      return "{} {} {} {} {}".format(self.first_name, self.last_name, self.birth_date, self.sex, self.a
+#+END_SRC
+
+其中构造函数中初始化的类属性名称与初始化函数参数列表中的参数名称是一样的。
+
+而借助inspect module和元类，我们可以实现省略构造函数中的这类初始化语句。
+
+首先让我们来看一下 =inspect module= 。
+
+* inspect module
+
+=inspect= module 中有一个 =getargspec= 函数，可以获取一个函数中的参数名称和默认值。
+
+它接受一个函数作为参数，然后返回一个四个元素的元组： =(args, varargs, varkw, defaults)= 。
+
+其中：
+
++ args :: 参数名称的列表
++ varargs :: 函数中 =*= 参数的名称，如果没有 =*= 参数则为None
++ varkw :: 函数中 =**= 参数的名称，如果没有 =**= 参数则为None
++ defaults :: 最后n个参数的默认值组成的n元素元组
+
+* 通过元类改造类的初始化函数，使之自动根据初始化函数中的函数名称进行初始化
+
+我么首先定义一个元类 =AutoInit= ：
+#+BEGIN_SRC python
+  class AutoInit(type):
+    def __new__(meta, classname, supers, classdict):
+      classdict['__init__'] = autoInitDecorator(classdict['__init__'])
+      return type.__new__(meta, classname, supers, classdict)
+#+END_SRC
+
+这里 =AutoInit= 元类会自动对类中的 =__init__= 函数进行改造，其改造动作由 =autoInitDecorator= 装饰器来完成。
+
+下一步我们来定义 =autoInitDecorator= 装饰器：
+#+BEGIN_SRC python
+  from inspect import getargspec
+
+  def autoInitDecorator (toDecoreFun):
+    def wrapper(*args):
+      # 获取初始化函数中的参数名称,其中第一个参数名称为self
+      argsnames = getargspec(toDecoreFun)[0]
+      # 初始化函数的值来自于args，但是请注意args[0]为self，因此需要去掉
+      argsvalues = [x for x in args[1:]]
+      # args[0]为self，也就是实例的引用,我们通过这个引用来对实例进行初始化
+      objref = args[0]
+      # 根据初始化函数中参数名称对实例进行属性设置,注意这里要去掉参数名称列表中第一个self名称
+      for x in argsnames[1:]:
+        objref.__setattr__(x,argsvalues.pop(0))
+    return wrapper
+#+END_SRC
+
+* 使用自初始化类
+这样一来，之前的Person类可以简化为
+#+BEGIN_SRC python
+  class Person (metaclass=AutoInit):
+    def __init__(self, first_name, last_name, birth_date, sex, address):
+      pass
+    def __repr__(self):
+      return "{} {} {} {} {}".format(self.first_name, self.last_name, self.birth_date, self.sex, self.address)
+#+END_SRC
+
+
+我们来试试结果
+#+BEGIN_SRC python
+  john = Person('Jonh', 'Doe', '21/06/1990', 'male', '216 Caledonia Street')
+  print(john)
+#+END_SRC
+
+结果为:
+#+BEGIN_SRC org
+Jonh Doe 21/06/1990 male 216 Caledonia Street
+#+END_SRC
+
+取得了预料的结果。
