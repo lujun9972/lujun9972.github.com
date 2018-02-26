@@ -1,0 +1,59 @@
+#+TITLE: 将OrangePiLite打造成BT下载服务器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-26 一 22:54]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+通过安装 transmission 可以将OrangePiLite打造成一个BT下载服务器。步骤如下：
+
+1. 安装官网的Ubuntu Server，安装步骤参见[[ego-link:%E6%8A%8AOrange%20Pi%20Lite%E6%89%93%E9%80%A0%E6%88%90ubuntu%20server.org][这里]]
+   
+2. 安装transmission
+   #+BEGIN_SRC shell :dir /ssh:root@orangepilite:
+     sudo apt install -y transmission-daemon
+   #+END_SRC
+
+3. 创建目录用于存放下载完的目标和下载未完成的目标
+   #+BEGIN_SRC shell :dir /ssh:lujun9972@orangepilite:
+     mkidr -p ~/transmission/complete
+     mkidr -p ~/transmission/incomplete
+   #+END_SRC
+
+4. 将用户加入debian-transmission用户组
+   在安装transmission时会自动创建debian-transmission用户组
+   #+BEGIN_SRC shell :dir /ssh:root@orangepilite:
+     sudo usermod -a -G debian-transmission lujun9972
+   #+END_SRC
+
+5. 更改下载目录的权限，让transmission能够读写这两个目录
+   #+BEGIN_SRC  shell :dir /ssh:root@orangepilite:
+     chgrp debian-transmission ~/transmission/incomplete
+     chgrp debian-transmission ~/transmission/complete
+     chmod 770 ~/transmission/incomplete
+     chmod 770 ~/transmission/complete
+   #+END_SRC
+   
+   这一步的目的就是让自己用户和debian-transmission同时能够对下载目录进行读写
+
+6. 修改配置文件 =/etc/transmission-daemon/settings.json=
+   
+   主要是配置 
+
+   + download-dir :: 完成的下载目录
+
+   + incomplete-dir :: 未完成的下载目录
+
+   + rpc-whitelist :: 允许访问的白名单地址，支持通配符，例如 "192.168.1.*"
+
+   + rpc-username :: 登陆用户
+
+   + rpc-password :: 登陆密码，输入明文即可，重启后会变为加密
+
+7. 加载新配置,重启transmission服务
+   #+BEGIN_SRC shell  :dir /ssh:root@orangepilite:
+     sudo service transmission-daemon reload
+     sudo service transmission-daemon restart
+   #+END_SRC
+
+8. 访问 =http://orangepi:9091= 输入设置的用户和密码即可
