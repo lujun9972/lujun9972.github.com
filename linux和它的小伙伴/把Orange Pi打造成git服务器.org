@@ -1,0 +1,77 @@
+#+TITLE: 把Orange Pi打造成git服务器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-02-28 三 23:18]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+目前主流的开源git服务器有 =gitlab= 和 =gogs= ，考虑到 =gogs= 相对轻量级，而OrangePi的性能普遍不高，因此这里选择 =gogs=
+
+* 安装golang
+gogs要求Go语言版本>=1.6，Ubuntu上的golang刚好是1.6版的，因此我们直接用 =apt= 安装
+#+BEGIN_SRC shell
+  sudo apt install golang
+#+END_SRC
+
+* 安装git
+#+BEGIN_SRC shell
+  sudo apt install git
+#+END_SRC
+
+然后创建 =git= 用户
+#+BEGIN_SRC shell
+  sudo adduser --disabled-login --gecos 'Gogs' git
+#+END_SRC
+
+设置环境变量
+#+BEGIN_SRC shell
+  sudo su - git
+  cd ~
+  echo 'export GOPATH=$HOME/go' >> $HOME/.bashrc
+  source $HOME/.bashrc
+#+END_SRC
+
+* 安装Gogs
+由于我们只是自己使用，需求很低，因此让Gogs直接使用SQLite3数据库
+#+BEGIN_SRC shell
+  go get -u -tags "sqlite" github.com/gogits/gogs # 注意，这一步要的时间超级长
+  cd $GOPATH/src/github.com/gogits/gogs
+  go build -tags "sqlite"
+#+END_SRC
+
+安装好后，试试运行 =./gogs web= ，当出现类似下面的内容时启动成功了
+#+BEGIN_EXAMPLE
+  git@orangepipc2:~/go/src/github.com/gogits/gogs$ ./gogs web
+  2018/02/28 23:08:16 [ WARN] Custom config '/home/git/go/src/github.com/gogits/gogs/custom/conf/app.ini' not found, ignore this if you're running first time
+  2018/02/28 23:08:16 [TRACE] Custom path: /home/git/go/src/github.com/gogits/gogs/custom
+  2018/02/28 23:08:16 [TRACE] Log path: /home/git/go/src/github.com/gogits/gogs/log
+  2018/02/28 23:08:16 [TRACE] Log Mode: Console (Trace)
+  2018/02/28 23:08:16 [ INFO] Gogs 0.11.34.1122
+  2018/02/28 23:08:16 [ INFO] Cache Service Enabled
+  2018/02/28 23:08:16 [ INFO] Session Service Enabled
+  2018/02/28 23:08:16 [ INFO] SQLite3 Supported
+  2018/02/28 23:08:16 [ INFO] Run Mode: Development
+  2018/02/28 23:08:18 [ INFO] Listen: http://0.0.0.0:3000
+
+#+END_EXAMPLE
+
+从启动内容可以看出 =gogs= 监听了3000端口。
+
+在第一次访问该URL后会出现安装配置页面，这里只需要注意我们要选择数据库类型为 =sqlite3=, 其他的按照需求自己填就好了。
+
+* 自动运行Gogs服务器
+Gogs提供了一个默认的service文件供我们使用： =~/go/src/github.com/gogits/gogs/scripts/systemd/gogs.service=
+
+#+BEGIN_SRC shell
+su -
+cp /home/git/go/src/github.com/gogits/gogs/scripts/systemd/gogs.service /etc/systemd/system
+#+END_SRC
+
+修改gogs.service配置文件
+由于我们只用sqlite，因此把 =After=mariadb.service mysqld.service postgresql.service memcached.service redis.service= 注释掉
+
+然后创建一个软连接
+#+BEGIN_SRC shell
+  cd ~/go/src/github.com/gogits/gogs
+  ln -s $(pwd) /home/git/gogs
+#+END_SRC
