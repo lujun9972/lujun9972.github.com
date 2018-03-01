@@ -1,0 +1,75 @@
+#+TITLE: 为history加上时间戳
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,bash,history
+#+DATE: [2018-03-01 四 21:56]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+一直以来，我对 =history= 的认识只限于：
+
++ 运行 =history= 能够列出曾经运行过的命令
++ 通过 =HISTFILE= 可以设置存储历史的文件
++ 通过 =HISTSIZE= 可以设置存储历史的数量
++ 通过 =history -c= 可以清空当前session的历史信息(history命令实际是在logout的时候才将命令计入HISTFILE中的)
+  
+但除此之外，其实还有其他一些变量能够影响 =history= 的行为，其中一个很有用的就是 =HISTTIMEFORMAT= 。
+
+默认情况下 =HISTTIMEFORMAT= 为空，这时候 =history= 仅仅只会记录运行的命令本身，而不会记录运行命令的时间。
+
+但若你设置了 =HISTTIMEFORMAT= 则 =history= 还会在 =$HISTFILE= 中以注释的形式将运行命令的时间也记录下来,记录的时间格式由 =HISTTIMEFORMAT= 决定：
+#+BEGIN_SRC shell
+  echo export HISTTIMEFORMAT=\"%m/%d/%y %T \" >> ~/.bash_profile
+#+END_SRC
+
+则执行 =history= 后会看到在执行的命令前有列出执行命令时的时间
+#+BEGIN_SRC shell
+  history |tail
+#+END_SRC
+
+结果为：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 ~]$ history |tail
+    511  03/01/18 22:15:23 sudo vi /etc/proxychains.conf 
+    512  03/01/18 22:15:33 proxychains yaourt -S snapd
+    513  03/01/18 22:15:48 ssh 192.168.1.19
+    514  03/01/18 22:15:56 ssh 192.168.1.9
+    515  03/01/18 22:16:20 ls
+    516  03/01/18 22:19:37 cat .bash_profile 
+    517  03/01/18 22:19:45 export HISTTIMEFORMAT="%m/%d/%y %T "
+    518  03/01/18 22:19:46 ls
+    519  03/01/18 22:19:48 history
+    520  03/01/18 22:20:24 history |tail
+#+END_EXAMPLE
+
+查看 =$HISTFILE= 中的内容可以看到,在每条命令的前面都有一个注释起来的时间戳
+#+BEGIN_SRC shell
+  tail $HISTFILE
+#+END_SRC
+
+结果为：
+#+BEGIN_EXAMPLE
+  #1519913458
+  exit
+  #1519913460
+  ls
+  #1519913465
+  source .bash_profile 
+  #1519913477
+  cat .bash_history 
+  #1519913492
+  exit
+#+END_EXAMPLE
+
+除此之外，通过设置 =HISTCONTROL= 变量可以设置哪些命令需要记录，那些命令不需要记录，该变量可以有三种值：
+
++ ignorespace :: 以空格开头的命令不会被记录
++ ignoredups :: 匹配上一次历史记录的行将不会记录
++ ignoreboth :: 上两种情况的综合
+
+除了 =HISTCONTROL= 之外，还有 =HISTIGNORE= 也可以设置来筛选哪些命令不被记录下来。
+
+=HISTIGNORE= 由多个通配符模式列表组成，默认列表由冒号分隔。 每个模式都从行首开始匹配，必须要匹配整行。
+
+这里的通配符模式除了能使用shell中平常的通配符好，还能用 =&= 来表示上一个历史行。当然若你就是想表示 =&= 的时候，则需要用反斜线将之转义起来。
+
+但要注意:多行组合命令的第二行以及后续行不受 =HISTIGNORE= 的影响，都将加入到历史中。
