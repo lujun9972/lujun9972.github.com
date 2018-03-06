@@ -1,0 +1,73 @@
+#+TITLE: 将Emacs插件库同步到本地来安装
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-03-06 二 17:29]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+如果你喜欢把玩各种Emacs插件，会不会觉得在线安装插件特别的慢，而且时时刻刻都得保持网络在线（虽然这也不是什么大问题），如果Emacs版本比较低的话还得解决TLS/SSL的连接问题。
+
+既然这样，为什么不把Emacs的插件库同步到本地上来呢？
+
+只需要一条命令就可以了
+#+BEGIN_SRC shell
+  rsync -avz rsync://elpa.emacs-china.org/elpa /media/emacs_plugins
+#+END_SRC
+
+然后再修改一下Emacs配置中的 =package-archives= 变量就可以了 
+
+#+BEGIN_SRC emacs-lisp
+  (setq package-archives
+        '(("melpa-cn" . "/media/emacs_plugins/melpa/")
+          ("org-cn"   . "/media/emacs_plugins/org/")
+          ("gnu-cn"   . "/media/emacs_plugins/gnu/")
+          ("marmalade-cn"   . "/media/emacs_plugins//marmalade/")))
+#+END_SRC
+
+如果你用的是spacemancs，则是修改 =configuration-layer--elpa-archives= 变量
+
+#+BEGIN_SRC emacs-lisp
+  (setq configuration-layer--elpa-archives
+        '(("melpa-cn" . "/media/emacs_plugins/melpa/")
+          ("org-cn"   . "/media/emacs_plugins/org/")
+          ("gnu-cn"   . "/media/emacs_plugins/gnu/")
+          ("marmalade-cn"   . "/media/emacs_plugins//marmalade/")))
+#+END_SRC
+
+这里要注意，仓库地址必须使用绝对路径。
+
+如果觉得手工同步插件库太麻烦，也可以写个timer来让系统帮你自动同步：
+
+在 =/etc/systemd/system/= 目录下创建一个 =rsync_emacs_china.service= 文件
+#+BEGIN_SRC conf :dir /sudo:: :tangle /etc/systemd/system/rsync_emacs_china.service 
+  [Unit]
+  Description=Sync emacs-china elpa repos with rsync
+  Documentation=http://elpa.emacs-china.org/
+  After=network.target
+
+  [Service]
+  Type=simple
+  TimeoutStartSec=infinity
+  User=root
+  Group=root
+  WorkingDirectory=/root
+  ExecStartPre=/usr/bin/mkdir -p /media/emacs_plugins
+  ExecStart=/usr/bin/rsync -avz rsync://elpa.emacs-china.org/elpa /media/emacs_plugins
+#+END_SRC
+
+然后在 =/etc/systemd/system/= 目录下创建一个 =rsync_emacs_china.timer= 文件
+#+BEGIN_SRC conf :dir /sudo:: :tangle /etc/systemd/system/rsync_emacs_china.service 
+  [Unit]
+  Description=Sync emacs-china elpa repos with rsync every 30 mins
+  Documentation=http://elpa.emacs-china.org/
+
+  [Timer]
+  OnBootSec=15min
+  OnUnitInactiveSec=30min
+  Unit=rsync_emacs_china.service
+
+  [Install]
+  WantedBy=multi-user.target
+#+END_SRC
+
+这样系统启动15分钟后，系统会自动开始同步插件库，此后每30分钟同步一次。
