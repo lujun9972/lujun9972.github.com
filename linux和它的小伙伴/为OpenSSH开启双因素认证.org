@@ -1,0 +1,48 @@
+#+TITLE: 为OpenSSH开启双因素认证
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,sshd
+#+DATE: [2018-03-06 二 09:10]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+至OpenSSH 6.2开始，就多了一个配置项 =AuthenticationMethods= 能够用来实现多因素认证。
+
+该配置项可以指定一个或多个认证方式，只有所有认证方式都通过后才会被认为是认证成功。
+
+比如，要指定账户必须拥有指定的密钥和正确的密码才能登陆，则可以这样配置:
+
+#+BEGIN_SRC conf
+  # 不要忘了开启这些认证方式
+  PubkeyAuthentication yes
+  PasswordAuthentication yes
+  AuthenticationMethods publickey,password
+#+END_SRC
+
+这里多个认证方式之间用 =,= 分隔开来。
+
+你也可以设置多组多因素认证，只要每组认证用空格分隔开就行。
+
+比如，你要设置，登陆用户必须有合适的密钥，然后若是用户来自于授信主机，则让他直接登陆，否则还需要输入密码才能登陆，则可以这样：
+#+BEGIN_SRC conf
+  AuthenticationMethods publickey,password publickey,hostbased
+#+END_SRC
+
+开启多因素认证有一个不好的地方就是对自动化脚本很不友好。因此一般来说多因素认证会跟 =Match User= 或 =Match Group= 一起连用，用来限制某些用户开启或者不开启双因素认证。
+
+比如，一个比较常见的场景可能就是为有管理权限的用户设置多因素认证
+#+BEGIN_SRC conf
+  PubkeyAuthentication yes
+  PasswordAuthentication yes
+
+  Match Group wheel
+    AuthenticationMethods publickey,password
+#+END_SRC
+
+当然，你也可以为一般用户都开启多因素认证，但提供某些密钥认证的用户来给自动化脚本使用：
+#+BEGIN_SRC conf
+  AuthenticationMethods publickey,password
+
+  Match User git
+      AuthenticationMethods publickey
+      ForceCommand /usr/bin/git-shell -c "$SSH_ORIGINAL_COMMAND"
+#+END_SRC
