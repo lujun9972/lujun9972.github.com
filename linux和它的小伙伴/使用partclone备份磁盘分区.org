@@ -1,6 +1,6 @@
 #+TITLE: 使用partclone备份磁盘分区
 #+AUTHOR: lujun9972
-#+TAGS: linux和它的小伙伴
+#+TAGS: linux和它的小伙伴,backup
 #+DATE: [2018-03-08 四 12:47]
 #+LANGUAGE:  zh-CN
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
@@ -45,3 +45,50 @@ looking for conflicting packages...
 #+END_SRC
 
 * 备份磁盘分区
+
+在备份磁盘分区之前，请先确保被备份的分区需要先卸载。不过如果你是用的 =lvm= ，那么可以创建一个逻辑卷的 live snapshot,因此可以不受此限制。
+
+下面这个例子，我把安装好的orangepilite做个备份。
+
+将orangepilite断电后，推出TF卡，然后插入读卡器中，插入电脑的USB接口。然后执行
+#+BEGIN_SRC shell :dir /sudo::
+  sudo partclone.ext4 -c -s /dev/sdb1 -o /mnt/orangepilite.pcl
+#+END_SRC
+
+其中：
+
++ -c :: 表示clone一个备份
++ -s :: 指定clone的源
++ -o :: 指定保存的镜像文件
+
+你会发现，虽然TF卡是8G，但是产生的orangepilite.pcl只有1.3G
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 lujun9972]$ ls -lh /mnt/orangepilite.pcl 
+  -rw------- 1 root root 1.3G 3月   8 21:23 /mnt/orangepilite.pcl
+#+END_EXAMPLE
+
+不过更多的时候，我们会对镜像文件压缩存储，我们可以让 =partclone= 与 =gzip= 连用实现这一点
+
+#+BEGIN_SRC shell :dir /sudo::
+  sudo bash -c "partclone.ext4 -c -s /dev/sdb1 |gzip -c -9 >/mnt/orangepilite.pcl.gz"
+#+END_SRC
+
+最后产生的备份文件只有454M
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 lujun9972]$ ls -lh /mnt/orangepilite.pcl.gz 
+  -rw-r--r-- 1 root root 454M 3月   8 21:34 /mnt/orangepilite.pcl.gz
+#+END_EXAMPLE
+
+* 从备份还原
+
+从备份还原很简单
+#+BEGIN_SRC shell
+  sudo partclone.ext4 -r -s /mnt/orangepilite.pcl -o /dev/sdb1
+#+END_SRC
+
+这里 =-r= 表示还原(restore),然后把上面备份的 =-s= 和 =-o= 参数值反过来就是了。
+
+若备份的是压缩过的文件，则只需要运行
+#+BEGIN_SRC shell
+  sudo bash -c "gzip -c -d /mnt/orangepilite.pcl.gz | partclone.ext4 -r -o /dev/sdb1"
+#+END_SRC
