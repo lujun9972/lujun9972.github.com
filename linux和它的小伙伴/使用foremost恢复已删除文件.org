@@ -1,0 +1,76 @@
+#+TITLE: 使用foremost恢复已删除文件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,recover
+#+DATE: [2018-03-08 四 09:48]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+foremost是一款根据文件头，尾和内部结构来尝试从镜像文件（或者磁盘）中恢复文件的工具。
+
+foremost默认可以扫描出 =jpg=, =gif=, =png=, =bmp=, =avi=, =exe=, =mpg=, =mp4=, =wav=, =riff=, =wmv=, =mov=, =pdf=, =ole=, =doc=, =zip=, =rar=, =html=, =cpp= 文件。
+
+但是通过配置它的配置文件(默认为 =/etc/foremost.conf=),你还可以为它增加新的支持类型。
+
+* 安装foremost
+#+BEGIN_SRC shell :dir /sudo::
+  sudo pacman -S foremost
+#+END_SRC
+
+* 使用foremost扫描文件
+最常用的方法就是
+#+BEGIN_SRC shell
+  sudo foremost -t 文件类型 -i 磁盘/镜像文件
+#+END_SRC
+
+比如，我误删除了一个 =png= 文件，那么可以运行
+#+BEGIN_SRC shell
+  sudo formost -t png -i /dev/sda1
+#+END_SRC
+
+这会扫描 =/dev/sda1= 分区，尝试查找其中的 =png= 文件，并将这些 =png= 文件保存到当前目录下的 =output= 目录中。
+
+你也可以通过 =-o= 选项来指定存放文件的目录，但要注意，这个目录需要是空的，否则会提示错误。
+#+BEGIN_SRC shell
+  sudo formost -t png -i /dev/sda1 -o /tmp/png
+#+END_SRC
+
+为了方便，你也可以使用 =T= 选项让foremost自动根据当前时间戳来生成output目录，这时生成的目录是类似这样的 =output_Thu_Mar__8_11_43_40_2018=
+#+BEGIN_SRC shell
+  sudo formost -t png -i /dev/sda1 -T
+#+END_SRC
+
+=foremost= 需要扫描整个磁盘或镜像文件来查找可能的文件，这常常是一个很漫长的过程，可以使用 =-q= 来加快扫描速度。
+
+当启用 =-q= 选项后， =foremost= 会仅仅在每个扇区的开始位置与文件头进行对比，这会极大地减少扫描时间，但可能会丢失一些嵌套在其他文件内的文件（比如嵌套在doc文件中的图片）。
+#+BEGIN_SRC shell
+  sudo formost -q -t png -i /dev/sda1 -T
+#+END_SRC
+
+与 =-q= 常连用的是 =-b number=, 它可以指定磁盘每个扇区的大小，默认是512个字节。但对于 =ext4= 文件系统来说，这个值一般是4096.
+#+BEGIN_SRC shell
+  sudo formost -q -b 4096 -t png -i /dev/sda1 -T
+#+END_SRC
+
+具体文件系统的扇区大小是多少，可以通过 =dumpe2fs= 来查看
+#+BEGIN_SRC shell
+  sudo  dumpe2fs /dev/sda1 |grep "Block size" |cut -f2 -d ":"
+#+END_SRC
+
+我们可以写一个脚本,将 =foremost= 和 =dumpe2fs= 结合起来实现快速扫描。
+#+BEGIN_SRC shell
+  TYPE=$1
+  DIR=$2
+  fs=$(df  ${DIR}|tail -n 1 |cut -f 1 -d " ")
+  block_size=$(sudo  dumpe2fs ${fs} |grep "Block size" |cut -f2 -d ":")
+  foremost -t ${TYPE} -q -b ${block_size} -i ${fs} -T
+#+END_SRC
+
+第一个参数指定文件类型
+
+第二个参数指定被删掉文件所在的目录
+
+第三行找出文件所属的磁盘
+
+第四行找出磁盘块大小
+
+第五行调用foremost扫描被删除的文件。

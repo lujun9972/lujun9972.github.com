@@ -1,0 +1,47 @@
+#+TITLE: 使用partclone备份磁盘分区
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-03-08 四 12:47]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在linux中，最常用的 =block level= 备份工具应该非 =dd= 莫属了。 然而用 =dd= 做磁盘备份有一个不好的地方就是太费空间，磁盘多大，生成的备份文件就有多大。
+
+partclone 跟 =dd= 类似，也是一款 =block level= 的备份工具，因此使用它你无需担心会破坏磁盘中 =acls= 或 =selinux labels= 这一类特殊的文件权限。
+
+但是跟 =dd= 相比， =partclone= 能够识别大多数常见的文件类型，只备份磁盘中用到的那些block，从而大大减少备份所耗的空间。
+
+目前 =partclone= 支持的文件系统格式包括ext2, ext3, ext4, hfs+, reiserfs, xfs, jfs, ntfs, fat(12/16/32), exfat。
+
+对每种文件系统 =partclone= 都提供了对应的 =partclone.<fs>= 对应。比如备份 =ext4= 文件系统则使用 =parclone.ext4= 进行备份。
+对于不支持的文件系统， =partclone= 也提供了 =partclone.dd= 来备份。
+
+* 安装partclone
+archlinux上可以直接使用pacman来安装：
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo pacman -S partclone --noconfirm
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+[0;1mPackages (1)[0m partclone-0.2.89-2
+
+[0;1mTotal Installed Size:[0m  1.48 MiB
+[0;1mNet Upgrade Size:    [0m  0.00 MiB
+
+[1;34m::[0;1m Proceed with installation? [Y/n] [0m
+(0/1) checking keys in keyring                     [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) checking keys in keyring                     [----------------------] 100%
+(0/1) checking package integrity                   [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) checking package integrity                   [----------------------] 100%
+(0/1) loading package files                        [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) loading package files                        [----------------------] 100%
+(0/1) checking for file conflicts                  [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) checking for file conflicts                  [----------------------] 100%
+(0/1) checking available disk space                [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) checking available disk space                [----------------------] 100%
+[1;34m::[0;1m Processing package changes...
+[0m(1/1) reinstalling partclone                       [[1;33mc[m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m[0;37mo[m[0;37m [m[0;37m [m]   0%(1/1) reinstalling partclone                       [----------------------] 100%
+[1;34m::[0;1m Running post-transaction hooks...
+[0m(1/1) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+* 备份磁盘分区
