@@ -1,0 +1,65 @@
+#+TITLE: 使用shell控制OrangePi的发光二极管
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,OrangePi
+#+DATE: [2018-03-10 六 22:28]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+本文以安装了Armbian的OrangePi PC2为例。
+
+在OrangePi PC2中有两个LED灯可以被软件控制:一个红灯，一个绿灯。
+
+在Linux中，LED是通过 /sys 目录里的文件来控制的，这个目录是由内核驱动程序实现的。
+
+这两个LED灯相关的目录分别为 =/sys/class/leds/orangepi:green:pwr= 以及 =/sys/class/leds/orangepi:red:status=.
+
+从名字上也很容易看出，前者是控制绿灯，后者是控制红灯的。
+
+而在具体的LED灯目录中，有各种文件和目录可以用来改变LED灯的行为和获取LED灯的状态：
+#+BEGIN_SRC shell :dir /ssh:root@orangepipc2:/ :results org
+ls -F /sys/class/leds/orangepi:green:pwr/
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+brightness  device@  max_brightness  power/  subsystem@  trigger  uevent
+#+END_SRC
+
+* 触发LED的条件(trigger)
+我们可以使用LED灯来表现各种事件，通过查看 =trigger= 文件能够看到哪些事件可以用来出发LED闪亮：
+#+BEGIN_SRC shell :dir  /ssh:root@orangepipc2:/ :results org
+  cat /sys/class/leds/orangepi:green:pwr/trigger
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+[none] kbd-scrolllock kbd-numlock kbd-capslock kbd-kanalock kbd-shiftlock kbd-altgrlock kbd-ctrllock kbd-altlock kbd-shiftllock kbd-shiftrlock kbd-ctrlllock kbd-ctrlrlock usbport usb-gadget usb-host mmc0 heartbeat cpu cpu0 cpu1 cpu2 cpu3 rc-feedback 0.2:01:1Gbps 0.2:01:100Mbps 0.2:01:10Mbps 
+#+END_SRC
+
+可以看到，支持的触发器有很多，但是 =none= 外面的方括号表明当前的选择是 =none= 。
+
+*只有当触发器源为none的情况下，才能用软件来控制LED灯*
+
+
+* 点亮/熄灭LED灯
+在LED灯目录中，还有一个 =brightness= 的文件，用来表示LED灯的亮度。其中0表示完全熄灭，255表示最大亮度。
+
+#+BEGIN_SRC shell :dir  /ssh:root@orangepipc2:/ :results org
+  cat /sys/class/leds/orangepi:green:pwr/brightness
+#+END_SRC
+
+结果：
+#+BEGIN_SRC org
+255
+#+END_SRC
+
+这说明，绿灯是亮着的。
+
+目前，OrangePi的LED只能亮或者不亮，也就是说，任何不为0的亮度值都会让LED完全点亮。
+
+要点亮或者熄灭LED灯，可以直接通过修改 =brightness= 的值来实现，比如：
+#+BEGIN_SRC shell :dir  /ssh:root@orangepipc2:/ :results org
+  echo 0|sudo tee /sys/class/leds/orangepi:green:pwr/brightness
+#+END_SRC
+
+就会让绿灯熄灭了。
