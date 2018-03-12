@@ -1,0 +1,253 @@
+#+TITLE: 使用mypy对python程序进行静态检查
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅,python,checker
+#+DATE: [2018-03-12 一 22:18]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+自从python3.6开始，允许为参数和返回类型添加 type hint，这使得对python程序进行静态检查成为可能。
+
+mypy就是这么一个python type checker.
+
+* 安装mypy
+我们可以使用 =pip= 来安装mypy。
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 work]$ pip install mypy
+  Collecting mypy
+    Downloading mypy-0.570-py3-none-any.whl (1.2MB)
+      100% |████████████████████████████████| 1.2MB 70kB/s 
+  Collecting typed-ast<1.2.0,>=1.1.0 (from mypy)
+    Downloading typed_ast-1.1.0-cp36-cp36m-manylinux1_x86_64.whl (724kB)
+      100% |████████████████████████████████| 727kB 68kB/s 
+  Installing collected packages: typed-ast, mypy
+  Successfully installed mypy-0.570 typed-ast-1.1.0
+
+#+END_EXAMPLE
+
+* 使用mypy进行静态检查
+假设有这么一个 =test.py= 的文件：
+#+BEGIN_SRC python :tangle /tmp/test.py
+  class Student():
+      def __init__(self,id,name,age,major):
+          self.id = id
+          self.name = name
+          self.age = age
+          self.major = major
+
+
+  def display(persons):
+      for person in persons:
+          print(f'{person.id} {person.name}')
+
+  dark = Student('1', 'Dark', '19', 'computer')
+  sun = Student('2', 'Sun', 21, 'account')
+  lujun= Student(3, 'lujun', 'MBA', 25)
+
+  display(dark)
+  display([sun, dark, 'lujun'])
+#+END_SRC
+
+这段代码并没有添加 type hint，但是从代码中可以很容易看出是有许多错误的。
+
+我们用 =mypy= 来检查一下看能不能查出什么：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 work]$ mypy /tmp/test.py 
+  [lujun9972@T520 work]$ 
+#+END_EXAMPLE
+
+你会发现 =mypy= 什么错误都没有提示。
+
+现在我们来为程序加上type hint
+
+#+BEGIN_SRC python :tangle /tmp/test_with_type_hint.py
+  from typing import List
+  class Student():
+      def __init__(self, id:int, name:str, age:int, major:str)->None:
+          self.id = id
+          self.name = name
+          self.age = age
+          self.major = major
+
+
+  def display(persons:List[Student])->None:
+      for person in persons:
+          print(f'{person.id} {person.name}')
+
+  dark = Student('1', 'Dark', '19', 'computer')
+  sun = Student('2', 'Sun', 21, 'account')
+  lujun= Student(3, 'lujun', 'MBA', 25)
+
+  display(dark)
+  display([sun, dark, 'lujun'])
+#+END_SRC
+
+再次用 =mypy= 来检查一下
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 work]$ mypy /tmp/test_with_type_hint.py 
+  /tmp/test_with_type_hint.py:14: error: Argument 1 to "Student" has incompatible type "str"; expected "int"
+  /tmp/test_with_type_hint.py:14: error: Argument 3 to "Student" has incompatible type "str"; expected "int"
+  /tmp/test_with_type_hint.py:15: error: Argument 1 to "Student" has incompatible type "str"; expected "int"
+  /tmp/test_with_type_hint.py:16: error: Argument 3 to "Student" has incompatible type "str"; expected "int"
+  /tmp/test_with_type_hint.py:16: error: Argument 4 to "Student" has incompatible type "int"; expected "str"
+  /tmp/test_with_type_hint.py:18: error: Argument 1 to "display" has incompatible type "Student"; expected "List[Student]"
+  /tmp/test_with_type_hint.py:19: error: List item 2 has incompatible type "str"; expected "Student"
+#+END_EXAMPLE
+
+可以发现，找出了一堆问题。
+
+* 帮助信息
+mypy还带有一堆的参数来定义检查的方法，运行 =mypy -h= 就会列出帮助信息了：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 work]$ mypy --help
+  usage: mypy [-h] [-v] [-V] [--python-version x.y] [--platform PLATFORM] [-2]
+              [--ignore-missing-imports]
+              [--follow-imports {normal,silent,skip,error}]
+              [--disallow-any-unimported] [--disallow-any-expr]
+              [--disallow-any-decorated] [--disallow-any-explicit]
+              [--disallow-any-generics] [--disallow-untyped-calls]
+              [--disallow-untyped-defs] [--disallow-incomplete-defs]
+              [--check-untyped-defs] [--disallow-subclassing-any]
+              [--warn-incomplete-stub] [--disallow-untyped-decorators]
+              [--warn-redundant-casts] [--no-warn-no-return] [--warn-return-any]
+              [--warn-unused-ignores] [--warn-unused-configs]
+              [--show-error-context] [--no-implicit-optional] [-i]
+              [--quick-and-dirty] [--cache-dir DIR] [--cache-fine-grained]
+              [--skip-version-check] [--strict-optional]
+              [--strict-optional-whitelist [GLOB [GLOB ...]]]
+              [--junit-xml JUNIT_XML] [--pdb] [--show-traceback] [--stats]
+              [--inferstats] [--custom-typing MODULE]
+              [--custom-typeshed-dir DIR] [--scripts-are-modules]
+              [--config-file CONFIG_FILE] [--show-column-numbers]
+              [--find-occurrences CLASS.MEMBER] [--strict]
+              [--shadow-file SOURCE_FILE SHADOW_FILE] [--any-exprs-report DIR]
+              [--cobertura-xml-report DIR] [--html-report DIR]
+              [--linecount-report DIR] [--linecoverage-report DIR]
+              [--memory-xml-report DIR] [--txt-report DIR] [--xml-report DIR]
+              [--xslt-html-report DIR] [--xslt-txt-report DIR] [-m MODULE]
+              [-c PROGRAM_TEXT] [-p PACKAGE]
+              [files [files ...]]
+
+  optional arguments:
+    -h, --help                show this help message and exit
+    -v, --verbose             more verbose messages
+    -V, --version             show program's version number and exit
+    --python-version x.y      use Python x.y
+    --platform PLATFORM       typecheck special-cased code for the given OS
+                              platform (defaults to sys.platform).
+    -2, --py2                 use Python 2 mode
+    --ignore-missing-imports  silently ignore imports of missing modules
+    --follow-imports {normal,silent,skip,error}
+                              how to treat imports (default normal)
+    --disallow-any-unimported
+                              disallow Any types resulting from unfollowed
+                              imports
+    --disallow-any-expr       disallow all expressions that have type Any
+    --disallow-any-decorated  disallow functions that have Any in their
+                              signature after decorator transformation
+    --disallow-any-explicit   disallow explicit Any in type positions
+    --disallow-any-generics   disallow usage of generic types that do not
+                              specify explicit type parameters
+    --disallow-untyped-calls  disallow calling functions without type
+                              annotations from functions with type annotations
+                              (inverse: --allow-untyped-calls)
+    --disallow-untyped-defs   disallow defining functions without type
+                              annotations or with incomplete type annotations
+                              (inverse: --allow-untyped-defs)
+    --disallow-incomplete-defs
+                              disallow defining functions with incomplete type
+                              annotations (inverse: --allow-incomplete-defs)
+    --check-untyped-defs      type check the interior of functions without type
+                              annotations (inverse: --no-check-untyped-defs)
+    --disallow-subclassing-any
+                              disallow subclassing values of type 'Any' when
+                              defining classes (inverse: --allow-subclassing-
+                              any)
+    --warn-incomplete-stub    warn if missing type annotation in typeshed, only
+                              relevant with --check-untyped-defs enabled
+                              (inverse: --no-warn-incomplete-stub)
+    --disallow-untyped-decorators
+                              disallow decorating typed functions with untyped
+                              decorators (inverse: --allow-untyped-decorators)
+    --warn-redundant-casts    warn about casting an expression to its inferred
+                              type (inverse: --no-warn-redundant-casts)
+    --no-warn-no-return       do not warn about functions that end without
+                              returning (inverse: --warn-no-return)
+    --warn-return-any         warn about returning values of type Any from non-
+                              Any typed functions (inverse: --no-warn-return-
+                              any)
+    --warn-unused-ignores     warn about unneeded '# type: ignore' comments
+                              (inverse: --no-warn-unused-ignores)
+    --warn-unused-configs     warn about unused '[mypy-<pattern>]' config
+                              sections (inverse: --no-warn-unused-configs)
+    --show-error-context      Precede errors with "note:" messages explaining
+                              context (inverse: --hide-error-context)
+    --no-implicit-optional    don't assume arguments with default values of None
+                              are Optional (inverse: --implicit-optional)
+    -i, --incremental         enable module cache, (inverse: --no-incremental)
+    --quick-and-dirty         use cache even if dependencies out of date
+                              (implies --incremental)
+    --cache-dir DIR           store module cache info in the given folder in
+                              incremental mode (defaults to '.mypy_cache')
+    --cache-fine-grained      include fine-grained dependency information in the
+                              cache
+    --skip-version-check      allow using cache written by older mypy version
+    --strict-optional         enable experimental strict Optional checks
+                              (inverse: --no-strict-optional)
+    --strict-optional-whitelist [GLOB [GLOB ...]]
+                              suppress strict Optional errors in all but the
+                              provided files (experimental -- read documentation
+                              before using!). Implies --strict-optional. Has the
+                              undesirable side-effect of suppressing other
+                              errors in non-whitelisted files.
+    --junit-xml JUNIT_XML     write junit.xml to the given file
+    --pdb                     invoke pdb on fatal error
+    --show-traceback, --tb    show traceback on fatal error
+    --stats                   dump stats
+    --inferstats              dump type inference stats
+    --custom-typing MODULE    use a custom typing module
+    --custom-typeshed-dir DIR
+                              use the custom typeshed in DIR
+    --scripts-are-modules     Script x becomes module x instead of __main__
+    --config-file CONFIG_FILE
+                              Configuration file, must have a [mypy] section
+                              (defaults to mypy.ini)
+    --show-column-numbers     Show column numbers in error messages (inverse:
+                              --hide-column-numbers)
+    --find-occurrences CLASS.MEMBER
+                              print out all usages of a class member
+                              (experimental)
+    --strict                  Strict mode. Enables the following flags:
+                              --disallow-untyped-calls, --disallow-untyped-defs,
+                              --disallow-incomplete-defs, --check-untyped-defs,
+                              --disallow-subclassing-any, --disallow-untyped-
+                              decorators, --warn-redundant-casts, --warn-return-
+                              any, --warn-unused-ignores, --warn-unused-configs,
+                              --no-implicit-optional, --strict-optional
+    --shadow-file SOURCE_FILE SHADOW_FILE
+                              Typecheck SHADOW_FILE in place of SOURCE_FILE.
+
+  report generation:
+    Generate a report in the specified format.
+
+    --any-exprs-report DIR
+    --cobertura-xml-report DIR
+    --html-report DIR
+    --linecount-report DIR
+    --linecoverage-report DIR
+    --memory-xml-report DIR
+    --txt-report DIR
+    --xml-report DIR
+    --xslt-html-report DIR
+    --xslt-txt-report DIR
+
+  How to specify the code to type check:
+    -m MODULE, --module MODULE
+                              type-check module; can repeat for more modules
+    -c PROGRAM_TEXT, --command PROGRAM_TEXT
+                              type-check program passed in as string
+    -p PACKAGE, --package PACKAGE
+                              type-check all files in a directory
+    files                     type-check given files or directories
+
+  environment variables: MYPYPATH additional module search path
+#+END_EXAMPLE
