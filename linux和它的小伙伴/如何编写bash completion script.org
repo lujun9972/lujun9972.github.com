@@ -1,0 +1,93 @@
+#+TITLE: 如何编写bash completion script
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,bash,completion
+#+DATE: [2018-03-13 二 21:25]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 静态补全
+
+创建静态补全很简单，只需要使用 =complete= 的 =-W= (wordlist) 选项为脚本注册补全的单词列表就行了。
+
+比如，假设有一个 =myscript= 脚本，可以接参数 =him,her,me,you=, 那么我们可以执行：
+#+BEGIN_SRC shell
+  complete -W "him her me you" myscript
+#+END_SRC
+
+这样输入 =myscript= 后按两下TAB，就会列出所有可能的参数了：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 .spacemacs.d]$ myscript 
+  her  him  me   you  
+#+END_EXAMPLE
+
+甚至，当你输入首字母后再按 TAB，bash会自动筛选出以首字母开头的参数
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 .spacemacs.d]$ myscript h
+  her  him  
+#+END_EXAMPLE
+
+除了 =-W= 之外， =complete= 还有很多其他选项，比如可以使用
+
++ -A alias / -a :: 列出别名
++ -A directory / -d :: 列出目录
++ -A command / -c :: 列出命令
++ -A file / -f :: 列出文件
++ -A service / -s :: 列出服务名称
++ -A signal :: 列出信号名称
++ -A user / -u :: 列出用户名
++ -A group / -g :: 列出组名
++ -A variable / -v :: 列出shell变量
+
+详细的说明可以看[[https://www.gnu.org/software/bash/manual/html_node/Programmable-Completion-Builtins.html#Programmable-Completion-Builtins][这里]]
+
+* 动态补全
+动态补全能够根据用户的环境动态的生成补全的内容。 当出发动态补全时，bash会在当前shell中执行一个补全函数，然后从变量 =COMPREPLY= 中读取补全的内容。
+
+在这个补全函数中，我们可以通过几个变量来获取当前用户输入命令的环境：
+
++ COMP_WORDS :: 一个数组，包含了程序名称和已经输入的参数
++ COMP_CWORD :: 这是一个指向COMP_WORDS数组的索引，指明了当前光标所在的位置(从0开始)
++ COMP_LINE :: 当前命令行的内容
+** compgen命令
+compgen是一款内置命令,它与 =complete= 命令类似，但可以根据已经输入的内容对补全内容进行过滤，比如
+#+BEGIN_SRC shell :results org
+  compgen -W "him her me you" h
+#+END_SRC
+
+会输出结果:
+#+BEGIN_SRC org
+him
+her
+#+END_SRC
+
+该命令常在动态补全的补全函数中使用
+** 注册动态补全函数
+要为命令注册动态补全函数，则需要使用 =completion= 的 =-F 函数= 参数:
+#+BEGIN_SRC shell
+  completion -F 补全函数 程序名称
+#+END_SRC
+** 举个例子
+比如，我想为 =myscript= 增加一个补全，这个补全的逻辑是:
+
++ 第一个参数可以是 =-f= 或 =-d=
++ 第二个参数补全的内容由第一个参数的值来决定，如果第一个参数为 =-f= 则补全文件名，如果第一个参数为 =-d= 则补全目录名。
+
+那么我们可以这么做:
+
+#+BEGIN_SRC  shell
+  # 首先，定义一个补全函数
+  function _myscript_completion()
+  {
+      if [[ "${COMP_CWORD}" == "1" ]];then
+          # 若补全的是第一个参数，则可以是 -f 或 -d
+          COMPREPLY=($(compgen -W "-f -d" ${COMP_WORDS[${COMP_CWORD}]}))
+      elif [[ "${COMP_WORDS[1]}" == "-f" ]];then
+          COMPREPLY=($(compgen -f ${COMP_WORDS[${COMP_CWORD}]}))
+      elif [[ "${COMP_WORDS[1]}" == "-d" ]];then
+          COMPREPLY=($(compgen -d ${COMP_WORDS[${COMP_CWORD}]}))
+      fi
+  }
+
+  # 注册补全函数
+  complete -F _myscript_completion myscript
+#+END_SRC
