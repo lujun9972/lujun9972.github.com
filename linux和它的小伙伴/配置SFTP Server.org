@@ -1,0 +1,106 @@
+#+TITLE: 配置SFTP Server
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,server
+#+DATE: [2018-03-27 二 11:55]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+PROPERTY: header-args:shell :dir /ssh:vagrant@localhost#2022: :results org
+
+* 安装
+SFTP是sshd的一部分，无需独立安装
+#+BEGIN_SRC shell 
+  sudo pacman -S openssh --noconfirm
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) openssh-7.6p1-2
+
+Total Installed Size:  4.66 MiB
+Net Upgrade Size:      0.00 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) reinstalling openssh                         [----------------------]   0%(1/1) reinstalling openssh                         [######################] 100%
+:: Running post-transaction hooks...
+(1/3) Reloading system manager configuration...
+(2/3) Creating temporary files...
+(3/3) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+
+* 配置
+
+** 创建SFTP服务的根目录
+这里我们先创建一个 =/data= 目录作为SFTP服务的根目录,所有SFTP用户的操作不能脱离该根目录范围。
+#+BEGIN_SRC shell 
+  sudo mkdir -p /data
+  sudo chmod 771 /data
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+#+END_SRC
+
+** 创建SFTP用户和用户组
+首先创建一个 =sftpusers= 用户组
+#+BEGIN_SRC shell
+  sudo groupadd sftpusers
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+#+END_SRC
+
+所有SFTP用户都归属于该组
+#+BEGIN_SRC shell
+  sudo chown -R root:sftpusers /data
+  for user in ftpuser1 ftpuser2 ftpuser3;do
+      sudo useradd -g sftpusers -d /$user -s /usr/bin/nologin $user
+      sudo passwd $user
+      sudo mkdir -p /data/$user
+      sudo chown -R $user:sftpusers /data/$user
+  done
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+#+END_SRC
+
+这里注册了三个用户，ftpuser1,ftpuser2和ftpuser3,三个用户都通过 =-g= 参数指定为 =sftpusers= 的用户。
+然后通过 =-d= 参数设置这三个用户的主目录为 =/$user=, 通过后面的配置将根目录设置为 =/data= 后，实际上他们的家目录地址为 =/data/$user=.
+并且通过 =-s /usr/bin/nologin= 让这些用户无法通过SSH登陆。
+
+** 配置sshd
+将下面内容添加到 =/etc/ssh/sshd_config= 中
+#+BEGIN_SRC shell
+  cat |sudo tee -a /etc/ssh/sshd_config<<EOF
+  Match Group sftpusers
+  ChrootDirectory /data
+  ForceCommand internal-sftp
+  EOF
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+Match Group sftpusers
+ChrootDirectory /data
+ForceCommand internal-sftp
+#+END_SRC
+
+** 重启sshd
+#+BEGIN_SRC shell
+  sudo systemctl restart sshd
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+#+END_SRC
