@@ -1,0 +1,109 @@
+#+TITLE: 利用linux清空Windows登陆密码
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-03-28 三 11:58]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Windows的用户和密码存放在SAM文件中，通过 =chntpw= 可以实现清空登陆密码的目的。
+
+步骤如下：
+
+1. 用Linux Live CD或Live USB登陆PC
+
+   我这里用了ArchLinux的安装镜像来演示。
+
+   [[./images/linux_reset_windows_password01.png]]
+
+   按下回车进入命令行
+
+   [[./images/linux_reset_windows_password02.png]]
+2. 安装 =chntpw=
+
+   #+BEGIN_SRC shell
+     # 启动dhcpcd获取IP地址
+     dhcpcd
+
+     # 安装chntpw
+     pacman -Syy
+     pacman -S chntpw --noconfirm
+   #+END_SRC
+
+   [[./images/linux_reset_windows_password03.png]]
+3. 挂载windows所在分区
+   #+BEGIN_SRC shell
+     # 查看windows分区
+     sfdisk -l
+     # 挂载windows所在分区
+     mount /dev/sda1 /mnt
+   #+END_SRC
+   
+   [[./images/linux_reset_windows_password04.png]]
+4. 开始破解
+   
+   进入SAM文件所在目录，SAM文件在 =WINDOWS/system32/config/= 目录下
+   #+BEGIN_SRC shell
+     cd /mnt/WINDOWS/system32/config
+   #+END_SRC
+   
+   使用 =chntpw -l SAM= 可以查看用户记录
+   
+   [[./images/linux_reset_windows_password05.png]]
+   
+   要清空登陆密码，则可以运行命令
+   #+BEGIN_SRC shell
+     chntpw -i SAM
+   #+END_SRC
+   会出现一个菜单：
+
+   [[./images/linux_reset_windows_password06.png]]
+   
+  我们选择 =1- Edit user data and passwords= 
+  
+   [[./images/linux_reset_windows_password07.png]]
+   
+   然后输入要清空密码用户前面的RID，比如我这里想清空 =Administrator= 的密码，则输入 =01f4=
+   然后你可以看到一个菜单，通过这个菜单你可以对用户做许多操作
+
+   [[./images/linux_reset_windows_password08.png]]
+   
+   这里我们选择 =1 - Cleara (blank) user password=
+
+   [[./images/linux_reset_windows_password09.png]]
+   
+   OK, =Administrator= 的密码就被清空了，我们按 =q= 健退出 =chntpw= 程序
+   最后按下 =y= 保存对文件的修改:
+
+   [[./images/linux_reset_windows_password10.png]]
+
+   最后重启系统后，再进入windows就会发现密码已经被清空了。
+5. 获取 chntpw 的帮助信息
+   通过执行 =chntpw -h= 就能查看它的其他选项说明：
+   #+BEGIN_SRC shell :results org
+     chntpw -h
+   #+END_SRC
+
+   结果为:
+   #+BEGIN_SRC org
+   chntpw: change password of a user in a Windows SAM file,
+   or invoke registry editor. Should handle both 32 and 64 bit windows and
+   all version from NT3.x to Win8.1
+   chntpw [OPTIONS] <samfile> [systemfile] [securityfile] [otherreghive] [...]
+    -h          This message
+    -u <user>   Username or RID (0x3e9 for example) to interactively edit
+    -l          list all users in SAM file and exit
+    -i          Interactive Menu system
+    -e          Registry editor. Now with full write support!
+    -d          Enter buffer debugger instead (hex editor), 
+    -v          Be a little more verbose (for debuging)
+    -L          For scripts, write names of changed files to /tmp/changed
+    -N          No allocation mode. Only same length overwrites possible (very safe mode)
+    -E          No expand mode, do not expand hive file (safe mode)
+
+   Usernames can be given as name or RID (in hex with 0x first)
+
+   See readme file on how to get to the registry files, and what they are.
+   Source/binary freely distributable under GPL v2 license. See README for details.
+   NOTE: This program is somewhat hackish! You are on your own!
+   #+END_SRC
+
