@@ -1,0 +1,114 @@
+#+TITLE: 使用inotify-tools与rsync构建实时备份系统
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-04 三 15:44]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 使用inotifywait监控文件变动
+inotifywait是 =inotify-tools= 包中提供的一个工具，它使用 =inotify= API 来监控文件/目录中的变动情况。
+
+在archlinux上，我们可以使用下面命令来安装
+#+BEGIN_SRC shell  :dir /sudo:: :results org
+  sudo pacman -S --noconfirm inotify-tools
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) inotify-tools-3.20.1-1
+
+Total Installed Size:  0.69 MiB
+Net Upgrade Size:      0.00 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) reinstalling inotify-tools                   [----------------------]   0%(1/1) reinstalling inotify-tools                   [######################] 100%
+:: Running post-transaction hooks...
+(1/1) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+平时 =inotifywait= 会挂起在那里，直到文件/目录发生了要引起关注的事件后，它会退出并输出事件发生的场所、事件的名称以及引起事件的文件（当事件发生在目录上时才会输出）.
+
+=inotifywait= 最常用的选项有两个，一个是 =-r= 一个是 =-e= ，其中：
+
++ -r :: 表示递归监控子目录中文件发生的事件
++ -e :: 指定要监控的事件列表。对于备份系统来说，只需要监控 modify、create和delete三种事件就行了。
+
+比如，我们运行
+#+BEGIN_SRC shell
+  inotifywait -r -e modify,create,delete /tmp
+#+END_SRC
+
+表示监控 =/tmp= 目录及其子目录中文件修改、文件创建和文件删除三种事件。
+
+这时程序一直在挂起状态
+#+BEGIN_EXAMPLE
+  [lujun9972@X61 ~]$ inotifywait -r -e modify,create,delete /tmp
+  Setting up watches.  Beware: since -r was given, this may take a while!
+  Watches established.
+#+END_EXAMPLE
+
+这时在 =/tmp= 目录下新建一个文件
+#+BEGIN_SRC shell
+  touch /tmp/newFile
+#+END_SRC
+
+则 =inotifywait= 进程退出，并输出如下信息
+#+BEGIN_EXAMPLE
+  /tmp/ CREATE newFile
+#+END_EXAMPLE
+
+* 使用rsync同步变动
+
+rsync是一款快速增量备份工具。它的具有以下几个特点使得它很适合用作做备份的工具：
+
++ 增量备份,只会传输修改过的内容
++ 可以在传输过程中实时解压缩，减少带宽消耗
++ 可以保持原来文件的权限、事件、软硬链接
++ 即支持本机复制，也支持远程复制
+
+rsync常用法为：
+#+BEGIN_SRC shell
+  rsync -avz --delete  src/ foo:/data
+#+END_SRC
+
+其中
++ -a :: 表示archive mode，即备份目录下的所有内容(包括子目录中的内容),并且保持软链接、文件属性、文件修改事件、文件的所有者和宿主信息不变，并且同步字符/块设备以及命名socket和fifo等特殊文件。
++ -v :: 表示输出备份的详细信息
++ -z :: 表示传输时进行压缩
++ --delete :: 删除备份目的地里src中没有的文件
++ src/ :: 表示要备份的是src目录下的所有内容，注意这里最后的 =/= 不能去掉，否则会把src目录本身备份过去
++ foo:/data :: 表示备份的目的地是foo主机下的 =/data/= 目录
+
+* 整合起来
+接下来我们只需要用个 =while= 死循环把两个工具整合起来就行了，非常简单
+
+#+BEGIN_SRC shell :tangle ~/bin/backup.sh
+  #!/bin/bash
+
+  if [[ $# -ne 2 ]];then
+      cat<<EOF
+  Usage $(basename $0) source_dir [host:]dest_dir
+  EOF
+      exit 0
+  fi
+
+  source_dir=$1
+  dest_dir=$2
+  while :
+  do
+      inotifywait -r -e modify,create,delete ${source_dir} && rsync -avz ${source_dir}/ ${dest_dir} --delete
+  done
+#+END_SRC
+
+这里有必要说明的是，虽然用 =inotifywait= 能探测出文件具体做了什么改动，但实际上我们根本不需要知道具体的改变是什么。
+
+我们只需要知道有所改变了，然后具体改变了什么由 =rsync= 来自己处理就行了。
