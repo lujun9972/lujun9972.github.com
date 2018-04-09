@@ -1,0 +1,93 @@
+#+TITLE: 使用netctl设置无线网络
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-09 一 18:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+netclt是一款archlinux上常用的管理网络配置的工具,它的参数与 =systemctl= 很类似
+
+* 安装netctl
+#+BEGIN_SRC shell :dir /sudo::
+  sudo pacman -S netctl
+#+END_SRC
+
+安装好后，在 =/etc/netctl/examples= 目录下有很多网络配置文件的例子可供参考
+#+BEGIN_EXAMPLE
+  [lujun9972@X61 netctl]$ ls /etc/netctl/examples/
+  bonding          ethernet-static  openvswitch  vlan-dhcp      wireless-wpa
+  bridge           macvlan-dhcp     pppoe        vlan-static    wireless-wpa-config
+  ethernet-custom  macvlan-static   tunnel       wireless-open  wireless-wpa-configsection
+  ethernet-dhcp    mobile_ppp       tuntap       wireless-wep   wireless-wpa-static
+#+END_EXAMPLE
+* 查看网络设备名称
+
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  ip link
+#+END_SRC
+
+结果为
+#+BEGIN_SRC org
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+2: enp0s25: <BROADCAST,MULTICAST> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000
+    link/ether 00:16:d3:c6:37:3c brd ff:ff:ff:ff:ff:ff
+3: wls3: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DORMANT group default qlen 1000
+    link/ether 00:1d:e0:51:46:47 brd ff:ff:ff:ff:ff:ff
+4: docker0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc noqueue state DOWN mode DEFAULT group default 
+    link/ether 02:42:3c:fb:85:e6 brd ff:ff:ff:ff:ff:ff
+#+END_SRC
+
+这里我们的无线网卡设备名为 =wls3=,而 =enp0s25= 为有线网卡的设备名称
+
+* 创建网络配置文件
+一般我们可以直接从 =examples= 中拷贝案例文件来做修改就行了。
+#+BEGIN_SRC shell
+  sudo cp /etc/netctl/examples/wireless-wpa /etc/netctl/wireless-wpa-test
+#+END_SRC
+
+这里配置文件的名字可以任意取
+
+然后修改该配置文件
+#+BEGIN_EXAMPLE
+  [lujun9972@X61 netctl]$ sudo cat /etc/netctl/wireless-test 
+  Description='A simple WPA encrypted wireless connection'
+  Interface=wlan0
+  Connection=wireless
+
+  Security=wpa
+  IP=dhcp
+
+  ESSID='MyNetwork'
+  # Prepend hexadecimal keys with \"
+  # If your key starts with ", write it as '""<key>"'
+  # See also: the section on special quoting rules in netctl.profile(5)
+  Key='WirelessKey'
+  # Uncomment this if your ssid is hidden
+  #Hidden=yes
+  # Set a priority for automatic profile selection
+  #Priority=10
+#+END_EXAMPLE
+
+将其中的 =Interface= 改成刚才查到的网络设备名
+
+将 =Security= 改成网络加密协议
+
+将 =ESSID= 改成WiFi的名称
+
+将 =Key= 改成登陆WiFi的密码（注意是明文，这也是为什么该文件权限为600的缘故）
+
+* 启停连接
+netctl的命令参数跟systemctl很类似。
+
+使用 =netctl list= 列出所有可用的配置名
+
+使用 =netctl start 配置名= 应用该配置
+
+使用 =netctl stop 配置名= 暂停该配置
+
+使用 =netctl enable 配置名= 让systemd启动时自动应用该配置
+
+使用 =netctl disable 配置名= 让systemd禁止启动时应用该配置
+
+当连接出现问题时，可以使用 =netctl status 配置名= 和 =journalct -x= 来诊断错误原因
