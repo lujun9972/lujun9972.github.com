@@ -1,0 +1,141 @@
+#+TITLE: 使用losetup帮你创建虚拟磁盘
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-09 一 18:13]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+linux一切都是文件的特性可以使你把一个文件当成虚拟磁盘来用。步骤如下：
+
+1. 使用dd创建虚拟磁盘文件
+
+   例如，使用下面可以创建一个200M的磁盘
+   #+BEGIN_SRC shell
+     dd if=/dev/zero of=~/HDD.img bs=1M count=200
+   #+END_SRC
+
+
+2. 使用fdisk对其进行分区
+   
+   #+BEGIN_EXAMPLE
+
+     [lujun9972@X61 ~]$ fdisk HDD.img
+
+     欢迎使用 fdisk (util-linux 2.32)。
+     更改将停留在内存中，直到您决定将更改写入磁盘。
+     使用写入命令前请三思。
+
+     设备不包含可识别的分区表。
+     创建了一个磁盘标识符为 0x38ffa4dc 的新 DOS 磁盘标签。
+
+     命令(输入 m 获取帮助)：n
+     分区类型
+        p   主分区 (0个主分区，0个扩展分区，4空闲)
+        e   扩展分区 (逻辑分区容器)
+     选择 (默认 p)：p
+     分区号 (1-4, 默认  1): 
+     第一个扇区 (2048-409599, 默认 2048): 
+     上个扇区，+sectors 或 +size{K,M,G,T,P} (2048-409599, 默认 409599): +100M
+
+     创建了一个新分区 1，类型为“Linux”，大小为 100 MiB。
+
+     命令(输入 m 获取帮助)：n
+     分区类型
+        p   主分区 (1个主分区，0个扩展分区，3空闲)
+        e   扩展分区 (逻辑分区容器)
+     选择 (默认 p)：p
+     分区号 (2-4, 默认  2): 
+     第一个扇区 (206848-409599, 默认 206848): 
+     上个扇区，+sectors 或 +size{K,M,G,T,P} (206848-409599, 默认 409599): 
+
+     创建了一个新分区 2，类型为“Linux”，大小为 99 MiB。
+
+
+     命令(输入 m 获取帮助)：w
+
+     分区表已调整。
+     正在同步磁盘。
+   #+END_EXAMPLE
+
+3. 使用losetup创建loop设备
+   
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ sudo losetup -Pf --show ~/HDD.img
+     [sudo] lujun9972 的密码：
+     /dev/loop0
+   #+END_EXAMPLE
+
+   使用 =lsblk= 可以看到已经把镜像文件挂载上去了
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ lsblk
+     NAME      MAJ:MIN RM   SIZE RO TYPE MOUNTPOINT
+     loop0       7:0    0   200M  0 loop 
+     ├─loop0p1 259:2    0   100M  0 loop 
+     └─loop0p2 259:3    0    99M  0 loop 
+     sda         8:0    0 111.8G  0 disk 
+     ├─sda1      8:1    0    50G  0 part /home
+     ├─sda2      8:2    0     8G  0 part [SWAP]
+     └─sda3      8:3    0  53.8G  0 part /
+   #+END_EXAMPLE
+
+4. 像普通磁盘那样使用
+
+   虚拟磁盘用起来跟普通磁盘一样:
+
+   可以创建文件系统
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ sudo mkfs.reiserfs /dev/loop0p1 
+     mkfs.reiserfs 3.6.27
+
+     Guessing about desired format.. Kernel 4.15.15-1-ARCH is running.
+     Format 3.6 with standard journal
+     Count of blocks on the device: 25600
+     Number of blocks consumed by mkreiserfs formatting process: 8212
+     Blocksize: 4096
+     Hash function used to sort names: "r5"
+     Journal Size 8193 blocks (first block 18)
+     Journal Max transaction length 1024
+     inode generation number: 0
+     UUID: 6cad1bcb-4798-4643-b471-a5ab695e0eb5
+     ATTENTION: YOU SHOULD REBOOT AFTER FDISK!
+       ALL DATA WILL BE LOST ON '/dev/loop0p1'!
+     Continue (y/n):y
+     Initializing journal - 0%....20%....40%....60%....80%....100%
+     Syncing..ok
+     ReiserFS is successfully created on /dev/loop0p1.
+   #+END_EXAMPLE
+
+   可以挂载
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ sudo mount /dev/loop0p1 /mnt
+     [lujun9972@X61 ~]$ df -h
+     文件系统        容量  已用  可用 已用% 挂载点
+     dev             1.9G     0  1.9G    0% /dev
+     run             1.9G  720K  1.9G    1% /run
+     /dev/sda3        53G  7.3G   43G   15% /
+     tmpfs           1.9G   23M  1.9G    2% /dev/shm
+     tmpfs           1.9G     0  1.9G    0% /sys/fs/cgroup
+     tmpfs           1.9G   52K  1.9G    1% /tmp
+     /dev/sda1        50G   25G   26G   49% /home
+     tmpfs           388M  4.0K  388M    1% /run/user/1000
+     /dev/loop0p1    100M   33M   68M   33% /mnt
+   #+END_EXAMPLE
+
+   存入文件
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ sudo touch /mnt/secret
+     [lujun9972@X61 ~]$ ls -l /mnt/secret 
+     -rw-r--r-- 1 root root 0 4月   9 18:36 /mnt/secret
+   #+END_EXAMPLE
+
+5. 使用完后，再使用losetup卸载虚拟磁盘
+   #+BEGIN_EXAMPLE
+     [lujun9972@X61 ~]$ sudo umount /mnt
+     [lujun9972@X61 ~]$ sudo losetup -d /dev/loop0 
+     [lujun9972@X61 ~]$ lsblk
+     NAME   MAJ:MIN RM   SIZE RO TYPE MOUNTPOINT
+     sda      8:0    0 111.8G  0 disk 
+     ├─sda1   8:1    0    50G  0 part /home
+     ├─sda2   8:2    0     8G  0 part [SWAP]
+     └─sda3   8:3    0  53.8G  0 part /
+   #+END_EXAMPLE
