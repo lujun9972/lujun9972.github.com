@@ -1,0 +1,140 @@
+#+TITLE: Newsboat：一款终端RSS阅读器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-10 二 18:35]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Newsboat是一款功能十分强大的基于终端的RSS/Atom feed阅读器。
+
+在archlinux上你可以通过 =sudo pacman -S newsboat= 来直接安装它。
+
+* 使用newsboat阅读RSS/Atom feed
+使用newsboat阅读RSS/Atom feed十分的简单，只需要下面几步：
+
+1. 用一个文本文件存放feed url，每行一个url
+   
+   比如我创建一个rss.txt,内容如下
+   #+BEGIN_SRC text
+     http://planet.emacsen.org/atom.xml
+     http://liutos.github.io/atom.xml
+     http://blog.binchen.org/?feed=rss2
+     http://feeds.feedburner.com/ruanyifeng
+     http://sspai.com/feed
+     http://planet.python.org/rss10.xml 
+   #+END_SRC
+
+   如果feed url需要用户和密码的认证，则以下面这种格式来写
+   #+BEGIN_EXAMPLE
+     http://username:password@hostname.domain.tld/feed.rss
+   #+END_EXAMPLE
+
+   由于 =@= 在URL中有特殊意义，因此若用户名中包含了 =@=, 则需要用 =%40= 来代替。
+
+2. 使用newsboat读取rss.txt中的feed url
+   
+   #+BEGIN_SRC shell
+     newsboat -ru rss.txt
+   #+END_SRC
+   
+   这里：
+
+   + -r :: 表示启动时刷新feeds
+
+   + -u :: 指定包含feed urls的文件
+
+   然后你就会看到这么一个界面
+
+   [[file:./images/screenshot-35.png]]
+
+   在这个界面上按上下键导航，然后按回车进入
+
+   [[file:./images/screenshot-36.png]]
+
+   在这个界面上，依然是用上下键导航，按回车看feed的具体内容
+
+   [[file:./images/screenshot-37.png]]
+
+   最下面还有一行提示，按 =o= 可以用浏览器打开原地址查看文章内容（默认用lynx打开，不过可以通过配置修改）
+   
+   按下 =q= 会跳到上一层目录，直到程序退出。
+
+* 接入inoreader
+
+如果只是这样当然不算什么，最让我觉得意外的是它居然还能接入inoreader，方法是创建一个配置文件，比如config,然后往里面加入以下内容：
+#+BEGIN_SRC conf
+  urls-source "inoreader"
+  inoreader-login "your-inoreader-account"
+  inoreader-password "your-password"
+#+END_SRC
+
+然后在启动 newsboat 时用 =-C= 参数指定这个配置文件就行了
+
+#+BEGIN_SRC shell
+  newsboat -r -C config
+#+END_SRC
+
+[[file:./images/screenshot-38.png]]
+
+* podcast
+更让人觉得神奇的是，newsboat居然还支持podcast。
+
+podcast将内容存放在一个特殊的名为 =enclosure= 的标签中，newsboat能够识别出该标签中的信息。
+
+当打开一个podcast时，它是这个样子的
+
+[[file:./images/screenshot-39.png]]
+
+可以看到它识别出了博客的下载地址。
+
+然后，按下 =e= 键来将该博客加入下载队列（$HOME/.newsboat/queue）。
+
+[[file:./images/screenshot-40.png]]
+
+然后我们需要用 =podboat= 来真正下载加入到下载队列中的这些播客文件.
+=podboat= 是 =newsboat= 包中自带的，无需另外安装。 它和 =newsboat= 公用同一个配置文件
+
+#+BEGIN_SRC shell
+  podboat -C config
+#+END_SRC
+
+[[file:./images/screenshot-41.png]]
+
+按 =d= 开始下载指定的博客，然后按下 =p= 就可以收听播客了。
+
+[[file:./images/screenshot-42.png]]
+
+当收听完播客后按下 =P= 键,可以清除掉所有已经收听过的播客URL,也可以按下 =D= 键将指定的URL删除掉。
+
+但是需要注意的是，将URL从QUEUE中删除并不意味着下载下来的博客文件也被删除掉了，你需要手工删除掉它（默认放在~目录下，不过可以配置）
+
+#+BEGIN_SRC shell
+  rm ~/15232488215106.mp3
+#+END_SRC
+
+* 配置
+newsboat提供了相当多的配置项让你定制newsboat的行为，比较常用的配置有下面这些
+#+BEGIN_SRC conf
+  browser "w3m %u"                #配置用哪个浏览器浏览feed
+  delete-read-articles-on-quit yes #退出后删除已经阅读的文章
+  download-full-page yes           #全文下载
+  download-timeout 60              #下载超时时间
+  error-log "~/.newsboat/error.log" #设置错误日志的存放文件
+  keep-articles-days 30             #保留多长天内的文章
+
+  #inoreader
+  urls-source "inoreader"         #指定从哪读取feed urls
+  inoreader-login "lujun9972@gmail.com" #inoreader登陆用户名
+  inoreader-min-items 100               #从inoreader中每个feed下加载多少篇文章
+  inoreader-password ""                 #inoreader登陆密码
+  inoreader-passwordfile  "~/.inoreader-password" #从哪个文件中读取inoreader的登陆密码
+  inoreader-passwordeval ""                       #通过执行哪个命令来读取inoreader的登陆密码
+  inoreader-show-special-feeds "yes"              #显示"Starred items" 和 "Shared items" 这两个特殊的feed
+  # 按下Ctrl-E可以对文章加flag，flag的范围可以是从A-Za-z共52个字符。
+  inoreader-flag-share "a"                        #为文章加"a" flag则表示"share"该文章
+  inoreader-flag-star "b"                         #为文章加"b" flag则表示"star"该文章
+
+  # podcast
+  player mpg123                   #设置播放博客的播放器
+  download-path "~/Downloads/%h/%n" #下载博客的路径
+#+END_SRC
