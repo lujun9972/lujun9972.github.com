@@ -1,0 +1,160 @@
+#+TITLE: kgotobed让你强制早睡
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-12 四 19:06]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Kgotobed是一个很变态的Kernel Module。它会强制linux在特定时间关闭，而你却毫无办法(即使你是root用户)
+
+* 安装Kgotobed
+在archlinux上要安装 =kgotobed=,首先需要安装 =dkms= 和 =linux= 这两个包
+#+BEGIN_SRC shell
+  sudo pacman -S dkms linux linux-headers --noconfirm
+#+END_SRC
+
+然后去github上克隆它的源代码
+#+BEGIN_SRC shell
+  git clone https://github.com/nikital/kgotobed.git
+#+END_SRC
+
+编译之
+#+BEGIN_SRC shell
+  cd kgotobed/
+  sudo make install
+#+END_SRC
+
+安装命令会
+
++ 通过DKMS注册 =kgotobed.ko=
++ 安装 =gotobed= 命令到 =/usr/local/bin= 下
++ 在systemd中注册,启用，运行 =kgotobed.service=
+
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux ~]$ cd kgotobed/
+  [vagrant@archlinux kgotobed]$ sudo make install
+  dkms remove kgotobed/1.0 --all
+
+  ------------------------------
+  Deleting module version: 1.0
+  completely from the DKMS tree.
+  ------------------------------
+  Done.
+  dkms install module
+
+  Creating symlink /var/lib/dkms/kgotobed/1.0/source ->
+                   /usr/src/kgotobed-1.0
+
+  DKMS: add completed.
+
+  Kernel preparation unnecessary for this kernel.  Skipping...
+
+  Building module:
+  cleaning build area...........
+  make -j2 KERNELRELEASE=4.15.15-1-ARCH -C /usr/lib/modules/4.15.15-1-ARCH/build M=/var/lib/dkms/kgotobed/1.0/build..................
+  cleaning build area.......
+  Kernel cleanup unnecessary for this kernel.  Skipping...
+
+  DKMS: build completed.
+
+  kgotobed.ko:
+  Running module version sanity check.
+   - Original module
+     - No original module exists within this kernel
+   - Installation
+     - Installing to /usr/lib/modules/4.15.15-1-ARCH/extra//
+
+  depmod...........
+
+  DKMS: install completed.
+  cp gotobed /usr/local/bin
+  cp kgotobed.service /etc/systemd/system
+  systemctl daemon-reload
+  systemctl enable kgotobed.service
+  Created symlink /etc/systemd/system/multi-user.target.wants/kgotobed.service → /etc/systemd/system/kgotobed.service.
+  systemctl start kgotobed.service
+  [vagrant@archlinux kgotobed]$ 
+#+END_EXAMPLE
+
+* 使用Kgotobed
+直接运行 =gotobed= 就能看到设置的强行关机的时间：
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux kgotobed]$ gotobed 
+  Current bedtime is 2018-04-13 01:00:00
+#+END_EXAMPLE
+可以看到默认的关机时间是凌晨一点。
+
+若你想临时调早一点关机时间可以 =gotobed 新时间=
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux kgotobed]$ gotobed 22:00
+  Current bedtime is 2018-04-13 01:00:00
+  Setting bedtime to 2018-04-12 22:00:00
+  Bedtime will be in 10 hours 32 minutes
+#+END_EXAMPLE
+
+不过你不能把时间调晚...
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux kgotobed]$ gotobed 2:00
+  Current bedtime is 2018-04-13 01:00:00
+  Error: Attempting to postpone bed time, it doesn't work like this...
+#+END_EXAMPLE
+
+要想调整默认时间，你需要修改 =/etc/systemd/system/kgotobed.service=
+#+BEGIN_EXAMPLE
+
+  [vagrant@archlinux system]$ cat kgotobed.service 
+  [Unit]
+  Description=kgotobed: Poweroff at bedtime
+  After=dkms.service
+
+  [Service]
+  Type=oneshot
+  ExecStartPre=/sbin/modprobe kgotobed
+  Environment=TIME=01:00
+  ExecStart=/usr/local/bin/gotobed -f ${TIME}
+
+  [Install]
+  WantedBy=multi-user.target[vagrant@archlinux system]$ 
+#+END_EXAMPLE
+
+将 =TIME=01:00= 改成 =TIME=02:00= 后重启系统，再次执行 =gotobed= 可以看到时间已经就改了
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux ~]$ gotobed 
+  Current bedtime is 2018-04-13 02:00:00
+#+END_EXAMPLE
+* 删除kgotobed
+要逃脱强制关机的命运，几乎唯一的办法就是卸载kgotobed了，执行 =make uninstall= 卸载
+#+BEGIN_EXAMPLE
+  [vagrant@archlinux ~]$ cd kgotobed/
+  [vagrant@archlinux kgotobed]$ sudo make uninstall
+  dkms remove kgotobed/1.0 --all
+
+  -------- Uninstall Beginning --------
+  Module:  kgotobed
+  Version: 1.0
+  Kernel:  4.15.15-1-ARCH (x86_64)
+  -------------------------------------
+
+  Status: Before uninstall, this module version was ACTIVE on this kernel.
+
+  kgotobed.ko:
+   - Uninstallation
+     - Deleting from: /usr/lib/modules/4.15.15-1-ARCH/extra//
+   - Original module
+     - No original module was found for this module on this kernel.
+     - Use the dkms install command to reinstall any previous module version.
+
+  depmod...........
+
+  DKMS: uninstall completed.
+
+  ------------------------------
+  Deleting module version: 1.0
+  completely from the DKMS tree.
+  ------------------------------
+  Done.
+  rm -f /usr/local/bin/gotobed
+  rm -f /etc/systemd/system/kgotobed.service
+  systemctl daemon-reload
+  [vagrant@archlinux kgotobed]$ 
+#+END_EXAMPLE
