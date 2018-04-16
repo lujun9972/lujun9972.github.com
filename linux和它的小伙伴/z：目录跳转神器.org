@@ -1,0 +1,108 @@
+#+TITLE: z：目录跳转神器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,bash
+#+DATE: [2018-04-16 一 18:46]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+z是一个很不寻常的目录跳转工具，它的不同点在于：
+
+1. 它根据正则表达式来匹配你想进入的目录
+
+2. 它会记录你的目录跳转信息，然后根据你在目录中执行命令的频率和最近所在目录的时间来推测你想要进入的是哪个目录
+
+* 安装
+z的安装很简单，它只不过是一个shell脚本而已。
+
+1. 下载z脚本
+   
+   #+BEGIN_SRC shell
+     wget https://raw.githubusercontent.com/rupa/z/master/z.sh -O ~/bin/z.sh
+   #+END_SRC
+
+2. 在 =~/.bashrc= 中加载 =z.sh=
+   #+BEGIN_SRC shell
+     echo ". ~/bin/z.sh" >> ~/.bashrc
+   #+END_SRC
+
+* 实现原理
+z的工作原理是通过 =PROMPT_COMMAND= 来在每次显示主提示符之前将当前目录加入到数据文件中去。
+
+相关代码如下：
+#+BEGIN_SRC shell
+  PROMPT_COMMAND="$PROMPT_COMMAND"$'\n''(_z --add "$(command pwd '$_Z_RESOLVE_SYMLINKS' 2>/dev/null)" 2>/dev/null &);'
+#+END_SRC
+
+在将当前目录添加入数据文件中时会同时更新该目录的频率和时间。
+若频率总数大于9000,则所有命令的频率都缩小到原来的0.99
+若有路径的频率小于1,则该条记录会在下次执行z命令时被删掉.
+
+相关代码如下：
+#+BEGIN_SRC shell
+  _z_dirs | awk -v path="$*" -v now="$(date +%s)" -F"|" '
+              BEGIN {
+                  rank[path] = 1
+                  time[path] = now
+              }
+              $2 >= 1 {
+                  # drop ranks below 1
+                  if( $1 == path ) {
+                      rank[$1] = $2 + 1
+                      time[$1] = now
+                  } else {
+                      rank[$1] = $2
+                      time[$1] = $3
+                  }
+                  count += $2
+              }
+              END {
+                  if( count > 9000 ) {
+                      # aging
+                      for( x in rank ) print x "|" 0.99*rank[x] "|" time[x]
+                  } else for( x in rank ) print x "|" rank[x] "|" time[x]
+              }
+          ' 2>/dev/null >| "$tempfile"
+#+END_SRC
+
+* 使用方法
+z的使用方法很简单，打开 =z.sh= 就能在头部看到一些使用的例子
+#+BEGIN_SRC shell
+  # USE:
+  #     * z foo     # cd to most frecent dir matching foo
+  #     * z foo bar # cd to most frecent dir matching foo and bar
+  #     * z -r foo  # cd to highest ranked dir matching foo
+  #     * z -t foo  # cd to most recently accessed dir matching foo
+  #     * z -l foo  # list matches instead of cd
+  #     * z -c foo  # restrict matches to subdirs of $PWD
+#+END_SRC
+
+直接执行 =z= 命令会列出数据库中记录的各个目录及其权重，并按照权重从低到高的顺序排列。
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 github]$ z
+  0.25       /home/lujun9972/github/lujun9972.github.com/linux和它的小伙伴
+  2.5        /home/lujun9972/github/GraphicsMagick.docker
+  16         /home/lujun9972/github/lctt-scripts
+  40         /home/lujun9972/github
+  44         /
+#+END_EXAMPLE
+
+使用 =z= 命令跳转目录最简单的方法就是给它一个正则表达式作为参数，z会按照权重依次匹配该正则表达式，进入第一个匹配该正则表达式的目录
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 github]$ z linux
+  [lujun9972@T520 linux和它的小伙伴]$ 
+#+END_EXAMPLE
+
+=z= 也支持一些参数：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 linux和它的小伙伴]$ z -h
+  z [-cehlrtx] args
+#+END_EXAMPLE
+
+比较常用的参数有：
+
++ -c :: 只进入当前目录下的子目录中
++ -e :: 只显示要进入的目录而不真正cd. 需要注意的是，你执行该命令本身会增加当前目录的频率，可能会对你下次执行z命令产生影响。
++ -l :: 列出所有匹配正则的目录，但不真正cd。
++ -r :: 只根据访问频率来排序
++ -t :: 只根据最近访问时间来排序
++ -x :: 将当前目录从数据库文件中删除掉。
