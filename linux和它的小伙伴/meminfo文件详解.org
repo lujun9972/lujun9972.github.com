@@ -75,6 +75,12 @@ buffers + cached的值就是可以使用的磁盘告诉缓存的大小。
 buffers + cached = Active(file) + Inactive(file) + Shmem
 
 * SwapCached:       114852 kB
+记录在交换缓存上的内容容量。
+
+所谓交换缓存是指，在换入某个内存页之后，物理磁盘上的交换空间依然保留同样的数据，这样的内存页会记录在"交换缓存"的列表上。
+这样的好处在于，当需要再次换出记录在交换缓存中的的内存页时，可以直接使用交换分区中保存的内容，而无需将内存再次写入交换空间。
+
+当该交换空间上的其他数据被换出，或是换入内存中的数据被改写，则交换缓存上的记录会被清空。
 * Active:           978684 kB
 等于Active(anon) + Active(file)的和
 * Inactive:         357080 kB
@@ -94,8 +100,11 @@ Linux内核中使用4类LRU表来分别记录对应的这4类内存页,内存页
 * Mlocked:              32 kB
 
 * SwapTotal:       8388604 kB
+交换空间的总大小
 * SwapFree:        7211516 kB
+交换空间的剩余容量
 * Dirty:                40 kB
+脏数据，在磁盘缓冲区中尚未写入物理磁盘的内存大小
 * Writeback:             0 kB
 * AnonPages:       1164512 kB
 Linux内核中存在一个rmap(reverse mapping)机制，负责管理匿名内存中每一个物理内存页映射到哪个进程的哪个逻辑地址这样的信息。
@@ -154,14 +163,60 @@ xfs_ili             4486   4488    168   24    1 : tunables    0    0    0 : sla
 * SUnreclaim:        57124 kB
 对象处于活跃状态，不能被回收的Slab容量
 * KernelStack:        8704 kB
+KernelStack是内核代码使用的堆栈区域。
+
+由于Linux内核中用户进程在运行过程中需要不断切换，因此内核需要为每个用户进程都设置各自的堆栈区域。
+因此，每启动一个新进程，KernelStack的值都会增加。
 * PageTables:        28720 kB
+PageTables就是页表，用于存储各个用户进程的逻辑地址和物理地址的变换关系，它本身也是一个内存区域。
 * NFS_Unstable:          0 kB
 * Bounce:                0 kB
 * WritebackTmp:          0 kB
 * CommitLimit:    10295656 kB
 * Committed_AS:    7566728 kB
 * VmallocTotal:   34359738367 kB
+Linux使用内存时，除了使用Slab中配置的对象外，还能直接将空闲内存页映射到逻辑地址上。
+
+这个容量指的是，理论上内核内部可以用来映射的逻辑地址的范围。这个值非常大，但并非实际使用的物理内存
 * VmallocUsed:           0 kB
+实际上，Linux将空闲内存页映射到逻辑地址上的容量。
+
+值得说明的是，这个容量除了物理内存上所作的映射外，也包括诸如视频卡这样的外部设备内存所作的映射，这类映射叫做"ioremap"
+
+我们可以通过 =/proc/vmallocainfo= 查看VmallocUsed中包含内存区域的详情
+#+BEGIN_SRC shell :results org :dir /sudo::
+  cat /proc/vmallocinfo |head
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+0x000000008088114a-0x000000001aecb69b    8192 acpi_os_map_iomem+0x14c/0x180 phys=0x00000000bf6bd000 ioremap
+0x000000001aecb69b-0x0000000086f9fed7    8192 acpi_os_map_iomem+0x14c/0x180 phys=0x00000000bf6e4000 ioremap
+0x0000000086f9fed7-0x000000006fbc598c    8192 acpi_os_map_iomem+0x14c/0x180 phys=0x00000000bf6e2000 ioremap
+0x000000006fbc598c-0x00000000636e4cf9   12288 acpi_os_map_iomem+0x14c/0x180 phys=0x00000000bf6e2000 ioremap
+0x00000000636e4cf9-0x000000005464ab58    8192 hpet_enable+0x34/0x2c1 phys=0x00000000fed00000 ioremap
+0x000000005464ab58-0x00000000396cc741   12288 alloc_large_system_hash+0x194/0x257 pages=2 vmalloc N0=2
+0x00000000396cc741-0x0000000038ec28d8    8192 bpf_prog_alloc+0x40/0xb0 pages=1 vmalloc N0=1
+0x0000000038ec28d8-0x000000002f686ade   65536 acpi_os_map_iomem+0x14c/0x180 phys=0x00000000bf6bd000 ioremap
+0x000000002f686ade-0x00000000fee69f16 4198400 alloc_large_system_hash+0x194/0x257 pages=1024 vmalloc vpages N0=1024
+0x00000000fee69f16-0x00000000362aad15 2101248 alloc_large_system_hash+0x194/0x257 pages=512 vmalloc N0=512
+#+END_SRC
+
+其中
+
++ 第一列为逻辑地址的范围
++ 第二列为容量，以字节为单位
++ 最后一列若为ioremap，说明该映射为ioremap
+
+所以要计算除ioremap外物理内存的映射量，可以这么计算
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo cat /proc/vmallocinfo |grep -v "ioremap" |awk '{total=total+$2};END{print total}'
+#+END_SRC
+
+#+BEGIN_SRC org
+107110400
+#+END_SRC
+
 * VmallocChunk:          0 kB
 * HardwareCorrupted:     0 kB
 * AnonHugePages:         0 kB
