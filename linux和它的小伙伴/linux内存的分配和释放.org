@@ -71,3 +71,89 @@
 而Inactive(anon)和Active(anon)内存页则需要将内容交换到物理磁盘上的swap中后再释放。
 具体来说，Linux会在进程页表上做一个标记，标记出换出内存所对应的逻辑地址。
 当进程访问该逻辑地址时，会产生相应物理内存不存在的异常，Linux内核检测到这个异常后，会再次将数据从swap中加载入空闲内存，并重新配置页表信息。
+
+Linux内核使用两种机制来加快换出处理速度：
+
++ 一种是预读。
+
+  当某一个内存页需要换入时，Linux内核会将其后的几个内存页一起换入。因为进程连续访问多个内存页的可能性很大。预读的页数为内核参数 =vm.page-cluster= 决定为 =2^vm.page-cluster=.
+
++ 另一种是交换缓存。
+
+  即在换入某个内存页后，物理磁盘上交换空间中仍然保留原数据，这种状态的内存会记录在“交换缓存”的列表上。这样当需要再次换出记录在“交换缓存”上的内存页的数据时，就无需再次换入了。
+
+  
+每个进程的内存使用情况可以通过查看 =/proc/进程ID/status= 来查看
+#+BEGIN_SRC shell :results org
+  cat /proc/$(pidof emacs)/status
+#+END_SRC
+
+#+BEGIN_SRC org
+Name:	emacs
+Umask:	0022
+State:	S (sleeping)
+Tgid:	6769
+Ngid:	0
+Pid:	6769
+PPid:	1
+TracerPid:	0
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+FDSize:	64
+Groups:	986 998 1000 
+NStgid:	6769
+NSpid:	6769
+NSpgid:	6769
+NSsid:	6769
+VmPeak:	  567040 kB
+VmSize:	  567040 kB
+VmLck:	       0 kB
+VmPin:	       0 kB
+VmHWM:	  241176 kB
+VmRSS:	  241176 kB
+RssAnon:	  204544 kB
+RssFile:	   36604 kB
+RssShmem:	      28 kB
+VmData:	  231712 kB
+VmStk:	    1596 kB
+VmExe:	    2332 kB
+VmLib:	   47832 kB
+VmPTE:	    1008 kB
+VmSwap:	       0 kB
+HugetlbPages:	       0 kB
+CoreDumping:	0
+Threads:	4
+SigQ:	1/15456
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000000000
+SigIgn:	0000000004381000
+SigCgt:	00000001db816eff
+CapInh:	0000000000000000
+CapPrm:	0000000000000000
+CapEff:	0000000000000000
+CapBnd:	0000003fffffffff
+CapAmb:	0000000000000000
+NoNewPrivs:	0
+Seccomp:	0
+Cpus_allowed:	3
+Cpus_allowed_list:	0-1
+Mems_allowed:	1
+Mems_allowed_list:	0
+voluntary_ctxt_switches:	12951
+nonvoluntary_ctxt_switches:	21641
+#+END_SRC
+
+其中比较有用的项有：
+
++ VmData :: data段的大小
++ VmExe :: text段的大小
++ VmHWM :: 当前物理内存使用量的最大值
++ WmLck :: 用mlock锁定的内存大小
++ VmLib :: 共享库的使用量
++ VmPTE :: 页面表的大小
++ VmPeak :: 当前物理内存的最大值
++ VmRSS :: 物理内存的实际使用量
++ VmSize :: 逻辑地址的大小
++ VmStk :: 堆栈的大小
++ VmSwap :: 交换空间的使用量
