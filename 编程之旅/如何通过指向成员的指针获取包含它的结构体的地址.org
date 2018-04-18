@@ -1,0 +1,57 @@
+#+TITLE: 如何通过指向成员的指针获取包含它的结构体的地址
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅,c
+#+DATE: [2018-04-18 三 14:43]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+假设我们有一个结构体
+#+BEGIN_SRC C :tangle "/tmp/t.c"
+  typedef struct Food{
+    char name[20];
+    double price;
+  } Food;
+
+  Food apple={
+    .name = "apple",
+    .price = 7.8
+  };
+#+END_SRC
+
+我们已知有一个指针指向了这个结构体的成员，那么能否从而推测出指向包含该成员的结构体本身的指针呢？
+#+BEGIN_SRC C :tangle "/tmp/t.c"
+  double* p = &apple.price;
+  /* 如何通过p获取&apple？？ */
+#+END_SRC
+
+在linux内核源码中就定义了这么一个神奇的宏。
+#+BEGIN_SRC C :tangle "/tmp/t.c"
+  #define container_of(ptr, type, member) ({ \
+    const typeof( ((type *)0)->member ) *__mptr = (ptr); \
+    (type *)( (char *)__mptr - offsetof(type,member) );})
+
+
+  #define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+#+END_SRC
+
+这个宏的使用方法是 =container_of(指向成员的指针, 包含成员的结构体类型,成员的内容)=.
+
+比如，上面例子中要得到 =apple= 的地址，可以这么做
+#+BEGIN_SRC C :tangle "/tmp/t.c"
+  Food* fp = container_of(p,Food,price);
+  printf("%x,%x\n",fp,&apple);
+#+END_SRC
+
+宏的实现原理其实很简单：
+=container_of= 宏的第一句话中的 =typeof= 是GNU C对标准C的扩展,它的作用是根据变量获取变量的类型. 
+因此这句话的意思是定义一个与 =ptr= 同类型且值相等的常量指针 =__mptr=,
+然后第二句里面的 =offsetof= 宏用于计算从结构体 =type= 的头到成员 =member= 所需要的偏移量，
+最后用 =__mptr= 表示的地址(转换成char指针后,因为char在C中定义永远为1个字节)减去这个偏移量就是结构体的地址了。
+
+而 =offsetof= 的实现原理则是直接将地址0强制类型转换为 =TYPE= 指针，因此该结构体中成员所在的指针值刚好为成员与结构体头部的偏移量了。
+
+整个实现中，其实比较难理解的是，为什么引入一个中间变量 =__mptr= 呢？
+
+在搜索了网上的资料后，才找到答案:
+引入__mptr是为了作编译期间的类型检查，确保传入的ptr是指向struct member的指针(因为赋值时如果类型不匹配会报告警)。
+而在运行期间，这个赋值gcc可以优化掉，不会影响效率。
