@@ -1,0 +1,83 @@
+#+TITLE: 使用anacron定期执行任务
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,sysadmin
+#+DATE: [2018-04-19 四 17:29]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* anacron与cron的不同点
+在网上可以可以看到很多文章都把anacron与cron来做比较，但实际上这两者之间的差距还是蛮大的。
+
+1. cron任务同通过常驻的守护进程crond来定期执行的。
+   而anacron则不是守护进程，它需要被别人定期掉起，比如跟cron或systemd timer配合
+
+2. crond每分钟检查一次是否有需要执行的任务，若这次任务错过了时间则需要等下次触发点才能再次执行。
+   而anacron会立即执行错过时间的任务,而正是由于这个特点，为了防止在不恰当的时刻执行命令，anacron专门有一个参数START_HOURS_RANGE来设置允许执行命令的时间段。
+
+3. cron的粒度能精确到分钟，而anacron的粒度只能到天（即执行频率不能超过1天1次）
+
+4. cron的执行时间是很精确的.
+   而anacron可以设置一个延迟时间(RANDOMDELAY),anacron会在这个延迟时间内的某一个随机时间点执行。
+   这样做的好处在于可以让任务的执行时间分散，防止一瞬间对服务器产生太大压力。
+
+5. cron有多个设置任务的地方(=/var/spool/cron/用户名=, =/etc/crontab=, =/etc/cron.d/*=).
+   而anacron只有一个设置任务的地方(默认为 =/etc/anacrontab=, 也可以通过 -t 设置其他路径的配置文件)。
+   
+从上面可以看出，anacron其实并不是设计来定时执行任务的，它的主要功能还是为了缓解cron中一瞬间大量任务并发执行而导致系统压力过大的问题。
+
+* /etc/anacrontab配置文件说明
+一个 =/etc/anacrontab= 内容大致如下：
+#+BEGIN_SRC shell :results org
+  cat /etc/anacrontab
+#+END_SRC
+
+#+BEGIN_SRC org
+# /etc/anacrontab: configuration file for anacron
+
+# See anacron(8) and anacrontab(5) for details.
+
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=root
+# the maximal random delay added to the base delay of the jobs
+RANDOM_DELAY=45
+# the jobs will be started during the following hours only
+START_HOURS_RANGE=3-22
+
+#period in days   delay in minutes   job-identifier   command
+1	5	cron.daily		nice run-parts /etc/cron.daily
+7	25	cron.weekly		nice run-parts /etc/cron.weekly
+@monthly 45	cron.monthly		nice run-parts /etc/cron.monthly
+#+END_SRC
+
+看起来跟 =cron= 的配置文件有点像。都是先定义环境变量，再定义执行计划。
+
+定义环境变量的部分跟cron一样，只是这些环境变量中，有一些特殊变量值得说明一下：
+
++ RANDOME_DELAY=45 :: 表示anacron在执行任务前先延时一段随记的时间再执行，这段随机的时间为0-45分钟之内的随机数。
+
++ START_HOURS_RANGE=3-22 :: 指定了只有在凌晨3点到晚上22点这个时间段内才允许执行任务。
+
+
+定义执行计划部分就跟 =cron= 差别很大了。
+
+执行计划由四部分组成：
+
++ period in days :: 轮回天数，表示任务多少天执行一次。
+
++ delay in minutes :: 表示启动Anacron和运行作业时间之间的延迟，单位为分钟. 当然前提是自最后一次运行之后所经过的时间超出了轮回天数。
+     但是它并不是作业真正运行的时间，真正运行的时间还需要加上RANDOME_DELAY中设置的随机分钟数。
+
++ job-identifier :: 作业的标识符。anacron在执行任务时会将日期写入 =/var/spool/anacron/$job-identifier= 文件中
+
++ command :: 实际运行的命令。这里的 =run-parts= 是一个运行指定目录中所有程序与脚本的命令，可以通过 =man run-parts= 来查看它的说明
+
+* anacron常用的选项
+anacron的常用选项有下面几个:
+
++ -t 配置文件路径 :: 让anacron从指定配置文件中读取配置，常用于普通用户来管理个人任务
++ -S spooldir :: 设定新的spool目录来记录任务执行的时间戳，常用于普通用户来管理个人任务
++ -T :: 测试配置文件是否正确
++ -f :: 强制执行所有的任务，而不管之前的执行日期是否超过轮回天数
++ -u :: 将所有任务的执行日期都更新为当前日期，而不真正的执行任务
++ -s :: 串行地执行任务，只有前一个任务完成后才开始下一个任务
