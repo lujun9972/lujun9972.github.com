@@ -1,0 +1,178 @@
+#+TITLE: nohup,setsid与disown的不同之处
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-04-20 五 22:01]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+nohup,setsid与disown都可以用来让需要长期运行的程序在退出终端后继续在后台运行。
+然而它们实现这一目的的原理不同，因此使用起来也有一些不同。
+
+* 退出终端时发生了什么
+让我们先看看终端退出时发生什么：
+
+当终端被挂断或伪终端程序被关掉，若终端的CLOCAL标志没有被设置，则SIGHUP信号会被发送到与该终端相关的控制进程（即会话首进程，通常为shell）。
+而SIGHUP的默认行为是终止程序的运行。
+当会话首进程终止，也会将SIGHUP信号发送给前台进程组中的每一个进程（根据shell的具体实现，还可能会把SIGNHUP发送给后台进程组）
+
+* nohup,setsid以及disown
+那么很自然就会发现，要实现终端退出后进程依然在后台运行，有两种途径：
+
+1. 进程收到SIGHUP后忽略该信号
+2. 进程根本没有收到SIGHUP信号
+   
+
+** nohup
+nohup的使用方法很简单，只需要在要执行的命令前加上 =nohup= 就行了。
+#+BEGIN_SRC shell
+  nohup commands
+#+END_SRC
+
+它的原理就是第一种途径。其核心代码为：
+#+BEGIN_SRC C
+  signal (SIGHUP, SIG_IGN);
+
+  char **cmd = argv + optind;
+  execvp (*cmd, cmd);
+#+END_SRC
+
+除此之外，它还做了以下动作：
+
++ 关闭进程的stdin，当进程尝试读取输入时，只会得到EOF
++ 重定向进程的stdout和stderr到nohup.out中
+
+由于进程的stdin，stdout和stderr都脱离了终端,因此让它在前台运行似乎意义不大，一般我们会在后面加上 =&= 让它在后台运行。
+** setsid
+nohup是通过忽略HUP信号来使我们的进程避免中途被中断，而setsid可以使我们的进程不属于接受HUP号的会话首进程的会话，从而避免受到HUP信号。
+
+setsid的使用方法跟 =nohup= 很类似，只需要在要执行的命令前加上 =setsid= 即可。
+#+BEGIN_SRC shell
+  setsid command
+#+END_SRC
+
+它的核心代码是 =setsid= 函数
+#+BEGIN_SRC C
+  pid_t setsid(void);
+#+END_SRC
+
+调用setsid函数的进程若不是一个进程组的组长就会创建一个新会话。具体来说会发生下面3件事情
+
++ 该进程会变成新会话的会话首进程（会话首进程即创建该会话的进程）,此时新会话中只有该进程这么一个进程
++ 该进程会变成一个新进程组的组长进程，新进程组ID就是该进程的PID
++ 该进程与控制终端的联系被切断。
+
+若调用setsid函数的进程就是一个进程组的组长，则该函数会返回出错。
+为了解决这种情况，通常函数需要先fork，然后父进程退出，由子进程执行setsid。
+由于子进程继承的是父进程的进程组ID，而其PID是新分配的ID，因此这两者不可能相等，即子进程不可能是进程组的组长。
+这种情况下，由于父进程先于子进程退出，因此子进程的父进程会有init进程接管。
+而这就是sid命令的实现原理。
+
+下面这个实验可以看书setsid所做的事情：
+
+先编译一个测试程序(假设编译后的执行文件为s.out)，源代码如下:
+#+BEGIN_SRC C
+  #include <unistd.h>
+  #include <stdio.h>
+
+  int main()
+  {
+    pid_t sid=getsid(0);          /* 会话 id */
+    pid_t pgrp=getpgrp();         /* 进程组id */
+    pid_t ppid=getppid();         /* 父进程id */
+    pid_t pid=getpid();           /* 进程ID */
+    printf("会话id:%d\n进程组id:%d\n父进程id:%d\n进程id:%d\n",sid,pgrp,ppid,pid);
+  }
+#+END_SRC
+
+#+RESULTS:
+| 会话id:17791   |
+| 进程组id:17791 |
+| 父进程id:5732  |
+| 进程id:17791   |
+
+在shell下直接执行的输出是:
+#+BEGIN_EXAMPLE
+  [lujun9972@X61 ~]$ ./s.out 
+  会话id:5235
+  进程组id:17095
+  父进程id:5235
+  进程id:17095
+#+END_EXAMPLE
+其中5235就是bash的进程ID
+
+而使用setsid的执行输出为:
+#+BEGIN_EXAMPLE
+  [lujun9972@X61 ~]$ setsid ./s.out 
+  [lujun9972@X61 ~]$ 会话id:17146
+  进程组id:17146
+  父进程id:1
+  进程id:17146
+#+END_EXAMPLE
+
+
+对比这两个输出，你会发现，setsid新建了一个全新的会话，而且其父进程变成了init京城。
+
+由于会话和父进程都与shell无关了，因此无论如何shell都无法向该进程发送SIGHUP命令。
+** disown
+前面提到的nohup和setsid都是外部命令，跟具体的shell无关。
+即无论shell(同时也是终端相关的控制进程)的具体实现是怎样的都能保证执行的进程不会被SIGHUP挂断。
+而且使用他们的一个限制就是必须在执行命令前，事先在命令前加上 nohup 或者 setsid 
+
+是如果我们未加任何处理就已经提交了命令，那就只能使用disown命令了。
+然而disown是bash的内置命令，它只能在bash下使用。
+
+比较常用的disown有以下三种方式
+
+#+BEGIN_SRC shell
+  disown -h $jobspec               #使某个作业忽略HUP信号。
+  disown -ah                       #使所有的作业都忽略HUP信号。
+  disown -rh                       #使正在运行的作业忽略HUP信号。
+#+END_SRC
+
+disown命令会将命令从bash的job list中删除。
+这样，当bash收到SIGHUP信号后，并不会将SIGHUP信号发送给该命令。
+
+然而，使用disown并不会切断命令与终端的关联关系，这样当终端被关闭后，若命令尝试从stdin中读取或输出到stdout中,可能会导致异常退出。
+* 关于 &
+事实上，在新版本的bash上，bash并不会向后台程序发送SIGHUP命令，也就是说任何以 =&= 结尾运行在后台的进程都不会因为终端退出的SIGHUP信号而退出。
+
+我们可以做个实验：
+
+先准备一个测试文件，代码如下：
+#+BEGIN_SRC C
+  #include <signal.h>
+  #include <stdio.h>
+  #include <unistd.h>
+
+  void sig_handler(int signo)
+  {
+    if(signo == SIGHUP)
+      {
+        printf("RECV SIGHUP\n");
+      }
+    else
+      {
+        printf("RECV signal %d\n",signo);
+      }
+  }
+
+  int main()
+  {
+    signal(SIGHUP,sig_handler);
+    sleep(180);
+  }
+#+END_SRC
+
+编译后(假设编译出来的执行文件是a.out)在终端中执行:
+#+BEGIN_SRC shell
+  a.out >a.txt &
+#+END_SRC
+
+让程序在后台运行，然后关闭终端，再打开新终端，查看a.txt没有发现有内容，用ps也能查到a.out没有被杀掉,只是它的父进程变成了init
+
+但若在终端中执行
+#+BEGIN_SRC shell
+a.out >a.txt
+#+END_SRC
+
+让程序在前台运行，然后关闭终端，再打开新终端，查看a.txt则会发现有“RECV SIGHUP”的内容，用ps也无法再查到a.out了,说明a.out也被杀掉了。
