@@ -1,0 +1,80 @@
+#+TITLE: docker容器中跑GUI的最简单方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,docker
+#+DATE: [2018-04-24 二 15:31]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最简单的方法就是让docker容器中的xclient应用直接使用主机上的Xserver就好了。
+
+* 步骤
+步骤上就两步
+
+1. 放开权限，允许本地连接
+   #+BEGIN_SRC shell
+     xhost +local:
+   #+END_SRC
+
+2. 将 =/tmp/.X11-unix= 共享到容器中
+   #+BEGIN_SRC shell
+     docker run -it --rm -v /tmp/.X11-unix:/tmp/.X11-unix ${docker_image}
+   #+END_SRC
+
+当然，你也可以在放开权限时，指定容器主机名，这样会安全一些，只是步骤上会麻烦一点
+#+BEGIN_SRC shell
+  xhost +local:$(docker inspect --format='{{ .Config.Hostname }}' $containerId)
+  docker start $containerId
+#+END_SRC
+
+* =/tmp/.X11-unix=是什么玩意？
+
+X11 server需要有一种途径来跟X11 client来进行沟通。
+在网络上它们可以通过TCP/IP Socket来实现沟通，而在本机上它们通过一个[[http://en.wikipedia.org/wiki/Unix_domain_socket][Unix-domain socket]]来沟通.
+
+Unix-domain socket其实很TCP/IP socket很类似，只不过它指向的是一个文件路径，而且无需通过网卡进行转发，因此相对来说更安全，更更快些。
+
+而 =/tmp/.X11-unix= 其实就是存放这些Unix-domain Socket的地方。
+
+一般来说 =/tmp/.X11-unix= 下面只会有一个 Unix-domain Socket(因为一般只有一个Xserver在运行)，但若系统同时运行多个Xserver，也可能会有多个Unix Domain Socket出现的情况。
+#+BEGIN_SRC shell :results org
+  ls -l /tmp/.X11-unix
+#+END_SRC
+
+#+BEGIN_SRC org
+总用量 0
+srwxrwxrwx 1 lujun9972 lujun9972 0 4月  24 09:18 X0
+#+END_SRC
+
+注意到 =X0= 前面的 =s= ，说明它是一个socket文件。
+
+我们可以使用 =lsof -U= 来查看有那些进程在使用这个 Unix-domain Socket
+#+BEGIN_SRC shell :results org
+  lsof -U /tmp/.X11-unix/X0 |cut -f1 -d " " |uniq
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+COMMAND
+systemd
+xinit
+Xorg
+awesome
+fcitx
+udiskie
+python2
+dbus-daem
+fcitx-dbu
+java
+gvfsd
+gvfsd-fus
+at-spi-bu
+dbus-daem
+at-spi2-r
+emacs
+firefox
+Web\x20Co
+gconfd-2
+Web\x20Co
+urxvt
+pulseaudi
+#+END_SRC
