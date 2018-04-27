@@ -1,0 +1,91 @@
+#+TITLE: 小议bash中的COPROC
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅,bash
+#+DATE: [2018-04-26 四 18:34]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在bash中，两个进程之间要传输数据的最常见方法就是用匿名管道了，像这样
+#+BEGIN_SRC shell
+  commandA|commandB|commandC
+#+END_SRC
+
+但是使用匿名管道最大的一个问题是，数据的传输是单项的，即commandB只能从commandA的输出中读取数据，然后commandB的输出只能被commandC读取。
+
+那么若想要两个进程之间相互读取数据怎么办呢？也就是说我希望上面的commandA和commandC其实是同一个进程怎么办？
+一个常见的解决方法就是使用命名管道:
+#+BEGIN_SRC shell
+  mkfifo in out
+  trap 'rm in out' EXIT
+  cmd <in >out &
+  exec 3> in 4< out
+  echo $data >&3
+  read $data <&4
+#+END_SRC
+
+不过使用命名管道也有一个麻烦事，就是需要记得清理生成的管道文件。
+
+不过，自bash4.0开始，bash引入了一个关键字 =coproc=, 用来在后台创建一个协作进程(co-process), 同时将它的输入和输出通过管道与文件句柄相连。
+
+有点类似于C中的 =FILE * popen ( const char * command , const char * type );= 函数,只不过它同时产生输入和输出两个句柄。
+
+* COPROC语法
+
+根据bash manual的说法，coprocess的语法为
+#+BEGIN_SRC shell
+  coproc [NAME] command [redirections]
+#+END_SRC
+其中当command为[[https://www.gnu.org/software/bash/manual/html_node/Simple-Commands.html#Simple-Commands][简单命令]]时，不能有 =NAME=. 
+
+这个说法很容易让人感到困惑，什么叫简单命令？这个概念不直观。
+
+直观点说，可以认为 =coproc= 有两类用法，一类是基本语法，一类是扩展的语法。
+
+** COPROC基本语法
+COPROC的基本语法适用于当只需要有一个coprocess的情况，它的语法为
+#+BEGIN_SRC shell
+  coproc cmd [redirections]
+#+END_SRC
+
+这时与coprocess的输入/输出管道相连的句柄保存在 =$COPROC= 数组中，分别为 =${COPROC[1]}= 和 =${COPROC[0]}=
+
+因此，你可以使用 =echo $data >&"${COPROC[1]}"= 来往coprocess中输入数据,
+通过使用 =echo $data <&"${COPROC[0]}"= 来读取coprocess的输出数据。
+
+** COPROC的扩展语法
+当需要创建多个coprocess时，你就需要使用coproc的扩展语法了，因为它允许你为coprocess命名。
+#+BEGIN_SRC shell
+  coproc NAME {cmds} [redirections]
+#+END_SRC
+
+有没有觉得它跟bash中定义函数的语法 =function NAME {cmds}= 很类似？
+
+这时与coprocess的输入/输出管道相连的句柄保存在 =$NAME= 数组中，分别为 =${NAME[1]}= 和 =${NAME[0]}=
+
+对应的，你可以使用 =echo $data >&"${NAME[1]}"= 来往coprocess中输入数据,
+通过使用 =echo $data <&"${NAME[0]}"= 来读取coprocess的输出数据。
+
+** 关闭不需要的管道
+
+若coprocess只需要输入句柄或输出句柄，则可以使用 =exec= 来关闭不需要的文件句柄
+#+BEGIN_SRC shell
+  exec {NAME[0]}>&-
+  exec {NAME[1]}>&-
+#+END_SRC
+
+* 注意事项
+
+使用coprocess虽然方便,但要当心coprocess由于输出缓存而导致的卡死。
+
+比如下面这个例子
+#+BEGIN_SRC shell
+  coproc tr a b
+  echo a >&"${COPROC[1]}"
+  read var<&"${COPROC[0]}"
+#+END_SRC
+
+你的期望是第三句能够读出字符 =b= 作为 =var= 的值， 然而实际上执行到第三句话时会卡死。
+这是因为 =tr= 命令缓存了输出的内容,而并未将其写到终端上来。
+
+因此创建coprocess时一定小心，只能使用那些不会缓存输出的命令。
+也正因为此，coprocess的使用范围其实也很首先，真要用来跟其他进程做交互的话，还是推荐使用 =expert= 比较好。
