@@ -91,7 +91,7 @@ rsync常用法为：
 * 整合起来
 接下来我们只需要用个 =while= 死循环把两个工具整合起来就行了，非常简单
 
-#+BEGIN_SRC shell :tangle ~/bin/backup.sh
+#+BEGIN_SRC shell
   #!/bin/bash
 
   if [[ $# -ne 2 ]];then
@@ -112,3 +112,35 @@ rsync常用法为：
 这里有必要说明的是，虽然用 =inotifywait= 能探测出文件具体做了什么改动，但实际上我们根本不需要知道具体的改变是什么。
 
 我们只需要知道有所改变了，然后具体改变了什么由 =rsync= 来自己处理就行了。
+* 改进
+但是上面这种方法存在一个问题，那就是在 =rsync= 运行完到调用起 =inotifywait= 之前其实是会有一个微小的时间间隔的。
+在这个时间间隔内若有文件发生变动，则无法检测出来从而同步。
+
+通过 =man inotifywait= 可以看到它其实有一个 =-m(--monitor)= 选项,这个选项可以让 =inotifywait= 持续监控而不是检测到时间后自动退出。
+通过该选项，我们可以做出如下改进：
+#+BEGIN_SRC shell  :tangle ~/bin/backup.sh
+  #!/bin/bash
+
+  if [[ $# -ne 2 ]];then
+      cat<<EOF
+  Usage $(basename $0) source_dir [host:]dest_dir
+  EOF
+      exit 0
+  fi
+
+  source_dir=$1
+  dest_dir=$2
+  temp=$(mktemp)
+  trap "rm ${temp}" exit
+  inotifywait -r -m -e modify,create,delete ${source_dir} >${temp} &
+  while :
+  do
+      if [[ $(stat -c '%s' ${temp}) -eq 0 ]];then # 若有改动出现
+          sleep 1
+          continue
+      fi
+
+      > ${temp}                   # 这个时间点之后的改动都会被rsync同步掉
+      rsync -avz ${source_dir}/ ${dest_dir} --delete
+  done
+#+END_SRC
