@@ -1,0 +1,243 @@
+#+TITLE: numfmt:让数字变得更容易理解
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-05-09 三 19:06]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+像 =ls=, =df=, =du= 这类命令都带有一个选项可以将数字直接转换成人类容易阅读的形式来展现。
+比如,直接执行 =df= 时，容量显示的是多少个块，而当用 =df -h= 时，容量会根据块的数量转换成G/M/K的形式。
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 ~]$ df
+  文件系统          1K-块     已用     可用 已用% 挂载点
+  dev             1900280        0  1900280    0% /dev
+  run             1906932      868  1906064    1% /run
+  /dev/sda2      41022688 23631300 15277852   61% /
+  tmpfs           1906932    26204  1880728    2% /dev/shm
+  tmpfs           1906932        0  1906932    0% /sys/fs/cgroup
+  tmpfs           1906932     5156  1901776    1% /tmp
+  /dev/sda3      73005440 61682676  7571272   90% /home
+  tmpfs               100        0      100    0% /var/lib/lxd/shmounts
+  tmpfs               100        0      100    0% /var/lib/lxd/devlxd
+  tmpfs            381384        8   381376    1% /run/user/1000
+#+END_EXAMPLE
+
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 ~]$ df -h
+  文件系统        容量  已用  可用 已用% 挂载点
+  dev             1.9G     0  1.9G    0% /dev
+  run             1.9G  868K  1.9G    1% /run
+  /dev/sda2        40G   23G   15G   61% /
+  tmpfs           1.9G   26M  1.8G    2% /dev/shm
+  tmpfs           1.9G     0  1.9G    0% /sys/fs/cgroup
+  tmpfs           1.9G  5.1M  1.9G    1% /tmp
+  /dev/sda3        70G   59G  7.3G   90% /home
+  tmpfs           100K     0  100K    0% /var/lib/lxd/shmounts
+  tmpfs           100K     0  100K    0% /var/lib/lxd/devlxd
+  tmpfs           373M  8.0K  373M    1% /run/user/1000
+#+END_EXAMPLE
+
+不过对于那些没有这类功能的命令该怎么办呢？有单独的一个命令来实现数字和易读形式之间的转换吗？
+答案是，还真有，这就是 =numfmt=. 而且 =numfmt= 是coreutils的一部分，无需另行安装，真是良心。
+
+* 1000进制还是1024进制？这是个问题
+使用 =numfmt= 支持两种转换标准，一种是 1K=1000,1M=1000K...的:
+
++ numfmt --to=si 数字 :: 将数字转换成易读格式
+     
+  #+BEGIN_SRC shell :results org
+    numfmt --to=si 100000
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  100K
+  #+END_SRC
+
++ numfmt --from=si 易读格式 :: 将易读格式转换成数字
+
+  #+BEGIN_SRC shell :results org
+    numfmt --from=si 100K
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  100000
+  #+END_SRC
+
+还有一种是 1K=1024,1M=1024K...的:
+
++ numfmt --to=iec 数字 :: 将数字转换成易读格式
+     
+  #+BEGIN_SRC shell :results org
+    numfmt --to=iec 100000
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  98K
+  #+END_SRC
+
++ numfmt --from=iec 易读格式 :: 将易读格式转换成数字
+     
+  #+BEGIN_SRC shell :results org
+    numfmt --from=iec 100K
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  102400
+  #+END_SRC
+
+事实上，还有一种格式是 1Ki=1024,1Mi=1024Ki...的(即在单位后面有个i)：
+
++ numfmt --to=iec-i 数字 :: 将数字转换成易读格式
+
+  #+BEGIN_SRC shell :results org
+    numfmt --to=iec-i 100000
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  98Ki
+  #+END_SRC
+
+
++ numfmt --from=iec-i 易读格式 :: 将易读格式转换成数字
+
+  #+BEGIN_SRC shell :results org
+    numfmt --from=iec-i 100Ki
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  102400
+  #+END_SRC
+
+  
+当将易读格式转换会数字时，可以将格式设置为 =auto=, 这样 =numfmt= 会自动判断应该是按1000来转换还是按1024来转换，其选择的规则为:
+
++ 若格式的单位后面不带 =i= 则使用1000进制来转换
+
+  #+BEGIN_SRC shell :results org
+    numfmt --from=auto 100K
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  100000
+  #+END_SRC
+
++ 若格式的单位后面不带 =i= 则使用1024进制来转换
+
+  #+BEGIN_SRC shell :results org 
+    numfmt --from=auto 100Ki
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  102400
+  #+END_SRC
+  
+
+* 一次进行多个转换
+=numfmt= 能够一次性进行多个转换，只需要在后面罗列数字或者易读格式就行了。
+#+BEGIN_SRC shell :results org
+  numfmt --to=iec 100000 20000 40000
+#+END_SRC
+
+#+BEGIN_SRC org
+98K
+20K
+40K
+#+END_SRC
+
+#+BEGIN_SRC shell :results org
+  numfmt  --from=iec 98K 20K 40K
+#+END_SRC
+
+#+BEGIN_SRC org
+100352
+20480
+40960
+#+END_SRC
+
+从中你也可以看出，转换的结果其实并不会特别的精确
+
+* 指定数字的单位
+使用 =--from-unit= 可以指定输入数字的单位,比如：
+#+BEGIN_SRC shell :results org
+  numfmt --to=si --from-unit K 1000
+#+END_SRC
+
+#+BEGIN_SRC org
+1.0M
+#+END_SRC
+
+你会发现，输出是 =1M= 而不是 =1K=
+
+同理，使用 =--to-unit= 可以指定输出数字的单位:
+#+BEGIN_SRC shell :results org
+  numfmt --from=si --to-unit K 1M
+#+END_SRC
+
+#+BEGIN_SRC org
+1000
+#+END_SRC
+
+可以看到，输出是是 =1000= 而不是 =1000000=
+
+* 指定输出的格式
+
+使用 =--format= 可以指定输出的格式，其格式语法类似于C语言中 =printf= 的格式说明，但仅限于格式化一个浮点数。比如：
+
++ 输出右对齐，占10位字符
+  
+  #+BEGIN_SRC shell
+    [lujun9972@T520 ~]$ numfmt --to=si --format "%10f" 1000
+          1.0K
+  #+END_SRC
+
++ 输出左对齐，占10位字符
+
+  #+BEGIN_EXAMPLE
+    [lujun9972@T520 ~]$ numfmt --to=si --format "%-10f|" 1000
+    1.0K      |
+  #+END_EXAMPLE
+  
+  为了清晰，我在字符串最后加了一个 =|=
+
++ 输出右对齐，占10位字符,不够的位用0填充
+  
+  #+BEGIN_EXAMPLE
+    [lujun9972@T520 ~]$ numfmt --to=si --format "%010f" 1000
+    00000001.0K
+  #+END_EXAMPLE
+
+* 与其他命令整合
+当 =numfmt= 没有指定数字或易读格式来转换时，它会从stdin中读取要转换的内容
+
+#+BEGIN_SRC shell :results org
+  echo 1000 |numfmt --to=si
+#+END_SRC
+
+#+BEGIN_SRC org
+1.0K
+#+END_SRC
+
+然而，对于像 =df= 这样的命令，除了数字外，还有其他内容怎么办呢？
+
+这个时候，我们可以使用 =--header= 来跳过命令输出前面几行的标题,使用 =field= 来指定转换某几列的内容。
+
+比如，我们可以用下列命令来让 =numfmt= 只转换 =df= 命令从第3行开始的2到4列数字，保持其他内容不变
+#+BEGIN_SRC shell :results org
+  df -B1 | numfmt --header=2 --field 2-4 --to=iec
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+文件系统             1B-块        已用        可用 已用% 挂载点
+dev             1945886720           0  1945886720    0% /dev
+run                   1.9G        868K        1.9G    1% /run
+/dev/sda2              40G         23G         15G   61% /
+tmpfs                 1.9G         26M        1.8G    2% /dev/shm
+tmpfs                 1.9G           0        1.9G    0% /sys/fs/cgroup
+tmpfs                 1.9G        5.1M        1.9G    1% /tmp
+/dev/sda3              70G         59G        7.3G   90% /home
+tmpfs                 100K           0        100K    0% /var/lib/lxd/shmounts
+tmpfs                 100K           0        100K    0% /var/lib/lxd/devlxd
+tmpfs                 373M        8.0K        373M    1% /run/user/1000
+#+END_SRC
