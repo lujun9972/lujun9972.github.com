@@ -1,0 +1,150 @@
+#+TITLE: 使用redshift保护你的睡眠质量
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-05-10 四 09:30]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+redshift是一款根据太阳位置(根据你所在的经纬度以及时间来推测)来调整色温(色温是指绝对黑体从绝对零度(一273℃)开始加温后所呈现的颜色。黑体在受热后．逐渐由黑变红，转黄，发白，最后发出蓝色光。)的应用。
+
+由于有证据表明，显示器发出的蓝光会抑制褪黑素的释放,从而影响夜晚的睡眠质量，因此redshift会在判断太阳下山后调低显示器的色温，从而减少光线中蓝光所占的计量。
+
+* 安装
+redshift在大多数linux发行版的仓库中都有，在archlinux下可以通过 =pacman= 来安装
+#+BEGIN_SRC shell
+  sudo pacman -S redshift --noconfirm
+#+END_SRC
+
+* 使用
+
+最简单的使用方法就是直接运行 =redshift=, 它会通过 =geoclue2= 服务自动获取你的经纬度从而判断当前时间是夜晚还是白天，从而调整色温。
+
+但是你也可以通过 =-l LAT:LON= 选项来指定当前位置的经纬度,这样使用redshift就无需再联网了。
+
+比如东莞的经度为 =113.75=,维度为 =23.04=, 那么可以
+#+BEGIN_SRC shell
+  redshift -l 23.04:113.75
+#+END_SRC
+
+如果不清楚你所在地的经纬度，那么可以让 =redshift= 在第一次运行时联网查询，后续再使用这个查询出来的值。
+
+要查看 =redshift= 自动查询出来的经纬度需要使用 =-v= 选项让 =redshift= 显示出执行的详细情况
+#+BEGIN_SRC shell :results org
+  timeout 1 redshift -v |head
+#+END_SRC
+
+运行结果为：
+#+BEGIN_SRC org
+正在使用服务”geoclue2“。
+位置：23.12 北纬, 113.25 东经
+色温：日间 5500K，夜间 3500K
+太阳高度：日间高于 3.0 度，夜间低于 -6.0 度
+亮度：1.00:1.00
+伽马 (日间)：1.000, 1.000, 1.000
+伽马 (夜间)：1.000, 1.000, 1.000
+正在使用模式 ”randr“。
+状态：已启用
+时段: 日间
+#+END_SRC
+
+默认情况下, =redshift= 白天的色温设置为 =5500K=, 晚上的色温设置为 =3700K=, 但是你也可以根据自己的偏好进行设置，方法是使用 =-t DAY:NIGHT= 选项
+
+比如，我想设置白天色温为 =5400K=, 晚上色温为 =3600K=,那么可以执行
+#+BEGIN_SRC shell
+  redshift -t 5400:3600
+#+END_SRC
+
+=redshift= 运行后不会自动退出，而是不断的尝试根据时间来进行色温的调整，而若你不希望让redshift一直调整色温，那么可以使用 =-o= 或者 =-O TEMP= 来让 =redshift= 进入 =One shot mode=
+
+其中 =-o= 是让 =redshift= 自动为你调整色温。
+#+BEGIN_SRC shell :results org
+  redshift -vo
+#+END_SRC
+
+#+BEGIN_SRC org
+正在使用服务”geoclue2“。
+位置：23.12 北纬, 113.25 东经
+色温：日间 5500K，夜间 3500K
+太阳高度：日间高于 3.0 度，夜间低于 -6.0 度
+亮度：1.00:1.00
+伽马 (日间)：1.000, 1.000, 1.000
+伽马 (夜间)：1.000, 1.000, 1.000
+正在使用模式 ”randr“。
+太阳高度：55.714565度
+时段: 日间
+色温：5500K
+亮度：1.00
+#+END_SRC
+
+而 =-O TEMP= 允许你手工指定色温
+#+BEGIN_SRC shell :results org
+  redshift -vO 5000
+#+END_SRC
+
+#+BEGIN_SRC org
+亮度：1.00:1.00
+伽马 (日间)：1.000, 1.000, 1.000
+伽马 (夜间)：1.000, 1.000, 1.000
+正在使用模式 ”randr“。
+色温：5000K
+#+END_SRC
+
+* 配置
+
+=redshift= 默认并不会创建配置文件，需要你手工在 =~/.config/= 中创建一个名为 =redshift.conf= 的文件，文件格式为标准的 =INI= 格式。
+
+=redshift= 支持以下配置项
+
+以下配置在 =[redshift]= section下
+
++ temp-day = integer :: 设置白天的色温
+
++ temp-night = integer :: 设置晚上的色温
+
++ transition = 0 or 1 :: 是否渐进地调整色温
+
++ brightness-day = 0.1-1.0 :: 调整白天的屏幕亮度
+
++ brightness-night = 0.1-1.0 :: 调整晚上的屏幕亮度
+
++ elevation-high = decimal :: 设置太阳多高了才算是白天
+
++ elevation-low = decimal :: 设置太阳多高了才算是晚上
+
++ gamma = R:G:B :: 对比度调整(无论白天还是晚上)
+
++ gamma-day = R:G:B :: 白天进行的对比度调整
+
++ gamma-night = R:G:B :: 晚上进行的对比度调整
+
++ adjustment-method = name :: 调整色温的方法，可以用 =redshift -m list= 来查看支持的方法，默认为 =randr=.
+
++ location-provider = name :: 指定获取经纬度的方法，可以用 =redshift -l list= 来查看支持的方法,默认为 =geoclue2=.
+
+     
+以下配置项在 =[manual]= section 下
+
++ lat = LAT :: 设置纬度
+
++ lon = LON :: 设置经度
+     
+               
+以下是我自己的配置
+#+BEGIN_SRC conf :tangle "~/.config/redshift.conf"
+  [redshift]
+  ; 设置色温
+  temp-day=5500
+  temp-night=3500
+
+  ; 渐进地改变色温
+  transition=1
+
+  adjustment-method=randr
+
+  ; 手工指定经纬度
+  location-provider=manual
+
+  [manual]
+  lat=23.12
+  lon=113.25
+#+END_SRC
