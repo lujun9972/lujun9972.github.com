@@ -1,0 +1,90 @@
+#+TITLE: 使用logsave将命令输出保存起来
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-05-14 一 16:03]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+如果想要把命令的输出保存到文件中，你会怎么做？
+
+一个常用的方法就是使用IO重定向吧
+#+BEGIN_SRC shell
+  ls >/tmp/ls.txt 2>&1
+#+END_SRC
+
+如果需要在将命令输出保存到文件中的同时还需要将内容也输出到屏幕中的话，那么我们可以使用 =tee= 命令
+#+BEGIN_SRC shell :results raw
+  ls |tee /tmp/ls.txt
+#+END_SRC
+
+不过，我今天发现还有一个 =logsave= 的命令，也可以做到将命令输出保存到文件的同时将内容页输出到屏幕中。
+
+=logsave= 的语法非常简单:
+
+#+BEGIN_SRC shell
+  logsave [ -asv ] logfile cmd_prog [args ... ]
+#+END_SRC
+
+logsave 会执行 =cmd_prog args...= 并将命令输出的副本保存到 =logfile= 中.
+而它厉害的地方在于 *即使logfile所在的目录不存在，logsave也会将输出保存到内存中，等到logfile所在的目录建立后再将内容写入到日志文件中*
+
+=logsave= 的这个特性使得它很适合用于系统启动脚本中，将输出的内容保存到内存中，直到 =/var/= 目录挂载后再将内容写入 =/var/log/= 中
+
+比如下面这个例子
+#+BEGIN_SRC shell :results org
+  # 删除存放logfile的目录
+  rm -rf /tmp/logdir
+  # 使用logsave保存logfile
+  logsave /tmp/logdir/logfile bash -c "sleep 2;date"
+  # 创建logdir
+  mkdir /tmp/logdir
+  echo 查看logfile是否生成:
+  ls -l /tmp/logdir
+  echo 等待2s后:
+  sleep 2
+  echo 再次查看logfile是否生成:
+  ls -l /tmp/logdir
+  echo 查看logfile的内容:
+  cat /tmp/logdir/logfile
+#+END_SRC
+
+#+BEGIN_SRC org
+2018年 05月 14日 星期一 16:31:44 CST
+查看logfile是否生成:
+总用量 0
+等待2s后:
+再次查看logfile是否生成:
+总用量 4
+-rw-r--r-- 1 lujun9972 lujun9972 141 5月  14 16:31 logfile
+查看logfile的内容:
+Log of bash -c sleep 2;date 
+Mon May 14 16:31:42 2018
+
+2018年 05月 14日 星期一 16:31:44 CST
+
+Mon May 14 16:31:44 2018
+----------------
+#+END_SRC
+
+从中可以看到：
+
+1. 虽然一开始logfile由于logdir不存在而无法生成，但是在创建logdir后, =logsave= 最终依然成功的生成了logfile,并将 =date= 命令的执行结果写入其中。
+
+2. =logsave= 不仅仅将命令的输出内容写入logfile中，而且还包括了执行的命令，命令执行的开始时间和命令执行结束的时间.
+
+=logsave= 中的 cmd_prog 可以是一个特殊的 =-= ，这表示 =logsave= 从标准输入中获取要记录日志的内容，这使得 =logsave= 可以像 =tee= 一样被使用
+#+BEGIN_SRC shell :results org
+  ls |wc -l |logsave /tmp/1.txt - >/dev/null
+  cat /tmp/1.txt
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+Log of stdin
+Mon May 14 16:39:45 2018
+
+124
+
+Mon May 14 16:39:45 2018
+----------------
+#+END_SRC
