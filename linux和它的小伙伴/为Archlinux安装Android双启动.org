@@ -1,0 +1,74 @@
+#+TITLE: 为Archlinux安装Android双启动
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-05-24 四 07:32]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+1. 从[[http://www.android-x86.org/download][官网上]]下载对应的rpm安装包
+
+   #+BEGIN_SRC shell
+     wget http://pumath.dl.osdn.jp/android-x86/67834/android-x86-7.1-r2.i686.rpm
+   #+END_SRC
+
+2. 安装rpmextract
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo pacman -S rpmextract --noconfirm
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   resolving dependencies...
+   looking for conflicting packages...
+
+   Packages (1) rpmextract-1.0-7
+
+   Total Installed Size:  0.00 MiB
+   Net Upgrade Size:      0.00 MiB
+
+   :: Proceed with installation? [Y/n] 
+   (0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+   (0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+   (0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+   (0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+   (0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+   :: Processing package changes...
+   (1/1) reinstalling rpmextract                      [----------------------]   0%(1/1) reinstalling rpmextract                      [######################] 100%
+   :: Running post-transaction hooks...
+   (1/1) Arming ConditionNeedsUpdate...
+   #+END_SRC
+
+   rpmextract会把rpm中的内容解压到当前目录，解压出来的目录结构以根目录(=/=)为基准
+
+3. 解压下载下来的android rpm文件
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     cd /
+     sudo rpmextract.sh ~lujun9972/android/android-x86-7.1-r2.i686.rpm
+   #+END_SRC
+
+4. 往 =/etc/grub.d/40_custom= 中添加如下内容
+   #+BEGIN_SRC conf
+     menuentry "Android 7.1-r2" {
+     search --set=root --file /android-7.1-r2/kernel
+     linux /android-7.1-r2/kernel quiet root=/dev/ram0 androidboot.selinux=permissive
+     initrd /android-7.1-r2/initrd.img
+     }
+   #+END_SRC
+   
+   可以通过执行下面脚本来添加
+   #+BEGIN_SRC shell :dir /sudo::
+     cat >>/etc/grub.d/40_custom <<'EOF'
+     menuentry "Android 7.1-r2" {
+     search --set=root --file /android-7.1-r2/kernel
+     linux /android-7.1-r2/kernel quiet root=/dev/ram0 androidboot.selinux=permissive
+     initrd /android-7.1-r2/initrd.img
+     }
+     EOF
+   #+END_SRC
+
+5. 运行 =grub-mkconfig= 更新grub配置文件
+   #+BEGIN_SRC shell :dir /sudo::
+     sudo grub-mkconfig -o /boot/grub/grub.cfg
+   #+END_SRC
+
+6. 重启之后就能看到"Android 7.1-r2"的启动菜单了
