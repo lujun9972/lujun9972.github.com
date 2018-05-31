@@ -73,3 +73,805 @@ zenburn
       l.floating, l.tile.left, l.floating, l.floating }
   awful.tag(names, s, layouts)
 #+END_SRC
+* 我的配置说明
+** 加载Awesome API library
+Awesome API分布在多个库中，需要一一加载才能用. 这些库包括:
+
++ gears :: 常用的工具
++ wibox :: Awesome的widget框架
++ awful :: window managment方面的功能
++ naughty :: 有关通知的功能
++ menubar :: XDG menu相关实现
++ beautiful :: Awesome主题相关的功能
+               
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Standard awesome library
+  local gears = require("gears")
+  local awful = require("awful")
+  require("awful.autofocus")
+  -- Widget and layout library
+  local wibox = require("wibox")
+  -- Theme handling library
+  local beautiful = require("beautiful")
+  -- Notification library
+  local naughty = require("naughty")
+  local menubar = require("menubar")
+  local hotkeys_popup = require("awful.hotkeys_popup").widget
+  -- Enable VIM help for hotkeys widget when client with matching name is opened:
+  require("awful.hotkeys_popup.keys.vim")
+#+END_SRC
+
+** 自定义一些函数
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  function file_exist_p (file)
+    local f = io.open(file)
+    if f ~= nil then
+      io.close(f)
+      return true
+    else
+      return false
+    end
+  end
+
+  local function client_menu_toggle_fn()
+    local instance = nil
+
+    return function ()
+      if instance and instance.wibox.visible then
+        instance:hide()
+        instance = nil
+      else
+        instance = awful.menu.clients({ theme = { width = 250 } })
+      end
+    end
+  end
+#+END_SRC
+** 错误处理
+错误可能会有以下几类：
+
++ 语法错误 :: 使用 =awesome -k= 来检查配置文件中是否存在语法错误
++ 动态语言类型错误 :: 可以使用 =luacheck= 来进行静态扫描
++ 废弃的API :: 若调用了废弃的API，则会在 =stderr= 和 =stdout= 中输出警告信息
+            
+=awesome.startup_errors= 中包含的是awesome启动期间的错误信息
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Check if awesome encountered an error during startup and fell back to
+  -- another config (This code will only ever execute for the fallback config)
+  if awesome.startup_errors then
+      naughty.notify({ preset = naughty.config.presets.critical,
+                       title = "Oops, there were errors during startup!",
+                       text = awesome.startup_errors })
+  end
+#+END_SRC
+
+=awesome.connect_signal(event,func)= 来注册当时间发生时调用哪个函数，其中
++ event为字符串形式的时间名称
++ func为触发调用的函数
+  
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Handle runtime errors after startup
+  do
+      local in_error = false
+      awesome.connect_signal("debug::error", function (err)
+          -- Make sure we don't go into an endless error loop
+          if in_error then return end
+          in_error = true
+
+          naughty.notify({ preset = naughty.config.presets.critical,
+                           title = "Oops, an error happened!",
+                           text = tostring(err) })
+          in_error = false
+      end)
+  end
+#+END_SRC
+** 加载主题
+=beautiful.init(config)= 函数初始化主题
+
+其中 =config= 可以是一个字符串路径指向主题文件(这个主题文件的执行结果应该是一个包含各类主题变量与值的table)，或者直接就是一个table对象
+
+使用 =beautiful.get()= 函数就能得到当前主题对象
+
+与设置主题相关的变量有：
+
++ font :: 默认的字体
++ useless_gap :: 程序与程序之间的间距大小，默认为0
++ border_width :: 程序边框宽度
++ border_normal :: 程序边框的默认宽度.
++ border_focus :: 焦点所在程序的边框框读
++ wallpaper :: 壁纸的路径
++ awesome_icon :: Awesome图标的路径
+
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Themes define colours, icons, font and wallpapers.
+  beautiful.init(awful.util.get_themes_dir() .. "default/theme.lua")
+  -- beautiful.init("~/.config/awesome/theme.lua")
+#+END_SRC
+** 定义一些变量
+定义终端、默认编辑器
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  -- This is used later as the default terminal and editor to run.
+  terminal = "urxvt"
+  editor = os.getenv("EDITOR") or "vi"
+  editor_cmd = terminal .. " -e " .. editor
+  emacsclient_newframe = "emacsclient -a \"\" -n -c "
+#+END_SRC
+
+设置默认的modkey
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  -- Default modkey.
+  -- Usually, Mod4 is the key with a logo between Control and Alt.
+  -- If you do not like this or do not have such a key,
+  -- I suggest you to remap Mod4 to another key using xmodmap or other tools.
+  -- However, you can use another modifier like Mod1, but it may interact with others.
+  modkey = "Mod4"
+#+END_SRC
+
+定义可用的布局
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Table of layouts to cover with awful.layout.inc, order matters.
+  awful.layout.layouts = {
+      awful.layout.suit.floating,
+      awful.layout.suit.tile,
+      awful.layout.suit.tile.left,
+      awful.layout.suit.tile.bottom,
+      awful.layout.suit.tile.top,
+      awful.layout.suit.fair,
+      awful.layout.suit.fair.horizontal,
+      awful.layout.suit.spiral,
+      awful.layout.suit.spiral.dwindle,
+      awful.layout.suit.max,
+      awful.layout.suit.max.fullscreen,
+      awful.layout.suit.magnifier,
+      awful.layout.suit.corner.nw,
+      -- awful.layout.suit.corner.ne,
+      -- awful.layout.suit.corner.sw,
+      -- awful.layout.suit.corner.se,
+  }
+#+END_SRC
+** Menu
+自定义菜单，其中一个菜单就是一个包含菜单项的数组。
+
+而一个菜单项可以是：一个菜单或一个形如 ={菜单项名称,菜单项对应的函数或命令字符串[,菜单项图标]}=, 其中 =菜单项图标= 可以省略。
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Create a launcher widget and a main menu
+  myawesomemenu = {
+     { "hotkeys", function() return false, hotkeys_popup.show_help end},
+     { "manual", emacsclient_newframe .. " -e '(man \"awesome\")'" },
+     { "重建菜单", function ()
+         os.execute("xdg_menu --format awesome --root-menu /etc/xdg/menus/arch-applications.menu >~/.config/awesome/archmenu.lua" )
+         awesome.restart()
+     end},
+     -- { "edit config", emacsclient_newframe .. awesome.conffile },
+     { "edit config", emacsclient_newframe .. "~/github/dotfile/dotfile.org" },
+     -- { "manual", terminal .. " -e man awesome" },
+     -- { "edit config", editor_cmd .. " " .. awesome.conffile },
+     { "restart", awesome.restart },
+     { "quit", function() awesome.quit() end}
+  }
+
+  -- 自动生成的xdg_menu
+  xdg_menu = require("archmenu")
+  mainmenu_items = { { "awesome", myawesomemenu, beautiful.awesome_icon },
+    { "Applications", xdgmenu },
+    { "Eshell", "eshell.sh"},
+    { "dired", "dired.sh" },
+    { "Firefox", "firefox" },
+    { "open terminal", terminal }
+  }
+#+END_SRC
+
+awful.menu:new(args,parent)用于生成menu对象，其中 =args= 是一个table，包含了menu的各项信息，该table可以具有以下三种key值:
+
++ items :: 必填，表示menu内容的table，格式如前所说
++ theme.[fg|bg][focus|normal], theme.bordercolor, theme.borderwidth, theme.submenuicon, theme.height , theme.width :: 可选，定义了menu的显示方法
++ auto_expand :: 定义是否自动弹出子菜单，默认为true,表示光标移动过去就自动弹出子菜单
+                 
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  mymainmenu = awful.menu({ items = mainmenu_items
+                          })
+#+END_SRC
+                 
+awful.widget.launcher:new (args)函数创建一个button widget，点击之后执行特点的命令。
+
+参数 =args= 是一个table,该table除了能包含标准widget table的那些参数外，还能有以下key值
+
++ image :: 图片的路径，该图片用于显示该button widget的外观
++ command :: 指定点击widget后运行的命令
++ menu :: 指定点击widget后要弹出的菜单
+          
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  mylauncher= awful.widget.launcher({ image = beautiful.awesome_icon,
+                                       menu = mymainmenu })
+
+  emacslauncher = awful.widget.launcher({ image = "/usr/share/icons/hicolor/128x128/apps/emacs.png",
+  command = "/usr/bin/emacsclient -a '' -n -c"})
+
+#+END_SRC
+
+menubar.utils.terminal指定了当应用需要在终端运行时，打开哪个终端
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  menubar.utils.terminal = terminal -- Set the terminal for applications that require it
+#+END_SRC
+
+awful.widget.keyboardlayout:new ()创建一个键盘布局的widget,用于显示当前的键盘布局
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  -- Keyboard map indicator and switcher
+  mykeyboardlayout = awful.widget.keyboardlayout()
+#+END_SRC
+** Wibar
+
+~wibox.widget.textclock ([format[, timeout[, timezone]]])~ 创建一个textclock widget，用于显示时间。其中
+
++ format :: 指明时间的格式，默认为"%a %b %d"
++ timeout :: 指定多少秒更新一次时间，默认为60
++ timezone :: 指明时区默认为本地时区
+              
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  -- Create a textclock widget
+  mytextclock = wibox.widget.textclock()
+#+END_SRC
+
+*** 定义点击tag的行为
+=gears.table.join(tables)= 会遍历参数中的所有table中的key，插入成一个新的table
+
+而awful.button:new (mod, _button, press[, release])方法创建一个可以点击的按钮table，其中
+
++ mod :: 定义鼠标点击时，一同按下哪个modifer
++ _button :: 定义了用哪个鼠标键进行点击操作
++ press :: 定义了点击按下时运行的函数
++ release :: 定义了点击释放时运行的函数
+             
+需要说明的是， =awful.button:new= 会根据 =awful.button.ignore_modifiers= 的值来生成多个版本的button对象。
+比如，默认 =awful.button.ignore_modifiers= 会忽略  ={ "Lock", "Mod2" }= 这两个按键，那么 =awful.button:new= 会生成4个button object，分别对应没有按下 ={ "Lock", "Mod2" }= 的情况，按下 ={ "Lock", "Mod2" }= 的情况， 按下 ={ "Lock"}=  的情况和按下 ={ "Mod2"}= 的情况.
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- Create a wibox for each screen and add it
+  local taglist_buttons = gears.table.join(
+
+    -- 点击左键，切换到该tag
+    awful.button({ }, 1, function(t) t:view_only() end), 
+    -- modkey+左键，将当前window移动到指定tag
+    awful.button({ modkey }, 1, function(t)
+        if client.focus then
+          client.focus:move_to_tag(t)
+        end
+    end),
+    -- 点击右键，让指定tag也可见
+    awful.button({ }, 3, awful.tag.viewtoggle),
+    -- modkey+右键，让当前window在指定tag也可见
+    awful.button({ modkey }, 3, function(t)
+        if client.focus then
+          client.focus:toggle_tag(t)
+        end
+    end),
+    awful.button({ }, 4, function(t) awful.tag.viewnext(t.screen) end),
+    awful.button({ }, 5, function(t) awful.tag.viewprev(t.screen) end)
+  )
+#+END_SRC
+*** 定义点击任务栏的行为
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  local tasklist_buttons = gears.table.join(
+    awful.button({ }, 1, function (c)
+        if c == client.focus then
+          c.minimized = true
+        else
+          -- Without this, the following
+          -- :isvisible() makes no sense
+          c.minimized = false
+          if not c:isvisible() and c.first_tag then
+            c.first_tag:view_only()
+          end
+          -- This will also un-minimize
+          -- the client, if needed
+          client.focus = c
+          c:raise()
+        end
+    end),
+    awful.button({ }, 3, client_menu_toggle_fn()),
+    awful.button({ }, 4, function ()
+        awful.client.focus.byidx(1)
+    end),
+    awful.button({ }, 5, function ()
+        awful.client.focus.byidx(-1)
+  end))
+#+END_SRC
+*** 当屏幕发生改变时，重新设置壁纸
+~gears.wallpaper.maximized(surf, s, ignore_aspect, offset)~ 以最大化的方式设置壁纸，其中
+
++ surf :: 要设置的壁纸
++ s :: 在哪个屏幕中设置该壁纸
++ ignore_aspect :: 是否忽略长宽比，默认为否
++ offset :: 设置壁纸的偏移量
+
+除了 =maximized= 这种壁纸设置方法外，还有其他的设置方法：
+
++ centered (surf, s, background, scale)
++ tiled (surf, s, offset)
++ fit (surf, s, background)
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  local function set_wallpaper(s)
+      -- Wallpaper
+      if beautiful.wallpaper then
+          local wallpaper = beautiful.wallpaper
+          -- If wallpaper is a function, call it with the screen
+          if type(wallpaper) == "function" then
+              wallpaper = wallpaper(s)
+          end
+          gears.wallpaper.maximized(wallpaper, s, true)
+      end
+  end
+
+  -- Re-set wallpaper when a screen's geometry changes (e.g. different resolution)
+  screen.connect_signal("property::geometry", set_wallpaper)
+#+END_SRC
+
+*** 设置屏幕布局
+~awful.screen.connect_for_each_screen (func)~ 为每个已存在的，且后面新创建的屏幕都调用 =func=, 其中 =func= 接受一个 =screen= 作为参数
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  awful.screen.connect_for_each_screen(function(s)
+      -- Wallpaper
+      set_wallpaper(s)
+
+      -- Each screen has its own tag table.
+      awful.tag({ "1.HOME", "2.STUDIO", "3.GAMES", "4.EDIT", "5.VM", "6.IRC"}, s, awful.layout.layouts[1])
+
+      -- Create a promptbox for each screen
+      s.mypromptbox = awful.widget.prompt()
+      -- Create an imagebox widget which will contains an icon indicating which layout we're using.
+      -- We need one layoutbox per screen.
+      s.mylayoutbox = awful.widget.layoutbox(s)
+      s.mylayoutbox:buttons(gears.table.join(
+                             awful.button({ }, 1, function () awful.layout.inc( 1) end),
+                             awful.button({ }, 3, function () awful.layout.inc(-1) end),
+                             awful.button({ }, 4, function () awful.layout.inc( 1) end),
+                             awful.button({ }, 5, function () awful.layout.inc(-1) end)))
+      -- Create a taglist widget
+      s.mytaglist = awful.widget.taglist(s, awful.widget.taglist.filter.all, taglist_buttons)
+
+      -- Create a tasklist widget
+      s.mytasklist = awful.widget.tasklist(s, awful.widget.tasklist.filter.currenttags, tasklist_buttons)
+
+      -- Create the wibox
+      s.mywibox = awful.wibar({ position = "top", screen = s })
+
+      -- Add widgets to the wibox
+      s.mywibox:setup {
+          layout = wibox.layout.align.horizontal,
+          { -- Left widgets
+              layout = wibox.layout.fixed.horizontal,
+              mylauncher,
+              emacslauncher,
+              s.mytaglist,
+              s.mypromptbox,
+          },
+          s.mytasklist, -- Middle widget
+          { -- Right widgets
+              layout = wibox.layout.fixed.horizontal,
+              mykeyboardlayout,
+              wibox.widget.systray(),
+              mytextclock,
+              s.mylayoutbox,
+          },
+      }
+  end)
+#+END_SRC
+** 设置鼠标操作
+*** 设置全局鼠标操作
+全局鼠标操作是在root窗口进行鼠标操作时触发的操作，awesome不带任何参数调用对应的函数。
+
+使用 ~root.buttons (button_table)~ 函数获取/设置全局的鼠标操作
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  root.buttons(gears.table.join(
+      awful.button({ }, 3, function () mymainmenu:toggle() end),
+      awful.button({ }, 4, awful.tag.viewnext),
+      awful.button({ }, 5, awful.tag.viewprev)
+  ))
+#+END_SRC
+*** 设置client鼠标操作
+
+client鼠标操作是当有window获取到焦点时触发的操作，awesome将当前捕获到焦点的window作为参数传递给对应的函数。
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  clientbuttons = gears.table.join(
+      awful.button({ }, 1, function (c) client.focus = c; c:raise() end),
+      awful.button({ modkey }, 1, awful.mouse.client.move),
+      awful.button({ modkey }, 3, awful.mouse.client.resize))
+#+END_SRC
+
+client鼠标操作需要通client的buttons属性来设置，参见后面的Rules章节
+** 设置快捷键
+每个快捷键都保存为一个key对象。
+
+key对象通过 =awful.key:new (mod, _key, press[, release], data)= 来产生，其中
+
++ mod :: 为一个包含0个或多个modifier key的table。能作为modifier key的键有Mod1, Mod2, Mod3, Mod4, Mod5, Shift, Lock 和 Control.
++ _key :: 为触发事件的按键或键码(通过xev命令来获取)
++ press :: 按下快捷键调用的函数
++ release :: 释放快捷键时调用的函数
++ data :: 额外的元数据，提供给 =awful.hotkeys_popup= widget使用
+          
+需要说明的是: =awful.key:new= 函数返回的是一个包含一个或多个key对象的table,这也是为什么能用 =gears.table.join= 来整合的原因。
+
+此外，类似 =awful.button=, =awful.key:new= 也会受到 =awful.key.ignore_modifiers= 的影响
+
+*** 设置全局快捷
+全局快捷键在任何情况下都可触发，当触发全局快捷键的函数时，awesome并不会传递任何参数
+
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  globalkeys = gears.table.join(
+      awful.key({ modkey,           }, "s",      hotkeys_popup.show_help,
+                {description="show help", group="awesome"}),
+      awful.key({ modkey,           }, "Left",   awful.tag.viewprev,
+                {description = "view previous", group = "tag"}),
+      awful.key({ modkey,           }, "Right",  awful.tag.viewnext,
+                {description = "view next", group = "tag"}),
+      awful.key({ modkey,           }, "Escape", awful.tag.history.restore,
+                {description = "go back", group = "tag"}),
+
+      awful.key({ modkey,           }, "j",
+          function ()
+              awful.client.focus.byidx( 1)
+          end,
+          {description = "focus next by index", group = "client"}
+      ),
+      awful.key({ modkey,           }, "k",
+          function ()
+              awful.client.focus.byidx(-1)
+          end,
+          {description = "focus previous by index", group = "client"}
+      ),
+      awful.key({ modkey,           }, "w", function () mymainmenu:show() end,
+                {description = "show main menu", group = "awesome"}),
+
+      -- Layout manipulation
+      awful.key({ modkey, "Shift"   }, "j", function () awful.client.swap.byidx(  1)    end,
+                {description = "swap with next client by index", group = "client"}),
+      awful.key({ modkey, "Shift"   }, "k", function () awful.client.swap.byidx( -1)    end,
+                {description = "swap with previous client by index", group = "client"}),
+      awful.key({ modkey, "Control" }, "j", function () awful.screen.focus_relative( 1) end,
+                {description = "focus the next screen", group = "screen"}),
+      awful.key({ modkey, "Control" }, "k", function () awful.screen.focus_relative(-1) end,
+                {description = "focus the previous screen", group = "screen"}),
+      awful.key({ modkey,           }, "u", awful.client.urgent.jumpto,
+                {description = "jump to urgent client", group = "client"}),
+      awful.key({ modkey,           }, "Tab",
+          function ()
+              awful.client.focus.history.previous()
+              if client.focus then
+                  client.focus:raise()
+              end
+          end,
+          {description = "go back", group = "client"}),
+
+      -- Standard program
+      awful.key({ modkey,           }, "Return", function () awful.spawn(terminal) end,
+                {description = "open a terminal", group = "launcher"}),
+      awful.key({ modkey,  "Shift" }, "f", function () awful.spawn("rox") end,
+                {description = "open a file manager", group = "launcher"}),
+      awful.key({ modkey, "Control" }, "r", awesome.restart,
+                {description = "reload awesome", group = "awesome"}),
+      awful.key({ modkey, "Shift"   }, "q", awesome.quit,
+                {description = "quit awesome", group = "awesome"}),
+
+      awful.key({ modkey,           }, "l",     function () awful.tag.incmwfact( 0.05)          end,
+                {description = "increase master width factor", group = "layout"}),
+      awful.key({ modkey,           }, "h",     function () awful.tag.incmwfact(-0.05)          end,
+                {description = "decrease master width factor", group = "layout"}),
+      awful.key({ modkey, "Shift"   }, "h",     function () awful.tag.incnmaster( 1, nil, true) end,
+                {description = "increase the number of master clients", group = "layout"}),
+      awful.key({ modkey, "Shift"   }, "l",     function () awful.tag.incnmaster(-1, nil, true) end,
+                {description = "decrease the number of master clients", group = "layout"}),
+      awful.key({ modkey, "Control" }, "h",     function () awful.tag.incncol( 1, nil, true)    end,
+                {description = "increase the number of columns", group = "layout"}),
+      awful.key({ modkey, "Control" }, "l",     function () awful.tag.incncol(-1, nil, true)    end,
+                {description = "decrease the number of columns", group = "layout"}),
+      awful.key({ modkey,           }, "space", function () awful.layout.inc( 1)                end,
+                {description = "select next", group = "layout"}),
+      awful.key({ modkey, "Shift"   }, "space", function () awful.layout.inc(-1)                end,
+                {description = "select previous", group = "layout"}),
+
+      awful.key({ modkey, "Control" }, "n",
+                function ()
+                    local c = awful.client.restore()
+                    -- Focus restored client
+                    if c then
+                        client.focus = c
+                        c:raise()
+                    end
+                end,
+                {description = "restore minimized", group = "client"}),
+
+      -- Prompt
+      awful.key({ modkey },            "r",     function () awful.screen.focused().mypromptbox:run() end,
+                {description = "run prompt", group = "launcher"}),
+
+      awful.key({ modkey }, "x",
+                function ()
+                    awful.prompt.run {
+                      prompt       = "Run Lua code: ",
+                      textbox      = awful.screen.focused().mypromptbox.widget,
+                      exe_callback = awful.util.eval,
+                      history_path = awful.util.get_cache_dir() .. "/history_eval"
+                    }
+                end,
+                {description = "lua execute prompt", group = "awesome"}),
+      -- Menubar
+      awful.key({ modkey }, "p", function() menubar.show() end,
+                {description = "show the menubar", group = "launcher"})
+  )
+
+  -- Bind all key numbers to tags.
+  -- Be careful: we use keycodes to make it work on any keyboard layout.
+  -- This should map on the top row of your keyboard, usually 1 to 9.
+  for i = 1, 9 do
+      globalkeys = gears.table.join(globalkeys,
+          -- View tag only.
+          awful.key({ modkey }, "#" .. i + 9,
+                    function ()
+                          local screen = awful.screen.focused()
+                          local tag = screen.tags[i]
+                          if tag then
+                             tag:view_only()
+                          end
+                    end,
+                    {description = "view tag #"..i, group = "tag"}),
+          -- Toggle tag display.
+          awful.key({ modkey, "Control" }, "#" .. i + 9,
+                    function ()
+                        local screen = awful.screen.focused()
+                        local tag = screen.tags[i]
+                        if tag then
+                           awful.tag.viewtoggle(tag)
+                        end
+                    end,
+                    {description = "toggle tag #" .. i, group = "tag"}),
+          -- Move client to tag.
+          awful.key({ modkey, "Shift" }, "#" .. i + 9,
+                    function ()
+                        if client.focus then
+                            local tag = client.focus.screen.tags[i]
+                            if tag then
+                                client.focus:move_to_tag(tag)
+                            end
+                       end
+                    end,
+                    {description = "move focused client to tag #"..i, group = "tag"}),
+          -- Toggle tag on focused client.
+          awful.key({ modkey, "Control", "Shift" }, "#" .. i + 9,
+                    function ()
+                        if client.focus then
+                            local tag = client.focus.screen.tags[i]
+                            if tag then
+                                client.focus:toggle_tag(tag)
+                            end
+                        end
+                    end,
+                    {description = "toggle focused client on tag #" .. i, group = "tag"})
+      )
+  end
+#+END_SRC
+
+使用 =root.keys(keys_array)= 来获取/设置全局的快捷方式
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  root.keys(globalkeys)
+#+END_SRC
+*** 设置client快捷键
+client快捷键是当有焦点在window(client)上时才能触发的。这时awesome调用快捷键上的函数时会将当前client作为参数传递过去。
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  clientkeys = gears.table.join(
+    awful.key({ modkey,           }, "f",
+      function (c)
+        c.fullscreen = not c.fullscreen
+        c:raise()
+      end,
+      {description = "toggle fullscreen", group = "client"}),
+    awful.key({ modkey, "Shift"   }, "c",      function (c) c:kill()                         end,
+      {description = "close", group = "client"}),
+    awful.key({ modkey, "Control" }, "space",  awful.client.floating.toggle                     ,
+      {description = "toggle floating", group = "client"}),
+    awful.key({ modkey, "Control" }, "Return", function (c) c:swap(awful.client.getmaster()) end,
+      {description = "move to master", group = "client"}),
+    awful.key({ modkey,           }, "o",      function (c) c:move_to_screen()               end,
+      {description = "move to screen", group = "client"}),
+    awful.key({ modkey,           }, "t",      function (c) c.ontop = not c.ontop            end,
+      {description = "toggle keep on top", group = "client"}),
+    awful.key({ modkey,           }, "n",
+      function (c)
+        -- The client currently has the input focus, so it cannot be
+        -- minimized, since minimized clients can't have the focus.
+        c.minimized = true
+      end ,
+      {description = "minimize", group = "client"}),
+    awful.key({ modkey,           }, "m",
+      function (c)
+        c.maximized = not c.maximized
+        c:raise()
+      end ,
+      {description = "(un)maximize", group = "client"}),
+    awful.key({ modkey, "Control" }, "m",
+      function (c)
+        c.maximized_vertical = not c.maximized_vertical
+        c:raise()
+      end ,
+      {description = "(un)maximize vertically", group = "client"}),
+    awful.key({ modkey, "Shift"   }, "m",
+      function (c)
+        c.maximized_horizontal = not c.maximized_horizontal
+        c:raise()
+      end ,
+      {description = "(un)maximize horizontally", group = "client"})
+  )
+#+END_SRC
+
+client快捷键需要通过对client的keys属性来进行设置(参见Rules章节)
+** Rules
+=awful.rules.rules= 是全局的规则表，这里定义的规则适用于所有新开的window。
+
+一个规则由 =rule= / =rule_any= ， =except= / =except_any= , =properties= / =callback= 组成，其中:
+
++ =rule= 定义了条件,其中的条件都必须满足才能满足该rule
++ =rule_any= 定义了条件,其中的条件只需要满足一个就能满足该rule
++ =except= / =except_any= 定义了符合rule但需要排除掉的那些特殊情况
++ =properties= 定义了client的属性,若属性值为函数，则该函数的返回值会作为属性的值。
++ =callback= 定义了触发的回调函数,该回调函数会接受打开的client作为参数
+
+属性是可以任意的，但下面的属性有特殊的意义
+
++ placement
++ honor_padding
++ honor_workarea
++ tag
++ new_tag
++ switchtotag
++ focus
++ titlebars_enabled
++ callback
++ keys
++ buttons
+
+  
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  -- Rules to apply to new clients (through the "manage" signal).
+  awful.rules.rules = {
+      -- All clients will match this rule.
+      { rule = { },
+        properties = { border_width = beautiful.border_width,
+                       border_color = beautiful.border_normal,
+                       focus = awful.client.focus.filter,
+                       raise = true,
+                       keys = clientkeys,
+                       buttons = clientbuttons,
+                       screen = awful.screen.preferred,
+                       placement = awful.placement.no_overlap+awful.placement.no_offscreen
+       }
+      },
+      { rule = { class = "MPlayer" },
+        properties = { floating = true } },
+      { rule = { class = "pinentry" },
+        properties = { floating = true } },
+      { rule = { class = "gimp" },
+        properties = { floating = true } },
+      { rule = { class = "Firefox" },
+        properties = { floating = true } },
+      -- 这里class通过xprop程序来获取
+      { rule = { class = "VirtualBox Manager" },
+        properties = { tag="5.VM", switchtotag = true } },
+
+      -- Floating clients.
+      { rule_any = {
+          instance = {
+            "DTA",  -- Firefox addon DownThemAll.
+            "copyq",  -- Includes session name in class.
+          },
+          class = {
+            "Arandr",
+            "Gpick",
+            "Kruler",
+            "MessageWin",  -- kalarm.
+            "Sxiv",
+            "Wpa_gui",
+            "pinentry",
+            "veromix",
+            "xtightvncviewer"},
+
+          name = {
+            "Event Tester",  -- xev.
+          },
+          role = {
+            "AlarmWindow",  -- Thunderbird's calendar.
+            "pop-up",       -- e.g. Google Chrome's (detached) Developer Tools.
+          }
+        }, properties = { floating = true }},
+
+      -- Add titlebars to normal clients and dialogs
+      { rule_any = {type = { "normal", "dialog" }
+        }, properties = { titlebars_enabled = true }
+      },
+
+  }
+#+END_SRC
+** Signal
+注册事件发生时的触发函数,该函数接受一个窗口(client对象)作为参数
+#+BEGIN_SRC lua :tangle "~/.config/awesome/rc.lua"
+  -- {{{ Signals
+  -- Signal function to execute when a new client appears.
+  client.connect_signal("manage", function (c)
+      -- Set the windows at the slave,
+      -- i.e. put it at the end of others instead of setting it master.
+      -- if not awesome.startup then awful.client.setslave(c) end
+
+      if awesome.startup and
+        not c.size_hints.user_position
+        and not c.size_hints.program_position then
+          -- Prevent clients from being unreachable after screen count changes.
+          awful.placement.no_offscreen(c)
+      end
+  end)
+
+  -- Add a titlebar if titlebars_enabled is set to true in the rules.
+  client.connect_signal("request::titlebars", function(c)
+      -- buttons for the titlebar
+      local buttons = gears.table.join(
+          awful.button({ }, 1, function()
+              client.focus = c
+              c:raise()
+              awful.mouse.client.move(c)
+          end),
+          awful.button({ }, 3, function()
+              client.focus = c
+              c:raise()
+              awful.mouse.client.resize(c)
+          end)
+      )
+
+      awful.titlebar(c) : setup {
+          { -- Left
+              awful.titlebar.widget.iconwidget(c),
+              buttons = buttons,
+              layout  = wibox.layout.fixed.horizontal
+          },
+          { -- Middle
+              { -- Title
+                  align  = "center",
+                  widget = awful.titlebar.widget.titlewidget(c)
+              },
+              buttons = buttons,
+              layout  = wibox.layout.flex.horizontal
+          },
+          { -- Right
+              awful.titlebar.widget.floatingbutton (c),
+              awful.titlebar.widget.maximizedbutton(c),
+              awful.titlebar.widget.stickybutton   (c),
+              awful.titlebar.widget.ontopbutton    (c),
+              awful.titlebar.widget.closebutton    (c),
+              layout = wibox.layout.fixed.horizontal()
+          },
+          layout = wibox.layout.align.horizontal
+      }
+  end)
+
+  -- Enable sloppy focus, so that focus follows mouse.
+  client.connect_signal("mouse::enter", function(c)
+      if awful.layout.get(c.screen) ~= awful.layout.suit.magnifier
+          and awful.client.focus.filter(c) then
+          client.focus = c
+      end
+  end)
+
+  client.connect_signal("focus", function(c) c.border_color = beautiful.border_focus end)
+  client.connect_signal("unfocus", function(c) c.border_color = beautiful.border_normal end)
+  -- }}}
+
+#+END_SRC
+** 设置自启动程序
+#+BEGIN_SRC  lua :tangle "~/.config/awesome/rc.lua"
+  autorun = true
+  autorunApps = 
+    { 
+      "ps -fu $(whoami)|grep \"emacs --daemon\"|grep -v grep || emacs --daemon"
+    }
+
+  if autorun then
+    for app = 1, #autorunApps do
+      awful.util.spawn_with_shell(autorunApps[app])
+    end
+  end
+#+END_SRC
