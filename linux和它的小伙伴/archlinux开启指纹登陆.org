@@ -1,0 +1,79 @@
+#+TITLE: archlinux开启指纹登陆
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-06-02 六 18:15]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+1. 安装 =fprintd=
+
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo pacman -S fprintd --noconfirm
+   #+END_SRC
+
+   #+RESULTS:
+   #+BEGIN_SRC org
+   resolving dependencies...
+   looking for conflicting packages...
+
+   Packages (2) libfprint-0.7.0-1  fprintd-0.8.0-1
+
+   Total Download Size:   0.23 MiB
+   Total Installed Size:  0.95 MiB
+
+   :: Proceed with installation? [Y/n] 
+   :: Retrieving packages...
+    libfprint-0.7.0-1-x...     0.0   B  0.00B/s 00:00 [----------------------]   0% libfprint-0.7.0-1-x...   109.7 KiB   164K/s 00:00 [###############-------]  72% libfprint-0.7.0-1-x...   152.0 KiB   661K/s 00:00 [######################] 100%
+    fprintd-0.8.0-1-x86_64     0.0   B  0.00B/s 00:00 [----------------------]   0% fprintd-0.8.0-1-x86_64    82.6 KiB  2.02M/s 00:00 [######################] 100%
+   (0/2) checking keys in keyring                     [----------------------]   0%(1/2) checking keys in keyring                     [###########-----------]  50%(2/2) checking keys in keyring                     [######################] 100%
+   (0/2) checking package integrity                   [----------------------]   0%(1/2) checking package integrity                   [##############--------]  64%(2/2) checking package integrity                   [######################] 100%
+   (0/2) loading package files                        [----------------------]   0%(1/2) loading package files                        [##############--------]  64%(2/2) loading package files                        [######################] 100%
+   (0/2) checking for file conflicts                  [----------------------]   0%(1/2) checking for file conflicts                  [###########-----------]  50%(2/2) checking for file conflicts                  [######################] 100%
+   (0/2) checking available disk space                [----------------------]   0%(1/2) checking available disk space                [###########-----------]  50%(2/2) checking available disk space                [######################] 100%
+   :: Processing package changes...
+   (1/2) installing libfprint                         [----------------------]   0%(1/2) installing libfprint                         [######################] 100%
+   (2/2) installing fprintd                           [----------------------]   0%(2/2) installing fprintd                           [######################] 100%
+   :: Running post-transaction hooks...
+   (1/3) Reloading system manager configuration...
+   (2/3) Reloading device manager configuration...
+   (3/3) Arming ConditionNeedsUpdate...
+   #+END_SRC
+
+2. 运行 =fprintd-enroll= 录入指纹信息，默认是为当前用户录入右食指指纹
+
+   #+BEGIN_SRC shell
+     fprintd-enroll
+   #+END_SRC
+   
+   不过你也可以用 =-f= 选项指定录入哪个手指的指纹
+   #+BEGIN_SRC shell
+     for finger in {left,right}-{thumb,{index,middle,ring,little}-finger};
+     do
+         fprintd-enroll -f "$finger"
+     done
+   #+END_SRC
+
+3. 使用 =fprintd-verify= 可以验证录入的指纹
+
+   使用 =fprintd-list= 查看已经录入的指纹
+
+   使用 =fprintd-delete= 删除已经录入的指纹
+
+4. 配置 =/etc/pam.d/system-local-login= 中的本地登陆认证方法
+
+   在第一行加上 =auth      sufficient pam_fprintd.so= 表示优先使用指纹登陆
+
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sed -i  "/^$/aauth      sufficient pam_fprintd.so" /etc/pam.d/system-local-login
+   #+END_SRC
+
+
+   #+BEGIN_SRC org
+   #%PAM-1.0
+
+   auth      sufficient pam_fprintd.so
+   auth      include   system-login
+   account   include   system-login
+   password  include   system-login
+   session   include   system-login
+   #+END_SRC
