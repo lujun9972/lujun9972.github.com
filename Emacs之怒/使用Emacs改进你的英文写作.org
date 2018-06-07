@@ -164,6 +164,84 @@ aspell程序本身还支持很多的选项参数，若要传递这些参数给as
 
 *** ispell-kill-ispell
 * flyspell-mode
-* artbollocks-mode
-
 * langtool
+[[https://www.languagetool.org/][langtool]]是一个能够提供语法和写作风格检查的工具，它同时提供了命令行和GUI两种风格的界面，这使的它很容易与Emacs进行整合。
+
+** 下载langtool离线版
+langtool提供了Desktop版本来作为离线使用. 一般来说, 离线版langtool的功能要比在线版弱一些，但是对于一般的使用也足够了。
+
+1. 下载langtool zip压缩包
+   #+BEGIN_SRC shell :results org :dir ~/Downloads
+     wget https://www.languagetool.org/download/LanguageTool-4.1.zip 
+   #+END_SRC
+
+2. 解压langtool zip压缩包
+
+   #+BEGIN_SRC shell :results none :dir ~/Downloads 
+     unzip LanguageTool-4.1.zip
+   #+END_SRC
+
+** 安装Emacs的langtool插件
+langtool插件并不是Emacs自带的, 你可以从MELPA上安装，或者自己从[[https://github.com/mhayashi1120/Emacs-langtool][github]]上下载
+
+** 配置Emacs langtool插件
+Emacs需要调用外部的langtool命令行工具来进行实际的检查工作，因此你首先需要指定langtool的命令行工具的地址:
+#+BEGIN_SRC emacs-lisp
+  (setq langtool-language-tool-jar "~/Downloads/LanguageTool-4.1/languagetool-commandline.jar")
+#+END_SRC
+
+langtool支持多种语言的语法检查，默认会自己推测所属的语系。
+但这种推测可能不一定准确，尤其是英语系里面那么多的变体(Australian, Canadian, GB, New Zealand, South African, US)。
+对此，你也可以明确指定一种语言：
+#+BEGIN_SRC emacs-lisp
+  (setq langtool-default-language "en-US")
+#+END_SRC
+关于langtool支持的语言列表，可以通过 =C-u M-x langtool-check= 来查看.
+
+你还可以设置母语信息，langtool会根据你的母语对检测规则进行一些微调
+#+BEGIN_SRC emacs-lisp
+  (setq langtool-mother-tongue "zh-CN")
+#+END_SRC
+
+最后需要说明的是，langtool的规则十分繁复，其中甚至包括一些写作风格的规则检查。若将所有规则都应用起来，那么可能会出现很多误报的情况. 所幸langtool可以允许任意组合检查规则，根据需要我们可以禁止某些规则的检查。
+#+BEGIN_SRC emacs-lisp
+  (setq langtool-disabled-rules '("WHITESPACE_RULE"
+                                  "EN_UNPAIRED_BRACKETS"
+                                  "COMMA_PARENTHESIS_WHITESPACE"
+                                  "EN_QUOTES"))
+#+END_SRC
+关于规则的说明，可以参见[[https://www.languagetool.org/languages/][这里]]
+
+比如，这里
++ WHITESPACE_RULE的规则是不允许出现多个空格在一起，但实际上在编写org的时候常常需要靠多个空格进行缩进
++ EN_UNPAIRED_BRACKETS的规则是不允许出现不匹配的括号，但是在org中是可以出现 =1)=, =2)= 这样的列表的
++ COMMA_PARENTHESIS_WHITESPACE的规则不允许在逗号前或括号的前后出现空格，但是在org中，当用 =)= 来表示列表时，是需要在 =)= 后接上空格的
++ EN_QUOTES则不允许使用花引号,但是我一般图方便都是直接用键盘上的花引号来进行引用的。
+
+** 使用langtool进行检查
+使用langtool进行检查的步骤很简单。
+
+1. 运行 =M-x langtool-check= 来进行检查
+
+   若没有设置 =langtool-default-language= 的langtool会自动推测检查的语言类别，否则就使用该变量的指定类别来进行检查。
+
+   但有时候你可能要临时指定另一种语言的规则来进行检查，则可以运行 =C-u M-x langtool-check=, 这会弹出一个列表，让你从中选择要应用的语言规则。
+
+   [[file:./images/screenshot-17.png]]
+
+   如上图所示，langtool检查完后会用红色标记出检测出问题的地方，将光标移动到红色位置就会在echo area中显示是根据哪条规则检测出来的问题，并给出修改意见。
+
+   [[file:./images/screenshot-18.png]]
+
+2. 运行 =langtool-correct-buffer= 修正检测出的问题
+
+   langtool会依次跳转到各个检测出问题的地方，并给出修改意见
+
+   [[file:./images/screenshot-19.png]]
+
+   只要按下修改意见前的编号就能自动修复该问题了
+
+3. 由于不是所有检测出来的问题都是真正有错误的地方，
+   因此在修改完所有要修改的错误后，运行 =langtool-check-done= 来清除所有的问题标记.
+
+* artbollocks-mode
