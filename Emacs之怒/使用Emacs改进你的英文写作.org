@@ -44,7 +44,7 @@ Optional dependencies for aspell
 (2/2) Updating the info directory file...
 #+END_SRC
 
-不过光安装 =aspell= 并没什么鸟用，你还需要安装对应的字典.
+不过光安装 =aspell= 并没什么鸟用， =aspell= 是通过字典来检查拼写的，因此你还需要安装对应的字典.
 #+BEGIN_SRC shell :results org
   pacman -Ss  aspell
 #+END_SRC
@@ -86,7 +86,7 @@ community/aspell-uk 1.8.0-1
 
 你可以看到aspell有很多个语言的字典，也就是支持多种语言的拼写检查，不过可惜的是不支持中文拼写检查(中文分词是个大问题)。
 
-我们一般用的最多的应该是对英文进行拼写检查吧，因此这里我们来安装英文的字典
+这里我们来安装英文的字典吧
 #+BEGIN_SRC shell :dir /sudo:: :results org
   sudo pacman -S aspell-en --noconfirm
 #+END_SRC
@@ -114,30 +114,30 @@ Total Installed Size:  4.06 MiB
 (1/1) Arming ConditionNeedsUpdate...
 #+END_SRC
 
-你可以试着直接在shell中运行 =aspell -c /tmp/t.txt= 来进行拼写检查，然而你可能会得到一个错误提示
+现在你可以试着直接在shell中运行 =aspell -c /tmp/t.txt= 来进行拼写检查，然而你很有可能会得到这样一个错误提示
 #+BEGIN_EXAMPLE
   [lujun9972@T430S ~]$ aspell -c /tmp/t.txt 
   错误：No word lists can be found for the language "zh_CN".
 #+END_EXAMPLE
 
-这是因为aspell会自动根据设置的 =LANG= 变量来查找对应的字典，结果当然是找不到中文的字典咯。
+这是因为aspell会默认会根据 =LANG= 变量的值来查找对应的字典，结果当然是找不到中文的字典咯。
 
-不过你可以通过 =-l en= 来指定语言代码为英文。
+你需要通过 =-l en= 来指定语言代码为英文。
 
 #+BEGIN_SRC shell
   aspell -c /tmp/t.txt -l en
 #+END_SRC
 
-[[file:./images/screenshot-15.png]]
+[[file:./images/ispell-01.png]]
 
 
 ** 配置ispell插件
 Emacs的ispell插件会自动以此查找aspell,ispell和hunspell，并以第一个找到的程序为检查程序。 
 因此大多数情况下，你无需特意手工设置拼写程序的名称(ispell-program-name)。
 
-不过默认情况下，Emacs的ispell插件也会根据设置的 =LANG= 变量值来决定使用哪个字典来进行拼写检查，因此很大可能，你有必要设置一下ispell插件用来检查的字典。
+不过默认情况下，Emacs的ispell插件也会是根据 =LANG= 变量的值来决定使用哪个字典来进行拼写检查的，因此很大可能，你有必要设置一下ispell插件用来检查的字典。
 
-ispell插件提供了两个变量来设置字典:
+ispell插件提供了两个变量来设置用来做·拼写检查的字典:
 
 + ispell-dictionary :: 用于设置全局的默认字典
 + ispell-local-dictionary :: 用来设置当前buffer局部使用的字典
@@ -155,15 +155,73 @@ aspell程序本身还支持很多的选项参数，若要传递这些参数给as
 ** 使用Ispell进行拼写检查
 
 *** ispell
+使用ispell进行拼写检查最简单的办法就是直接运行 =M-x ispell=, 在选中区域的情况下它会调用 =ispell-region= 来对该区域内的内容进行检查，否则会调用 =M-x ispell-buffer= 来对整个buffer中的内容进行拼写检查。
+
+若拼写检查无错误，则 =ispell= 直接在echo area显示一条信息:
+#+BEGIN_EXAMPLE
+  Spell-checking region using aspell with en dictionary...done
+#+END_EXAMPLE
+
+若发现了不认识的单词，则 =ispell= 会将光标定位到该单词，并高亮该单词，然后在上方显示修改建议
+[[file:./images/ispell-02.png]]
+
+此时你可以做如下动作：
+
++ 按下修改建议前的字母 :: 使用对应的修改建议替换该单词
++ C-h / ? :: 显示进一步的帮助
++ 空格 :: 忽略这个单词
++ a / A :: 全文忽略该单词
++ i :: 将该单词认为是正确的单词并加入个人词典中
++ u :: 将单词的小写形式加入个人词典中
++ r / R :: 手工输入新单词来替换该单词,r与R不同之处在于r只会对该单词做一次替换，而R可以对buffer中所有该单词出现的地方进行替换。
++ x / X :: 退出这次单词检查,但ispell进程不被杀死
++ q :: 退出单词检查，并且杀死ispell进程
+
+如果文档中有多处相同的拼写错误，可以使用“R”进入替换模式，然后输入新单词，当查找到第二个匹配的单词时，按下“!”就会自动将后面所有的单词替换成正确的单词了。
+
+*** 递归编辑
+ispell支持递归编辑，当你在进行拼写检查的过程中，可能会发现其他某个地方需要做个修改，但是又不想中断拼写检查的这个过程。
+
+这个时候就可以按下 =C=r= 进入递归编辑状态。
+
+在递归编辑状态下，你可以像往常一样使用Emacs来修改文档，当完成递归编辑后再使用 =C-M-c= 退出递归编辑并继续拼写检查。
 
 *** ispell-word
 
+如果你在写作时，脑袋卡壳了，对某个单词不确实是不是拼写正确的，那么可以直接执行 =M-x ispell-word=, 它仅仅会对光标所在的单词进行检查。
+
 *** ispell-minior-mode
 
+
+ispell-minior-mode 能够实时的对你输入的内容进行拼写检查。
+
+当你输入一个单词后(按下空格或回车)，ispell会自动检查该单词，如果找不到该单词，则会给你以提示
+[[file:./images/ispell-03.png]]
+
 *** ispell-complete-word
+当你不记得一个单词怎么拼写的时候，还可以使用 ispell 来帮你进行单词补全。
+
+运行 =M-x ispell-complete-word= 就能看到一个可选列表，列出了各种可供选择的单词。
+
+不过要使用该功能，你还必须设置 =ispell-alternate-dictionary= 的值。将其指向一个 *包含各种单词的存文本格式文件* 。
+
+[[file:./images/ispell-04.png]]
 
 *** ispell-kill-ispell
+启用ispell后，它会一直在后台运行。如果觉得不爽它消耗了系统资源，可以运行 =M-x ispell-kill-ispell= 把它干掉。
+
 * flyspell-mode
+flyspell-mode跟ispell-minior-mode类似，也是提供了实时的单词拼写检查功能。
+
+但它与ispell-minior-mode的不同点在于，dispell-minior-mode只会对刚刚输入的单词进行检查，而flyspell-mode会对buffer中所有单词进行检查，并在认为是错误的单词下面加上一个波浪线作为标识。
+
+[[file:./images/flyspell-01.png]]
+
+在flyspell-mode下修改错误单词的方法是，将鼠标移动到错误单词上，然后按下 *鼠标中键* 就能看到一系列的可选操作了。
+
+
+** flyspell-prog-mode
+值得一提的是，flyspell还为程序员提供了一个 =flyspell-progn-mode=, 在该模式下，Emacs只会对注释和字符串中的内容进行拼写检查。
 * artbollocks-mode
 
 * langtool
