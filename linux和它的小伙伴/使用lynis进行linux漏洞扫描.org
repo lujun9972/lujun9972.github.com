@@ -1,0 +1,407 @@
+#+TITLE: 使用lynis进行linux漏洞扫描
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-06-08 五 17:32]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+lynis 是一款运行在 Unix/Linux 平台上的基于主机的、开源的安全审计软件。
+
+* 安装lynis
+在 archlinux 上可以直接通过 pacman 来安装
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo pacman -S lynis --noconfirm
+#+END_SRC
+
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) lynis-2.6.4-1
+
+Total Installed Size:  1.35 MiB
+Net Upgrade Size:      0.00 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) reinstalling lynis                           [----------------------]   0%(1/1) reinstalling lynis                           [######################] 100%
+:: Running post-transaction hooks...
+(1/2) Reloading system manager configuration...
+(2/2) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+* 使用lynis进行主机扫描
+
+首先让我们不带任何参数运行 lynis, 这会列出 lynis 支持的那些参数
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 linux和它的小伙伴]$ lynis
+
+  [ Lynis 2.6.4 ]
+
+  ################################################################################
+    Lynis comes with ABSOLUTELY NO WARRANTY. This is free software, and you are
+    welcome to redistribute it under the terms of the GNU General Public License.
+    See the LICENSE file for details about using this software.
+
+    2007-2018, CISOfy - https://cisofy.com/lynis/
+    Enterprise support available (compliance, plugins, interface and tools)
+  ################################################################################
+
+
+  [+] Initializing program
+  ------------------------------------
+
+
+    Usage: lynis command [options]
+
+
+    Command:
+
+      audit
+          audit system                  : Perform local security scan
+          audit system remote <host>    : Remote security scan
+          audit dockerfile <file>       : Analyze Dockerfile
+
+      show
+          show                          : Show all commands
+          show version                  : Show Lynis version
+          show help                     : Show help
+
+      update
+          update info                   : Show update details
+
+
+    Options:
+
+      --no-log                          : Don't create a log file
+      --pentest                         : Non-privileged scan (useful for pentest)
+      --profile <profile>               : Scan the system with the given profile file
+      --quick (-Q)                      : Quick mode, don't wait for user input
+
+      Layout options
+      --no-colors                       : Don't use colors in output
+      --quiet (-q)                      : No output
+      --reverse-colors                  : Optimize color display for light backgrounds
+
+      Misc options
+      --debug                           : Debug logging to screen
+      --view-manpage (--man)            : View man page
+      --verbose                         : Show more details on screen
+      --version (-V)                    : Display version number and quit
+
+      Enterprise options
+      --plugindir <path>                : Define path of available plugins
+      --upload                          : Upload data to central node
+
+      More options available. Run '/usr/bin/lynis show options', or use the man page.
+
+    No command provided. Exiting..
+#+END_EXAMPLE
+
+从上面可以看出，使用 lynis 进行主机扫描很简单，只需要带上参数 =audit system= 即可。
+Lynis在审计的过程中,会进行多种类似的测试,在审计过程中会将各种测试结果、调试信息、和对系统的加固建议都被写到 stdin 。
+我们可以执行下面命令来跳过检查过程,直接截取最后的扫描建议来看。
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo lynis audit system |sed '1,/Results/d'
+#+END_SRC
+
+lynis将扫描的内容分成几大类，可以通过 =show groups= 参数来获取类别
+#+BEGIN_SRC shell :results org
+  lynis show groups
+#+END_SRC
+
+#+BEGIN_SRC org
+accounting
+authentication
+banners
+boot_services
+containers
+crypto
+databases
+dns
+file_integrity
+file_permissions
+filesystems
+firewalls
+hardening
+homedirs
+insecure_services
+kernel
+kernel_hardening
+ldap
+logging
+mac_frameworks
+mail_messaging
+malware
+memory_processes
+nameservices
+networking
+php
+ports_packages
+printers_spools
+scheduling
+shells
+snmp
+squid
+ssh
+storage
+storage_nfs
+system_integrity
+time
+tooling
+usb
+virtualization
+webservers
+
+#+END_SRC
+
+若指向扫描某几类的内容，则可以通过 =--tests-from-group= 参数来指定。
+
+比如我只想扫描 shells 和 networking 方面的内容，则可以执行
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo lynis --tests-from-group "shells networking" --no-colors
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+
+[ Lynis 2.6.4 ]
+
+################################################################################
+  Lynis comes with ABSOLUTELY NO WARRANTY. This is free software, and you are
+  welcome to redistribute it under the terms of the GNU General Public License.
+  See the LICENSE file for details about using this software.
+
+  2007-2018, CISOfy - https://cisofy.com/lynis/
+  Enterprise support available (compliance, plugins, interface and tools)
+################################################################################
+
+
+[+] Initializing program
+------------------------------------
+[2C- Detecting OS... [41C [ DONE ]
+[2C- Checking profiles...[37C [ DONE ]
+[2C- Detecting language and localization[22C [ zh ]
+[4CNotice: no language file found for 'zh' (tried: /usr/share/lynis/db/languages/zh)[0C
+
+  ---------------------------------------------------
+  Program version:           2.6.4
+  Operating system:          Linux
+  Operating system name:     Arch Linux
+  Operating system version:  Rolling release
+  Kernel version:            4.16.13
+  Hardware platform:         x86_64
+  Hostname:                  T520
+  ---------------------------------------------------
+  Profiles:                  /etc/lynis/default.prf
+  Log file:                  /var/log/lynis.log
+  Report file:               /var/log/lynis-report.dat
+  Report version:            1.0
+  Plugin directory:          /usr/share/lynis/plugins
+  ---------------------------------------------------
+  Auditor:                   [Not Specified]
+  Language:                  zh
+  Test category:             all
+  Test group:                shells networking
+  ---------------------------------------------------
+[2C- Program update status... [32C [ NO UPDATE ]
+
+[+] System Tools
+------------------------------------
+[2C- Scanning available tools...[30C
+[2C- Checking system binaries...[30C
+
+[+] Plugins (phase 1)
+------------------------------------
+[0CNote: plugins have more extensive tests and may take several minutes to complete[0C
+[0C [0C
+[2C- Plugins enabled[42C [ NONE ]
+
+[+] Shells
+------------------------------------
+[2C- Checking shells from /etc/shells[25C
+[4CResult: found 5 shells (valid shells: 5).[16C
+[4C- Session timeout settings/tools[25C [ NONE ]
+[2C- Checking default umask values[28C
+[4C- Checking default umask in /etc/bash.bashrc[13C [ NONE ]
+[4C- Checking default umask in /etc/profile[17C [ WEAK ]
+
+[+] Networking
+------------------------------------
+[2C- Checking IPv6 configuration[30C [ ENABLED ]
+[6CConfiguration method[35C [ AUTO ]
+[6CIPv6 only[46C [ NO ]
+[2C- Checking configured nameservers[26C
+[4C- Testing nameservers[36C
+[6CNameserver: 202.96.134.33[30C [ SKIPPED ]
+[6CNameserver: 202.96.128.86[30C [ SKIPPED ]
+[4C- Minimal of 2 responsive nameservers[20C [ SKIPPED ]
+[2C- Getting listening ports (TCP/UDP)[24C [ DONE ]
+[6C* Found 11 ports[39C
+[2C- Checking status DHCP client[30C [ RUNNING ]
+[2C- Checking for ARP monitoring software[21C [ NOT FOUND ]
+
+[+] Custom Tests
+------------------------------------
+[2C- Running custom tests... [33C [ NONE ]
+
+[+] Plugins (phase 2)
+------------------------------------
+
+================================================================================
+
+  -[ Lynis 2.6.4 Results ]-
+
+  Great, no warnings
+
+  Suggestions (1):
+  ----------------------------
+  ,* Consider running ARP monitoring software (arpwatch,arpon) [NETW-3032] 
+      https://cisofy.com/controls/NETW-3032/
+
+  Follow-up:
+  ----------------------------
+  - Show details of a test (lynis show details TEST-ID)
+  - Check the logfile for all details (less /var/log/lynis.log)
+  - Read security controls texts (https://cisofy.com)
+  - Use --upload to upload data to central system (Lynis Enterprise users)
+
+================================================================================
+
+  Lynis security scan details:
+
+  Hardening index : 33 [######              ]
+  Tests performed : 13
+  Plugins enabled : 0
+
+  Components:
+  - Firewall               [X]
+  - Malware scanner        [X]
+
+  Lynis Modules:
+  - Compliance Status      [?]
+  - Security Audit         [V]
+  - Vulnerability Scan     [V]
+
+  Files:
+  - Test and debug information      : /var/log/lynis.log
+  - Report data                     : /var/log/lynis-report.dat
+
+================================================================================
+
+  Lynis 2.6.4
+
+  Auditing, system hardening, and compliance for UNIX-based systems
+  (Linux, macOS, BSD, and others)
+
+  2007-2018, CISOfy - https://cisofy.com/lynis/
+  Enterprise support available (compliance, plugins, interface and tools)
+
+================================================================================
+
+  [TIP]: Enhance Lynis audits by adding your settings to custom.prf (see /etc/lynis/default.prf for all settings)
+
+#+END_SRC
+** 查看详细说明
+在查看审计结果时,你可以通过 =show details= 参数来获取关于某条警告/建议的详细说明。其对应的命令形式为:
+
+#+BEGIN_SRC shell
+  lynis show details ${test_id}
+#+END_SRC
+
+比如，上面图中有一个建议
+#+BEGIN_EXAMPLE
+  ,* Consider running ARP monitoring software (arpwatch,arpon) [NETW-3032] 
+#+END_EXAMPLE
+
+我们可以运行命令：
+
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo lynis show details NETW-3032 
+#+END_SRC
+
+#+BEGIN_SRC org
+2018-06-08 18:18:01 Performing test ID NETW-3032 (Checking for ARP monitoring software)
+2018-06-08 18:18:01 IsRunning: process 'arpwatch' not found
+2018-06-08 18:18:01 IsRunning: process 'arpon' not found
+2018-06-08 18:18:01 Suggestion: Consider running ARP monitoring software (arpwatch,arpon) [test:NETW-3032] [details:-] [solution:-]
+2018-06-08 18:18:01 Checking permissions of /usr/share/lynis/include/tests_printers_spools
+2018-06-08 18:18:01 File permissions are OK
+2018-06-08 18:18:01 ===---------------------------------------------------------------===
+#+END_SRC
+
+   
+** 查看日志文件
+lynis在审计完成后会将详细的信息记录在 =/var/log/lynis.log= 中.
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo tail /var/log/lynis.log
+#+END_SRC
+
+#+BEGIN_SRC org
+2018-06-08 17:59:46 ================================================================================
+2018-06-08 17:59:46 Lynis 2.6.4
+2018-06-08 17:59:46 2007-2018, CISOfy - https://cisofy.com/lynis/
+2018-06-08 17:59:46 Enterprise support available (compliance, plugins, interface and tools)
+2018-06-08 17:59:46 Program ended successfully
+2018-06-08 17:59:46 ================================================================================
+2018-06-08 17:59:46 PID file removed (/var/run/lynis.pid)
+2018-06-08 17:59:46 Temporary files:  /tmp/lynis.sGxCR0hSPz
+2018-06-08 17:59:46 Action: removing temporary file /tmp/lynis.sGxCR0hSPz
+2018-06-08 17:59:46 Lynis ended successfully.
+#+END_SRC
+
+同时将报告数据被保存到 =/var/log/lynis-report.dat= 中.
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo tail /var/log/lynis-report.dat
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+network_listen_port[]=[::ffff:14.120.31.247]:51224
+suggestion[]=NETW-3032|Consider running ARP monitoring software (arpwatch,arpon)|-|-|
+dhcp_client_running=1
+arpwatch_running=0
+lynis_tests_done=13
+report_datetime_end=2018-06-08 17:59:46
+hardening_index=33
+tests_executed=NETW-3032|NETW-3030|NETW-3012|NETW-3008|NETW-3006|NETW-3004|NETW-2705|NETW-2704|NETW-2600|SHLL-6230|SHLL-6220|SHLL-6211|CORE-1000|
+tests_skipped=NETW-3028|NETW-3015|NETW-3014|NETW-3001|SHLL-6202|
+finish=true
+#+END_SRC
+
+另外需要注意的是，每次审计都会覆盖原日志文件.
+
+* 检查更新
+审计软件需要随时进行更新从而得到最新的建议和信息，我们可以使用 =update info= 参数来检查更新:
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  lynis update info --no-colors
+#+END_SRC
+
+#+BEGIN_SRC org
+
+ == [1;37mLynis[0m ==
+
+  Version            : 2.6.4
+  Status             : [1;32mUp-to-date[0m
+  Release date       : 2018-05-02
+  Update location    : https://cisofy.com/lynis/
+
+
+2007-2018, CISOfy - https://cisofy.com/lynis/
+
+#+END_SRC
+
+* 自定义lynis安全审计策略
+lynis的配置信息以 =.prf= 文件的格式保存在 =/etc/lynis= 目录中。
+其中，默认lynis自带一个名为 =default.prf= 的默认配置文件。
+
+不过我们无需直接修改这个默认的配置文件，只需要新增一个 =custom.prf= 文件将自定义的信息加入其中就可以了。
+
+关于配置文件中各配置项的意义，在 =default.prf= 中都有相应的注释说明,这里就不详述了。
+
+想了解lynis的更多信息，可以访问[[https://cisofy.com/documentation/lynis/][它的官网.]]
