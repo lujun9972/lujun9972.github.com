@@ -1,0 +1,176 @@
+#+TITLE: AwesomeWM中的client
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-06-10 日 20:51]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Awesome WM 使用 client 类来指代 XClient 应用程序的一个窗口。
+
+一个应用程序可能有多个窗口，也就有多个 client 对象与之相对应。 这些 client 对象通常有相同的 class 属性。 我们可以通过 =xprop= 命令来查询某个 client 的属性。
+
+一个clinet对象中包含了多个属性，这些属性包括:
+
++ window :: X window ID
++ name :: client title
++ skip_taskbar :: 是否在任务栏上显示
++ type :: 窗口类型，可能是 desktop, docker, splash, dialog, menu, toolbar, utility, dropdown_menu, popup_menu, notification, combo, dnd, normal. 详情可以参见[[https://specifications.freedesktop.org/wm-spec/wm-spec-latest.html#idm140200472629520][这里]]
++ class :: client的第一个class属性，可以通过 xprop 命令获取
++ instance :: client的instance属性，可以通过 xprop 命令获取
++ pid :: client的PID
++ role :: The window role, if available(没太明白什么意思).
++ machine :: 运行client所在的机器
++ icon_name :: 当缩小成图标时的client name
++ icon :: client所使用的图标路径
++ icon_sizes :: 一个数组，包含了icon可用的所有尺寸大小
++ screen :: client所在的screen
++ hidden :: 该client是否隐藏
++ minimized :: 该client是否最小化。最小化的client只在任务栏上可见
++ size_hints_honor :: Honor size hints
++ border_width :: client边框宽度
++ border_color :: client边框颜色
++ urgent :: client的urgent标志，true/false
++ content :: A cairo surface for the client window content.
+             可以用它来进行截屏 =gears.surface(c.content):write_to_png(path)=
++ opacity :: 透明度，0为完全透明，1为完全不透明
++ ontop :: 该client是否在所有窗口的最前面
++ above :: 该client是否设为居前(The client is above normal windows.)
++ below :: 该client是否设为据后(The client is below normal windows. )
++ fullscreen :: 该client是否全屏显示
++ maximized :: 该client是否最大化
++ maximized_horizontal :: 该client是否水平最大化
++ maximized_vertical :: 该client是否垂直最大化
++ transient_for :: The client the window is transient for.(没看懂)
++ group_window :: window所属组ID
++ leader_window :: 当一个命令产生多个client时，这些client共享同一个leader_window
++ size_hints :: client的推荐大小(A table with size hints of the client. )
++ sticky :: 设置client是否sticky，一个sticky的client在所有tags下都可见
++ modal :: Indicate if the client is modal.
++ focusable :: 该client是否能获取到焦点
++ shape_bounding :: The client's bounding shape as set by awesome as a (native) cairo surface.
++ shape_clip :: The client's clip shape as set by awesome as a (native) cairo surface.
++ client.shape_input :: The client's input shape as set by awesome as a (native) cairo surface.
++ shape_client_bounding :: The client's bounding shape as set by the program as a (native) cairo surface.
++ shape_client_clip :: The client's clip shape as set by the program as a (native) cairo surface.
++ startup_id :: The FreeDesktop StartId.
++ valid :: 该client是否由awesome WM所管理着
++ first_tag :: 该client所属的第一个tag，相当于 =c:tags()[1]=
++ marked :: 该client是否被标记
++ is_fixed :: 该client的大小是否被锁定，该属性为只读的
++ floating :: 该client是否为浮动的
++ x / y :: 该client在screen上的偏移量
++ width / height :: 该client的尺寸
++ dockable :: If the client is dockable. A dockable client is an application confined to the edge of the screen. The space it occupies is substracted from the screen.workarea.
++ shape :: 设置client的形状，请参见[[https://awesomewm.org/doc/api/libraries/gears.shape.html#][gears.shape]]
+
+需要说明的是，修改client对象的属性可能会对窗口本身产生影响，比如设置
+#+BEGIN_SRC lua
+  c.maximized=true
+#+END_SRC           
+会让该client最大化
+
+* client的常用操作
+
+** 获取当前的client
+client.focus对象总是代表当前获取焦点的窗口
+#+BEGIN_SRC lua
+  local c = client.focus
+  if c then
+    -- 处理当前client
+  end
+#+END_SRC
+
+** 获取client列表
+*** 获取所有的client列表
+client.get函数可以返回一个包含所有client对象的数组
+#+BEGIN_SRC lua
+  for _,c in ipairs(client.get()) do
+    --do something
+  end
+#+END_SRC
+*** 获取符合某个条件的client列表
+awful.client.iterate(filter,start,s) 可以获取符合 filter 条件的 client列表，其中
+
++ filter :: 为条件过滤函数
++ start :: 标识了从哪个client开始进行过滤，nil则表示当前获取焦点的client
++ s :: 限制了只返回哪个screen上的client，nil表示所有的screen
+       
+例如下面代码会取消所有 URxvt 应用窗口的最小化状态:
+#+BEGIN_SRC lua
+  -- un-minimize all urxvt instances
+  local urxvt = function (c)
+    return awful.rules.match(c, {class = "URxvt"})
+  end
+
+  for c in awful.client.iterate(urxvt) do
+    c.minimized = false
+  end
+#+END_SRC
+*** 获取某个screen上的client列表
++ screen对象中的 =clients= 属性就是该screen上所有可见client的数组
++ screen对象中的 =hidden_clients= 属性就是该screen上所有不可见client的数组
++ screen对象中的 =all_clients= 属性就是该screen上所有client的数组
++ screen对象中的 =tiled_clients= 属性就是该screen上所有被平铺的client的数组
+
+** 获取窗口的位置与大小
+=client:geometry()= 方法返回一个包含 =x=, =y=, =width=, =height= key 的table, 指示了窗口(不包括边框宽度)在屏幕上的偏移量和长度与宽度。
+#+BEGIN_SRC lua
+  local c = client.focus
+  if c then
+    x,y,width,height = c:geometry()
+    naughty.notify{text=string.format("x=%s,y=%s,w=%s,h=%s",x,y,width,height)}
+  end
+#+END_SRC
+
+另外，也可以直接访问client对象的 =x=, =y=, =width=, 和 =height= 属性来获取相应的指
+
+** 设置某个窗口的位置和大小
+=client:geometry(geo)= 方法也能用来设置窗口的位置和大小。
+方法是先设置好一个包含 =x=, =y=, =width=, =height= key 的table,然后使用它作为参数传递给 =geometry= 方法
+
+** raise
+client::raise() 方法可以唤起指定client，让它处于其他client的最上方。
+
+** lower
+client::lower() 方法让该client向下降一级
+
+** run or raise
+awful.client.run_or_raise(cmd,matcher,merge) 函数可以在当某个符合条件的client存在时切换到该client，否则通过执行命令的方式运行新应用。 其中:
++ cmd :: 为没有找到匹配的client时执行的命令
++ matcher :: 为匹配函数，它接受一个client对象作为参数，返回true或false
++ merge ::  bool or function If true then merge tags (select the client's first tag additionally) when the client is not visible. If it is a function, it will be called with the client as argument. 
+           
+比如，下面操作当有URxvt窗口存在时，弹出该窗口，否则运行一个新 =urxvt= 应用:
+#+BEGIN_SRC lua
+  local matcher = function (c)
+    return awful.rules.match(c, {class = 'URxvt'})
+  end
+  awful.client.run_or_raise('urxvt', matcher)
+#+END_SRC
+
+** 给某个client设置鼠标操作
+client:buttons (buttons_array) 方法可以获取/设置某个client快捷键
+
+** 给某个client设置快捷键
+client::keys(keys_array) 方法可以获取/设置某个client的快捷键
+
+** 关闭某个client
+client:kill() 关闭该client
+
+** 为某个client设置所属tag
+client:tags(tags_array) 方法获取/设置该client所属的tag
+
+** 移动client到某个tag
+client:move_to_tag(targe) 将client移动到某个tag
+
+* client中的signal处理
++ 当client对象中的某个属性发生改变时，会引发名为 =property::属性名= 的signal
+
++ 当新client对象产生时，引发 =manage= 信号
+
++ 当client获取到焦点时，引发 =focus= 信号,当失去焦点时，引发 =unfocus= 信号
+
++ 当键盘或鼠标操作时，引发 =button::press=, =button::release=, =mouse::enter=, =mouse::leave=, =mouse::move=
+
++ 当client获取tag时，引发 =tagged= 信号，当失去tag时，引发 =untagged= 信号
+
