@@ -1,0 +1,216 @@
+#+TITLE: lua中神奇的table
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2018-06-17 日 21:07]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近在尝试配置 awesome WM，因此粗略地学习了一下 lua 。 在学习过程中，我完全被 table 在 lua 中的应用所镇住了。
+
+table 在 lua 中真的是无处不在:首先,它可以作为字典和数组来用; 此外，它还可以被用于设置闭包环境、module; 甚至可以用来模拟对象和类
+
+* 字典
+
+table 最基础的作用就是当成字典来用。 它的 key 值可以是除了 nil 之外的任何类型的值。
+
+#+BEGIN_SRC lua :results output :results org
+  t={}
+  t[{}] = "table"                 -- key 可以是 table
+  t[1] = "int"                    -- key 可以是整数
+  t[1.1] = "double"               -- key 可以是小数
+  t[function () end] = "function" -- key 可以是函数
+  t[true] = "Boolean"             -- key 可以是布尔值
+  t["abc"] = "String"             -- key 可以是字符串
+  t[io.stdout] = "userdata"       -- key 可以是userdata
+  t[coroutine.create(function () end)] = "Thread" -- key可以是thread
+#+END_SRC
+
+当把 table 当成字典来用时，可以使用 =pairs= 函数来进行遍历。
+#+BEGIN_SRC lua
+  for k,v in pairs(t) do
+    print(k,"->",v)
+  end
+#+END_SRC
+
+运行结果为:
+#+BEGIN_SRC org
+1	->	int
+1.1	->	double
+thread: 0x220bb08	->	Thread
+table: 0x220b670	->	table
+abc	->	String
+file (0x7f34a81ef5c0)	->	userdata
+function: 0x220b340	->	function
+true	->	Boolean
+#+END_SRC
+
+从结果中你还可以发现，使用 =pairs= 进行遍历时的顺序是随机的，事实上相同的语句执行多次得到的结果是不一样的。
+
+table 中的key最常见的两种类型就是整数型和字符串类型。 
+当 key 为字符串时，table可以当成结构体来用。同时形如 =t["field"]= 这种形式的写法可以简写成 =t.field= 这种形式。
+
+* 数组
+
+当 key 为整数时，table 就可以当成数组来用。而且这个数组是一个 *索引从1开始* ，没有固定长度，可以根据需要自动增长的数组。
+#+BEGIN_SRC lua :results org :results output
+  a = {}
+  for i=0,5 do                    -- 注意，这里故意写成了i从0开始
+    a[i] = 0
+  end
+#+END_SRC
+
+当将 table 当成数组来用时，可以通过 长度操作符 =#= 来获取数组的长度
+#+BEGIN_SRC lua
+  print(#a)
+#+END_SRC
+结果为
+#+BEGIN_SRC org
+5
+#+END_SRC
+
+你会发现， lua 认为 数组 a 中只有5个元素，到底是哪5个元素呢？我们可以使用使用 =ipairs= 对数组进行遍历:
+#+BEGIN_SRC lua
+  for i,v in ipairs(a) do
+    print(i,v)
+  end
+#+END_SRC
+结果为
+#+BEGIN_SRC org
+1	0
+2	0
+3	0
+4	0
+5	0
+#+END_SRC
+从结果中你会发现 =a= 的0号索引并不认为是数组中的一个元素，从而也验证了 lua 中的数组是从 *1开始索引的*
+
+另外，将table当成数组来用时，一定要注意索引不连贯的情况，这种情况下 =#= 计算长度时会变得很诡异
+#+BEGIN_SRC lua :results org :results output
+  a = {}
+  for i=1,5 do
+    a[i] = 0
+  end
+  a[8] = 0                        -- 虽然索引不连贯，但长度是以最大索引为准
+  print(#a)
+  a[100] = 0                      -- 索引不连贯，而且长度不再以最大索引为准了
+  print(#a)
+#+END_SRC
+结果为：
+#+BEGIN_SRC org
+8
+8
+#+END_SRC
+
+而使用 =ipairs= 对数组进行遍历时，只会从1遍历到索引中断处
+#+BEGIN_SRC lua
+  for i,v in ipairs(a) do
+    print(i,v)
+  end
+#+END_SRC
+结果为：
+#+BEGIN_SRC org
+1	0
+2	0
+3	0
+4	0
+5	0
+#+END_SRC
+
+* 环境
+lua将所有的全局变量/局部变量保存在一个常规table中，这个table一般被成为全局或者某个函数(闭包)的环境。
+
+为了方便，lua在创建最初的全局环境时，使用全局变量 =_G= 来引用这个全局环境。因此，在未手工设置环境的情况下，可以使用 =-G[varname]= 来存取全局变量的值.
+#+BEGIN_SRC lua :results org :results output
+  for k,v in pairs(_G) do
+    print(k,"->",v)
+  end
+#+END_SRC
+
+#+BEGIN_SRC org
+rawequal	->	function: 0x41c2a0
+require	->	function: 0x1ea4e70
+_VERSION	->	Lua 5.3
+debug	->	table: 0x1ea8ad0
+string	->	table: 0x1ea74b0
+xpcall	->	function: 0x41c720
+select	->	function: 0x41bea0
+package	->	table: 0x1ea4820
+assert	->	function: 0x41cc50
+pcall	->	function: 0x41cd10
+next	->	function: 0x41c450
+tostring	->	function: 0x41be70
+_G	->	table: 0x1ea2b80
+coroutine	->	table: 0x1ea4ee0
+unpack	->	function: 0x424fa0
+loadstring	->	function: 0x41ca00
+setmetatable	->	function: 0x41c7e0
+rawlen	->	function: 0x41c250
+bit32	->	table: 0x1ea8fc0
+utf8	->	table: 0x1ea8650
+math	->	table: 0x1ea7770
+collectgarbage	->	function: 0x41c650
+rawset	->	function: 0x41c1b0
+os	->	table: 0x1ea6840
+pairs	->	function: 0x41c950
+arg	->	table: 0x1ea9450
+table	->	table: 0x1ea5130
+tonumber	->	function: 0x41bf40
+io	->	table: 0x1ea5430
+loadfile	->	function: 0x41cb10
+error	->	function: 0x41c5c0
+load	->	function: 0x41ca00
+print	->	function: 0x41c2e0
+dofile	->	function: 0x41cbd0
+rawget	->	function: 0x41c200
+type	->	function: 0x41be10
+getmetatable	->	function: 0x41cb80
+module	->	function: 0x1ea4e00
+ipairs	->	function: 0x41c970
+#+END_SRC
+
+从lua 5.2开始，可以通过修改 =_ENV= 这个值(*lua5.1中的setfenv从5.2开始被废除*)来设置某个函数的环境，从而让这个函数中的执行语句在一个新的环境中查找全局变量的值。
+
+#+BEGIN_SRC lua :results org :results output
+  a=1                             -- 全局变量中a=1
+  local env={a=10,print=_G.print} -- 新环境中a=10,并且确保能访问到全局的print函数
+  function f1()
+    local _ENV=env
+    print("in f1:a=",a)
+    a=a*10                        -- 修改的是新环境中的a值
+  end
+
+  f1()
+  print("globally:a=",a)
+  print("env.a=",env.a)
+#+END_SRC
+
+#+BEGIN_SRC org
+in f1:a=	10
+globally:a=	1
+env.a=	100
+#+END_SRC
+
+* module
+
+定义module的一般模板为
+#+BEGIN_SRC lua
+  module(模块名, package.seeall)
+#+END_SRC
+* 对象
+10. lua支持a.function和a:function两种函数的定义/调用方法
+
+    其中a:function在定义时添加一个额外的隐藏参数 =sef=, 在调用时添加一个额外的隐藏参数 =self=
+   
+
+* 类
+
+11. 类定义的一般模板为
+    #+BEGIN_SRC lua
+      function 类名:new(o)
+        o = o or {}
+        setmetatable(o,self)
+        self.__index = self
+        return o
+      end
+    #+END_SRC
+    
