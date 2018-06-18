@@ -1,6 +1,6 @@
 #+TITLE: lua中神奇的table
 #+AUTHOR: lujun9972
-#+TAGS: 编程之旅
+#+TAGS: 编程之旅,lua
 #+DATE: [2018-06-17 日 21:07]
 #+LANGUAGE:  zh-CN
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
@@ -116,8 +116,8 @@ table 中的key最常见的两种类型就是整数型和字符串类型。
 5	0
 #+END_SRC
 
-* 环境
-lua将所有的全局变量/局部变量保存在一个常规table中，这个table一般被成为全局或者某个函数(闭包)的环境。
+* 环境(命名空间)
+lua将所有的全局变量/局部变量保存在一个常规table中，这个table一般被称为全局或者某个函数(闭包)的环境。
 
 为了方便，lua在创建最初的全局环境时，使用全局变量 =_G= 来引用这个全局环境。因此，在未手工设置环境的情况下，可以使用 =-G[varname]= 来存取全局变量的值.
 #+BEGIN_SRC lua :results org :results output
@@ -190,27 +190,107 @@ globally:a=	1
 env.a=	100
 #+END_SRC
 
+另外，新创建的闭包都继承了创建它的函数的环境
+
 * module
+
+lua 中的模块也是通过返回一个table来供模块使用者来使用的。 这个 table中包含的是模块中所导出的所有东西，包括函数和常量。
 
 定义module的一般模板为
 #+BEGIN_SRC lua
   module(模块名, package.seeall)
 #+END_SRC
-* 对象
-10. lua支持a.function和a:function两种函数的定义/调用方法
 
-    其中a:function在定义时添加一个额外的隐藏参数 =sef=, 在调用时添加一个额外的隐藏参数 =self=
-   
+其中 =module(模块名)= 的作用类似于
+#+BEGIN_SRC lua
+  local modname = 模块名
+  local M = {}                    -- M即为存放模块所有函数及常数的table
+  _G[modname] = M
+  package.loaded[modname] = M
+  setmetatable(M,{__index=_G})    -- package.seeall可以使全局环境_G对当前环境可见
+  local _ENV = M                  -- 设置当前的运行环境为 M，这样后续所有代码都不需要限定模块名了，所定义的所有函数自动变成M的成员
+  <函数定义以及常量定义>
+
+  return M                        -- module函数会帮你返回module table，而无需手工返回
+#+END_SRC
+* 对象
+lua 中之所以可以把table当成对象来用是因为:
+1. 函数在 lua 中是一类值，你可以直接存取table中的函数值。 这使得一个table既可以有自己的状态，也可以有自己的行为：
+   #+BEGIN_SRC lua
+     Account = {balance = 0}
+     function Account.withdraw(v)
+       Account.balance = Account.balance - v
+     end
+   #+END_SRC
+2. lua 支持闭包,这个特性可以用来模拟对象的私有成员变量
+   #+BEGIN_SRC lua  :results org :results output
+     function new_account(b)
+       local balance = b
+       return {withdraw = function (v) balance = balance -v end,
+               get_balance = function () return balance end
+       }
+     end
+
+     a1 = new_account(1000)
+     a1.withdraw(10)
+     print(a1.get_balance())
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   990
+   #+END_SRC
+
+不过，上面第一种定义对象的方法有一个缺陷，那就是方法与 =Account= 这个名称绑定死了。
+也就是说，这个对象的名称必须为 =Accout= 否则就会出错
+#+BEGIN_SRC lua
+  a = Account
+  Account = nil
+  a.withdraw(10)                  -- 会报错，因为Accout.balance不再存在
+#+END_SRC
+
+为了解决这个问题，我们可以给 =withdraw= 方法多一个参数用于指向对象本身
+#+BEGIN_SRC lua :results org :results output
+  Account = {balance=100}
+  function Account.withdraw(self,v)
+    self.balance = self.balance - v
+  end
+  a = Account
+  Account = nil
+  a.withdraw(a,10)                  -- 没问题，这个时候 self 指向的是a，因此会去寻找 a.balance
+  print(a.balance)
+#+END_SRC
+
+#+BEGIN_SRC org
+90
+#+END_SRC
+
+不过由于第一个参数 =self= 几乎总是指向调用方法的对象本身，因此 lua 提供了一种语法糖形式 =object:method(...)= 用于隐藏 =self= 参数的定义及传递. 
+这里冒号的作用有两个，其在定义函数时往函数中地一个参数的位置添加一个额外的隐藏参数 =sef=, 而在调用时传递一个额外的隐藏参数 =self= 到地一个参数位置。
+即 =function object:method(v) end= 等价于 =function object.method(self,v) end=,
+=object:method(v)= 等价于 =object.method(object,v)=
 
 * 类
+当涉及到类和继承时，就要用到元表和元方法了。事实上，对于 lua 来说，对象和类并不存在一个严格的划分。
 
-11. 类定义的一般模板为
-    #+BEGIN_SRC lua
-      function 类名:new(o)
-        o = o or {}
-        setmetatable(o,self)
-        self.__index = self
-        return o
-      end
-    #+END_SRC
-    
+当一个对象被另一个table的 =__index= 元方法所引用时，table就能引用该对象中所定义的方法，因此也就可以理解为对象变成了table的类。
+
+类定义的一般模板为:
+#+BEGIN_SRC lua
+  function 类名:new(o)
+    o = o or {}
+    setmetatable(o,{__index = self})
+    return o
+  end
+#+END_SRC
+或者
+#+BEGIN_SRC lua
+  function 类名:new(o)
+    o = o or {}
+    setmetatable(o,self)
+    self.__index = self
+    return o
+  end
+#+END_SRC
+相比之下，第二种写法可以多省略一个table
+
+另外有一点我觉得有必要说明的就是 lua 中的元方法是在元表中定义的，而不是对象本身定义的，这一点跟其他面向对象的语言比较不同。
