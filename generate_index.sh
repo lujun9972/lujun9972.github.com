@@ -3,7 +3,7 @@ repo=$(basename $(git remote get-url origin) |sed 's/.git$//')
 branch=$(git branch |grep -E "^\*" |cut -c3-)
 
 declare -A catalog_comment_dict
-catalog_comment_dict=([Emacs之怒]="" [英文必须死]="" [life-hacking]="" [时间管理]="" [linux和它的小伙伴]="" [编程之旅]="" [无主之地]="" [异闻录]="生活工作中遇到的奇怪问题")
+catalog_comment_dict=([Emacs之怒]="" [英文必须死]="" [life-hacking]="" [时间管理]="" [linux和它的小伙伴]="" [编程之旅]="" [无主之地]="" [异闻录]="那些奇怪的问题")
 
 catalogs=$(for catalog in ${!catalog_comment_dict[*]};do
                echo $catalog
