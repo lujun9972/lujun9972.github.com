@@ -1,0 +1,125 @@
+#+TITLE: nvidia
+#+AUTHOR: lujun9972
+#+TAGS: ../
+#+DATE: [2018-06-24 日 22:06]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 查看nvida网卡型号
+#+BEGIN_SRC shell :results org
+  dmesg |grep -i nvidia
+#+END_SRC
+
+#+BEGIN_SRC org
+[    3.092611] nouveau 0000:01:00.0: NVIDIA GF117 (0d7000a2)
+#+END_SRC
+
+这里可以看出我们的nvida网卡型号为 GF117
+
+* 根据网卡型号查询code name
+去 [[https://nouveau.freedesktop.org/wiki/CodeNames/][这里]] 搜索 =GF117=, 有结果：
+[[file:./images/screenshot-01.png]]
+
+可以看出对应的Code name是NVD7
+
+* 根据codename查询archlinux上对应的驱动包
+
+根据 [[https://wiki.archlinux.org/index.php/NVIDIA][archwiki]] 中的说明， =NVDx= 系的网卡对应的安装包为 =nvidia-390xx=
+#+BEGIN_SRC shell :results org
+  pacman -Ss nvidia-390xx
+#+END_SRC
+
+#+BEGIN_SRC org
+extra/nvidia-390xx 390.67-4
+    NVIDIA drivers for linux, 390xx legacy branch
+extra/nvidia-390xx-dkms 390.67-4
+    NVIDIA driver sources for linux, 390xx legacy branch
+extra/nvidia-390xx-lts 1:390.67-1
+    NVIDIA drivers for linux-lts, 390xx legacy branch
+extra/nvidia-390xx-settings 390.67-2
+    Tool for configuring the NVIDIA graphics driver, 390xx legacy branch
+extra/nvidia-390xx-utils 390.67-2
+    NVIDIA drivers utilities
+extra/opencl-nvidia-390xx 390.67-2
+    OpenCL implemention for NVIDIA
+#+END_SRC
+
+其中 =nvidia-390xx= 对应 =linux kernel=, =nvida-390xx-lts= 对应 =linux-lts kernel=, =nvidia-390xx-dkms= 对应其 =他自编译的linux kernel=
+
+我这里用的只是普通的 =linux kernel=,因此直接安装 =nvidia-390xx= 即可
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo pacman -S nvidia-390xx nvidia-390xx-settings nvidia-390xx-utils --noconfirm
+#+END_SRC
+
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) nvidia-390xx-390.67-4
+
+Total Installed Size:  9.21 MiB
+Net Upgrade Size:      0.00 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [----------------------]   0%(1/1) reinstalling nvidia-390xx                    [######################] 100%
+:: Running post-transaction hooks...
+(1/2) Updating linux module dependencies...
+(2/2) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+* 使用bumblebee
+1. 安装 bumblebee
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo pacman -S bumblebee --noconfirm
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   resolving dependencies...
+   looking for conflicting packages...
+
+   Packages (1) bumblebee-3.2.1-17
+
+   Total Installed Size:  0.12 MiB
+   Net Upgrade Size:      0.00 MiB
+
+   :: Proceed with installation? [Y/n] 
+   (0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+   (0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+   (0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+   (0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+   (0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+   :: Processing package changes...
+   (1/1) reinstalling bumblebee                       [----------------------]   0%(1/1) reinstalling bumblebee                       [######################] 100%
+   :: Running post-transaction hooks...
+   (1/4) Reloading system manager configuration...
+   (2/4) Creating system user accounts...
+   (3/4) Reloading device manager configuration...
+   (4/4) Arming ConditionNeedsUpdate...
+   #+END_SRC
+
+2. 添加当前用户到 bumblebee 组
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo gpasswd -a ${USER} bumblebee
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   Adding user lujun9972 to group bumblebee
+   #+END_SRC
+
+3. 修改 =/etc/bumblebee/bumblebee.conf=
+
+   将 ~Driver=~ 修改为 ~Driver=nvidia~
+   将 ~KernelDriver=nouveau~ 修改为 ~KernelDriver=nvidia~
+   
+4. 启用 bumblebeed.service
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo systemctl enable bumblebeed
+     sudo systemctl start bumblebeed
+   #+END_SRC
