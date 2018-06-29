@@ -1,0 +1,103 @@
+#+TITLE: 如何在archlinux上安装RPM包
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-06-29 五 11:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有时候你可能会发现，想安装一个包，但是这个包只提供RPM安装文件，而archlinux并不支持安装RPM文件，这该怎么办呢？
+
+下面这个方法也许可以帮到你
+
+1. 安装 rpmextract
+
+   rpmextract 是一个用来解压 rpm 的工具，它会将rpm包中的内容解压到当前目录下。
+
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     sudo pacman -S rpmextract --noconfirm
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   resolving dependencies...
+   looking for conflicting packages...
+
+   Packages (1) rpmextract-1.0-8
+
+   Total Download Size:   0.00 MiB
+   Total Installed Size:  0.00 MiB
+
+   :: Proceed with installation? [Y/n] 
+   :: Retrieving packages...
+    rpmextract-1.0-8-any       0.0   B  0.00B/s 00:00 [----------------------]   0% rpmextract-1.0-8-any       2.5 KiB  0.00B/s 00:00 [######################] 100%
+   (0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+   (0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+   (0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+   (0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+   (0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+   :: Processing package changes...
+   (1/1) installing rpmextract                        [----------------------]   0%(1/1) installing rpmextract                        [######################] 100%
+   :: Running post-transaction hooks...
+   (1/1) Arming ConditionNeedsUpdate...
+   #+END_SRC
+
+2. 使用rpmextract解压rpm文件
+
+   由于rpm文件中打包的目录结构是以根目录为基准的，因此推荐直接在根目录下进行解压:
+
+   #+BEGIN_SRC shell :dir /sudo:: :results org
+     cd /
+     sudo rpmextract.sh ~lujun9972/android-x86-7.1-r2.x86_64.rpm
+   #+END_SRC
+   
+3. 抽取出安装RPM时调用的脚本
+
+   光把RPM包中的文件解压出来还是不够的，rpm文件在安装（或者卸载）前/后还会执行一个脚本。
+
+   这个脚本可以通过命令 =rpm -qp --script file.rpm= 来查看。
+
+   然而, archlinux 并没有rpm命令怎么办呢？我们可以可以在虚拟机上运行一个 centos 或者直接使用docker来模拟一个 centos 环境也可以：
+   #+BEGIN_SRC shell :results org
+     docker run --rm -v ~lujun9972/android-x86-7.1-r2.x86_64.rpm:/tmp/android.rpm centos rpm -qp --scripts /tmp/android.rpm
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   postinstall scriptlet (using /bin/sh):
+   . /etc/os-release
+   mkdir -p /android-7.1-r2/data
+   if [ "$ID" = "debian" -o "$ID_LIKE" = "debian" ]; then
+     grubcfg=/boot/grub/custom.cfg
+   elif mountpoint -q /boot/efi; then
+     grubcfg=/boot/efi/EFI/$ID/custom.cfg && efi=efi
+   else
+     grubcfg=/boot/grub2/custom.cfg
+   fi
+   echo -e "menuentry \"Android-x86 7.1-r2\" {\n\tsearch --set=root --file /android-7.1-r2/kernel\n\tlinux$efi /android-7.1-r2/kernel quiet root=/dev/ram0 androidboot.selinux=permissive buildvariant=userdebug \n\tinitrd$efi /android-7.1-r2/initrd.img\n}" > $grubcfg
+   echo -e "menuentry \"Android-x86 7.1-r2 (DEBUG mode)\" {\n\tsearch --set=root --file /android-7.1-r2/kernel\n\tlinux$efi /android-7.1-r2/kernel root=/dev/ram0 androidboot.selinux=permissive buildvariant=userdebug DEBUG=2\n\tinitrd$efi /android-7.1-r2/initrd.img\n}" >> $grubcfg
+
+   if [ "$ID" = "debian" -o "$ID_LIKE" = "debian" ]; then
+     sed -i 's/^GRUB_HIDDEN_/#GRUB_HIDDEN_/' /etc/default/grub
+     update-grub
+   fi
+   postuninstall scriptlet (using /bin/sh):
+   . /etc/os-release
+   if [ "$ID" = "debian" -o "$ID_LIKE" = "debian" ]; then
+     grubcfg=/boot/grub/custom.cfg
+   elif mountpoint -q /boot/efi; then
+     grubcfg=/boot/efi/EFI/$ID/custom.cfg
+   else
+     grubcfg=/boot/grub2/custom.cfg
+   fi
+   if [ "$1" = "1" ]; then
+     new_prefix=`dirname $(grep initrd $grubcfg | head -1 | awk '{print $2}')`
+     if [ "$new_prefix" != "/android-7.1-r2" ]; then
+       rmdir $new_prefix/data
+       mv /android-7.1-r2/data $new_prefix
+       rmdir /android-7.1-r2
+     fi
+   else
+     rmdir /android-7.1-r2/data /android-7.1-r2
+     rm -f $grubcfg
+   fi
+   #+END_SRC
+
+4. 调用安装脚本，运气好的话，你就能把rpm安装好了。
