@@ -1,0 +1,136 @@
+#+TITLE: 使用git的一些小技巧
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-07-04 三 12:56]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* bash prompt中显示仓库branch的名字
+在bash prompt中显示仓库branch，可以防止你在错误的branch下修改了代码。
+
+环境变量PS1定义了bash prompt的格式，其中可以使用\$(command)来将 =command= 的执行结果显示在 bash prompt 中。
+因此，我们只需要在PS1合适的地方嵌入 =\$(parse_git_branch)= 就能在 bash prompt 中显示仓库branch名了。
+
+比如我的PS1定义为：
+#+BEGIN_SRC shell
+export PS1="\u@\h \[\033[32m\]\W\[\033[33m\]\$(git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/')\[\033[00m\] $ "
+#+END_SRC
+
+其中:
++ \u :: 替换成用户名
++ \h :: 替换成主机名
++ \[\033[32m\] :: 表示后面的内容以绿色前景色显示
++ \W :: 当前目录的名称
++ \[\033[33m\] :: 表示后面的内容以棕色前景色显示
++ \$(git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/ (\1)/') :: 显示当前仓库branch
++ \[\033[00m\] :: 回复正常的前景色
+
+* git git
+有没有遇到过头脑花昏，输入git命令时重复输入 =git= 的情况？比如这样
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git git status
+  git：'git' 不是一个 git 命令。参见 'git --help'。
+
+  最相似的命令是
+    init
+#+END_EXAMPLE
+
+不过，当执行 =git command= 时，实际上执行的是  =git-command= 这个命令,所以我们可以通过手工创建一个 =git-git= 命令来解决这一问题
+#+BEGIN_SRC shell :dir /sudo::
+  echo 'git $@' > /usr/local/bin/git-git
+  chmod +x /usr/local/bin/git-git
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git git git git status
+  位于分支 master
+  您的分支与上游分支 'origin/master' 一致。
+
+  未跟踪的文件:
+    （使用 "git add <文件>..." 以包含要提交的内容）
+
+    env/
+
+  提交为空，但是存在尚未跟踪的文件（使用 "git add" 建立跟踪）
+#+END_EXAMPLE
+
+* 自动修正输入错误的git command
+有的时候可能会出现输入错误的git command的情况
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git sttu
+  git：'sttu' 不是一个 git 命令。参见 'git --help'。
+
+  最相似的命令是
+    status
+#+END_EXAMPLE
+
+git会提示错误并自动推测你想要输入的命令. 然后你可以再次输入正确的命令
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git status
+  位于分支 master
+  您的分支与上游分支 'origin/master' 一致。
+
+  未跟踪的文件:
+    （使用 "git add <文件>..." 以包含要提交的内容）
+
+    env/
+
+  提交为空，但是存在尚未跟踪的文件（使用 "git add" 建立跟踪）
+#+END_EXAMPLE
+
+但通过配置 =help.autoCorrect= 参数 ,我们可以设置让git自动执行修正后的命令。
+
+#+BEGIN_SRC shell
+  git config --global help.autoCorrect 10
+#+END_SRC
+
+表示10个0.1秒后,git自动执行修正后的命令。 若不希望git自动执行该命令，则需要在这个时间段内按下 =Ctrl-c= 终止git的运行。
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git sttu
+  警告：您运行了一个并不存在的 Git 命令 'sttu'。
+  假定你想要的是 'status'，在 1.0 秒钟后继续。
+  位于分支 master
+  您的分支与上游分支 'origin/master' 一致。
+
+  未跟踪的文件:
+    （使用 "git add <文件>..." 以包含要提交的内容）
+
+    env/
+
+  提交为空，但是存在尚未跟踪的文件（使用 "git add" 建立跟踪）
+#+END_EXAMPLE
+
+若不希望等待，由git直接执行修正后的命令，则需将该时间设置为负值(*注意，不是0值*)
+
+#+BEGIN_SRC shell
+  git config --global help.autoCorrect -1
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git stau
+  警告：您运行了一个并不存在的 Git 命令 'stau'。
+  假定你想要的是 'status' 并继续。
+  位于分支 master
+  您的分支与上游分支 'origin/master' 一致。
+
+  未跟踪的文件:
+    （使用 "git add <文件>..." 以包含要提交的内容）
+
+    env/
+
+  提交为空，但是存在尚未跟踪的文件（使用 "git add" 建立跟踪）
+#+END_EXAMPLE
+
+要警用git的自动修正功能，则将超时时间设置为0,这也是初始的默认值
+#+BEGIN_SRC shell
+  git config --global help.autoCorrect 0
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  lujun9972@T520 lctt-scripts (master) $ git stau
+  git：'stau' 不是一个 git 命令。参见 'git --help'。
+
+  最相似的命令是
+    status
+#+END_EXAMPLE
+
