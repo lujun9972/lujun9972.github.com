@@ -1,0 +1,36 @@
+#+TITLE: 排查SSH X11 Forwarding无效的步骤
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-07-13 五 12:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://lonesysadmin.net/2018/07/06/fixing-x11-forwarding-ssh-sudo/ 中看到的，觉得不错，记录一下。
+
++ 检查 SSH client 本身是否支持 X11 Forwarding
+
++ 检查远程服务器上是否安装了 xauth. 
+
+  xauth 是允许 X11 Forwarding 必须的,因为远程的Xclient需要用它来跟本地的Xserver进行认证。
+
++ 本地的SSH Client配置参数是否正确。比如,检查一下 =~/.ssh/config= 文件中是否有 =ForwardAgent yes= 和 =ForwardX11 yes=
+
++ 本机上是否安装并启动了Xserver
+
++ 检查 =$DISPLAY= 有没有正确设置，检查本地Xserver的权限配置是否允许远程主机连接
+
++ 远程主机上的 =sshd_config= 中是否配置了 =X11Forwarding yes= 和 =AllowAgentForwarding yes=
+
++ 你的$HOME目录是否可写. 因为XClient连接Xserver时需要创建 =~/.Xauthority= 文件
+
++ =~/.ssh= 目录的权限是否正确，目录本身的权限应该是 =700=, 而目录中文件的属性应该是 =600=
+
++ 是否禁用了 IPv6
+
+  在 =sshd_config= 中添加 =AddressFamily inet= 可以强制 OpenSSH 只使用 IPv4
+
++ 若运行 =sudo= 或 =su= 命令提示 =X11 connection rejected because of wrong authentication=, 那么可能是 =root= 没有配置好 xauth 的权限。
+
+  解决方法是直接拷贝当前用户的 =~${USER}/.Xauthority= 到 =~root/= 下就行了
+
++ 若还不行，则查看ssh连接过程中的详细信息 =ssh -v -X user@host=, =ssh -vv -X user@host=, =ssh -vvv -X user@host=
