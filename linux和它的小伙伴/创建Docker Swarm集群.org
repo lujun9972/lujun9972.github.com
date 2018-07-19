@@ -1,0 +1,371 @@
+#+TITLE: 创建Docker Swarm集群
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-07-17 二 16:55]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Docker Swarm是由Docker提供的原生集群工具，通过它可以很方便的将多台主机组成一个集群。
+其中，每个集群都可以有多台manager和多台worker。
+
+
+* 创建Swarm集群
+创建Swarm集群的动作其实就是把一台主机Node初始化成manager的行为，方法超级简单，只需要在 manager node 主机上执行
+#+BEGIN_SRC shell :dir /ssh:root@tencent_cloud: :results org
+  docker swarm init --advertise-addr 172.27.0.8
+#+END_SRC
+
+#+BEGIN_SRC org
+Swarm initialized: current node (wrjpsf0ms32ioem9ozw5xu27r) is now a manager.
+
+To add a worker to this swarm, run the following command:
+
+    docker swarm join --token SWMTKN-1-0brpw02md8cpm97xld6go5tat7fuj7hggdvp7an5rm49ybhp8v-76mcm21ak8phkez4ktf8wa5b0 172.27.0.8:2377
+
+To add a manager to this swarm, run 'docker swarm join-token manager' and follow the instructions.
+
+#+END_SRC
+
+=docker swarm init= 会随机生成两个token，一个worker token，一个manager token。
+
+比如上面输出中的 =SWMTKN-1-0brpw02md8cpm97xld6go5tat7fuj7hggdvp7an5rm49ybhp8v-76mcm21ak8phkez4ktf8wa5b0= 就是Worker Token
+
+后面的 =172.27.0.8:2377= 就是当前cluster的IP和监听的端口
+
+而根据提示，获取 manager token 通过执行下面命令来获取
+
+#+BEGIN_SRC shell :dir /ssh:root@tencent_cloud: :results org
+  docker swarm join-token manager
+#+END_SRC
+
+#+BEGIN_SRC org
+To add a manager to this swarm, run the following command:
+
+    docker swarm join --token SWMTKN-1-0brpw02md8cpm97xld6go5tat7fuj7hggdvp7an5rm49ybhp8v-0zyncobrt5vfcms9r8f1exyok 172.27.0.8:2377
+
+#+END_SRC
+
+manager Token 为 =SWMTKN-1-0brpw02md8cpm97xld6go5tat7fuj7hggdvp7an5rm49ybhp8v-0zyncobrt5vfcms9r8f1exyok=
+
+我们可以用 =docker info= 查一下Swarm状态
+#+BEGIN_SRC shell :dir /ssh:root@tencent_cloud: results org
+  docker info |sed -n "/^Swarm/,+5 p"
+#+END_SRC
+
+#+RESULTS:
+
+#+BEGIN_SRC org
+  WARNING: bridge-nf-call-ip6tables is disabled
+  Swarm: active
+   NodeID: wrjpsf0ms32ioem9ozw5xu27r
+   Is Manager: true
+   ClusterID: 9pz2p3d57im2yo2v3vayb5w8n
+   Managers: 1
+   Nodes: 1
+#+END_SRC
+
+其中 =Is Manager: true= 说明本节点是作为Manager， =Managers: 1= 说明集群中有一个Manager， =Nodes: 1= 说明集群中只有一个节点。
+
+我们还可以通过 =docker node ls= 命令来查看集群中各节点的信息
+
+#+BEGIN_SRC shell :dir /ssh:root@tencent_cloud: results org
+  docker node ls
+#+END_SRC
+
+#+BEGIN_SRC org
+  ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+  wrjpsf0ms32ioem9ozw5xu27r *   VM_0_8_centos       Ready               Active              Leader              18.03.1-ce
+#+END_SRC
+
+ID后面的 =*= 号表示这个记录就是当前NODE的信息。
+
+* 向集群中添加节点
+现在我们往这个集群中添加一个worker节点，方法很简单，跟着 =docker swarm init= 输出中的命令来执行就行了
+
+这次我们在 worker node主机上执行
+
+#+BEGIN_SRC shell  :results org
+  docker swarm join --token SWMTKN-1-0brpw02md8cpm97xld6go5tat7fuj7hggdvp7an5rm49ybhp8v-76mcm21ak8phkez4ktf8wa5b0 118.24.148.238:2377
+#+END_SRC
+
+#+BEGIN_SRC org
+This node joined a swarm as a worker.
+#+END_SRC
+
+注意到我这里 =docker swarm join= 的IP是 =118.24.148.238=, 而不是前面输出的 =172.27.0.8=, 这是因为 =172.27.0.8= 是我云主机的内网IP，而 =118.24.148.238= 才是映射出来的公网IP地址。
+
+而我的 worker node主机是通过公网IP来访问manager node主机的，因此这里对IP进行了修改。
+
+增加节点后，再来看一下集群中各节点的信息：
+
+在manager node上执行
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker node ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+qpinc63kw5ta2t1b5ojhi8r1o     T520                Ready               Active                                  18.05.0-ce
+wrjpsf0ms32ioem9ozw5xu27r *   VM_0_8_centos       Ready               Active              Leader              18.03.1-ce
+#+END_SRC
+
+可以看到多了一个NODE信息。
+
+另外值得一说的是，类似 =docker node ls= 这些管理类的命令只能在 manager node 上执行，若在 worker node 上执行则会失败：
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 ~]$ docker node ls
+  Error response from daemon: This node is not a swarm manager. Worker nodes can't be used to view or modify cluster state. Please run this command on a manager node or promote the current node to a manager.
+#+END_EXAMPLE
+
+* 部署服务到集群中
+
+我们在manager node上使用 =docker service create= 命令来创建一个服务.
+
+=docker service create= 跟 =docker start= 的命令接口有点像：
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service create --name web --publish 8080:80 nginx:alpine
+#+END_SRC
+
+#+BEGIN_SRC org
+rttpyxf8wbajmsr312j4r20ub
+
+[1A[1K[Koverall progress: 0 out of 1 tasks [1B
+[1A[1K[K1/1:   [1B[2A[1K[Koverall progress: 0 out of 1 tasks [2B[1A[1K[K1/1: assigned  [1B[2A[1K[Koverall progress: 0 out of 1 tasks [2B[1A[1K[K1/1: starting  [1B[2A[1K[Koverall progress: 0 out of 1 tasks [2B[1A[1K[K1/1: starting  [1B[2A[1K[Koverall progress: 0 out of 1 tasks [2B[1A[1K[K1/1: starting  [1B[2A[1K[Koverall progress: 0 out of 1 tasks [2B[1A[1K[K1/1: running   [1B[2A[1K[Koverall progress: 1 out of 1 tasks [2B
+[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Service converged [1B
+#+END_SRC
+
+这里 =--name web= 表示创建的服务名称为 =web=, 这个服务是基于 =nginx:alpine= 这个镜像的，而且容器的HTTP端口发布在主机的8080端口上。
+
+而上面命令中的输出 =rttpyxf8wbajmsr312j4r20ub= 则是这个服务的ID号
+
+我们可以使用 =docker service ls= 来查看集群中的服务
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+rttpyxf8wbaj        web                 replicated          1/1                 nginx:alpine        *:8080->80/tcp
+#+END_SRC
+
+通过上面的 =REPLICAS= 可以知道，这个服务由单个容器提供，而且目前有一个容器在提供服务。
+
+我们可以通过 =docker service create= 的 =--replicas= 参数来设置创建服务时启动的副本数，比如
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service create --name ping --replicas 2 alpine ping www.baidu.com
+#+END_SRC
+
+#+BEGIN_SRC org
+k2cvjo3nb4o7d1cqr4thv4c51
+
+[1A[1K[Koverall progress: 0 out of 2 tasks [1B
+[1A[1K[K1/2:   [1B
+[1A[1K[K2/2:   [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: assigned  [2B[1A[1K[K2/2: assigned  [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: preparing [2B[1A[1K[K2/2: preparing [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: preparing [1B[2A[1K[K1/2: preparing [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: starting  [2B[1A[1K[K2/2: starting  [1B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[1A[1K[K2/2: starting  [1B[2A[1K[K1/2: starting  [2B[3A[1K[Koverall progress: 0 out of 2 tasks [3B[2A[1K[K1/2: running   [2B[1A[1K[K2/2: starting  [1B[3A[1K[Koverall progress: 1 out of 2 tasks [3B[2A[1K[K1/2: running   [2B[1A[1K[K2/2: running   [1B[3A[1K[Koverall progress: 2 out of 2 tasks [3B
+[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Service converged [1B
+#+END_SRC
+
+这里创建了一个名为 =ping= 的服务，这个服务启动了两个alpine容器，执行 =ping www.baidu.com= 这个命令
+
+我们再来看一下这个集群中的服务
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+k2cvjo3nb4o7        ping                replicated          2/2                 alpine:latest       
+rttpyxf8wbaj        web                 replicated          1/1                 nginx:alpine        *:8080->80/tcp
+#+END_SRC
+
+* 调整服务规模
+使用命令 =docker service scale ${SERVICE}=${NUMBER}= 可以调整指定服务的规模，比如
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service scale web=5
+#+END_SRC
+
+#+BEGIN_SRC org
+web scaled to 5
+
+[1A[1K[Koverall progress: 0 out of 5 tasks [1B
+[1A[1K[K1/5:   [1B
+[1A[1K[K2/5:   [1B
+[1A[1K[K3/5:   [1B
+[1A[1K[K4/5:   [1B
+[1A[1K[K5/5:   [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: assigned  [4B[3A[1K[K3/5: assigned  [3B[2A[1K[K4/5: assigned  [2B[1A[1K[K5/5: assigned  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: preparing [4B[3A[1K[K3/5: ready     [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: preparing [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[5A[1K[K1/5: running   [5B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: starting  [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 1 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: running   [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 2 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: running   [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 2 out of 5 tasks [6B[4A[1K[K2/5: starting  [4B[3A[1K[K3/5: starting  [3B[2A[1K[K4/5: running   [2B[1A[1K[K5/5: starting  [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 2 out of 5 tasks [6B[4A[1K[K2/5: running   [4B[3A[1K[K3/5: running   [3B[2A[1K[K4/5: running   [2B[1A[1K[K5/5: running   [1B[5A[1K[K1/5: running   [5B[6A[1K[Koverall progress: 5 out of 5 tasks [6B
+[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 5 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 4 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 3 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 2 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Waiting 1 seconds to verify that tasks are stable... [1B[1A[1K[Kverify: Service converged [1B
+#+END_SRC
+
+这个命令将启动5个容器来提供web服务,我们再来看一下这个集群中的服务
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+k2cvjo3nb4o7        ping                replicated          2/2                 alpine:latest       
+rttpyxf8wbaj        web                 replicated          5/5                 nginx:alpine        *:8080->80/tcp
+#+END_SRC
+
+我们可以看到 =web= 服务的 =REPLICAS= 变成了 =5=
+
+* 查看服务详细信息
+我们可以使用 =docker service inspect= 命令来查看某项服务的详细内容，比如
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service inspect --pretty web
+#+END_SRC
+
+#+BEGIN_SRC org
+
+ID:		rttpyxf8wbajmsr312j4r20ub
+Name:		web
+Service Mode:	Replicated
+ Replicas:	5
+Placement:
+UpdateConfig:
+ Parallelism:	1
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Update order:      stop-first
+RollbackConfig:
+ Parallelism:	1
+ On failure:	pause
+ Monitoring Period: 5s
+ Max failure ratio: 0
+ Rollback order:    stop-first
+ContainerSpec:
+ Image:		nginx:alpine@sha256:56a9367b64eaef37894842a6f7a19a0ef8e7bd5de964aa844a70b3e2d758033c
+Resources:
+Endpoint Mode:	vip
+Ports:
+ PublishedPort = 8080
+  Protocol = tcp
+  TargetPort = 80
+  PublishMode = ingress 
+#+END_SRC
+
+我们还可以使用 =docker service ps ${SERVICE}= 来查看服务运行在那几个node主机上
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ps web
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                IMAGE               NODE                DESIRED STATE       CURRENT STATE            ERROR               PORTS
+xsldf1trr9ea        web.1               nginx:alpine        VM_0_8_centos       Running             Running 35 minutes ago                       
+rf7s8r2e44xy        web.2               nginx:alpine        VM_0_8_centos       Running             Running 5 minutes ago                        
+g0fc0edmriig        web.3               nginx:alpine        VM_0_8_centos       Running             Running 5 minutes ago                        
+2y39megirflj        web.4               nginx:alpine        VM_0_8_centos       Running             Running 5 minutes ago                        
+on0k4qnv7d5v        web.5               nginx:alpine        VM_0_8_centos       Running             Running 5 minutes ago                        
+#+END_SRC
+
+可以看到所有的容器都是运行在 =VM_0_8_centos= 这个节点上的，我们在这个节点上直接运行 =docker ps= 命令来看看是不是有5个nginx容器在运行
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker ps  |grep nginx:alpine
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+e93f8e412c4d        nginx:alpine        "nginx -g 'daemon of…"   11 minutes ago      Up 11 minutes       80/tcp              web.2.rf7s8r2e44xyvmqdno7442oez
+abecc4812055        nginx:alpine        "nginx -g 'daemon of…"   11 minutes ago      Up 11 minutes       80/tcp              web.3.g0fc0edmriigwx4crz64zv3id
+cc7d82708eec        nginx:alpine        "nginx -g 'daemon of…"   11 minutes ago      Up 11 minutes       80/tcp              web.4.2y39megirflj5nwko3kvhl8yu
+4d695daec1ef        nginx:alpine        "nginx -g 'daemon of…"   11 minutes ago      Up 11 minutes       80/tcp              web.5.on0k4qnv7d5v6b0g6z8s361s2
+fa08b0567c13        nginx:alpine        "nginx -g 'daemon of…"   42 minutes ago      Up 42 minutes       80/tcp              web.1.xsldf1trr9eavsdsh9efpne55
+#+END_SRC
+
+可以看到确实是5个容器在跑，与结果温和
+
+* 删除服务
+删除服务就特别简单了，直接在manager node上运行 =docker service rm ${SERVICE}= 就行了，比如
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service rm ping  
+#+END_SRC
+
+#+BEGIN_SRC org
+ping
+#+END_SRC
+
+然后我们再用查看一下集群中的服务
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                MODE                REPLICAS            IMAGE               PORTS
+rttpyxf8wbaj        web                 replicated          5/5                 nginx:alpine        *:8080->80/tcp
+#+END_SRC
+
+现在只剩下 =web= 这一个服务了
+
+* 服务升级
+当提供服务容器的镜像发生更改后，可以使用 =docker service update --image ${NEW_IMAGE} ${SERVICE}= 来进行服务升级。
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service update --image nginx:1.15.1-alpine-perl web
+#+END_SRC
+
+我们再来看一下集群中的服务
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker service ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                  NAME                MODE                REPLICAS            IMAGE                      PORTS
+rttpyxf8wbaj        web                 replicated          5/5                 nginx:1.15.1-alpine-perl   *:8080->80/tcp
+#+END_SRC
+
+可以看到，服务镜像已经发生了改变。
+
+* NODE退出集群
+要将某个NODE退出集群十分简单，只需要在那个node上执行 =docker swarm leave= 即可。
+
+比如我在 worker node 上执行
+#+BEGIN_SRC shell :results org
+  docker swarm leave
+#+END_SRC
+
+#+BEGIN_SRC org
+  Node left the swarm.
+#+END_SRC
+
+再在 manager node 上查看一下 node 信息
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker node ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+qpinc63kw5ta2t1b5ojhi8r1o     T520                Down                Active                                  18.05.0-ce
+wrjpsf0ms32ioem9ozw5xu27r *   VM_0_8_centos       Ready               Active              Leader              18.03.1-ce
+#+END_SRC
+
+可以看到集群中 =T520= 的状态已经变成 =Down= 了，要想把这个节点完全从集群中移除，则可以在 manager node 上执行 =docker node rm= 命令
+
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker node rm T520
+#+END_SRC
+
+#+BEGIN_SRC org
+T520
+#+END_SRC
+
+再查看一下 node 信息
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud:
+  docker node ls
+#+END_SRC
+
+#+BEGIN_SRC org
+ID                            HOSTNAME            STATUS              AVAILABILITY        MANAGER STATUS      ENGINE VERSION
+wrjpsf0ms32ioem9ozw5xu27r *   VM_0_8_centos       Ready               Active              Leader              18.03.1-ce
+#+END_SRC
+
+好了， =T520= 这个node已经被彻底移除了。
