@@ -1,0 +1,84 @@
+#+TITLE: 重建CentOS或RHEL上被损坏的RPM数据库
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-07-21 六 12:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有时候使用rpm/yum命令时可能会出现下面这样的错误
+#+BEGIN_EXAMPLE
+  rpm command terminates with “cannot open Packages database in /var/lib/rpm”
+#+END_EXAMPLE
+或者
+#+BEGIN_EXAMPLE
+  rpmdb: Lock table is out of available locker entries
+#+END_EXAMPLE
+或者
+#+BEGIN_EXAMPLE
+  rpmdb: /var/lib/rpm/Packages: unexpected file type or format
+  error: cannot open Packages index using db3 – Invalid argument (22)
+#+END_EXAMPLE
+或者
+#+BEGIN_EXAMPLE
+  error: rpmdbNextIterator: skipping h# 1601 Header V4 RSA/SHA1 signature: BAD, key ID 2142eef7
+#+END_EXAMPLE
+
+这可能是因为RPM数据库被损坏了. 若没有备份RPM数据库(/var/lib/rpm)的话,那么可以尝试下面步骤来进行恢复
+
+1. 首先备份现在的RPM数据库，防止后续操作对数据库产生进一步的损坏
+
+   #+BEGIN_SRC shell
+     tar -cvf rpm.db.tar /var/lib/rpm
+   #+END_SRC
+
+2. 删除 =/var/lib/rpm/__db*= 文件，这一步是删除之前rpm命令所产生的锁
+
+   #+BEGIN_SRC shell
+     cd /var/lib/rpm
+     rm -f /var/lib/rpm/__db*
+   #+END_SRC
+
+3. 尝试重建RPM数据库
+   
+   #+BEGIN_SRC shell
+     rpm -vv --rebuilddb
+   #+END_SRC
+
+4. 验证Packages中文件的完整性
+
+   #+BEGIN_SRC shell
+     /usr/lib/rpm/rpmdb_verify /var/lib/rpm/Packages
+   #+END_SRC
+
+如果上面的步骤还不行，那么需要重新导出倒入数据库
+
+1. 备份Packages目录
+
+   #+BEGIN_SRC shell
+     cd /var/lib/rpm
+     mv /var/lib/rpm/Packages /var/lib/rpm/Packages.bak
+   #+END_SRC
+
+2. 导出再导入数据库
+
+   #+BEGIN_SRC shell
+     /usr/lib/rpm/rpmdb_dump Packages.bak |/usr/lib/rpm/rpmdb_load Packages
+   #+END_SRC
+
+3. 再校验Packages文件中的完整性
+
+   #+BEGIN_SRC shell
+     /usr/lib/rpm/rpmdb_verify Packages
+   #+END_SRC
+
+4. 检查DB中的headers
+
+   #+BEGIN_SRC shell
+     rpm -q >/dev/null
+   #+END_SRC
+
+5. 若上一步没有输出，那么可以重建index了
+
+   #+BEGIN_SRC shell
+     rpm -v --rebuilddb
+   #+END_SRC
