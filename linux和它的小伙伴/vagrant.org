@@ -1,0 +1,192 @@
+#+TITLE: vagrant
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-07-29 日 20:24]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Vagrant是一款虚拟机管理工具，通过它可以以代码的方式快速地重建不同虚拟环境的虚拟机。
+
+本文以virtualbox作为虚拟机引擎来演示一下Vagrant的使用方法。
+
+* Vagrant的依赖
+Vagrant本身并不具有虚拟化的能力，因此它额外依赖于一套虚拟机程序,我们这里以VirtualBox作为例子，当然除了VirtualBox之外，Vagrant也支持Hyper-V和VMWare，甚至支持Docker作为虚拟机(虚拟环境)引擎。
+我们一般把这些虚拟机引擎称之为provider.
+#+BEGIN_SRC shell
+  sudo pacman -S virtualbox vagrant --noconfirm
+#+END_SRC
+
+当然，要使虚拟机能够运行起来，除了有虚拟机引擎创建虚拟机之外，还需要有被虚拟的操作系统镜像，这些镜像我们称之为box。
+box可以由自己创建或者直接使用他人分享的。
+Vagrant有两类box，一类是“Pre-Build”，表示所有东西都已经安装在box中了，直接使用就好。
+还有一类是“Base OS”，即只安装了一个基础的操作系统，其他所有的软件都需要自己来安装。
+
+
+* 创建第一台虚拟机
+Vagrant通过一个名为 VagrangtFile 的配置文件来创建虚拟机,该文件中包含了如下信息：
++ 使用哪个box作为虚拟镜像
++ 使用哪个虚拟引擎进行虚拟化(virtualbox,vmware,hyper-v,docker等)
++ 虚拟机的网络配置信息
++ 其他虚拟机初始化脚本(shell,puppet,chef等)
+  
+** 创建VagrantFile
+1. 我们需要创建一个目录，用于存放VagrantFile
+   #+BEGIN_SRC shell :results org
+     mkdir ~/rhel7
+     cd ~/rhel7
+   #+END_SRC
+
+2. 运行 =vagrant init= 初始化Vagrant box。
+
+   #+BEGIN_SRC shell :dir ~/rhel7 :results org
+     vagrant init "generic/rhel7"
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   A `Vagrantfile` has been placed in this directory. You are now
+   ready to `vagrant up` your first virtual environment! Please read
+   the comments in the Vagrantfile as well as documentation on
+   `vagrantup.com` for more information on using Vagrant.
+   #+END_SRC
+   
+   该命令会初始化所在目录用于存放Vagrant相关信息(.vagrant目录)，并在其中中创建一个 =VagrantFile= 文件，并且在其中指明使用的box为 =centos/7=
+
+   Vagrant本身有一个云端预存了大量的box，你可以去 [[https://app.vagrantup.com/boxes/search][Vagrant Cloud]] 搜索其他想要的box
+
+** 配置VagrangFile
+打开VagrantFile你会发现其中包含了关于虚拟机的大量设置，每个配置项还很贴心的包含了注释说明
+
+其中比较常用的配置项有下面几个：
+
+1. =config.vm.box= 定义了使用哪个box启动虚拟机。若指定的box本机找不到，则会从 [[https://app.vagrantup.com/boxes/search][Vagrant Cloud]] 中搜索并下载指定的box
+
+   #+BEGIN_SRC ruby
+     config.vm.box = "generic/rhel7"
+   #+END_SRC
+
+2. =config.vm.hostname= 定义了虚拟机的主机名
+
+   #+BEGIN_SRC ruby
+     config.vm.hostname = "rhel7"
+   #+END_SRC
+
+3. =config.vm.boot_timeout= 指明了系统启动的超时时间，若这段时间内Vagrang还无法连接上虚拟机，则认为虚拟机启动过程中发生了错误
+
+   #+BEGIN_SRC ruby
+     config.vm.boot_timeout = 600
+   #+END_SRC
+
+4. =config.vm.communicator= 指明了Vagrant与虚拟机通讯的方式，可以选择"ssh"或者"winrm",一般box为linux类操作系统则使用"ssh"，为windows操作系统则选择"winrm"
+
+   #+BEGIN_SRC ruby
+     config.vm.communicator = "ssh"
+   #+END_SRC
+
+5. =config.vm.provider= 用于对虚拟机引擎进行配置
+
+   #+BEGIN_SRC ruby
+     config.vm.provider "virtualbox" do |vb|
+       # Display the VirtualBox GUI when booting the machine
+       vb.gui = true
+
+       # Customize the amount of memory on the VM:
+       vb.memory = "1024"
+       vb.cpus = 2
+       vb.customize ["modifyvm", :id, "--vram", "128"]
+       vb.customize ["modifyvm", :id, "--clipboard", "bidirectional"]
+       vb.name = "RHEL7"
+     end
+   #+END_SRC
+   
+   比如这段配置指明了虚拟机引擎为 "virtualbox"，启动虚拟机时会现实VirtualBox GUI。同时它还定义了该虚拟机拥有:
+
+   + 1G内存
+
+   + 2个CPU
+
+   + 128M显存
+
+   + 设置虚拟机与主机双向共享粘帖板
+
+   + 虚拟机的名称为RHEL7
+     
+
+** Vagrant常用命令
+*** 启动虚拟机
+配置好 =VagrantFile= 后，我们只需要在当前目录下运行 =vagrant up= 就能启动虚拟机了。
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant up
+#+END_SRC
+
+若虚拟机尚未创建，则 =vagrant up= 会自动创建新虚拟机；同时若创建虚拟机时Vagrant发现指定的box不存在，则还会自动从 Vagrant Cloud 上搜索并下载指定的box
+
+值得一提的时，由于在当前目录中存储了相关虚拟机的信息，因此在执行Vagrant命令时都无需指明作用于哪个虚拟机之上。
+
+*** 查看虚拟机状态
+
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant status
+#+END_SRC
+
+*** 挂起虚拟机
+
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant suspend
+#+END_SRC
+
+*** 重启虚拟机
+
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant reload
+#+END_SRC
+
+*** 关闭虚拟机
+
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant shutdown
+#+END_SRC
+
+*** 删除虚拟机
+
+#+BEGIN_SRC shell :dir ~/rhel7 :results org
+  vagrant destory
+#+END_SRC
+* Vagrant provision
+Vagrant provision能够让你为虚拟机自动安装软件并修改配置。
+
+Vagrant会在三种情况下触发provision:
+1. 第一次使用vagrant up创建虚拟环境,且没有指定 =--no-provision= 时
+2. 运行命令 =vagrant provision= 时
+3. 运行命令 =vagrant reload --provision= 时
+   
+Vagrant支持两种provision provider:
++ shell provider :: 调用shell或powershell脚本，脚本中应该不包括手工交互内容
+
+  一个shell provision大概长得像这样
+  #+BEGIN_SRC ruby
+    config.vm.provision "shell", inline: <<-SHELL
+      apt-get update
+      apt-get install -y apache2
+    SHELL
+  #+END_SRC   
+  
+  其中 ="shell"= 表示使用的是shell provider, =inline:= 表示要执行的内容嵌入在后面， =<<-SHELL= 表示执行脚本到 =SHELL= 这一行结束。
+  
+  除了 =inline:= ,还可以是 =path:= 表示要执行的内容存放在后面指定的文件中。
+  #+BEGIN_SRC ruby
+    config.vm.provision :shell, path: "shell/main.cmd"
+  #+END_SRC
+
++ file provider :: 将主机上的文件拷贝到虚拟机中但并不执行脚本的内容。
+
+  一个shell provision大概长得像这样
+  #+BEGIN_SRC ruby
+    config.vm.provision "file",
+                        source: "shell/RunBoxStarterGist.bat",
+                        destination: "desktop\\RunBoxStarterGist.bat"
+  #+END_SRC   
+  
+  很明显, =source:= 和 =destination:= 分别指明了源文件路径和目的文件路径
+
+此外，值得说明的是，一个VagrantFile中支持多个 =config.vm.provision= 模块，Vagrant会从上到下一次执行。
+
