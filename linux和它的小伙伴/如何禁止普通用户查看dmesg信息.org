@@ -1,0 +1,41 @@
+#+TITLE: 如何禁止普通用户查看dmesg信息
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-03 五 16:18]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+dmesg能够输出kernel ring buffer中的内容，这些内容中可能会包含一些敏感信息。
+
+根据 [[https://www.kernel.org/doc/Documentation/sysctl/kernel.txt][kernel docs]] 中的说明:
+#+BEGIN_EXAMPLE
+  This toggle indicates whether unprivileged users are prevented from using dmesg(8) to view messages from the kernel’s log buffer. When dmesg_restrict is set to (0) there are no restrictions. When dmesg_restrict is set set to (1), users must have CAP_SYSLOG to use dmesg(8). The kernel config option CONFIG_SECURITY_DMESG_RESTRICT sets the default value of dmesg_restrict.
+#+END_EXAMPLE
+
+我们可以通过设置内核参数 =dmesg_restrict= 为 =1= 的方式来禁止普通用户查看demsg信息
+
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo sysctl -w kernel.dmesg_restrict=1
+#+END_SRC
+
+我们来看一下现在 =dmesg_restrict= 的值是什么
+#+BEGIN_SRC shell :results org
+  sysctl kernel.dmesg_restrict 
+#+END_SRC
+
+#+BEGIN_SRC org
+kernel.dmesg_restrict = 1
+#+END_SRC
+
+现在再来用普通用户执行demsg:
+#+BEGIN_EXAMPLE
+  [lujun9972@T520 wikit.docker]$ dmesg
+  dmesg: 读取内核缓冲区失败: 不允许的操作
+#+END_EXAMPLE
+
+会发现提示无法读取内核缓冲区
+
+要让该设置永久生效，则需要修改 =/etc/sysctl.conf= 文件
+#+BEGIN_SRC shell :dir /sudo::
+  sudo echo 'kernel.dmesg_restrict=1' >> /etc/sysctl.conf
+#+END_SRC
