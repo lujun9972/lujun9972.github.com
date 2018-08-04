@@ -1,0 +1,143 @@
+#+TITLE: GRUB 2常用命令
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-04 六 22:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 如何进入GRUB 2命令行界面
+进入GRUB 2命令行有两种方法:
+
+1. 在GRUB启动菜单中按 =Ctrl-C= 进入，这种方法支持的命令比较全面
+2. 进入linux后，在shell中运行 =grub= 命令进入命令行界面，这种方法已经进入操作系统，很多命令不可以用了
+
+* 常用命令
+
+** help:查看命令用法
+
+查看search命令的用法
+#+BEGIN_SRC shell
+  help search
+#+END_SRC
+
+** set:设置变量值
+
+#+BEGIN_EXAMPLE
+  set default=0
+  set timeout=5
+  set root=(hd0,1)
+#+END_EXAMPLE
+
+其中这几个变量都有起特殊意义:
++ default :: 定义默认引导那个操作系统，0表示第一个操作系统，1表示第二个操作系统，以此类推
++ timeout :: 设置多少秒后，自动启动default指定的操作系统
++ root :: 指定启动系统的分区
+
+** insmod:加载模块
+
+#+BEGIN_EXAMPLE
+  insmod ntfs
+#+END_EXAMPLE
+
+** rmmod:移除模块
+
+#+BEGIN_EXAMPLE
+  rmmod png
+#+END_EXAMPLE
+
+** drivemap:映射磁盘分区
+有些操作系统只能从hd0（第一块磁盘）引导，但实际上可能安装在其他磁盘上，那么可以使用 =drivemap= 进行映射
+
+#+BEGIN_EXAMPLE
+  menuentry "Windows XP"{
+  set root=(hd1,1)
+  drivemap -s (hd0) ${root}
+  clainloader +1
+  }
+#+END_EXAMPLE
+
+** ls:列出设备/文件
+
+详细列出当前所有设备:
+#+BEGIN_EXAMPLE
+  ls -l
+#+END_EXAMPLE
+
+列出root分区下的文件
+#+BEGIN_EXAMPLE
+  ls /
+#+END_EXAMPLE
+
+列出(hd1,1)分区下的文件
+#+BEGIN_EXAMPLE
+  ls (hd1,1)/
+#+END_EXAMPLE
+
+** search:搜索符合条件的分区
+
+找到根目录中包含ntldr文件的分区
+#+BEGIN_EXAMPLE
+  search -f /ntldr
+#+END_EXAMPLE
+
+找到label是WINDOWS的分区
+#+BEGIN_EXAMPLE
+  search -l WINDOWS
+#+END_EXAMPLE
+
+找到符合条件的分区并将之设置为root
+#+BEGIN_EXAMPLE
+  search --set -l LINUX
+#+END_EXAMPLE
+
+** loopback:创建loop设备
+通过 =loopback= 可以从ISO文件中进行引导
+
+建立loop设备:
+#+BEGIN_EXAMPLE
+  loopback lo(hd1,1)/Android.iso
+#+END_EXAMPLE
+
+然后可以访问 Android.iso 中的内容了
+#+BEGIN_EXAMPLE
+  linux (lo0)/memdisk
+  initrd (lo)/Android.img
+#+END_EXAMPLE
+
+通过 =-d= 参数可以删除loop设备
+#+BEGIN_EXAMPLE
+  loopback -d lo0
+#+END_EXAMPLE
+
+** pager:设置是否分页现实
+
+分页现实会在输出内容满屏后暂停输出，按空格后继续输出
+
+启用分页显示:
+#+BEGIN_EXAMPLE
+  set pager=1
+#+END_EXAMPLE
+
+禁止分页显示:
+#+BEGIN_EXAMPLE
+  set pager=0
+#+END_EXAMPLE
+
+** linux:加载内核
+
+#+BEGIN_EXAMPLE
+  kernel /bzImage-2.6.14.2
+#+END_EXAMPLE
+
+** initrd:引导特定的内核
+
+#+BEGIN_EXAMPLE
+  initrd /initrd-2.6.14.2.img
+#+END_EXAMPLE
+
+** chainloader:调用另一个启动器
+
+调用地一块硬盘第一个分区引导扇区内的启动器:
+#+BEGIN_EXAMPLE
+  chainloader (hd0,1)+1
+#+END_EXAMPLE
