@@ -1,0 +1,349 @@
+#+TITLE: 使用journalctl查看systemd日志
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-08 三 15:28]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+当启动service失败或者出现异常时，我们同行需要查看systemd的日志。 journalctl就是最常用的查看systemd日志的工具了。
+
+* systemd-journald.service
+
+systemd本身使用 =systemd-journald.service= 来提供日志服务.
+它默认以二进制的格式将日志文件存在 =/var/log/journal/= 目录中.
+#+BEGIN_SRC shell :results org
+  ls -R /var/log/journal/
+#+END_SRC
+
+#+BEGIN_SRC org
+/var/log/journal/:
+c291481e2d9b4024b6315308254f29df
+remote
+
+/var/log/journal/c291481e2d9b4024b6315308254f29df:
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000000001-00054f69725bd1f4.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000000b4fb-000551d6d83e3bec.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000011330-00055283e814ebff.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000001f0f2-000554ef5835cba3.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000001f26f-000554ef5d159c4d.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000002e434-0005575684e0156a.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000002e59d-0005575694a45c89.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000041f7f-000559d3e2618783.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000420e3-000559d411759d7a.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000053108-00055c3ebcc97ddd.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000053268-00055c3ecdad6b24.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000060b5e-00055ea67129b27f.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000060cc2-00055ea750da7423.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000705c2-0005610bae10254c.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000007f115-000563724facc0ec.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000007f2a6-00056372622f1fb9.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000089e54-000565e109b67bae.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000008a147-000565e11109f819.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000009d3f5-00056846b7b72568.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000009d6ef-00056846b9dfdae2.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000bee0f-00056a81e6471243.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000d7e23-00056cea54ac049d.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000d7fca-00056cea9d641931.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000f2885-00056f63127cbe97.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000f2af8-00056f63149c60b5.journal
+system.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000015b0-00055006ed5dfbb6.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000001132e-00055283e8135caf.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000001f26d-000554ef5d14f66e.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000002e59b-0005575694a3b831.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000420e1-000559d41174fbf8.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-0000000000053266-00055c3ecdacd823.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-0000000000060cc0-00055ea750d9d71f.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000705cb-0005610bbd3f532d.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000007f2a4-00056372622da099.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000008a145-000565e11108ed20.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000009d6ed-00056846b9ddd3d4.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000bfd2c-00056a8255f67694.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000d7fc8-00056cea9d631972.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000f2af6-00056f63149a9d60.journal
+user-1000.journal
+
+/var/log/journal/remote:
+#+END_SRC
+
+systemd之所以使用二进制来存储日志是因为systemd除了记录日志本身外，还会记录大量的元数据。
+这些信息可以方便用户对信息进行过滤和分类，但同时也占用了大量的空间。
+有鉴于此，systemd使用二进制格式以节省空间。
+
+#+BEGIN_SRC shell :results org
+  journalctl --output=verbose --all |head -n 32
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 15:38:56 HKT. --
+Sat 2017-05-13 23:26:32.333812 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=1;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=2796ef;t=54f69725bd1f4;x=c397f8de2fb56e8e]
+    SYSLOG_FACILITY=3
+    SYSLOG_IDENTIFIER=systemd-journald
+    _TRANSPORT=driver
+    PRIORITY=6
+    MESSAGE=Time spent on flushing to /var is 943us for 0 entries.
+    _PID=180
+    _UID=0
+    _GID=0
+    _COMM=systemd-journal
+    _EXE=/usr/lib/systemd/systemd-journald
+    _CMDLINE=/usr/lib/systemd/systemd-journald
+    _CAP_EFFECTIVE=25402800cf
+    _SYSTEMD_CGROUP=/system.slice/systemd-journald.service
+    _SYSTEMD_UNIT=systemd-journald.service
+    _SYSTEMD_SLICE=system.slice
+    _SYSTEMD_INVOCATION_ID=028ad00d541f43b18015d87a4b504133
+    _BOOT_ID=3d88f970ddc247a8bc58bbcf924fb9c5
+    _MACHINE_ID=c291481e2d9b4024b6315308254f29df
+    _HOSTNAME=T520
+Sat 2017-05-13 23:26:32.333966 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=2;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=279788;t=54f69725bd28e;x=ed81c61ce14af023]
+    _BOOT_ID=3d88f970ddc247a8bc58bbcf924fb9c5
+    _MACHINE_ID=c291481e2d9b4024b6315308254f29df
+    _HOSTNAME=T520
+    _SOURCE_MONOTONIC_TIMESTAMP=0
+    _TRANSPORT=kernel
+    PRIORITY=5
+    SYSLOG_FACILITY=0
+    SYSLOG_IDENTIFIER=kernel
+    MESSAGE=Linux version 4.10.13-1-ARCH (builduser@tobias) (gcc version 6.3.1 20170306 (GCC) ) #1 SMP PREEMPT Thu Apr 27 12:15:09 CEST 2017
+Sat 2017-05-13 23:26:32.334011 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=3;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=2797b6;t=54f69725bd2bb;x=e5ad63c3bd76a8fa]
+#+END_SRC
+
+你会看到除了 =MESSAGE= 这一项是真正的日志消息外，还有大量的其他元数据，比如 =SYSLOG_FACILIT=, =_PID=, =_UID= 等等信息.
+此外，你还会发现不同MESSAGE中元数据的数量也是不同的。
+
+** 配置systemd-journald.service
+=systemd-journald= 的配置文件为 =/etc/systemd/journald.conf= 中， 通过修改其中的配置信息可以影响其行为：
+#+BEGIN_SRC shell :results org
+  cat /etc/systemd/journald.conf
+#+END_SRC
+
+#+BEGIN_SRC conf
+#  This file is part of systemd.
+#
+#  systemd is free software; you can redistribute it and/or modify it
+#  under the terms of the GNU Lesser General Public License as published by
+#  the Free Software Foundation; either version 2.1 of the License, or
+#  (at your option) any later version.
+#
+# Entries in this file show the compile time defaults.
+# You can change settings by editing this file.
+# Defaults can be restored by simply deleting this file.
+#
+# See journald.conf(5) for details.
+
+[Journal]
+#Storage=auto
+#Compress=yes
+#Seal=yes
+#SplitMode=uid
+#SyncIntervalSec=5m
+#RateLimitIntervalSec=30s
+#RateLimitBurst=10000
+#SystemMaxUse=
+#SystemKeepFree=
+#SystemMaxFileSize=
+#SystemMaxFiles=100
+#RuntimeMaxUse=
+#RuntimeKeepFree=
+#RuntimeMaxFileSize=
+#RuntimeMaxFiles=100
+#MaxRetentionSec=
+#MaxFileSec=1month
+#ForwardToSyslog=no
+#ForwardToKMsg=no
+#ForwardToConsole=no
+#ForwardToWall=yes
+#TTYPath=/dev/console
+#MaxLevelStore=debug
+#MaxLevelSyslog=debug
+#MaxLevelKMsg=notice
+#MaxLevelConsole=info
+#MaxLevelWall=emerg
+#LineMax=48K
+#+END_SRC
+
+* journalctl常用方法
+** 查询指定时间内的日志
+当你直接运行 =journalctl= 时，会显示从第一次启动系统开始到现在的所有日志。
+#+BEGIN_SRC shell :results org
+  journalctl |head
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 16:27:01 HKT. --
+5月 13 23:26:32 T520 systemd-journald[180]: Time spent on flushing to /var is 943us for 0 entries.
+5月 13 23:26:32 T520 kernel: Linux version 4.10.13-1-ARCH (builduser@tobias) (gcc version 6.3.1 20170306 (GCC) ) #1 SMP PREEMPT Thu Apr 27 12:15:09 CEST 2017
+5月 13 23:26:32 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+5月 13 23:26:32 T520 kernel: Disabled fast string operations
+5月 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+5月 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x002: 'SSE registers'
+5月 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x004: 'AVX registers'
+5月 13 23:26:32 T520 kernel: x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:  256
+5月 13 23:26:32 T520 kernel: x86/fpu: Enabled xstate features 0x7, context size is 832 bytes, using 'standard' format.
+#+END_SRC
+
+但这是没有必要的，我们可以使用 =--since= 和 =--until= 来指定显示某个时间段内的日志。
+
+比如下面命令显示从 2018年8月1日开始的所有日志
+#+BEGIN_SRC shell :results org
+  journalctl --since "2018-08-01 00:00:00" |head
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+8月 01 10:05:31 T520 kernel: microcode: microcode updated early to revision 0x2d, date = 2018-02-07
+8月 01 10:05:31 T520 kernel: Linux version 4.17.9-1-ARCH (builduser@heftig-26261) (gcc version 8.1.1 20180531 (GCC)) #1 SMP PREEMPT Sun Jul 22 20:23:36 UTC 2018
+8月 01 10:05:31 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+8月 01 10:05:31 T520 kernel: KERNEL supported cpus:
+8月 01 10:05:31 T520 kernel:   Intel GenuineIntel
+8月 01 10:05:31 T520 kernel:   AMD AuthenticAMD
+8月 01 10:05:31 T520 kernel:   Centaur CentaurHauls
+8月 01 10:05:31 T520 kernel: Disabled fast string operations
+8月 01 10:05:31 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+#+END_SRC
+
+下面命令显示从 2018年7月30日9:30开始到2018年8月1日凌晨结束的所有日志
+#+BEGIN_SRC shell :results org
+  journalctl --since "2018-07-30 09:30:00" --until "2018-08-01 00:00:00" |head
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+7月 30 11:43:53 T520 kernel: microcode: microcode updated early to revision 0x2d, date = 2018-02-07
+7月 30 11:43:53 T520 kernel: Linux version 4.17.9-1-ARCH (builduser@heftig-26261) (gcc version 8.1.1 20180531 (GCC)) #1 SMP PREEMPT Sun Jul 22 20:23:36 UTC 2018
+7月 30 11:43:53 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+7月 30 11:43:53 T520 kernel: KERNEL supported cpus:
+7月 30 11:43:53 T520 kernel:   Intel GenuineIntel
+7月 30 11:43:53 T520 kernel:   AMD AuthenticAMD
+7月 30 11:43:53 T520 kernel:   Centaur CentaurHauls
+7月 30 11:43:53 T520 kernel: Disabled fast string operations
+7月 30 11:43:53 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+#+END_SRC
+
+还有一种常见的情况是，若想查看本次启动后发生的日志，可以使用 =--boot= 参数
+#+BEGIN_SRC shell :results org
+  journalctl --boot |tail
+#+END_SRC
+
+#+BEGIN_SRC org
+8月 08 20:22:06 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8月 08 20:22:06 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8月 08 20:22:08 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8月 08 20:22:08 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8月 08 20:22:08 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8月 08 20:22:10 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8月 08 20:22:10 T520 sshd[6092]: Connection closed by invalid user admin 5.188.10.156 port 37215 [preauth]
+8月 08 20:22:10 T520 sshd[6092]: PAM 2 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=5.188.10.156
+8月 08 20:41:31 T520 sshd[7195]: Received disconnect from 50.115.166.112 port 42538:11: Bye Bye [preauth]
+8月 08 20:41:31 T520 sshd[7195]: Disconnected from 50.115.166.112 port 42538 [preauth]
+#+END_SRC
+
+** 约束日志输出的行数
+若我们只是想查看日志中的最后几行，没有必要使用tail命令，通过 =--lines= 命令即可,比如上面那个命令可以写成
+#+BEGIN_SRC shell :results org
+  journalctl --boot --lines=10
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+8月 08 20:22:06 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8月 08 20:22:06 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8月 08 20:22:08 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8月 08 20:22:08 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8月 08 20:22:08 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8月 08 20:22:10 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8月 08 20:22:10 T520 sshd[6092]: Connection closed by invalid user admin 5.188.10.156 port 37215 [preauth]
+8月 08 20:22:10 T520 sshd[6092]: PAM 2 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=5.188.10.156
+8月 08 20:41:31 T520 sshd[7195]: Received disconnect from 50.115.166.112 port 42538:11: Bye Bye [preauth]
+8月 08 20:41:31 T520 sshd[7195]: Disconnected from 50.115.166.112 port 42538 [preauth]
+#+END_SRC
+
+** 根据日志元数据进行过滤
+前面提到了，systemd-journald写入的日志中包含了大量的元数据，我们可以通过这些元数据对日志信息进行过滤。
+#+BEGIN_SRC shell
+  journalctl [options] [MATCHES...]
+#+END_SRC
+其中 =MATCHES= 的格式为 ~FIELD=VALUE~ 表示只有日志元数据域的值为指定值的日志才显示出来。
+
+比如，我们想查看本次启动后 =systemd-journald= 本身产生的日志，可以这么看
+#+BEGIN_SRC shell :results org
+  journalctl --boot "_EXE=/usr/lib/systemd/systemd-journald"
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 18:46:13 HKT. --
+8月 09 14:36:32 T520 systemd-journald[225]: Journal started
+8月 09 14:36:32 T520 systemd-journald[225]: Runtime journal (/run/log/journal/c291481e2d9b4024b6315308254f29df) is 8.0M, max 186.2M, 178.2M free.
+8月 09 14:36:32 T520 systemd-journald[225]: Time spent on flushing to /var is 809.869ms for 725 entries.
+8月 09 14:36:32 T520 systemd-journald[225]: System journal (/var/log/journal/c291481e2d9b4024b6315308254f29df) is 1.1G, max 3.9G, 2.7G free.
+#+END_SRC
+
+既然是复数的 =MATCHES= 那么自然表示可以接多个 ~FIELD=VALUE~ 对了，这些 ~FIELD=VALUE~ 的组合规则为:
+
+1. 如果有多个 *不同* 的字段被 [MATCHES...]  参数匹配，那么这些字段之间使用"AND"逻辑连接,即所有域都满足的日志才会被输出
+2. 如果 *同一个* 字段被多个 [MATCHES...] 参数匹配， 那么这些匹配条件之间使用"OR"逻辑连接，也就是对于同一个字段，日志项只需满足任意一个匹配条件即可输出。
+3.  "+" 字符可用作 [MATCHES...]组之间的分隔符，并被视为使用"OR"逻辑连接。 也就是，MATCHE1 MATCHE2 + MATCHE3 MATCHE4 MATCHE5 + MATCHE6 MATCHE7 相当于 ( MATCHE1 MATCHE2 ) OR ( MATCHE3 MATCHE4 MATCHE5 ) OR ( MATCHE6 MATCHE7 )
+
+除了直接通过 ~FIELD=VALUE~ 来过滤日志外， journalctl 也为一些常用的过滤域准备了专门的参数，比如:
+
++ -u / ==unit=${UNIT}|${PATTERN} :: 显示名为UNIT或匹配PATTERN模式的单元日志，相当于 ~_SYSTEMD_UNIT=${UNIT}~
++ --user-unit=${USER} :: 显示特定用户会话单元的日志，相当于 ~_SYSTEMD_USER_UNIT=${USER}~ 和 ~_UID=${USER}~
++ -p / --prioprity=${LEVEL} :: 根据日志级别过滤输出结果，相当于 ~PRIORITY=${LEVEL}~
+   
+
+** 根据正则表达式搜索的日志
+通过 ~--grep="REGEXP"~ 可以过滤匹配正则表达式的日志内容,比如我想查看日志中所有与wifi相关的内容，那么可以
+#+BEGIN_SRC shell :results org 
+  journalctl --boot --grep="wifi"
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 19:09:54 HKT. --
+8月 09 14:36:32 T520 systemd[1]: /etc/systemd/system/netctl@wlp3s0\x2daWiFi.service:1: .include directives are deprecated, and support for them will be removed in a future version of systemd. Please use drop-in files instead.
+8月 09 14:36:33 T520 kernel: Intel(R) Wireless WiFi driver for Linux
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: can't disable ASPM; OS doesn't have ASPM control
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: loaded firmware version 18.168.6.1 op_mode iwldvm
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEBUG enabled
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEBUGFS enabled
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEVICE_TRACING enabled
+8月 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: Detected Intel(R) Centrino(R) Advanced-N 6205 AGN, REV=0xB0
+8月 09 14:36:34 T520 systemd[1]: Starting Automatically generated profile by wifi-menu...
+8月 09 14:36:34 T520 netctl-auto[424]: Included profile 'wlp3s0-bWiFi'
+8月 09 14:36:34 T520 netctl-auto[424]: Included profile 'wlp3s0-aWiFi'
+8月 09 14:36:34 T520 network[421]: Starting network profile 'wlp3s0-aWiFi'...
+8月 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0 wlp3s0: renamed from wlan0
+8月 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 14:36:51 T520 network[421]: Failed to bring the network up for profile 'wlp3s0-aWiFi'
+8月 09 14:36:51 T520 systemd[1]: netctl@wlp3s0\x2daWiFi.service: Main process exited, code=exited, status=1/FAILURE
+8月 09 14:36:51 T520 systemd[1]: netctl@wlp3s0\x2daWiFi.service: Failed with result 'exit-code'.
+8月 09 14:36:51 T520 systemd[1]: Failed to start Automatically generated profile by wifi-menu.
+8月 09 15:09:58 T520 sudo[2730]: lujun9972 : TTY=pts/0 ; PWD=/home/lujun9972 ; USER=root ; COMMAND=/usr/bin/wifi-menu
+8月 09 15:09:58 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 15:09:58 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 15:10:07 T520 systemd[1]: Starting Automatically generated profile by wifi-menu...
+8月 09 15:10:07 T520 network[2810]: Starting network profile 'wlp3s0-aWiFi'...
+8月 09 15:10:07 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 15:10:07 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8月 09 15:10:11 T520 systemd[1]: Started Automatically generated profile by wifi-menu.
+8月 09 15:10:16 T520 network[2810]: Started network profile 'wlp3s0-aWiFi'
+#+END_SRC
+
+从输出中你会发现当用全小写的 =wifi= 来搜索时， =WiFi= 也会被匹配上，也就是不区分大小写，
+而若是搜索的内容中有一个大些字母,则搜索会变成大小写敏感的，这一点跟Emacs中的搜索很类似
+#+BEGIN_SRC shell :results org
+  journalctl --boot --grep="Wifi"
+#+END_SRC
+
+#+BEGIN_SRC org
+-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 19:09:54 HKT. --
+-- No entries --
+#+END_SRC
+
+** 其他参数
+除了上面提到的这些选项外，还有一些比较常用的选项，列举在此:
+
++ -f / --follow :: 只显示最新的日志项，并且不断显示新生成的日志项
++ -x / --catalog :: 在日志的输出中增加一些解释性的短文本， 以帮助进一步说明日志的含义、 问题的解决方案、支持论坛、开发文档等内容
++ --pager-end :: 在分页工具内立即跳转到日志的尾部，而不是从首部开始看
