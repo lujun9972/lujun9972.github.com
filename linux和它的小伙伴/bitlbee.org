@@ -1,0 +1,140 @@
+# -*- org-screenshot-file-name-format: "bitlbee-%2.2d.png"; -*-
+#+TITLE: bitlbee
+#+AUTHOR: lujun9972
+#+TAGS: ../
+#+DATE: [2018-08-10 五 14:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+The program that makes IM possible within IRC is an IM-to-IRC gateway called Bitlbee (www.bitlbee.org). Basically, Bitlbee sets up an IRC server on your local machine that you can connect to like any other IRC server you might already use. Once you connect to the server, you can join the #bitlbee channel and authenticate with the bot inside. Then, you can configure Bitlbee with your Jabber, MSN, Yahoo or Oscar (AIM/ICQ) accounts. Once you are set up, when your friends are on-line, they join the channel, and when you talk to them or private-message them inside the IRC channel, it translates it to an instant message. 
+
+* 安装bitlbee
+bitlbee在常见linux发行版中都有被纳入包仓库中，因此安装起来很简单。在archlinux上可以直接使用pacman来安装
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo pacman -S bitlbee --noconfirm
+#+END_SRC
+但是这个版本的 =bitlbee= 不支持 =libpurple= 所能支持的IM协议不对，推荐使用 =aur/bitlbee-libpurple-unicode-channel= 代替
+#+BEGIN_SRC shell :results org
+  aurman -S bitlbee-libpurple-unicode-channel --noconfirm
+#+END_SRC
+安装好后，你会发现多出来了一个 =bitlbee.service=,我们启动它
+#+BEGIN_SRC shell  :results org :dir /sudo::
+  sudo systemctl start bitlbee.service
+#+END_SRC
+
+* 创建 Bitlbee 账户
+
+启动bitlbee后，它会在本地启动一个IRC server。使用IRC客户端登陆 =localhost:6667=, 后会自动 =/join &bitlbee= 频道。
+
+[[file:images/bitlbee-01.png]]
+
+在这里你会看到有一个名叫 =root= 的机器人，我们可以输入 =help= 或者 =help 命令= 来查看帮助信息。
+
+[[file:images/bitlbee-02.png]]
+
+我们可以根据 =help quickstart= 的说明来设置好Bitlbee用户，并绑定即时消息帐号
+
+** 1. 为当前用户设置密码
+
+[[file:./images/bitlbee-03.png]]
+
+由于Bitlbee将会保存你的即使信息帐号,密码,联系人等敏感信息，因此你需要为自己的Bitlbee用户设置一个好的密码来保障安全。
+
+设置密码的方法是输入 =register 密码=
+
+设置密码后，下一次再登陆Bitlbee的本地IRC，就可以用 =identify 密码= 来认证身份了。
+认证身份后，Bitlbee会自动帮你登陆所有绑定的即时消息服务。
+
+** 2. 管理绑定的IM账户
+
+[[file:./images/bitlbee-04.png]]
+
+我们可以用 =account= 命令来添加/删除绑定的IM账户.
+
+添加IM账户的语法为 =account add IM协议 IM用户名 IM密码 [IM服务器]=
+
+默认 Bitlbee 支持的IM协议有Hipchat、Identica Jabber、MSN、Oscar(ICQ/AOL)、twitter.
+但是通过插件，你可以扩展 Bitlbee 支持的协议。 要查看当前 Bitlbee 支持那些协议可以运行 =plugins=
+
+[[file:./images/bitlbee-05.png]]
+
+若安装的是启用了 =libpurple= 的Bitlbee，则还可以输入 =help purple= 来查看其他支持的IM协议
+
+[[file:./images/bitlbee-06.png]]
+
+由于ICQ和AOL都使用的Oscar协议，因此需要通过最后面的 =IM服务器= 来区分。
+AOL服务器为 =login.oscar.aol.com=, ICQ服务器为 =slogin.icq.com=
+
+添加完所有的IM账号后，输入 =acount on=, Bitlbee就会登陆所有绑定的账号了。
+
+Bitlbee登陆IM账号后会自动下载联系人信息，将在线的联系人加入到IRC的channel中来。
+
+*** 查看已经添加了的IM账号
+可以输入 =account list= 来查看已经添加了哪些IM账号
+
+[[file:./images/bitlbee-08.png]]
+
+*** 删除IM账号
+若不想再通过 Bitlbee 登陆某个IM账号，可以使用 =account IM账号 del= 来删除之
+
+[[file:./images/bitlbee-09.png]]
+
+*** 安装slack支持
+注意：要安装slack支持，必须使用启用了 =libpurple= 的Bitlbee。
+
+1. 安装 =libpurple=
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo pacman -S libpurple --noconfirm
+   #+END_SRC
+
+2. 从github上下载并编译 =slack-libpurple=
+   #+BEGIN_SRC shell :results org :dir ~/Downloads
+     git clone https://github.com/dylex/slack-libpurple.git
+     cd slack-libpurple
+     sudo make install
+   #+END_SRC
+   
+   编译完后，你会发现在 =/usr/lib/purple-2/= 目录下多了一个 =libslack.so=
+
+3. 重启Bitlbee
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo systemctl restart bitlbee.service
+   #+END_SRC
+
+4. 再次使用 =help purple= 查看支持的协议会发现已经支持slack了
+
+   [[file:./images/bitlbee-07.png]]
+
+5. 使用 =account add slack username@networkname.slack.com= 来添加slack账号
+   #+BEGIN_EXAMPLE
+     account add slack lujun9972@emacs-cn.slack.com
+   #+END_EXAMPLE
+
+6. 登陆 =https://api.slack.com/custom-integrations/legacy-tokens= 生成API tokens
+
+7. 设置 API tokens
+   #+BEGIN_EXAMPLE
+     account slack set api_token xxxx-xxxxxxxxxxxxxxxxxxxxxxxxxxx
+     account slack on
+   #+END_EXAMPLE
+   
+   [[file:./images/bitlbee-11.png]]
+
+8. 加入要聊天的channel
+   
+   比如我要加入 =emacs-general= channel，那么我可以输入
+   #+BEGIN_EXAMPLE
+     chat add slack emacs-general
+     /join #emacs-general
+   #+END_EXAMPLE
+   
+   [[file:./images/bitlbee-12.png]]
+
+** 使用Bitlbee进行聊天
+使用Bitlbee进行聊天的方法跟使用IRC一样，只需要按照 =昵称:消息= 的格式来会话即可，Bitlbee会弹出一个独立的聊天窗口
+
+或者也可以使用 =/msg 昵称= 开启私密聊天.
+
+下面是我自己跟自己聊天的截图
+[[file:./images/bitlbee-10.png]]
+
