@@ -1,0 +1,64 @@
+#+TITLE: 命令行查看GPU内存容量
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-14 二 17:19]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有两个命令可以帮助我们查看GPU的内存容量，一个时lspci,一个是lshw
+
+* lspci
+1. 查找显卡的设备地址
+   #+BEGIN_SRC shell :results org
+     lspci |grep VGA
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   00:02.0 VGA compatible controller: Intel Corporation 2nd Generation Core Processor Family Integrated Graphics Controller (rev 09)
+   #+END_SRC
+   
+   其中 =00:02.0= 指明了显卡是在哪个总线、哪个插槽上的设备、上的那个功能模块。
+
+2. 查看详细信息
+   #+BEGIN_SRC shell :results org
+     lspci -v -s 00:02.0
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   00:02.0 VGA compatible controller: Intel Corporation 2nd Generation Core Processor Family Integrated Graphics Controller (rev 09) (prog-if 00 [VGA controller])
+     Subsystem: Lenovo ThinkPad T520
+     Flags: bus master, fast devsel, latency 0, IRQ 30
+     Memory at f0000000 (64-bit, non-prefetchable) [size=4M]
+     Memory at e0000000 (64-bit, prefetchable) [size=256M]
+     I/O ports at 5000 [size=64]
+     [virtual] Expansion ROM at 000c0000 [disabled] [size=128K]
+     Capabilities: <access denied>
+     Kernel driver in use: i915
+     Kernel modules: i915
+
+   #+END_SRC
+
+   你可以看到，GPU内置内存只有4M，可以通过共享主机内存的方式扩展到256M，果然是个垃圾显卡啊...
+
+* lshw
+#+BEGIN_SRC shell :results org
+  lshw -C display
+#+END_SRC
+
+#+BEGIN_SRC org
+  ,*-display
+       description: VGA compatible controller
+       product: 2nd Generation Core Processor Family Integrated Graphics Controller
+       vendor: Intel Corporation
+       physical id: 2
+       bus info: pci@0000:00:02.0
+       version: 09
+       width: 64 bits
+       clock: 33MHz
+       capabilities: vga_controller bus_master cap_list rom
+       configuration: driver=i915 latency=0
+       resources: irq:30 memory:f0000000-f03fffff memory:e0000000-efffffff ioport:5000(size=64) memory:c0000-dffff
+#+END_SRC
+
+可以看到resources中 =irq:30 memory:f0000000-f03fffff  memory:e0000000-efffffff=
+前一个容量就是 ~4M~,后一个容量就是 ~256M~
