@@ -270,4 +270,117 @@ Synced Folder可以用来实现宿主机和虚拟机之间共享文件，
   config.vm.synced_folder ${主机目录}, ${虚拟机目录}
 #+END_SRC
 其中主机目录若为相对路径，则是以Vagrant项目目录为基准
-* 
+* 网络配置
+Vagrnat中的所有关于网络的配置都是通过 =config.vm.network= 配置方法来进行的。
+这个方法的第一个参数是一个字符串标识符，用来指明配置网络哪个方面的参数，比如 ="forwarded_port"= 就表示用来指明配置的是网络转发。
+这个方法的其他参数则根据第一个参数的不同而不同。
+
+在一个VagrantFile中，可以通过多次调用 =config.vm.network= 方法来多次配置网络参数。
+
+** 端口转发
+Vagrant的端口转发功能能够让你把发送到主机端口的数据包转发到虚拟机中去，从而实现暴露虚拟机服务的功能。
+
+端口转发的标识符为 ="forwarded_port"=, 它有两个必须接受的参数 =host= 和 =guest=.
+即发送到主机 =host= 端口上的数据包会被转发到 虚拟机的 =guest= 端口上。
+
+比如
+#+BEGIN_SRC ruby
+  Vagrant.configure("2") do |config|
+    config.vm.network "forwarded_port", guest: 80, host: 8080
+  end
+#+END_SRC
+表示访问主机8080端口的数据包其实会被转发到虚拟机的80端口上去。
+
+除了 =host= 和 =guest= 之外，其他常见的参数还包括:
+
++ guest_ip :: 指定转发到虚拟机的哪个IP上，默认会转发到虚拟机的每个IP接口上
+
++ host_ip :: 指定只有访问主机哪个IP上的端口才进行转发，默认也是主机的每个IP
+
++ protocol :: 指定转发的协议是 "tcp" 还是 "udp",默认是 "tcp"
+
+** 私有网络
+虚拟机与虚拟机之间、虚拟机与主机之间可以组成一个私有网络，这个网络只允许网络内的虚拟机或本地主机访问，而不允许主机外的机器进行访问。
+
+私有网络的标识符为 ="private_network"=
+
+*** 配置IP
+
+配置IP有两种方式，一种是DHCP，一种是配置静态IP。最方便的方法莫过于直接通过DHCP动态分配IP了:
+#+BEGIN_SRC ruby
+  Vagrant.configure("2") do |config|
+    config.vm.network "private_network", type: "dhcp"
+  end
+#+END_SRC
+
+配置静态IP其实也挺简单的:
+#+BEGIN_SRC ruby
+  Vagrant.configure("2") do |config|
+    config.vm.network "private_network", ip: "192.168.50.4"
+  end
+#+END_SRC
+
+同时，静态IP还支持IPV6
+#+BEGIN_SRC ruby
+  Vagrant.configure("2") do |config|
+    config.vm.network "private_network", ip: "fde4:8dba:82e1::c4"
+  end
+#+END_SRC
+
+
+*** 配置网关
+
+*** 配置子网掩码
+
+*** 配置DNZS
+
+*** 配置MTU
+
+** 公有网络
+Vagrant也支持创建共有网络，主机外的机器允许访问共有网络。
+公有网络的意义根据虚拟机引擎的不同有所不同，一般来说它意味着 "桥接网卡".
+
+私有网络的标识符为 ="public_network"=
+
+*** DHCP
+
+若公网上启用了DHCP，则共有网络无需任何配置
+#+BEGIN_SRC ruby
+  Vagrant.configure("2") do |config|
+    config.vm.network "public_network"
+  end
+#+END_SRC
+
+*** 设置静态IP
+与私有网络类似，你可以通过 =ip= 参数来设置静态IP
+
+#+BEGIN_SRC ruby
+  config.vm.network "public_network", ip: "192.168.0.17"
+#+END_SRC
+
+*** 指定桥接的网卡
+可以通过 =bridge= 参数来指定桥接的网卡
+#+BEGIN_SRC ruby
+  config.vm.network "public_network", bridge: "en1: Wi-Fi (AirPort)"
+#+END_SRC
+
+有些provider甚至支持桥接多个网卡
+#+BEGIN_SRC ruby
+  config.vm.network "public_network", bridge: [
+    "en1: Wi-Fi (AirPort)",
+    "en6: Broadcom NetXtreme Gigabit Ethernet Controller",
+  ]
+#+END_SRC
+
+*** 其他网络设置
+我们实际上可以通过 provision 的能力来让虚拟机每次启动自动设置网络
+#+BEGIN_SRC ruby
+  config.vm.provision "shell",
+      run: "always",
+      inline: "ifconfig eth1 192.168.0.17 netmask 255.255.255.0 up"
+
+  # default router
+  config.vm.provision "shell",
+      run: "always",
+      inline: "route add default gw 192.168.0.1"
+#+END_SRC
