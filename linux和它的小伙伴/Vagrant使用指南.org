@@ -1,4 +1,4 @@
-#+TITLE: vagrant
+#+TITLE: Vagrant使用指南
 #+AUTHOR: lujun9972
 #+TAGS: linux和它的小伙伴
 #+DATE: [2018-07-29 日 20:24]
@@ -328,14 +328,6 @@ Vagrant的端口转发功能能够让你把发送到主机端口的数据包转�
 #+END_SRC
 
 
-*** 配置网关
-
-*** 配置子网掩码
-
-*** 配置DNZS
-
-*** 配置MTU
-
 ** 公有网络
 Vagrant也支持创建共有网络，主机外的机器允许访问共有网络。
 公有网络的意义根据虚拟机引擎的不同有所不同，一般来说它意味着 "桥接网卡".
@@ -372,7 +364,7 @@ Vagrant也支持创建共有网络，主机外的机器允许访问共有网络�
   ]
 #+END_SRC
 
-*** 其他网络设置
+** 其他网络设置
 我们实际上可以通过 provision 的能力来让虚拟机每次启动自动设置网络
 #+BEGIN_SRC ruby
   config.vm.provision "shell",
@@ -384,3 +376,91 @@ Vagrant也支持创建共有网络，主机外的机器允许访问共有网络�
       run: "always",
       inline: "route add default gw 192.168.0.1"
 #+END_SRC
+
+* 插件
+通过Vagrant插件可以扩展vagrant的功能或者更改vagrant的某些行为，事实上，某些Vagrant的核心功能都是以插件的方式来实现的。
+
+** 安装插件
+通过 =vagrant plugin install= 命令可以安装插件。一个插件其实就是ruby的gem包。
+
+安装插件有两种方式：
+
+一种是从已知的gem源搜索并安装插件
+#+BEGIN_SRC shell
+  vagrant plugin install 插件名称
+#+END_SRC
+其中 =插件名称= 一般遵循 =vagrant-xxxx= 的命名规则
+
+还有一种是安装下载到本地的插件
+#+BEGIN_SRC shell
+  vagrant plugin install /path/to/plugin.gem
+#+END_SRC
+
+** 更新插件
+
+运行 =vagrant plugin update= 会更新所有已安装的插件到最新版。
+
+你也可以通过 =vagrant plugin update 插件名称= 来指定更新某个插件
+
+** 列出已安装的插件
+
+=vagrant plugin list= 命令会列出已经安装的插件及其对应的版本号
+
+#+BEGIN_SRC shell :results org
+  vagrant plugin list
+#+END_SRC
+
+#+BEGIN_SRC org
+vagrant-libvirt (0.0.43)
+vagrant-proxyconf (1.5.2)
+vagrant-vbguest (0.15.2)
+#+END_SRC
+
+** 卸载插件
+
+#+BEGIN_SRC shell :results org :var plugin_name="vagrant-proxyconf"
+  vagrant plugin uninstall ${plugin_name}
+#+END_SRC
+
+#+BEGIN_SRC org
+Uninstalling the 'vagrant-proxyconf' plugin...
+Successfully uninstalled vagrant-proxyconf-1.5.2
+#+END_SRC
+
+* 设置代理服务器
+
+** 为 vagrant 命令设置代理
+
+通过配置 =http_proxy= 和 =https_proxy= 这两个环境变量可以让 =vagrant= 命令通过代理访问互联网。
+
+#+BEGIN_SRC shell
+  export http_proxy=http://proxyserver:port
+  export https_proxy=https://proxyserver:port
+#+END_SRC
+
+** 为虚拟机设置代理
+
+为虚拟机设置代理需要借助 =vagrant-proxyconf= 插件
+
+1. 安装 =vagrant-proxyconf= 插件 
+   #+BEGIN_SRC shell :results org
+     vagrant plugin install vagrant-proxyconf
+   #+END_SRC
+
+2. 在 =VagrantFile= 中添加下面配置
+
+   #+BEGIN_SRC ruby
+     Vagrant.configure("2") do |config|
+       if Vagrant.has_plugin?("vagrant-proxyconf")
+         # 若安装了plugin，则设置代理信息
+         config.proxy.http     = "http://192.168.0.2:3128/"
+         config.proxy.https    = "http://192.168.0.2:3128/"
+         config.proxy.no_proxy = "localhost,127.0.0.1,.example.com"
+       else
+         # 若没有安装plugin，则调用系统命令安装插件，并提示重运行命令
+         system('vagrant plugin install vagrant-proxyconf')
+         raise("vagrant-proxyconf installed. Run command again.");
+       end
+       # ... rest of the configurations
+     end
+   #+END_SRC
