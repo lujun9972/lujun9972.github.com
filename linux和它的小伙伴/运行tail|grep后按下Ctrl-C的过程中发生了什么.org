@@ -1,0 +1,44 @@
+#+TITLE: 运行tail|grep后按下Ctrl-C的过程中发生了什么
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-16 四 11:39]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://ubuntuforums.org/showthread.php?t=1761120&s=bbaf101ffbcc9abdb032d90cff01fc36 中看到的，记录一下
+
+* 在shell中运行 tail|grep 时发生了什么
+1. 运行tail
+   
+   + shell调用fork产生子进程
+
+   + 重置信号处理函数为SIG_DFL
+
+   + 产生新的进程组，并将子进程设置为该进程组的leader
+
+   + exec tail
+
+2. 运行grep
+
+   + shell调用fork产生子进程
+
+   + 重置信号处理函数为SIG_DFL
+
+   + 将进程加入到 =tail= 产生的进程组中
+
+   + exec tail
+
+3. 将新产生的进程组放到前台，控制终端
+
+   + tcsetpgrp(STDIN_FILENO, tail进程组);
+     
+
+* 当按下Ctrl-c时发生了什么
+
+根据 =setpgrp= manual page 的说法，按下 =Ctrl-c= 后:
+
++ 终端产生 =SIGINT= 信号
+
++ 前台进程组中的所有进程都会接收到 =SIGINT= 信号然后退出(默认动作)
+
++ shell通过调用 =waitpid= 清理进程表中子进程信息
