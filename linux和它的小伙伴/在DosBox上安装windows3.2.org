@@ -1,0 +1,125 @@
+#+TITLE: 在DosBox上安装windows3.2
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-17 五 11:36]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 安装DOS6.22
+** 下载DOS启动镜像
+1. 下载并解压DOS安装的软盘镜像
+   
+   你可以从 [[http://www.bkill.com/download/MS-DOS-622-25731.html][这里]] 下载安装镜像
+   #+BEGIN_SRC shell :dir ~/Downloads :results org
+     wget http://w1.downbk.com:806/1302/dos622_bkill.com.zip
+   #+END_SRC
+
+   解压这个zip文件
+   #+BEGIN_SRC shell :dir ~/Downloads :results org
+     unzip dos622_bkill.com.zip
+   #+END_SRC
+
+   这会在本地路径下生成一个 =dos622= 的路径，软件镜像就在这个目录下
+
+   #+BEGIN_SRC shell :dir ~/Downloads :results org
+     cd dos622
+     ls
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   比克尔.url
+   dos1.img
+   dos2.img
+   dos3.img
+   #+END_SRC
+** 创建一个磁盘镜像作为C盘
+我们将会将这个磁盘镜像挂载为C盘，并在上面安装操作系统
+
+*** 创建镜像文件
+
+这个磁盘文件不需要太大，256M已经算是很大了:
+#+BEGIN_SRC shell :~/Dosbox :results org
+  dd if=/dev/zero of=~/Dosbox/Windows3.2.img bs=1M count=256 
+#+END_SRC
+
+*** 打开 =~/.dosbox/dosbox-0.74.conf= 在 =[autoexec]= 节下添加如下内容
+
+#+BEGIN_SRC conf
+  mount Y: ~/Downloads/dos622 #将dos安装目录挂载成Y盘
+  Y:                                        #将当前目录切换到Y盘
+  imgmount 2 "~/Dosbox/Windows3.2.img" -size 512,63,16,520 -t hdd -fs none
+  boot dos1.img dos2.img dos3.img -l a
+#+END_SRC
+
+其中有几点需要说明一下：
+
+1. =~/.dosbox/dosbox-0.74.conf= 是dosbox7.4的默认配置文件，其他版本的dosbox配置文件可能是 =~/.dosbox/DOSBox.conf=
+
+2. DOSBOX配置文件中的 =autoexec= 节下的内容类似于dos系统中的 =C:\AUTOEXEC.BAT=, 即该部分内容会在系统启动时自动运行
+
+3. mount 命令将一个主机目录仿真成DOSBox中的一个虚拟磁盘。
+
+   mount的语法为:
+   #+BEGIN_EXAMPLE
+     MOUNT [Drive-Letter] [Local-Directory]
+   #+END_EXAMPLE
+   
+   需要注意的是，主机目录仿真为虚拟磁盘后，在DOSBOX外对目录进行的操作并不会实时刷新DOSBOX内的虚拟磁盘！
+   
+   此外，使用mount命令也可以卸载虚拟磁盘，语法为
+   #+BEGIN_EXAMPLE
+     MOUNT -u [Drive-Letter]
+   #+END_EXAMPLE
+
+4. [[https://www.dosbox.com/wiki/IMGMOUNT][IMGMOUNT]] 命令将镜像文件挂载为DOSBox中的虚拟磁盘
+
+   IMGMOUNT 命令的语法为:
+   #+BEGIN_EXAMPLE
+     IMGMOUNT DRIVE [imagefile] -t [image_type] -fs [image_format] -size [sectorsbytesize, sectorsperhead, heads, cylinders -u DRIVE]
+   #+END_EXAMPLE
+   
+   其中配置:
+   
+   =DRIVE为2= 意思是该挂载的磁盘为master盘，与后面的 =fs none= 一起用
+
+   =-t hdd= 表示挂载的镜像文件为硬盘，这种情况下必须指明合适的CHS参数. 
+
+   =-size 512,63,16,520= 指定磁盘的CHS参数，其中前三个参数一般固定为 =512,63,16=,而第四个参数的计算方法是用硬盘容量除与前三个参数的积，即 ~256*1024*1024/512/63/16=520~
+
+   =-fs none= 表示该磁盘需要被格式化或者会被BOOT命令引导，这种情况下 =DRIVE= 必须为数字2或者3,其中2表示master，3表示slaver
+
+5. boot命令指定从哪个镜像文件中引导系统
+
+   boot命令的语法为
+   #+BEGIN_EXAMPLE
+     BOOT [diskimg1.img diskimg2.img .. diskimgN.img] [-l driveletter]
+   #+END_EXAMPLE
+   
+   其中 =diskimgN.img= 指定了从哪个镜像文件中开始引导，它可以一次性接受多个镜像文件，表示引导后挂载多个镜像。
+   即此时 =diskimg1.img= 挂载成了A盘， =diskimg2.img= 挂载成了B盘...
+
+   你可以通过 =Ctrl-F4= 来切换这些镜像,这时 =diskimg2.img= 挂载成了A盘， =diskimg3.img= 挂载成了B盘...
+
+   =-l driveletter= 则指明了从哪个盘进行引导
+
+*** 启动dosbox，开始安装dos6.22
+#+BEGIN_SRC shell
+  dosbox
+#+END_SRC
+
+安装过程中可能会提示需要重启一下，直接重新运行一次 =dosbox= 即可
+
+若安装出现换盘的情况，则按下 =Ctrl-F4= 进行换盘
+
+
+*** 更改配置，从硬盘镜像引导系统
+更改DOSBOX的配置文件，将 =[autoexec]= 中的配置修改为
+#+BEGIN_EXAMPLE
+  imgmount C "~/Dosbox/Windows3.2.img" -size 512,63,16,520 -t hdd -fs fat
+  boot -l c
+#+END_EXAMPLE
+* 安装Windows3.2
+
+* 按键映射
+With DOSBox open, the welcome screen will tell you to press Ctrl-F1 to activate the keymapper. Once open, press “Mod 3”. The buttons “Mod 1” and “Mod 2” are already defined as “Ctrl” and “Alt” respectively; “Mod 3” needs to be defined as “Left Shift”. Press “Add” to add a key to bind to “Mod 3” and press the left shift button.
+
