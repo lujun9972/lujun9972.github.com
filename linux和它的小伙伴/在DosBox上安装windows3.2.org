@@ -102,15 +102,19 @@
 
    =-l driveletter= 则指明了从哪个盘进行引导
 
+** 安装dos6.22
 *** 启动dosbox，开始安装dos6.22
 #+BEGIN_SRC shell
   dosbox
 #+END_SRC
 
+[[file:images/dosbox_1534506974.png]]
+
 安装过程中可能会提示需要重启一下，直接重新运行一次 =dosbox= 即可
 
-若安装出现换盘的情况，则按下 =Ctrl-F4= 进行换盘
+[[file:images/dosbox_1534507049.png]]
 
+若安装出现换盘的情况，则按下 =Ctrl-F4= 进行换盘
 
 *** 更改配置，从硬盘镜像引导系统
 更改DOSBOX的配置文件，将 =[autoexec]= 中的配置修改为
@@ -119,7 +123,219 @@
   boot -l c
 #+END_EXAMPLE
 * 安装Windows3.2
+** 下载Windows3.2安装文件
 
-* 按键映射
-With DOSBox open, the welcome screen will tell you to press Ctrl-F1 to activate the keymapper. Once open, press “Mod 3”. The buttons “Mod 1” and “Mod 2” are already defined as “Ctrl” and “Alt” respectively; “Mod 3” needs to be defined as “Left Shift”. Press “Add” to add a key to bind to “Mod 3” and press the left shift button.
+1. 我们可以从 [[https://www.jb51.net/softs/127428.html][这里]] 下载Windows3.2的安装文件:
+   #+BEGIN_SRC shell :results org
+     wget "http://sf.jb51.net:81/201312/tools/windows3.2(jb51.net).rar" -O ~/Downloads/windows3.2/windows3.2.rar
+   #+END_SRC
 
+2. 解压这个rar文件
+
+   #+BEGIN_SRC shell :results none
+     cd ~/Downloads/windows3.2
+     rar x -c- -idq windows3.2.rar
+   #+END_SRC
+
+  这会产生多个 =DISKN= 的目录
+
+   #+BEGIN_SRC shell :results org :dir ~/Downloads/windows3.2
+     ls
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   服务器软件.url
+   去脚本之家看看.url
+   DISK1
+   DISK2
+   DISK3
+   DISK4
+   DISK5
+   DISK6
+   DISK7
+   DISK8
+   DISK9
+   DISKA
+   DISKB
+   DISKC
+   DISKD
+   DISKE
+   windows3.2.rar
+   #+END_SRC
+
+** 挂载 DOSBOX 的硬盘镜像文件，将 windows 安装文件拷贝进去
+  
+1. 创建一个loop设备用来表示DOSBOX的硬盘镜像文件
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo losetup -Pf --show /home/lujun9972/Dosbox/Windows3.2.img
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   /dev/loop1
+   #+END_SRC
+
+   其中 =-P= 表示内核在loop设备生成后扫描其中的分区表， =-f= 参数表示自动寻找第一个未使用的loop设备号
+
+2. 挂载loop设备
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo mount -t vfat -o uid=1000 /dev/loop1p1 /mnt
+   #+END_SRC
+
+3. 为了方便，我们可以将所有的 =DISKN= 中的内容放到同一个目录中
+
+   #+BEGIN_SRC shell :results org :dir ~/Downloads/windows3.2
+     mkdir -p /mnt/wininst
+     for n in DISK*;do
+         cp $n/* /mnt/wininst
+     done
+   #+END_SRC
+
+   这就将windows安装目录拷入DOSBOX的硬盘镜像文件中了
+
+4. 卸载DOS的硬盘镜像文件
+
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo umount /mnt
+     sudo losetup -d /dev/loop1
+   #+END_SRC
+
+** 安装Windows3.2
+
+1. 启动dosbox
+   
+   #+BEGIN_SRC shell
+     dosbox
+   #+END_SRC
+   
+   [[file:images/dosbox_1534518203.png]]
+
+2. 运行windows3.2的安装文件
+
+   在dos中运行
+   #+BEGIN_EXAMPLE
+     cd wininst
+     setup
+   #+END_EXAMPLE
+   
+   [[file:images/dosbox_1534519854.png]]
+   
+   需要说明的是，我在安装时，安装到一般DOSBOX会报错 " DRC64:Unhandled memory reference",然后退出。
+   需要在配置文件中将 ~core=auto~ 改成 ~core=normal~
+   
+   [[file:images/dosbox_1534520641.png]]
+
+   
+** 设置启动DOSBOX自动启动windows
+只需要在 =c:\autoexec.bat= 最后添加 =win= 就行了
+
+[[file:images/dosbox_1534521503.png]]
+
+** 安装显卡驱动
+
+1. 挂载DOSBOX硬盘镜像文件
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo losetup -Pf --show /home/lujun9972/Dosbox/Windows3.2.img
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   /dev/loop0
+   #+END_SRC
+   
+   #+BEGIN_SRC shell :results org :dir /sudo::
+     sudo mount -t vfat -o uid=1000 /dev/loop0p1 /mnt
+   #+END_SRC
+
+2. 下载S3驱动
+   #+BEGIN_SRC shell :results org
+     curl http://www.sierrahelp.com/Files/3x_Files/S3DRIVERS.ZIP -o /mnt/S3DRIVERS.ZIP
+   #+END_SRC
+
+3. 解压S3驱动
+   #+BEGIN_SRC shell :results org
+     cd /mnt
+     unzip S3DRIVERS.ZIP -d S3DRIVERS
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   Archive:  S3DRIVERS.ZIP
+     inflating: S3DRIVERS/8514FIX.FO_   
+     inflating: S3DRIVERS/8514OEM.FO_   
+     inflating: S3DRIVERS/8514SYS.FO_   
+     inflating: S3DRIVERS/CGA40850.FON  
+     inflating: S3DRIVERS/CGA40WOA.FON  
+     inflating: S3DRIVERS/CGA80850.FON  
+     inflating: S3DRIVERS/CGA80WOA.FON  
+     inflating: S3DRIVERS/COURE.FON     
+     inflating: S3DRIVERS/COURF.FON     
+     inflating: S3DRIVERS/EGA40850.FON  
+     inflating: S3DRIVERS/EGA40WOA.FON  
+     inflating: S3DRIVERS/EGA80850.FON  
+     inflating: S3DRIVERS/EGA80WOA.FON  
+     inflating: S3DRIVERS/EGAMONO.LGO   
+     inflating: S3DRIVERS/EGAMONO.RLE   
+     inflating: S3DRIVERS/HELVE.FON     
+     inflating: S3DRIVERS/HELVF.FON     
+     inflating: S3DRIVERS/MODERN.FON    
+     inflating: S3DRIVERS/OEMSETUP.INF  
+     inflating: S3DRIVERS/OEMSETUP.SAV  
+     inflating: S3DRIVERS/RESTORE.TXT   
+     inflating: S3DRIVERS/ROMAN.FON     
+     inflating: S3DRIVERS/S3911GRB.3GR  
+     inflating: S3DRIVERS/S3VGA.2GR     
+     inflating: S3DRIVERS/S3VGA.3GR     
+     inflating: S3DRIVERS/S3VSND.DRV    
+     inflating: S3DRIVERS/S3VSND24.DRV  
+     inflating: S3DRIVERS/S3VSND4.DRV   
+     inflating: S3DRIVERS/SCRIPT.FON    
+     inflating: S3DRIVERS/SERIFE.FON    
+     inflating: S3DRIVERS/SERIFF.FON    
+     inflating: S3DRIVERS/SMALLE.FON    
+     inflating: S3DRIVERS/SMALLF.FON    
+     inflating: S3DRIVERS/SSERIFE.FON   
+     inflating: S3DRIVERS/SSERIFF.FON   
+     inflating: S3DRIVERS/SYMBOLE.FON   
+     inflating: S3DRIVERS/SYMBOLF.FON   
+     inflating: S3DRIVERS/TMSRE.FON     
+     inflating: S3DRIVERS/TMSRF.FON     
+     inflating: S3DRIVERS/VDDS3.386     
+     inflating: S3DRIVERS/VDDS3VSN.386  
+    extracting: S3DRIVERS/VERSION       
+     inflating: S3DRIVERS/VGACOLOR.2GR  
+     inflating: S3DRIVERS/VGAFIX.FON    
+     inflating: S3DRIVERS/VGALOGO.LGO   
+     inflating: S3DRIVERS/VGALOGO.RLE   
+     inflating: S3DRIVERS/VGAOEM.FON    
+     inflating: S3DRIVERS/VGASYS.FON    
+   #+END_SRC
+
+4. 修改DOSBOX配置，将 =[dosbox]= 节下的 =machine= 值改成 =svga_s3=
+   
+   #+BEGIN_SRC conf
+     machine=svga_s3
+   #+END_SRC
+
+5. 启动 =dosbox=, 安装S3驱动
+   #+BEGIN_SRC shell
+     dosbox
+     cd c:\widows
+     setup
+   #+END_SRC
+   
+   [[file:images/dosbox_1534523181.png]]
+   
+   [[file:images/dosbox_1534523197.png]]
+   
+   [[file:images/dosbox_1534523485.png]]
+
+** 设置声音
+DOSBOX模拟了一个 Sound Blaster 接口，但是在Windows上需要经过设置才能通过它来发出声音。
+
+在Windows中选择 "主群组" 中的 "控制面板" -> "驱动程序" -> "新增" -> "Creative Labs Sound Blaster 1.0" -> 输入windows安装文件的路径 ->选择sbbase和irq
+
+其中 =sbbase= 和 =irq= 的值，可以在DOSBOX配置参数中的 =[sblaster]= 节中查到
+
+[[file:images/dosbox_1534524380.png]]
+
+[[file:images/dosbox_1534524413.png]]
+
+[[file:images/dosbox_1534524428.png]]
