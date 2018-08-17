@@ -1,0 +1,50 @@
+#+TITLE: 误删除dev下特殊文件怎么办
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-18 六 06:25]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+若不小心误删除了 =/dev/null= 这样的特殊文件,或者chroot到其他目录需要手工创建 =/dev/null= 怎么办呢？
+
+我们可以用 =mknod= 来重新创建
+#+BEGIN_SRC shell :dir /sudo::
+  sudo /bin/mknod -m 0666 /dev/null c 1 3
+#+END_SRC
+
+其中 =mknod= 命令用来创建块或者字符特殊文件，其语法为
+#+BEGIN_EXAMPLE
+  mknod [选项]... 名称 类型 [主设备号 从设备号]
+#+END_EXAMPLE
+
+其中:
+
++ -m 0666 :: 设定设备文件的权限
++ c :: 创建的是字符无缓冲特殊文件
++ 1和3 :: 分别表示主设备号和从设备号。
+
+调用 =mknod= 的所有这些参数都能通过 =stat= 命令预先查出来
+#+BEGIN_SRC shell :results org
+  stat /dev/null
+#+END_SRC
+
+#+BEGIN_SRC org
+  文件：/dev/null
+  大小：0         	块：0          IO 块：4096   字符特殊文件
+设备：6h/6d	Inode：32          硬链接：1     设备类型：1,3
+权限：(0666/crw-rw-rw-)  Uid：(    0/    root)   Gid：(    0/    root)
+最近访问：2018-08-18 06:19:31.450439053 +0800
+最近更改：2018-08-18 06:19:31.450439053 +0800
+最近改动：2018-08-18 06:19:31.450439053 +0800
+创建时间：-
+#+END_SRC
+
+从上面结果可以看出 =/dev/null= 是一个权限为 =0666=,设备类型为 =1,3= 的字符特殊文件
+
+=/dev/random= 和 =/dev/urandom= 也可以采取类似的方法创建
+#+BEGIN_SRC shell
+  # - name: Mknod /dev/random to Chroot
+  sudo /bin/mknod -m 0666 /dev/random     c 1 8
+  # - name: Mknod /dev/urandom to Chroot
+  sudo /bin/mknod -m 0666 /dev/urandom    c 1 9
+#+END_SRC
