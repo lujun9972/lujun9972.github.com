@@ -1,0 +1,152 @@
+#+TITLE: 保护容器部署安全的一些技巧
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,docker
+#+DATE: [2018-08-18 六 15:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+摘录自 《Docker开发指南》 13.7 "安全建议"
+
+* 设置容器内运行用户或开启USER NAMESPACE
+
+永远不要以root用户的身份在容器内运行正式的应用，否则一旦攻击者攻破了应用就能获取容器的全部访问权限。
+
+而且在未开启USER NAMESPACE的情况下，该权限会蔓延到主机挂载到容器中的卷上。
+
+更糟糕的是，若他能突破容器的限制，则它就能获得主机上的root权限了。
+
+
+* 限制容器联网
+
+容器应该仅仅打开必须的端口，且只对所需的容器开放。
+
+为了实现这一点，Docker守护进程启动时需要加上 ~--icc=false~ 参数以关容器间的默认通讯。
+
+另外，在主机上发布端口时，Docker默认在主机所有接口上发布，最好明确指定希望绑定的接口以减少攻击面
+#+BEGIN_SRC shell
+  docker run -p 192.168.1.9:8080:8080 -d httpd
+#+END_SRC
+
+* 删除容器中的setuid和setgid文件
+
+这类文件一般只在构建镜像时有用，但却极易被利用来发动提权攻击。
+
+可以通过下面命令来找出并移除二进制文件的suid/sgid设置
+#+BEGIN_EXAMPLE
+  RUN find / -perm /6000 -type f -exec chmod a-s {} \;||true
+#+END_EXAMPLE
+
+* 限制内存使用
+
+限制容器内存使用可以防止DoS攻击和应用程序的内存泄漏。
+* 限制CPU使用
+若不限制容器的CPU使用率，则攻击者可以通过一个容器将主机CPU完全占用，从而导致系统被DoS攻击瘫痪。
+
+CPU的限制参数包括如下：
+#+BEGIN_SRC shell :results org
+  docker run --help|grep cpu
+#+END_SRC
+
+#+BEGIN_SRC org
+      --cpu-period int                 Limit CPU CFS (Completely Fair
+      --cpu-quota int                  Limit CPU CFS (Completely Fair
+      --cpu-rt-period int              Limit CPU real-time period in
+      --cpu-rt-runtime int             Limit CPU real-time runtime in
+  -c, --cpu-shares int                 CPU shares (relative weight)
+      --cpus decimal                   Number of CPUs
+      --cpuset-cpus string             CPUs in which to allow execution
+      --cpuset-mems string             MEMs in which to allow execution
+#+END_SRC
+
+* 限制重启次数
+若系统不断崩溃又不断重启，将会造成大量系统时间和资源浪费。
+
+为了防止这种情况出现，我们可以将重启策略由 =always= 改成 =on-failure= 并指定重启次数
+
+#+BEGIN_SRC shell
+  docker run -d --restart=on-failure:10 $image
+#+END_SRC
+
+容器的重启次数可以通过 =docker inspect= 的 =.RestartCount= 元数据找到
+#+BEGIN_SRC shell
+  docker inspect -f "{{.RestartCount}}" $container
+#+END_SRC
+
+另外，Docker重启容器的时间间隔采用指数递增的方式进行，即第一次重启等待100ms，第二次200ms，第三次400ms，这个措施能有效防止利用重启机制引发DoS攻击
+
+* 设置文件系统只读
+阻止攻击者对容器内文件系统的写入可以抵御系统的攻击。
+
+在 =docker run= 中使用 =--read-only= 参数可以把容器的文件系统设置为只读:
+#+BEGIN_SRC shell :results org
+  docker run --read-only ubuntu touch x 2>&1 || exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+touch: cannot touch 'x': Read-only file system
+#+END_SRC
+
+给数据卷参数后加上 =:ro= 则能够把卷设为只读
+#+BEGIN_SRC shell :results org
+  docker run -v ${pwd}:/pwd:ro ubuntu touch /touch /pwd/x 2>&1 ||exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+touch: cannot touch '/pwd/x': No such file or directory
+#+END_SRC
+
+* 限制内核能力
+我们可以通过 =docker run= 的 =--cap-add= 和 =--cap-drop= 参数来控制容器允许使用的内核能力。
+
+最不安全的做法就是通过 =--privileged= 参数放开权限。
+
+一般的做法是先把所有权限清空，再把需要的权限添加回去
+#+BEGIN_SRC shell
+  docker run --cap-drop all --cap-add CHOWN ubuntu chown 770 /tmp
+#+END_SRC
+
+* 应用资源限制
+Linux内核定义了一些用于进程的资源限制，可以限制进程允许fork的子进程数，或者允许打开的文件描述符数量等。
+
+通过 docker run 的 =--ulimit= 选项可以将限制也用于容器上。
+同时，我们可以在启动Docker守护进程时加上 =--default-ulimit= 选项来给所有容器设置资源限制的默认值。
+选项参数中包括两个数值，其格式为 ~资源=软限制:硬限制~ ,若只提供一个值，则表示同时作为软限制和硬限制。
+
+比较常用的限制包括以下几个:
+
+** cpu
+把CPU时间限制为给定参数，以秒为单位。
+
+当达到软限制后，会发送一个 SIGXCPU给容器，达到硬限制后则会发送一个 SIGKILL 信号给容器
+#+BEGIN_SRC shell
+  docker run --ulimit cpu=12:14 stress stress --cpu 1
+#+END_SRC
+
+** nofile
+制定容器中能够同时打开的最多文件描述符数量
+#+BEGIN_SRC shell
+  docker run --ulimit nofile=5 ubuntu cat /etc/hostname
+#+END_SRC
+
+需要注意的是，操作系统本身会占用3个文件描述符，分别对应stdin,stdout,stderr
+
+** nproc
+指定运行容器的用户能够创建进程的最大数量。
+#+BEGIN_SRC shell
+  docker run --user 500 --ulimit nproc=2 -d ubuntu sleep 100
+#+END_SRC
+
+需要注意的是： *nproc限制的不是容器，而是运行这个容器的用户的所有进程数量*
+
+* 启用Linux安全模块(LSM)
+最常见的Linux安全模块包括AppArmor和SELinux。
+
+通过 =docker run= 的 =--security-opt= 选项可以设置容器的标签，使之与LSM整合在一起
+
+* 审核容器和镜像
+
++ 定期检查正在运行的容器，确保使用的镜像是最新的，而且这些镜像所使用的如那件也是最新的，没有安全隐患的。
+
++ 使用 =docker diff= 检查容器与镜像之间的差异
+
++ 运行极简的镜像，其中只包含应用程序必需的文件和程序库
