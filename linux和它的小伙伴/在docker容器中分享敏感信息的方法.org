@@ -1,0 +1,38 @@
+#+TITLE: 在docker容器中分享敏感信息的方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,docker
+#+DATE: [2018-08-18 六 13:16]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+摘自《Docker开发指南》9.7节"分享秘密信息"
+* 直接将敏感信息保存到镜像中
+
+这是最简单的方法，但这意味着任何能够获取镜像的人都能看到敏感信息，而且它还无法被删除，一直都会存在于上层镜像中。
+
+另一种变体是将敏感信息加密后保存到镜像中，但你要注意将解密密钥传到使用者手中时不要被人攻击。
+
+* 通过环境变量传递敏感信息
+
+这是 “[[http://12factor.net][十二要素应用宣言]]” 推荐的方法，使用起来也很简单，只需要把敏感信息作为参数传递给docker run即可
+#+BEGIN_SRC shell
+  docker run -d -e API_TOKEN=xxxxxxxxxxxx image
+#+END_SRC
+
+但这种方法还有一些缺陷：
+
++ 环境变量对所有子进程、docker inspect以及其他连接的容器可见
++ 环境变量可能会被记录到日志中，从而暴露敏感信息
+
+* 将敏感信息以文件的形式存储到卷中
+#+BEGIN_SRC shell
+  docker run -d -v /secret-file:/secret-file:ro image
+#+END_SRC
+
+这种方法的优势在于敏感信息不会暴露给docker inspect和连接容器。
+但由于敏感信息以文件形式保存，因此要注意不要不小心被提交到版本控制系统中。
+
+* 使用第三方键值存储应用
+第三方键值存储容器可以对容器进行身份验证，还可以实现灵活管理敏感信息，是目前来说最好的解决方案.
+
+但缺点是太过复杂。
