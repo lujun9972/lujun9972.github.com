@@ -1,0 +1,88 @@
+#+TITLE: 如何多用户共享tmux session
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-19 日 21:21]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+tmux server管理着多个session，而一个session可以被多个tmux client连接。
+这些tmux client通过一个 UNIX Damain Socket 文件来跟tmux server通讯.
+
+因此，要想让多个用户共享tmux session，只需要指定这些用户调用的tmux client连接上同一个Socket文件即可。
+
+而这可以分成两种情况:
+
++ 多个用户使用同一个操作系统帐号
+
++ 多个用户使用不同的操作系统帐号
+  
+这两者的区别主要在Socket文件的权限问题
+
+* 多个用户使用同一个操作系统帐号
+在多个用户使用同一个操作系统帐号时，不存在用户访问Socket文件的权限问题，因此操作起来特别简单,只需要多个用户指定同一个tmux session名字就行了
+
+1. 第一个用户新建一个tmux session
+   #+BEGIN_SRC shell 
+     tmux new-session -s mysession
+   #+END_SRC
+2. 第二个用户连接上这个tmux session即可
+   #+BEGIN_SRC shell
+     tmux attach-session -t mysession
+   #+END_SRC
+
+* 多个用户使用不同的操作系统帐号
+当多个用户使用不同帐号登录操作系统时，就存在访问Socket文件的权限问题了。
+
+那么 tmux server 使用的 Socket 文件在哪里呢？
+
+根据 tmux manual page 的说法，tmux的 socket 文件默认为 =/tmp/= 或 =${TMUX_TMPDIR}/= 目录下的 =default= 文件。
+但当使用 =-L socket-name= 指定socket-name时，该socket文件为 =/tmp/= 或 =${TMUX_TMPDIR}/= 目录下的 =${socket-name}= 文件.
+甚至，我们可以通过 =-S socket-path= 的方法来直接指定 Socket 文件的路径。
+
+为了让多个用户在不同帐号间共享tmux session，可以这么做:
+
+1. 第一个用户指定一个Socket文件来创建tmux session
+   #+BEGIN_SRC shell
+     tmux -S /tmp/shared new-session -s shared
+   #+END_SRC
+
+   这时你会看到在 =/tmp/= 目录下多了一个 =shared= 文件
+   #+BEGIN_SRC shell :results org
+     ls -l /tmp/shared
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   srwxrwx--- 1 lujun9972 lujun9972 0 8月  19 23:25 /tmp/shared
+   #+END_SRC
+
+   你会发现user和group都有权限对其进行读写
+
+2. 为了让其他账户能够访问socket文件，有两种方法
+
+   第一种方法是让这些账户处于同一个用户组(例如joint)中，再将socket文件的宿组改为那个用户组(即joint组)
+   #+BEGIN_SRC shell
+     usermod -a -G joint user1
+     usermod -a -G joint user2
+     chown :joint /tmp/shared
+   #+END_SRC
+
+   另一种方法当然就是让socket文件 other 也能访问啦
+   #+BEGIN_SRC shell
+     chmod 777 /tmp/shared
+   #+END_SRC
+   
+   若其他用户只是查看 tmux session 而不做输入的话，也可以不赋予写权限
+   #+BEGIN_SRC shell
+     chmod 775 /tmp/shared
+   #+END_SRC
+   
+3. 其他用户可以通过这个 socket 文件连接上同一个 session 了
+   #+BEGIN_SRC shell
+     tmux -S /tmp/shared attach-session -t shared
+   #+END_SRC
+
+   或者 
+
+   #+BEGIN_SRC shell
+     tmux -S /tmp/shared attach-session -t shared -r
+   #+END_SRC
