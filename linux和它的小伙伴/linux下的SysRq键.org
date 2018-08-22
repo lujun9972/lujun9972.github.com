@@ -1,0 +1,171 @@
+#+TITLE: linux下的SysRq键
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-22 三 11:16]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://en.wikipedia.org/wiki/Magic_SysRq_key][SysRq]] 键在 QWERT 键盘上与 =PrtSc= 同键,通过按下 =ALT+SysRq+<command key>= 可以直接向linux kernel发送预设的系统操作指令。
+这套组合键提供了一系列在系统崩溃时常用到的功能，比如同步数据、杀进程、卸载文件系统，甚至系统重启.
+
+* 启用SysRq
+
+** 对内核的要求
+
+启用 =SysRq= 的前提是在linux kernel编译时启用了 =CONFIG_MAGIC_SYSRQ= 选项.
+
+在目前主流的发行版linux中都启用了该选项，但若你是自己编译的内核，则有必要搜索一下内核的config文件了，确保里面有一句
+#+BEGIN_EXAMPLE
+  CONFIG_MAGIC_SYSRQ=y
+#+END_EXAMPLE
+
+内核中还有一个与SysRq相关的配置项:
+#+BEGIN_EXAMPLE
+  CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE=0x01b6
+#+END_EXAMPLE
+这个配置项指定了默认SysRq的值，这个值表示kernel会对哪些功能产生反应。
+
+** 查看当前SysRq的值
+我们可以通过查看 =/proc/sys/kernel/sysrq= 的值来判断Kernel会对哪些功能产生反应.
+#+BEGIN_SRC shell :results org
+  cat /proc/sys/kernel/sysrq
+#+END_SRC
+
+#+BEGIN_SRC org
+16
+#+END_SRC
+
+这里你会看到一个数字，这个数字可以转换成一个9位比特的形式，其中每一位的比特都有一个含义如下:
+| 数字 | 位数 | 意义                                   |
+|------+------+----------------------------------------|
+|    0 |    1 | 完全禁用sysrq                          |
+|    1 |    1 | 允许所有的sysrq功能                    |
+|    2 |    2 | 允许控制终端日志级别                   |
+|    4 |    3 | 允许控制键盘输入类型(SAK,unraw)        |
+|    8 |    4 | 允许调试进程dump                       |
+|   16 |    5 | 允许执行sync命令                       |
+|   32 |    6 | 允许重新挂载文件系统为之读             |
+|   64 |    7 | 允许发送信号给进程(term,kill,oom-kill) |
+|  128 |    8 | 允许重启/关机                          |
+|  256 |    9 | 允许调整实时任务的优先级               |
+
+因此，我这里的 =16= 表示允许通过 SysRq 来同步数据到磁盘中去，
+而数字 =130= 转换成二进制就是 =010000010=,根据表中的对应关系很容易看出允许重启/关机以及调整终端日志级别。
+
+** 更改SysRq的值
+如果只是希望临时更改 =SysRq= 的值，那么很简单，只需要将新的值写入到 =/proc/sys/kernel/sysrq= 中去
+#+BEGIN_SRC shell :dir /sudo::
+  echo "1" |sudo tee /proc/sys/kernel/sysrq
+#+END_SRC
+或者通过 =sysctl= 来进行设置
+#+BEGIN_SRC shell :dir /sudo::
+  sysctl -w kernel.sysrq=1
+#+END_SRC
+
+如果需要每次启动时都自动修改SysRq的值，则需要修改配置文件
+#+BEGIN_SRC shell :dir /sudo::
+  echo "kernel.sysrq = 1"|sudo tee -a /etc/sysctl.conf
+#+END_SRC
+
+* 使用SysRq
+使用SysRq有两种方式:
+
+一种是直接通过键盘 =Alt+SysRq+<command key>(部分笔记本上是Alt+Fn+PrtSrc+<command key>)= 来出发，
+
+还有一种是直接通过 =/proc/sysrq-trigger= 接口来完成.
+#+BEGIN_SRC shell :dir /sudo::
+  echo “ b ” |sudo tee /proc/sysrq-trigger
+#+END_SRC
+
+其中，这里每个 =command-key= 都对应一种kernel的行为，而且需要说明的是，不同种类的键盘上，相同kernel行为对应的 =command-key= 居然是不同的！
+
+下面表格就是各个kernel行为对应的 =command-key= 的说明:
+
+| Action                                                                                                                                    | 	QWERTY | 	Dvorak | 	AZERTY               | 	Colemak |
+|-------------------------------------------------------------------------------------------------------------------------------------------+----------+----------+------------------------+-----------|
+| 设置控制台日志级别(console_loglevel),它决定了哪些kernel信息会被输出到控制台上                                                             | 	0 - 9  | 	0 - 9  | 0 - 9(without ⇧ Shift) | 	0 - 9   |
+| 不同步并卸载文件系统，立即重启系统                                                                                                        | b        | x        | b                      | b         |
+| 让系统立即崩溃. 在配置得当的情况下会产生一个 crashdump                                                                                    | c        | j        | c                      | c         |
+| 显示所有排它锁 (需要内核启用CONFIG_LOCKDEP选项)                                                                  | d        | e        | d                      | s         |
+| 发送 SIGTERM 信号到除了 init (PID 1) 外的所有进程                                                                                         | e        | .        | e                      | f         |
+| 触发 oom_kill, 会随机杀掉一个进程以缓解 OOM                                                                                               | f        | u        | f                      | t         |
+| 当进入内核模式时，切换到内核的 framebuffer 控制台. 若有内核调试器 kdb，则进入该调试器中| g        | i        | g                      | d         |
+| 在控制台上输出一个简短的帮助信息. (其他不能识别的key也会输出帮助信息)                                                                     | h        | d        | h                      | h         |
+| 发送 SIGKILL 信号到除了 init (PID 1) 外的所有进程                                                                                         | i        | c        | i                      | u         |
+| 强制通过 FIFREEZE ioctl 冻结文件系统.                                                                                                     | j        | h        | j                      | n         |
+| 杀掉当前虚拟控制台中的所有进程 (包括 X 和 SVGALib 程序).                                                                                  | k        | t        | k                      | e         |
+| 列出所有活动CPU上的 stack backtrace                                                                                                       | l        | n        | l                      | i         |
+| 在控制台上输出当前内存信息                                                                                                                | m        | m        | ,                      | m         |
+| 重置所有高优先级和实时任务的 nice 级别                                                                                                    | n        | b        | n                      | k         |
+| 关闭系统                                                                                                                                  | o        | r        | o                      | y         |
+| 在控制台输出当前寄存器和标志位信息                                                                                                        | p        | l        | p                      | ;         |
+| Display all active high-resolution timers and clock sources.                                                                              | q        | '        | a                      | q         |
+| 将键盘从 raw 模式(常被诸如X11和SVGALib这样的程序所使用)切换到 XLATE模式                                                                   | r        | p        | r                      | p         |
+| 同步所有已挂载的文件系统                                                                                                                  | s        | o        | s                      | r         |
+| 在控制台输出当前任务列表                                                                                                                  | t        | y        | t                      | g         |
+| 重新以只读模式重新挂载所有已挂载的文件系统                                                                                                | u        | g        | u                      | l         |
+| 强制恢复 framebuffer console. 若为ARM处理器,则会导致 ETM buffer dump.                                                                     | v        | k        | v                      | v         |
+| 显示所有阻塞状态(状态为D)的任务                                                                                                           | w        | ,        | z                      | w         |
+| Used by xmon interface on PPC/PowerPC platforms.                                                                                          | x        | q        | x                      | x         |
+| 显示全局的CPU寄存器内容 (仅对SPARC-64平台有效)                                                                        | y        | f        | y                      | j         |
+| Dump the ftrace buffer                                                                                                                    | z        | ;        | w                      | z         |
+| 输出一份简单的系统支持SysRq的键列表                                                                                                       | space    | space    | space                  | space     |
+
+
+** 常见的几种功能键组合
+下面列出几个常见的功能键组合:
+
+*** R-E-I-S-U-B:安全重启系统
+这套组合键大致相当于reboot命令：
+
++ unRaw – 把键盘设置为 XLATE 模式，使按键可以穿透 x server 捕捉传递给内核
+
++ tErminate – 向除 init 外进程发送 SIGTERM 信号，让其自行结束. 这一步推荐等待30秒让进程有足够的时间进行收尾的嗯做。
+
++ kIll - 向除 init 以外所有进程发送 SIGKILL 信号，强制结束进程. 这一步推荐等待10秒，保证所有进程都退出了
+
++ Sync – 同步缓冲区数据到硬盘，避免数据丢失. 这一步在能看到输出的情况下等到"Emergency Sync complete" 后再做后续动作，否则推荐等待10秒
+
++ Unmount – 将所有已经挂载的文件系统 重新挂载为只读. 该操作通常也有一定延时,请等到"Emergency Remount complete" 出现过后再进行后续操作,否则推荐等待10秒
+
++ reBoot - 立即重启计算机
+
+*** 恢复系统挂起
+若仅仅是因为资源消耗过量引起系统挂起就重启系统显然是不好的，我们可以尝试通过回收一些资源的方式来回复系统挂起。
+
+SysRq中用来结束进程的command-key包括 E-I-K-F，其中:
+
++ E 和 I 太凶残，它会杀掉除了 init 外的所有进程,属于杀敌一千自损八百的操作。因此在一般情况下不会轻易使用
+
++ F 则是利用 OOM-Kiler选择一个进程来结束,对于由于内存不足引起的挂起比较有效，但有时候OOMKiller也可能会误判杀掉一些长期运行的后台程序。
+
++ K 杀掉与当前控制台有关的进程组，比较推荐用这种方法回复系统
+
+此外，若系统挂起是由于实时任务消耗太多CPU引起的，则可以通过 =N= 来降低实时任务运行的优先级来缓解挂起症状。
+*** 获取系统信息
+SysRq还提供了几个用于获取系统信息的commandkey，在恢复系统挂起前推荐执行这些commandkey，以记录下当前系统状态。
+
++ M :: 打印内存使用信息
+
++ W :: 打印CPU寄存器上下文和程序调用栈回溯信息
+
++ P :: 打印CPU寄存器信息,比如正在执行的进程名，运行函数，寄存器上下文，以及程序的调用栈回溯等
+
++ T :: 打印进程列表,各进程的名称，进程 PID，父 PID 兄弟 PID 以及进程运行状态等相关信息
+* 查看SysRq的输出信息
+
+从上面的列表中我们可以看到，使用SysRq能够输出大量的信息。这些信息，默认会输出到syslog中.
+同时，若设置的 =console_loglevel(0-9)= 大于 =default_message_loglevel= 则输出也会输出到本地控制台终端上去。
+另外，若设置的 =console_loglevel= 大于 =default_message_loglvel= 则输出还会通过netconsole输出到远程机器上去。
+
+总体来说，syslog中记录的日志应该是最完整的，然而由于负责记录日志的 =syslogd= 本身是一个用户进程，在某些情况下可能会被杀掉，从而导致日志记录不下来。
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  echo " "|sudo tee /proc/sysrq-trigger
+  dmesg |tail -n 1
+#+END_SRC
+
+#+BEGIN_SRC org
+ 
+[17899.255261] sysrq: SysRq : HELP : loglevel(0-9) reboot(b) crash(c) terminate-all-tasks(e) memory-full-oom-kill(f) kill-all-tasks(i) thaw-filesystems(j) sak(k) show-backtrace-all-active-cpus(l) show-memory-usage(m) nice-all-RT-tasks(n) poweroff(o) show-registers(p) show-all-timers(q) unraw(r) sync(s) show-task-states(t) unmount(u) force-fb(V) show-blocked-tasks(w) dump-ftrace-buffer(z) 
+#+END_SRC
