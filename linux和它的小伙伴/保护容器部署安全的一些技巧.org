@@ -57,6 +57,19 @@ CPU的限制参数包括如下：
       --cpuset-cpus string             CPUs in which to allow execution
       --cpuset-mems string             MEMs in which to allow execution
 #+END_SRC
+* 限制IO
+#+BEGIN_SRC shell :results org
+  docker help run |grep -E 'jbps|IO'
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+Usage:	docker run [OPTIONS] IMAGE [COMMAND] [ARG...]
+      --blkio-weight uint16            Block IO (relative weight),
+      --blkio-weight-device list       Block IO weight (relative device
+      --device-read-iops list          Limit read rate (IO per second)
+      --device-write-iops list         Limit write rate (IO per second)
+#+END_SRC
 
 * 限制重启次数
 若系统不断崩溃又不断重启，将会造成大量系统时间和资源浪费。
@@ -150,3 +163,30 @@ Linux内核定义了一些用于进程的资源限制，可以限制进程允许
 + 使用 =docker diff= 检查容器与镜像之间的差异
 
 + 运行极简的镜像，其中只包含应用程序必需的文件和程序库
+* 为Docker Daemon开启TLS加密传输
+若Docker Daemon通过TCP方式与外界通讯，则可能传输内容会被截获，为此Docker Daemon提供了4个参数来开启TLS加密传输
+#+BEGIN_SRC shell
+  docker daemon --tlsverify \
+         --tlscacert=ca.pem \
+         --tlscert=server-cert.pem \
+         --tlskey=server-key.pem \
+         -H=0.0.0.0:2376
+#+END_SRC
+
++ --tlsverify :: 安全传输验证
++ --tlscacert=ca.pem :: 信任的证书
++ --tlscert=server-cert.pem :: 服务证书
++ --tlskey=server-key.pem :: 服务器或客户端密钥
+
+
+当然，相应的在客户端连接时也需要设置这四个参数:
+#+BEGIN_SRC shell
+  docker --tlsverify \
+         --tlscacert=ca.pem \
+         --tlscert=cert.pem \
+         --tlskey=key.pem \
+         -H=${DAEMON_HOST}:2376
+#+END_SRC
+* 注意那些未隔离的内核资源
+目前namespace在隔离上并不完善，还有许多未隔离的内核资源可能会影响到容器安全，比如 =procfs=, =syslog= 等
+* 
