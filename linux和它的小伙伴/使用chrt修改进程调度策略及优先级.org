@@ -1,0 +1,88 @@
+#+TITLE: 使用chrt修改进程调度策略及优先级
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-28 二 16:37]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* Linux内核调度策略
+linux内核有五种调度方法：
+
++ SCHED_FIFO :: first in first out 实时调度策略
+
++ SCHED_RR :: robin round 实时调度策略
+
++ SCHED_DEADLINE :: 基于Earliest Deadline First (EDF) 调度算法
+
++ SCHED_OTHER :: 分时调度策略
+
++ SCHED_BATCH :: 批处理
+
++ SCHED_IDLE :: 优先级最低的策略
+
+其中，前三个是实时进程的调度方法,后两个时一般进程的调度算法。 
+实时实时进程一般由操作系统创建，普通用户只能创建普通进程，且不管怎样，实时进程的优先级总是要高于普通进程。
+实时进程根据实时优先级决定调度权值，优先级的设定范围默认为 =1-99=
+
+FIFO实时调度策略中的进程一旦处于可执行状态就会一直执行，直到它自己阻塞或者被优先级更高的进程抢占。一般用于延时要求较短的进程，被赋予较高的优先级。
+
+RR实时调度策略中的进程会有一个时间片，进程执行直到时间片用完或者自己阻塞后系统将重新分配时间片，并该进程置于就绪队列尾.从而保证了所有具有相同优先级的RR任务的调度公平。
+RR实时调度策略同时也能被优先级更高的进程抢占。一般用于延时要求稍长的进程，被赋予较低的优先级。
+
+SCHED_DEADLINE是新支持的实时进程调度策略，针对突发型计算，且适用于延迟和完成时间高度敏感的任务
+
+后三个进程是普通进程的调度策略。
+
+SCHED_OTHER策略是普通进程的默认调度策略。
+SCHED_OTHER调度策略首先根据进程的nice值确定分配CPU的执行时间。若进程没有等待资源则进程变为就绪状态。
+然后调度程序遍历就绪队列中的进程，计算每个进程的动态优先级(counter+20-nice)，并挑选动态优先级最高的进程去运行，直到时间片用完或主动放弃CPU。
+
+SCHED_BATCH策略与SCHED_OTHER很类似，区别在于该策略认为进程是非交互式的CPU密集型进程，该策略的进程不会去抢占其他SCHED_OTHER调度策略的进程。
+
+SCHED_IDLE策略则是只有在没有其他进程可运行的状态下才才会被调度
+
+* 使用chrt查看/修改进程调度策略
+
+** 查看进程的调度策略及优先级
+#+BEGIN_SRC shell
+  chrt -p $pid
+#+END_SRC
+
+比如，我想查看Emacs进程的调度策略及优先级那么可以
+#+BEGIN_SRC shell :results org
+  chrt -p $(pidof emacs)
+#+END_SRC
+
+#+BEGIN_SRC org
+pid 1032 当前的调度策略︰ SCHED_OTHER
+pid 1032 的当前调度优先级：0
+#+END_SRC
+
+** 查看每种策略的有效优先级范围
+#+BEGIN_SRC shell :results org
+  chrt -m
+#+END_SRC
+
+#+BEGIN_SRC org
+SCHED_OTHER 最小/最大优先级	: 0/0
+SCHED_FIFO 最小/最大优先级	: 1/99
+SCHED_RR 最小/最大优先级	: 1/99
+SCHED_BATCH 最小/最大优先级	: 0/0
+SCHED_IDLE 最小/最大优先级	: 0/0
+SCHED_DEADLINE 最小/最大优先级	: 0/0
+#+END_SRC
+
+** 设置进程的调度策略
+#+BEGIN_SRC shell
+  chrt [-b/-f/-o/-r/-i/-d] -p [$priority] $pid
+#+END_SRC
+
+其中:
+
++ -b :: 设置为 SCHED_BATCH 调度策略
++ -f :: 设置为 SCHED_FIFO 调度策略
++ -o :: 设置为 SCHED_OTHER 调度策略
++ -r :: 设置为 SCHED_RR 调度策略
++ -i :: 设置为 SCHED_IDLE 调度策略
++ -d :: 设置为 SCHED_DEADLINE 调度策略
++ priority :: 为要设置的优先级
