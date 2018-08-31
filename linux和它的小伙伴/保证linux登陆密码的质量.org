@@ -1,0 +1,140 @@
+#+TITLE: 保证linux登陆密码的质量
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-31 五 17:26]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 检查现有密码的质量
+使用 =pwscore= 命令能够给密码进行打分，Archlinux中这个命令在 =libpwquality= 这个包中
+#+BEGIN_SRC shell :dir /sudo:: :results org
+  sudo pacman -S libpwquality --noconfirm
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) libpwquality-1.4.0-1
+
+Total Installed Size:  0.37 MiB
+
+:: Proceed with installation? [Y/n] 
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) installing libpwquality                      [----------------------]   0%(1/1) installing libpwquality                      [######################] 100%
+Optional dependencies for libpwquality
+    python2: Python bindings [installed]
+:: Running post-transaction hooks...
+(1/1) Arming ConditionNeedsUpdate...
+#+END_SRC
+
+安装之后就能用它来检查密码强度了：
+#+BEGIN_SRC shell :results org
+  echo "1234567" |pwscore 2>&1 || exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+密码质量检查失败：
+密码少于 8 个字符
+#+END_SRC
+
+#+BEGIN_SRC shell :results org
+  echo "selective" |pwscore 2>&1 || exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+密码质量检查失败：
+密码未通过字典检查 - ?????????????????????
+#+END_SRC
+
+#+BEGIN_SRC shell :results org
+  echo "djTdysi87" |pwscore 2>&1 || exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+43
+#+END_SRC
+
+* 设置密码要求
+我们可以通过修改 =/etc/security/pwquality.conf= 来修改密码的质量要求。
+
+#+BEGIN_SRC shell :results org
+  cat /etc/security/pwquality.conf
+#+END_SRC
+
+#+BEGIN_SRC org
+# Configuration for systemwide password quality limits
+# Defaults:
+#
+# Number of characters in the new password that must not be present in the
+# old password.
+# difok = 1
+#
+# Minimum acceptable size for the new password (plus one if
+# credits are not disabled which is the default). (See pam_cracklib manual.)
+# Cannot be set to lower value than 6.
+# minlen = 8
+#
+# The maximum credit for having digits in the new password. If less than 0
+# it is the minimum number of digits in the new password.
+# dcredit = 0
+#
+# The maximum credit for having uppercase characters in the new password.
+# If less than 0 it is the minimum number of uppercase characters in the new
+# password.
+# ucredit = 0
+#
+# The maximum credit for having lowercase characters in the new password.
+# If less than 0 it is the minimum number of lowercase characters in the new
+# password.
+# lcredit = 0
+#
+# The maximum credit for having other characters in the new password.
+# If less than 0 it is the minimum number of other characters in the new
+# password.
+# ocredit = 0
+#
+# The minimum number of required classes of characters for the new
+# password (digits, uppercase, lowercase, others).
+# minclass = 0
+#
+# The maximum number of allowed consecutive same characters in the new password.
+# The check is disabled if the value is 0.
+# maxrepeat = 0
+#
+# The maximum number of allowed consecutive characters of the same class in the
+# new password.
+# The check is disabled if the value is 0.
+# maxclassrepeat = 0
+#
+# Whether to check for the words from the passwd entry GECOS string of the user.
+# The check is enabled if the value is not 0.
+# gecoscheck = 0
+#
+# Whether to check for the words from the cracklib dictionary.
+# The check is enabled if the value is not 0.
+# dictcheck = 1
+#
+# Whether to check if it contains the user name in some form.
+# The check is enabled if the value is not 0.
+# usercheck = 1
+#
+# Whether the check is enforced by the PAM module and possibly other
+# applications.
+# The new password is rejected if it fails the check and the value is not 0.
+# enforcing = 1
+#
+# Path to the cracklib dictionaries. Default is to use the cracklib default.
+# dictpath =
+#+END_SRC
+
+从中可以看到很多配置项，比如 ~minlen~ 设定了密码长度最少不能少于多少位
+
+
+
