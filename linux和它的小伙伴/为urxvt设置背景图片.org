@@ -1,0 +1,66 @@
+#+TITLE: 为urxvt设置背景图片
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-09-04 二 16:41]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 确保urxvt支持background images
+
+要让urxvt设置桌面背景，首先需要确保urxvt编译时启用了 =pixbuf= 功能，可以通过下面命令来确认urxvt是否支持pixbuf
+#+BEGIN_SRC shell :results org
+  urxvt -help 2>&1 |grep ^options |grep pixbuf
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+options: perl,xft,styles,combining,blink,iso14755,unicode3,encodings=eu+vn+jp+jp-ext+kr+zh+zh-ext,fade,transparent,tint,pixbuf,XIM,frills,selectionscrolling,wheel,slipwheel,cursorBlink,pointerBlank,scrollbars=plain+rxvt+NeXT+xterm
+#+END_SRC
+
+如果有结果则表示urxvt是支持pixbuf的
+
+archlinux的默认urxvt是不支持background images的，你需要安装aur中的 =rxvt-unicode-pixbuf=
+#+BEGIN_SRC shell
+  aurman -S rxvt-unicode-pixbuf
+#+END_SRC
+
+或者自己编译
+#+BEGIN_SRC shell
+  git clone https://github.com/exg/rxvt-unicode
+  cd rxvt-unicode
+  ./configure --enable-256-color --enable-pixbuf 
+#+END_SRC
+
+* 为urxvt设置背景图片
+** 通过 urxvt 的 =-pixmap= 选项来设置背景图片
+#+BEGIN_SRC shell
+  urxvt -pixmap file[;oplist]
+#+END_SRC
+这里 =file= 就是指向图片的路径，而 =oplist= 则指定了修改图片的一些操作，这些操作以冒号间隔
+
+其中urxvt支持的图片操作包括:
+
++ WxH+X+Y :: 其中W和H为的图片缩放到urxvt窗口的宽高比率(0表示不缩放，保持原图片大小)，X和Y指定了图片中心的百分比位置。默认为100x100+50+50
++ op=tile :: 平铺图片
++ op=keep-aspect :: 缩放图片时保持宽高比率
+                    
+urxvt本身也预设了许多背景图片的设置方式:
+
++ syle=tiled :: 图片本身不缩放，平铺。相当于 =0x0+0+0;op=title=
++ style=aspect-stretched :: 图片居中显示，占据整个窗口，但缩放保持宽高比例.相当于 =100x100+50+50:op=keep-aspect=
++ style=stretched :: 图片占据整个窗口。相当于 =100x100=
++ style=centered :: 图片居中，不缩放。相当于 =0x0+50+50=
+
+这种方法比较灵活，比如我们可以定义一个alias，让urxvt执行时自动从 =~/Pictures/wallpaper= 中随机挑选一张图片作为背景图片
+#+BEGIN_SRC shell
+  alias urxvt='urxvt -pixmap $(find ~/Pictures/wallpaper -type f|shuf|head -n 1)'
+#+END_SRC
+** 通过配置.Xdefaults
+第二种方法是通过设置Xresource中的 =backgroundPixmap= 来实现,比如
+#+BEGIN_SRC conf-xdefaults
+  URxvt*backgroundPixmap: /home/lujun9972/Pictures/wallpaper/1.png;style=tiled
+  URxvt.backgroundPixmap: /home/lujun9972/Pictures/wallpaper/1.png
+  URxvt.backgroundPixmap: /home/lujun9972/Pictures/wallpaper/1.png;+0+0:tile
+#+END_SRC
+
+这种方法则比较死板，无法做到随机设置背景图片。
