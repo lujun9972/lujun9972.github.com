@@ -1,0 +1,206 @@
+#+TITLE: btrfs文件系统管理
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-09-05 三 20:07]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+记录btrfs文件系统的常用操作
+
+* 格式化btrfs格式的文件系统
+
+#+BEGIN_SRC shell
+  sudo mkfs.btrfs /dev/sdc1
+#+END_SRC
+
+通过 =-O= 选项可以设置btrfs文件系统的fature，这些feature可以通过下面命令看到
+#+BEGIN_SRC shell :results org
+  mkfs.btrfs -O list-all 2>&1
+#+END_SRC
+
+#+BEGIN_SRC org
+Filesystem features available:
+mixed-bg            - mixed data and metadata block groups (0x4, compat=2.6.37, safe=2.6.37)
+extref              - increased hardlink limit per file to 65536 (0x40, compat=3.7, safe=3.12, default=3.12)
+raid56              - raid56 extended format (0x80, compat=3.9)
+skinny-metadata     - reduced-size metadata extent refs (0x100, compat=3.10, safe=3.18, default=3.18)
+no-holes            - no explicit hole extents for files (0x200, compat=3.14, safe=4.0)
+#+END_SRC
+
+* 挂载btrfs文件系统
+
+#+BEGIN_SRC shell
+  sudo mount -t btrds -o rw /dev/sdc1 /mnt
+#+END_SRC
+
+btrfs还有许多feature，可以通过 =-o= 来指定。比较特别的选项有:
+
++ ssd :: btrfs 针对ssd硬盘进行过特殊的优化，尽可能的将写入的数据分散到磁盘的各个位置，防止出现单个位置过多次的写入导致
++ compress=lzo :: 启用自动压缩,压缩算法为lzo。其他可选压缩算法有zlib,zstd,或者no
+
+#+BEGIN_SRC shell
+  sudo mount -t btrds -o rw,ssd,compress=lzo /dev/sdc1 /mnt/mybtrfs
+#+END_SRC
+
+* 修改Btrfs文件系统的大小
+我们还可以修改创建好的btrfs文件系统的大小.
+
+下面命令将文件系统减少2G
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs filesystem resize -2g /mnt
+#+END_SRC
+
+#+BEGIN_SRC org
+Resize '/mnt' of '-2g'
+#+END_SRC
+
+或者通过下面命令增加文件系统大小
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs filesystem resize +2g /mnt
+#+END_SRC
+
+#+BEGIN_SRC org
+Resize '/mnt' of '+2g'
+#+END_SRC
+
+* 创建快照
+快照是对文件系统某一时刻的完全备份。建立快照后，对文件系统的修改不会影响快照中的内容
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs subvolume snapshot /mnt /mnt/snap1
+#+END_SRC
+
+#+BEGIN_SRC org
+Create a snapshot of '/mnt' in '/mnt/snap1'
+#+END_SRC
+
+若要创建只读快照，则可以使用 =-r= 选项
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs subvolume snapshot -r /mnt /mnt/snap2
+#+END_SRC
+
+#+BEGIN_SRC org
+Create a readonly snapshot of '/mnt' in '/mnt/snap2'
+#+END_SRC
+
+* 子卷
+我们可以把btrfs文件系统的一部分配置为一个完整的子文件系统，这些子文件系统被称为subvolume(子卷).
+这些子卷共享底层的设备空间，在需要磁盘空间时便从底层设备中分配。
+
+** 创建子卷
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs subvolume create /mnt/sub1
+#+END_SRC
+
+#+BEGIN_SRC org
+Create subvolume '/mnt/sub1'
+#+END_SRC
+
+** 列出子卷
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs subvolume list  /mnt
+#+END_SRC
+
+#+BEGIN_SRC org
+ID 259 gen 12 top level 5 path sub1
+#+END_SRC
+
+** 挂载子卷
+
+通过 ~subvol=/path/to/subvolumne~ 或 ~subvolid=objectid~ 选项可以指定挂载那个子卷
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo mount -t btrfs -o subvol=/mnt/sub1 /home/lujun9972/btrfs.img /media
+#+END_SRC
+
+** 删除子卷
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfs subvolume delete /mnt/sub1
+#+END_SRC
+
+#+BEGIN_SRC org
+Delete subvolume (no-commit): '/mnt/sub1'
+#+END_SRC
+
+* RAID
+执行mkfs时可以指定多个设备，并设定RAID级别，比如
+#+BEGIN_SRC shell
+  mkfs.btrfs -draid1 /dev/sde1 /dev/sdf1
+  mount -t btrfs /dev/sde1 /mnt/raid
+#+END_SRC
+
+* 添加/删除新设备
+当设备空间快要被用完时，可以通过 =btrfs device add= 命令为文件系统添加新磁盘设备，从而增加存储空间
+#+BEGIN_SRC shell :results org :dir /sudo::
+  df -h /mnt
+  sudo btrfs device add -f /dev/loop1 /mnt
+  df -h /mnt
+#+END_SRC
+
+#+BEGIN_SRC org
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0      6.0G   17M  5.1G   1% /mnt
+Performing full device TRIM /dev/loop1 (4.00GiB) ...
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0       10G   17M  9.1G   1% /mnt
+#+END_SRC
+
+同样的，也可以通过命令删除所添加的设备
+#+BEGIN_SRC shell :results org :dir /sudo::
+  df -h /mnt
+  sudo btrfs device delete  /dev/loop1 /mnt
+  df -h /mnt
+#+END_SRC
+
+#+BEGIN_SRC org
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0       10G   17M  9.1G   1% /mnt
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0      6.0G   17M  5.1G   1% /mnt
+#+END_SRC
+
+* 文件系统转换
+可以通过命令将非Btrfs文件系统转换为Btrfs文件系统
+#+BEGIN_SRC shell  :results org :dir /sudo::
+  sudo btrfs-convert ~lujun9972/ext4.img
+#+END_SRC
+
+#+BEGIN_SRC org
+create btrfs filesystem:
+	blocksize: 4096
+	nodesize:  16384
+	features:  extref, skinny-metadata (default)
+creating ext2 image file
+creating btrfs metadata
+copy inodes [o] [         0/        11]
+conversion complete
+#+END_SRC
+
+我们也可以通过命令将文件系统回滚转换前的状态
+#+BEGIN_SRC shell  :results org :dir /sudo::
+  sudo btrfs-convert -r ~lujun9972/ext4.img
+#+END_SRC
+
+#+BEGIN_SRC org
+rollback succeeded
+#+END_SRC
+
+* 检查btrfs文件系统
+可以通过以下命令检查Btrfs文件系统
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo btrfsck ~lujun9972/btrfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+Opening filesystem to check...
+Checking filesystem on /home/lujun9972/btrfs.img
+UUID: 658b38c7-d9a0-4c36-aeab-e4dc072269d0
+found 229376 bytes used, no error found
+total csum bytes: 0
+total tree bytes: 163840
+total fs tree bytes: 65536
+total extent tree bytes: 16384
+btree space waste bytes: 153939
+file data blocks allocated: 65536
+ referenced 65536
+#+END_SRC
