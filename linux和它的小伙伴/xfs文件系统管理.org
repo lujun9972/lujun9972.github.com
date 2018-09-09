@@ -1,0 +1,314 @@
+#+TITLE: xfs文件系统管理
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-09-08 六 17:07]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+XFS文件系统管理常用命令记录
+
+* 常用命令说明
+
++ mkfs.xfs :: 创建xfs文件系统
++ xfs_admin :: 调整XFS文件系统各种参数
++ xfs_copy :: 并行地拷贝XFS文件系统的内容到一个或多个目标系统中
++ xfs_db :: 调试或检测XFS文件系统
++ xfs_check :: 检测XFS文件系统完整性
++ xfs_bmap :: 查看一个文件的块映射
++ xfs_repair :: 尝试修复受损的XFS文件系统
++ xfs_fsr :: 碎片整理
++ xfs_quota :: 管理XFS文件系统的磁盘配额
++ xfs_metadump :: 导出XFS文件系统的元数据
++ xfs_growfs :: 扩展XFS文件系统大小
++ xfs_freeze :: 暂停/恢复XFS文件系统
+
+* 创建XFS文件系统
+使用 =mkfs.xfs= 可以将存储设备格式化为XFS格式
+#+BEGIN_SRC shell :results org
+  dd if=/dev/zero of=~/xfs.img bs=1M count=4096
+  mkfs.xfs ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=262144 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=4096   blocks=1048576, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+但若原存储已经被格式化过，则 =mkfs.xfs= 会拒绝再次格式化
+#+BEGIN_SRC shell :results org
+  mkfs.xfs ~/xfs.img 2>&1 ||exit 0
+#+END_SRC
+
+#+BEGIN_SRC org
+mkfs.xfs: /home/lujun9972/xfs.img appears to contain an existing filesystem (xfs).
+mkfs.xfs: Use the -f option to force overwrite.
+#+END_SRC
+
+这个时候需要用 =-f= 选项表示强行格式化
+#+BEGIN_SRC shell :results org
+  mkfs.xfs -f ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=262144 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=4096   blocks=1048576, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+** 设置block大小
+block是文件系统存储的最小单位，较大的block可以增加文件系统和单个文件的大小上限并加快大文件的读写速度，但是会浪费较多空间。而太小的block则相反。
+
+我们可以在格式化时指定block的大小，XFS的大小最小为512字节，最大为64KB,默认为4K
+
+在格式化时使用 ~-b size=block大小~ 来指定区块大小
+#+BEGIN_SRC shell :results org
+  mkfs.xfs -f -b size=1k ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=1048576 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=1024   blocks=4194304, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=1024   blocks=10240, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+这里大小单位可以是"k"表示kb，或者"s"表示扇区数，一个扇区默认为512字节，但可以通过 =-s= 选项改变。
+
+XFS允许目录使用比文件系统block更大的block,方法是使用 ~-n size=block大小~
+
+#+BEGIN_SRC shell :results org
+  mkfs.xfs -f -b size=1k -n size=4k ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=1048576 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=1024   blocks=4194304, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=1024   blocks=10240, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+** 日志大小
+格式化XFS时，mkfs.xfs会根据文件系统的大小自动分配日志的大小。
+日志大小介于512KB到128MB之间，但可以通过 ~-l size=日志大小~ 来设置，其中日志的单位可以是:
+
++ s :: 扇区
++ b :: block
++ k :: KB
++ m :: MB
++ g :: GB
++ t :: TB
++ p :: PB
++ e :: EB
+
+#+BEGIN_SRC shell :results org
+  mkfs.xfs -f -l size=64m ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=262144 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=4096   blocks=1048576, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=4096   blocks=16384, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+** 设置文件系统标签
+Label或者说Volume Name可以用来说明文件系统的用途，可以通过 =-L 标签= 来设置
+#+BEGIN_SRC shell :results org
+  mkfs.xfs -f -L TEST ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+meta-data=/home/lujun9972/xfs.img isize=512    agcount=4, agsize=262144 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=0
+data     =                       bsize=4096   blocks=1048576, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=512   sunit=0 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
+#+END_SRC
+
+我们可以使用 =xfs_admin= 来查看当前的label
+#+BEGIN_SRC shell :results org
+  xfs_admin -l ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+label = "TEST"
+#+END_SRC
+
+* 挂载XFS文件系统
+在挂载时，可以使用一些性能增强的选项来发掘XFS文件系统的性能
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo mount -t xfs ~lujun9972/xfs.img /mnt -o noatime,nodiratime
+#+END_SRC
+
+其他常见的 =-o= 选项包括:
+
++ allocsize :: 延时分配时，预分配缓冲区的大小
++ discard / nodiscard :: 块设备是否自动回收空间
++ largeio :: 大块分配
++ nolargeio :: 尽量小块分配
++ noatime :: 读取文件时不更新访问时间
++ nodiratime :: 不更新目录的访问时间
++ norecovery :: 挂载时不运行日志恢复
++ logbufs :: 内存中的日志缓冲区数量
++ logbsize :: 内存中每个日志缓存区的大小
+* 调整XFS文件系统参数
+使用 =xfs_admin= 来调整XFS文件系统参数
+** 卷标管理
+*** 设置卷标
+#+BEGIN_SRC shell :results org
+  xfs_admin -L "another_volume" ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+writing all SBs
+xfs_admin: truncating label length from 14 to 12
+new label = "another_volu"
+#+END_SRC
+
+*** 查看卷标
+#+BEGIN_SRC shell :results org
+  xfs_admin -l ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+label = "another_volu"
+#+END_SRC
+
+** UUID管理
+传统上Linux在/etc/fstab中直接使用设备名称指定要挂载的存储设备。
+然而设备名称会因为BIOS或硬件的改变而改变，引起混乱，因此现在Linux改用UUID来指定要挂载的存储设备。
+
+*** 查看指定设备的UUID
+#+BEGIN_SRC shell :results org
+  xfs_admin -u ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+UUID = aceeca47-82a0-47ce-a2e6-704569ebcbd4
+#+END_SRC
+
+*** 设置设备的UUID
+#+BEGIN_SRC shell :results org
+  xfs_admin -U 12345678-9012-3456-7890-123456789012 ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+Clearing log and setting UUID
+writing all SBs
+new UUID = 12345678-9012-3456-7890-123456789012
+#+END_SRC
+
+你也可以给 -U 参数传递 =generate= 表示随机生成新的UUID
+#+BEGIN_SRC shell :results org
+  xfs_admin -U generate ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+Clearing log and setting UUID
+writing all SBs
+new UUID = 9618fe39-638d-41b0-9863-5b3b8daa9801
+#+END_SRC
+
+*** 清除文件系统的UUID
+#+BEGIN_SRC shell :results org
+  xfs_admin -U nil ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+Clearing log and setting UUID
+writing all SBs
+new UUID = 00000000-0000-0000-0000-000000000000
+#+END_SRC
+
+* 扩展XFS文件系统的大小
+
+XFS文件系统只能扩大，不能减少大小
+
+扩容指定容量
+#+BEGIN_SRC shell :results org
+  sudo xfs_growfs -D 20G /mnt
+#+END_SRC
+
+扩展全部未用容量
+#+BEGIN_SRC shell :results org
+  sudo xfs_growfs -d /mnt
+#+END_SRC
+
+* 暂停/恢复XFS文件系统
+xfs_freeze 命令可以停止对文件系统的访问并创建一个静态的磁盘镜像。
+
+** 暂停XFS文件系统
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo xfs_freeze -f /mnt
+#+END_SRC
+
+这个时候任何对文件系统的操作都会被挂起
+
+** 恢复XFS文件系统
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo xfs_freeze -u /mnt
+#+END_SRC
+
+* 修复XFS文件系统
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo umount /mnt
+  xfs_repair ~lujun9972/xfs.img
+#+END_SRC
+
+* 碎片管理
+
+** 查看碎片情况
+#+BEGIN_SRC shell :results org
+  xfs_db -c frag -r ~/xfs.img
+#+END_SRC
+
+#+BEGIN_SRC org
+actual 0, ideal 0, fragmentation factor 0.00%
+Note, this number is largely meaningless.
+Files on this filesystem average -nan extents per file
+#+END_SRC
+
+** 整理碎片
+#+BEGIN_SRC shell
+  xfs_fsr ~/xfs.img
+#+END_SRC
+
