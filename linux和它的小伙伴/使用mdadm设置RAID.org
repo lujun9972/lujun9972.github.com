@@ -1,0 +1,275 @@
+#+TITLE: 使用mdadm设置RAID
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-09-10 一 21:36]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* RAID简介
+RAID是一种使用磁盘驱动器的方法，它将一组磁盘驱动器用某种逻辑方式联系起来，作为一个逻辑磁盘驱动器来使用的.
+
+比较常用的的RAID级别包括：
+
+| 级别   | 说明                                                                                                                                                                    |
+|--------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| RAID0  | 条带化,数据被拆分到多个驱动器中，但并没有数据镜像或校验信息                                                                                                             |
+| RAID1  | 镜像化,完全磁盘镜像，在独立的磁盘上创建数据的两份拷贝。这个级别提供最好的数据安全，但写速度慢，接代价最昂贵                                                             |
+| RAID5  | 分布式奇偶校验,将奇偶校验信息分布在多个磁盘上，每个磁盘上的校验信息都通过其他磁盘上的数据来构建                                                                         |
+| RAID6  | 双分布式奇偶校验,和 RAID 5 相似但它有两个分布式奇偶校验。大多用在大数量的阵列中。我们最少需要4个驱动器，即使有2个驱动器发生故障，我们依然可以更换新的驱动器后重建数据。 |
+| RAID10 | 镜像+条带,RAID 10 可以被称为1 + 0或0 +1。它将做镜像+条带两个工作。在 RAID 10 中首先做镜像然后做条带。在 RAID 01 上首先做条带，然后做镜像。RAID 10 比 01 好。            |
+
+* mdadm: RAID设置工具
+madam命令是Linux下用于构建、管理和监控RAID阵列(也被称为md设备)的工具.
+它的语法为
+#+BEGIN_SRC shell
+  mdadm [模式] [设备] [选项]
+#+END_SRC
+
+其中模式有下面几个:
+
++ --create :: 使用空闲设备创建新阵列，每个设备具有元数据快
++ --assemble :: 将设备加入一个已经定义好的磁盘阵列
++ --build :: 创建一个没有元数据块的磁盘阵列
++ --manage :: 管理已经存储在阵列中的设备
++ --misc :: 查询或修改磁盘阵列中相关设备的信息
++ --grow :: 改变阵列中每个设备使用的容量或阵列中设备的数量
++ --incremental :: 根据需要在阵列中添加/删除设备
++ --monitor :: 监控一个或多个阵列，上报指定事件
+               
+* mdadm操作说明
+** 创建RAID阵列
+我们可以通过 =mdadm= 命令来创建软件RAID，比如下面命令可以创建一个RAID5
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm --create /dev/md0 -a yes -l 5 -n 3 /dev/sdb /dev/sdc /dev/sdd
+#+END_SRC
+其中
+
++ --create /dev/md0 :: 创建一个新RAID，名字叫做 =/dev/md0=
++ -a yes :: 自动在/dev/下创建对应的RAID阵列设备
++ -l 5 :: 指定RAID级别为5
++ -n 3 :: 指定硬盘数量。表示用三块硬盘来创建RAID5,分别为 =/dev/sdb=, =/dev/sdc=, =/dev/sdd=
+
+我们会发现 =/dev= 下出现了一个名为 md0 的设备
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  ls -l /dev/md0
+#+END_SRC
+
+#+BEGIN_SRC org
+brw-rw----. 1 root disk 9, 0 Sep 11 09:40 /dev/md0
+#+END_SRC
+*** 自动启用RAID
+在创建好RAID以后，可以将RAID信息保存到 =/etc/mdadm.conf= 文件中，这样在下次操作系统重新启动时，系统会自动加载这个文件来启用RAID
+#+BEGIN_SRC shell  :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm -D --scan >/etc/mdadm.conf
+  cat /etc/mdadm.conf
+#+END_SRC
+
+#+BEGIN_SRC org
+ARRAY /dev/md0 metadata=1.2 name=MiWiFi-R3-srv:0 UUID=ece6c656:c9999ff6:9d17c0ec:08a0e3af
+#+END_SRC
+
+** 查看RAID阵列信息
+创建好RAID阵列后，我们可以通过 =mdadm --misc= 模式来查看刚创建好的RAID的详细信息
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  mdadm --misc --detail /dev/md0
+#+END_SRC
+
+#+BEGIN_SRC org
+/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 09:40:45 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:03:35 2018
+             State : clean 
+    Active Devices : 3
+   Working Devices : 3
+    Failed Devices : 0
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : ece6c656:c9999ff6:9d17c0ec:08a0e3af
+            Events : 18
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       3       8       48        2      active sync   /dev/sdd
+#+END_SRC
+
+或者我们也可以通过 =/proc/mdstat= 文件来查看RAID的简洁信息
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  cat /proc/mdstat
+#+END_SRC
+
+#+BEGIN_SRC org
+Personalities : [raid6] [raid5] [raid4] 
+md0 : active raid5 sdd[3] sdc[1] sdb[0]
+      16758784 blocks super 1.2 level 5, 512k chunk, algorithm 2 [3/3] [UUU]
+      
+unused devices: <none>
+#+END_SRC
+
+** 使用RAID阵列
+在创建好RAID阵列后，我们就不能直接操作组成阵列的磁盘了，否则会损坏刚创建好的RAID阵列。
+我们通过 =/dev/md0= 这个设备来进行文件格式化和挂载
+
+#+BEGIN_SRC shell  :dir /ssh:root@192.168.1.38: :results org
+  set -x
+  exec 2>&1
+  mkfs.xfs -f /dev/md0
+  mount /dev/md0 /mnt
+  mount |grep md0
+#+END_SRC
+
+#+BEGIN_SRC org
++ mkfs.xfs -f /dev/md0
+meta-data=/dev/md0               isize=512    agcount=16, agsize=261760 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=0, sparse=0
+data     =                       bsize=4096   blocks=4188160, imaxpct=25
+         =                       sunit=128    swidth=256 blks
+naming   =version 2              bsize=4096   ascii-ci=0 ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=512   sunit=8 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
++ mount /dev/md0 /mnt
++ mount
++ grep md0
+/dev/md0 on /mnt type xfs (rw,relatime,seclabel,attr2,inode64,sunit=1024,swidth=2048,noquota)
+#+END_SRC
+
+** 关闭RAID
+我们可以通过 =mdadm --misc= 模式来关闭RAID。这会释放所有资源
+
+在关闭RAID之前需要先卸载RAID:
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo umount /mnt
+#+END_SRC
+
+然后关闭RAID
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm --misc --stop /dev/md0
+#+END_SRC
+
+关闭RAID后，我们可以通过 =mdadm --misc --zero-superblock= 来清空磁盘中RAID阵列的超级块信息。
+清空就能够正常使用这些磁盘了
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  mdadm --misc --zero-superblock /dev/sdb
+  mdadm --misc --zero-superblock /dev/sdc
+  mdadm --misc --zero-superblock /dev/sdd
+#+END_SRC
+
+** 模拟RAID故障
+我们可以通过 =mdadm --manage /dev/md0 --fail= 来将某块磁盘设置成故障状态
+
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm /dev/md0 -f /dev/sdd 2>&1
+#+END_SRC
+
+#+BEGIN_SRC org
+mdadm: set /dev/sdd faulty in /dev/md0
+#+END_SRC
+
+然后我们再来查一下这个RAID的信息
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm --misc --detail /dev/md0
+#+END_SRC
+
+#+BEGIN_SRC org
+/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 10:32:21 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:35:12 2018
+             State : clean, degraded 
+    Active Devices : 2
+   Working Devices : 2
+    Failed Devices : 1
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : c031d0c9:998a4e86:5cf90e71:52b229cd
+            Events : 20
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       -       0        0        2      removed
+
+       3       8       48        -      faulty   /dev/sdd
+#+END_SRC
+
+你会发现 =/dev/sdd= 的状态现在变成了 =faulty=, 但是RAID5这个级别是允许一块磁盘损坏而不造成数据损坏的。
+
+** 移除RAID阵列中的磁盘
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.38: :results org
+  sudo mdadm --manage /dev/md0 --remove /dev/sdd
+#+END_SRC
+
+** 更换新磁盘
+#+BEGIN_SRC shell  :dir /ssh:root@192.168.1.38: :results org
+  set -x
+  exec 2>&1
+  sudo mdadm --manage /dev/md0 --add /dev/sdd
+  sudo mdadm --misc --detail /dev/md0
+#+END_SRC
+
+#+BEGIN_SRC org
++ sudo mdadm --manage /dev/md0 --add /dev/sdd
+mdadm: added /dev/sdd
++ sudo mdadm --misc --detail /dev/md0
+/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 10:32:21 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:40:41 2018
+             State : clean, degraded 
+    Active Devices : 2
+   Working Devices : 3
+    Failed Devices : 0
+     Spare Devices : 1
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : c031d0c9:998a4e86:5cf90e71:52b229cd
+            Events : 22
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       -       0        0        2      removed
+
+       3       8       48        -      spare   /dev/sdd
+#+END_SRC
