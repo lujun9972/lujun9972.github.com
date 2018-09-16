@@ -1,0 +1,97 @@
+#+TITLE: 使用iw连接无线网络
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-09-16 日 19:42]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 查看无线网络接口
+#+BEGIN_SRC shell :results org
+  iw dev
+#+END_SRC
+
+#+BEGIN_SRC org
+phy#0
+	Interface wlp3s0
+		ifindex 2
+		wdev 0x1
+		addr a4:4e:31:33:2a:48
+		ssid NETGEAR90
+		type managed
+		channel 2 (2417 MHz), width: 20 MHz, center1: 2417 MHz
+		txpower 15.00 dBm
+#+END_SRC
+
+这里可以看到我们的无线接口为wlp3s0
+
+* 启动无线接口
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo ip link set wlp3s0 up
+#+END_SRC
+
+* 获取SSID
+
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo iw wlp3s0 scan |grep SSID
+#+END_SRC
+
+#+BEGIN_SRC org
+	SSID: NETGEAR90
+	SSID: NETGEAR90
+	SSID: \x20 \xe5\xb0\x8f\xe7\xb1\xb3\xe5\x85\xb1\xe4\xba\xabWiFi_3C87
+	SSID: ChinaNet-TZF2
+	SSID: JATEN-2.4G
+	SSID: NETGEAR90
+	SSID: Xiaomi_plus17
+		 ,* SSID List
+	SSID: TP-LINK_WU
+	SSID: HiWiFi_200A32
+	SSID: TP-LINK_5G_610C
+	SSID: HUAWEI-45DWWD
+	SSID: PDCN20180626
+	SSID: HUAWEI-SM2MG2
+	SSID: TV1209
+	SSID: MyHomeCloud
+	SSID: CMCC-j667
+#+END_SRC
+
+* 连接无线路由
+这里假设我们想要连接MyHomeCloud
+
+** 连接无密码的无线路由
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo iw wlp3s0 connect -w MyHomeCloud
+#+END_SRC
+
+** 连接使用WEP加密的无线路由
+这里假设WEP密码是1234567890
+#+BEGIN_SRC shell :results org :dir /sudo::
+  sudo iw wlp3s0 connect -w MyHomeCloud key d:0:1234567890
+#+END_SRC
+
+** 连接WPA加密的无线路由
+可惜iw只能处理WEP加密，要连接WPA需要 =wpasupplicant=
+
+1. 生成配置信息
+   #+BEGIN_SRC shell
+     wpa_passphrase ${SSID} >>/etc/wpa_supplicant.conf
+     # 然后输入登陆密码
+   #+END_SRC
+
+2. 进行连接
+   #+BEGIN_SRC shell
+     sudo wpa_supplicant -B -D wext -i wlp3s0 -c /etc/wpa_supplicant.conf
+   #+END_SRC
+
+3. 获取无线路由提供的DHCP IP
+   #+BEGIN_SRC shell
+     # 申请前先释放原有地址
+     sudo dhclient -r wlp3s0
+     sudo dhclient wlp3s0
+   #+END_SRC
+
+* 断开连接
+#+BEGIN_SRC shell
+  iw wlp3s0 disconnect
+#+END_SRC
