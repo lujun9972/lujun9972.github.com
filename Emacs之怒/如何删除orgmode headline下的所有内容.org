@@ -1,0 +1,43 @@
+#+TITLE: 如何删除orgmode headline下的所有内容
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-09-26 三 15:55]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 找到指定的headline
+使用 =(org-goto-local-search-headings STRING BOUND NOERROR)= 可以将光标定位到指定的headline处。
+
+但是要注意的是，这个函数的行为跟 =isearch-forward= 的值相关:
+
+若 =isearch-forward= 的值为 =t=, 则 =org-goto-local-search-headlings= 从前向后搜索，通常这时你会需要把光标移动到 =(point-min)= 处
+#+BEGIN_SRC emacs-lisp
+  (save-excursion
+    (goto-char (point-min))
+    (org-goto-local-search-headings "Report" nil nil))
+#+END_SRC
+
+若 =isearch-forward= 的值为 =nil=, 则 =org-goto-local-search-headlings= 从后向前搜索，通常这时你会需要把光标移动到 =(point-max)= 处
+#+BEGIN_SRC emacs-lisp
+  (save-excursion
+    (goto-char (point-max))
+    (org-goto-local-search-headings "Report" (point-min) nil))
+#+END_SRC
+
+* 删除head下的所有内容
+org-mode似乎没有提供专门的函数来清空head下的所有内容，但是它提供了一个 =org-mark-subtree= 函数用来mark整个subtree(包括headline),因此你可以很容易写出这么一个函数来:
+#+BEGIN_SRC emacs-lisp
+  (defun clear-subtree ()
+    (interactive)
+    (org-mark-subtree) ;; mark 当前subtree，包括headline
+    (forward-line) ;; 去掉headline
+    (delete-region (region-beginning) (region-end)) ;; 删除剩下的内容
+  )
+#+END_SRC
+
+类似的，org-mode还提供了一个 =org-mark-element= 来mark某个元素，比如你像删除某个org-time-clock那么可以这么做
+#+BEGIN_SRC emacs-lisp
+  (when (search-forward-regexp "^\s*#\\+BEGIN:\s+clocktable" nil t)
+    (org-mark-element)
+    (delete-region (region-beginning) (region-end)))
+#+END_SRC
