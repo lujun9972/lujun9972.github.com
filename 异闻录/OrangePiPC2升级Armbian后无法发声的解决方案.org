@@ -1,0 +1,62 @@
+#+TITLE: OrangePiPC2升级Armbian后无法发声的解决方案
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2018-09-27 四 22:27]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+某一次在对OrangePiPC2进行系统升级后，提示内核已更新，需要进行重启。
+
+然而在重启后发现播放音乐不再有声音了。
+
+* COMMENT 排查过程
+
+1. 怀疑是不是音量被调成0了，因此运行 =alsamixer=,发现提示 =This sound device does not have any controls.=
+   
+   [[file:./images/screenshot-01.png]]
+
+2. 注意到现在这张声卡是hdmi的,按下 =F6= 选择其他声卡，可以发现还有一张 =H3 Audio Codec= 声卡
+
+   [[file:./images/screenshot-02.png]]
+
+3. 而选择 =H3 Audio Codec= 声卡可以看到熟悉的音量控制界面
+
+   [[file:./images/screenshot-03.png]]
+
+4. 大致可以推测出，由于我的音响是接到 =H3 Audio Codec= 上的，而alsa默认声卡变成了 =hdmi= 从而导致了播放音乐没有声音
+
+5. 将ALSA默认声卡修改为 =H3 Audio Codec=, 步骤为:
+
+   查看声卡极其对应的编号
+   #+BEGIN_SRC shell :dir /ssh:lujun9972@192.168.1.9: :results org
+     cat /proc/asound/cards
+     echo 或者
+     aplay -l | awk -F \: '/,/{print $2}' | awk '{print $1}' | uniq
+   #+END_SRC
+
+   #+BEGIN_SRC org
+    0 [allwinnerhdmi  ]: allwinner_hdmi - allwinner,hdmi
+                         allwinner,hdmi
+    1 [Codec          ]: H3_Audio_Codec - H3 Audio Codec
+                         H3 Audio Codec
+   或者
+   allwinnerhdmi
+   Codec
+   #+END_SRC
+
+   可以看到我想要的默认声卡名为 =Codec=,其编号为1,那么创建文件 =/etc/asound.conf= 填入下面内容
+   #+BEGIN_SRC conf :tangle "/etc/asound.conf"
+     pcm.!default {
+         type hw
+         card 1
+     }
+
+     ctl.!default {
+         type hw           
+         card 1
+     }
+   #+END_SRC
+   其中的 =1= 就是声卡对应的编号
+
+6. 再次播放音乐，就可以正常发声了。
