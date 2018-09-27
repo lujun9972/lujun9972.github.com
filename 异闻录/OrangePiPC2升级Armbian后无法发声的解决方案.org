@@ -10,7 +10,7 @@
 
 然而在重启后发现播放音乐不再有声音了。
 
-* COMMENT 排查过程
+* 排查过程
 
 1. 怀疑是不是音量被调成0了，因此运行 =alsamixer=,发现提示 =This sound device does not have any controls.=
    
@@ -46,7 +46,7 @@
    #+END_SRC
 
    可以看到我想要的默认声卡名为 =Codec=,其编号为1,那么创建文件 =/etc/asound.conf= 填入下面内容
-   #+BEGIN_SRC conf :tangle "/etc/asound.conf"
+   #+BEGIN_SRC conf :tangle /ssh:root@192.168.1.9:/etc/asound.conf
      pcm.!default {
          type hw
          card 1
@@ -60,3 +60,34 @@
    其中的 =1= 就是声卡对应的编号
 
 6. 再次播放音乐，就可以正常发声了。
+
+* 另一种解决方法
+其实还有另一种解决方法就是控制声卡module的载入顺序，让 =H3 Audio Codec= 声卡成为第一顺位的声卡就行了. 方法如下:
+
+1. 查看加载的声卡驱动
+   #+BEGIN_SRC shell :dir /ssh:lujun9972@192.168.1.9: :results org
+     lsmod |grep snd
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   snd_soc_hdmi_codec     16384  1
+   snd_soc_simple_card    16384  0
+   snd_soc_simple_card_utils    16384  1 snd_soc_simple_card
+   snd_soc_core          155648  6 sun4i_i2s,sun8i_codec_analog,snd_soc_hdmi_codec,sun4i_codec,snd_soc_simple_card_utils,snd_soc_simple_card
+   snd_pcm_dmaengine      16384  1 snd_soc_core
+   snd_pcm               106496  4 sun4i_i2s,snd_soc_hdmi_codec,snd_soc_core,snd_pcm_dmaengine
+   snd_timer              32768  1 snd_pcm
+   #+END_SRC
+
+   你会发现查出来了好多module，但只有两个module是不被别人引用的: =snd_soc_hdmi_codec= 和 =snd_soc_simple_card=.
+
+   可以推测出 =snd_soc_hdmi_codec= 对应的是 =hdmi= 声卡，
+   =snd_soc_simple_card= 对应的是 =H3 Audio Codec= 声卡
+
+2. 创建 =/etc/modprobe.d/alsa-base.conf= 文件，填入下面内容
+   #+BEGIN_SRC conf :tangle /ssh:root@192.168.1.9:/etc/modprobe.d/alsa-base.conf
+     options snd_soc_hdmi_codec index=-1
+     options snd_soc_simple_card index=-2
+   #+END_SRC
+
+
