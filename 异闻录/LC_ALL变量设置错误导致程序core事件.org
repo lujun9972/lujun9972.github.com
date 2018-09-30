@@ -1,0 +1,18 @@
+#+TITLE: LC_ALL变量设置错误导致程序core事件
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2018-09-30 日 14:28]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+使用自动发布工具启动应用时某个进程莫名其妙会core掉，但是通过ssh登陆服务器手工启动应用却一切正常
+
+* 排查过程
+由于自动发布工具是模拟的ssh登陆手工操作的过程，因此跟是否登陆SHELL应该是无关的。
+
+在对比了两次发布过程中进程的环境变量后（正常启动后 =strings /proc/$pid/environ=,然后在自动发布中运行 =env= 进行对比）,发现两次发布 =LC_ALL= 这个环境是不同的。
+
+正常发布时 =LC_ALL= 的值为 =C=, 而自动发布工具发布时，将本地的 =LC_ALL= 传递过去，设置成了 =zh_CN.UTF-8=.
+
+而 =LC_ALL= (及其其他 LC_* 类的环境变量) 会影响到某些 C 函数(比如setlocale,ctype,multibyte,catopen,printf,localeconv,tolower,toupper等)的运行结果
