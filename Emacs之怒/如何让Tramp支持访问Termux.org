@@ -1,0 +1,70 @@
+#+TITLE: 如何让Tramp支持访问Termux
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒,tramp
+#+DATE: [2018-09-30 日 11:29]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* Tramp ssh协议访问Termux
+当使用Tramp通过ssh访问Termux上的文件时，你可能会发现出现下面这样的错误:
+#+BEGIN_EXAMPLE
+  tramp-file-name-handler: Method ‘ssh’ should specify both encoding and decoding command or an scp program
+#+END_EXAMPLE
+
+这是因为Termux是一个prefixed Linux环境，它的目录结构是构建在 =/data/data/com.termux/files/usr= 下的.
+若你在Termux上查看它的 =PATH= 环境变量会发现它的 =PATH= 环境变量并不是我们常见的 =/bin:/usr/bin= 这种位于根目录下的路径
+
+#+BEGIN_SRC shell :dir /ssh:phone#8022: :results org
+  echo $PATH
+#+END_SRC
+
+#+BEGIN_SRC org
+/sbin:/data/data/com.termux/files/usr/bin:/data/data/com.termux/files/usr/bin/applets
+#+END_SRC
+
+因此，当Tramp尝试在这些常见的 =bin= 目录中搜索Decode和Encode程序时就会找不到。
+
+解决方法其实很简单，往 =tramp-remote-path= 变量中加入 =tramp-own-remote-path= 就行了.
+#+BEGIN_SRC emacs-lisp
+(setq tramp-remote-path `(,@tramp-remote-path tramp-own-remote-path))
+#+END_SRC
+
+Tramp 根据 =tramp-remote-path= 中配置的路径来搜索远程主机上的程序，当它看到 =tramp-own-remote-path= 时会将其替换成远程主机上的 =PATH= 变量中定义的路径。
+
+* Tramp 与 org-babel 联用
+
+即使经过上面的配置，当将Tramp与org-babel联用时，依然会有类似下面的错误出现:
+
+#+BEGIN_EXAMPLE
+  tramp-file-name-handler: Couldn’t write region to ‘/ssh:phone#8022:/tmp/ob-input-87lP37’, decode using ‘base64 -d >%s’ failed
+#+END_EXAMPLE
+
+根据错误信息很容易知道这是因为Tramp尝试往Termux的 =/tmp= 目录中写内容导致的。
+
+你可能会觉得这很好解决，只需要改一下 =tramp-connection-properties= 向Tramp指明 =tmpdir= 的路径就行了，像这样:
+#+BEGIN_SRC emacs-lisp
+  (add-to-list 'tramp-connection-properties
+               (list (regexp-quote "/ssh:phone#8022:")
+                     "tmpdir" "/data/data/com.termux/files/usr/tmp"))
+#+END_SRC
+
+然而很可惜，你会发现这样是没用的。这其实是 =org-babel= 中的一个 BUG(可以[[http://emacs.1067599.n8.nabble.com/Cannot-execute-org-babel-shell-script-over-tramp-to-remote-termux-Android-due-to-tmpdir-issues-td459741.html#a459779][参见这里的讨论]])
+
+你需要修改 =org-babel-remote-temporary-directory= 的值指向新的路径.
+
+我们首先看一下 Termux 中定义的 tmpdir 是哪个路径
+#+BEGIN_SRC shell :dir /ssh:phone#8022: :results org
+  echo $TMPDIR
+#+END_SRC
+
+#+BEGIN_SRC org
+/data/data/com.termux/files/usr/tmp
+#+END_SRC
+
+然后将其设置为 =org-babel-remote-temporary-directory= 的值
+#+BEGIN_SRC emacs-lisp
+     (set-default 'org-babel-remote-temporary-directory "/data/data/com.termux/files/usr/tmp")
+#+END_SRC
+
+这里有一点需要注意，那就是由于ob-shell在执行时不是在当前buffer中执行的，因此你通过 file-variable 机制将其临时修改为其他值是不顶用的.
+这也是这里使用 =set-default= 进行赋值的原因
