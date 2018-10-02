@@ -1,0 +1,202 @@
+#+TITLE: MobileOrg的一个BUG
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-10-02 二 22:30]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+MobileOrg中其实有一个BUG，就是不能在手机端连续修改同一个entry两次，因为MobileOrg手机端会记录下每次修改手机端上的旧内容和新内容，并且在 =org-mobile-pull= 的时候对比记录的旧内容是否与电脑上当前的内容相同。
+
+然而...MobileOrg手机端在未与电脑端(org-mobile-push后再同步)同步前是不会更改真正的内容的！
+
+也就是说，假设对一个entry的内容更改过程是 =A->B->C=,那么本来我们想象应该是记录成这样的:
+#+BEGIN_EXAMPLE
+  ,* entry
+  ,** old
+  A
+  ,** new
+  B
+
+  ,* entry
+  ,** old
+  B
+  ,** new
+  C
+#+END_EXAMPLE
+
+但实际上记录的是
+#+BEGIN_EXAMPLE
+  ,* entry
+  ,** old
+  A
+  ,** new
+  B
+
+  ,* entry
+  ,** old
+  A
+  ,** new
+  C
+#+END_EXAMPLE
+
+因此只能应用 =A->B= 的变更，而无法应用 =B->C= 的变更。
+
+一个解决方案是修改 =org-mobile-force-mobile-change= 来强制应用新值,这对非 =body= 类的操作还是比较适合的
+#+BEGIN_SRC emacs-lisp
+  (setq org-mobile-force-mobile-change '(todo todostate tags priority heading addheading))
+#+END_SRC
+
+但是对于 =body= 类的修改来说是不太适合的，因为mobileorg的 =clock-in=, =clock-out= 操作会修改 =body= 的内容，而这部分内容修改起来很麻烦
+
+一个更完善的解决方案可能是自定义新的 =org-mobile-edit= 函数，然后设置到 =org-mobile-action-alist= 变量中.
+在这个函数中，对于 =body= 类修改使用 (patch (diff old new)) 的方法可能更适合。
+
+#+BEGIN_SRC emacs-lisp
+  (defun org-mobile-edit (what old new)
+    "Edit item WHAT in the current entry by replacing OLD with NEW.
+  WHAT can be \"heading\", \"todo\", \"tags\", \"priority\", or \"body\".
+  The edit only takes place if the current value is equal (except for
+  white space) the OLD.  If this is so, OLD will be replace by NEW
+  and the command will return t.  If something goes wrong, a string will
+  be returned that indicates what went wrong."
+    (let (current old1 new1 level)
+      (if (stringp what) (setq what (intern what)))
+
+      (cond
+
+       ((memq what '(todo todostate))
+        (setq current (org-get-todo-state))
+        (cond
+         ((equal new "DONEARCHIVE")
+          (org-todo 'done)
+          (org-archive-subtree-default))
+         ((equal new current) t)		; nothing needs to be done
+         ((or (equal current old)
+              (eq org-mobile-force-mobile-change t)
+              (memq 'todo org-mobile-force-mobile-change))
+          (org-todo (or new 'none)) t)
+         (t (error "State before change was expected as \"%s\", but is \"%s\""
+                   old current))))
+
+       ((eq what 'tags)
+        (setq current (org-get-tags)
+              new1 (and new (org-split-string new ":+"))
+              old1 (and old (org-split-string old ":+")))
+        (cond
+         ((org-mobile-tags-same-p current new1) t) ; no change needed
+         ((or (org-mobile-tags-same-p current old1)
+              (eq org-mobile-force-mobile-change t)
+              (memq 'tags org-mobile-force-mobile-change))
+          (org-set-tags-to new1) t)
+         (t (error "Tags before change were expected as \"%s\", but are \"%s\""
+                   (or old "") (or current "")))))
+
+       ((eq what 'priority)
+        (let ((case-fold-search nil))
+          (when (looking-at org-complex-heading-regexp)
+            (let ((current (and (match-end 3) (substring (match-string 3) 2 3))))
+              (cond
+               ((equal current new) t)	;no action required
+               ((or (equal current old)
+                    (eq org-mobile-force-mobile-change t)
+                    (memq 'tags org-mobile-force-mobile-change))
+                (org-priority (and new (string-to-char new))))
+               (t (error "Priority was expected to be %s, but is %s"
+                         old current)))))))
+
+       ((eq what 'heading)
+        (let ((case-fold-search nil))
+          (when (looking-at org-complex-heading-regexp)
+            (let ((current (match-string 4)))
+              (cond
+               ((equal current new) t)	;no action required
+               ((or (equal current old)
+                    (eq org-mobile-force-mobile-change t)
+                    (memq 'heading org-mobile-force-mobile-change))
+                (goto-char (match-beginning 4))
+                (insert new)
+                (delete-region (point) (+ (point) (length current)))
+                (org-set-tags nil 'align))
+               (t (error "Heading changed in MobileOrg and on the computer")))))))
+
+       ((eq what 'addheading)
+        (if (org-at-heading-p)	; if false we are in top-level of file
+            (progn
+              ;; Workaround a `org-insert-heading-respect-content' bug
+              ;; which prevents correct insertion when point is invisible
+              (org-show-subtree)
+              (end-of-line 1)
+              (org-insert-heading-respect-content t)
+              (org-demote))
+          (beginning-of-line)
+          (insert "* "))
+        (insert new))
+
+       ((eq what 'refile)
+        (org-copy-subtree)
+        (org-with-point-at (org-mobile-locate-entry new)
+          (if (org-at-heading-p)	; if false we are in top-level of file
+              (progn
+                (setq level (org-get-valid-level (funcall outline-level) 1))
+                (org-end-of-subtree t t)
+                (org-paste-subtree level))
+            (org-paste-subtree 1)))
+        (org-cut-subtree))
+
+       ((eq what 'delete)
+        (org-cut-subtree))
+
+       ((eq what 'archive)
+        (org-archive-subtree))
+
+       ((eq what 'archive-sibling)
+        (org-archive-to-archive-sibling))
+
+       ((eq what 'body)
+        (setq current (buffer-substring (min (1+ (point-at-eol)) (point-max))
+                                        (save-excursion (outline-next-heading)
+                                                        (point))))
+        (if (not (string-match "\\S-" current)) (setq current nil))
+        (cond
+         ((org-mobile-bodies-same-p current new) t) ; no action necessary
+         ((or (org-mobile-bodies-same-p current old)
+              (eq org-mobile-force-mobile-change t)
+              (memq 'body org-mobile-force-mobile-change))
+          (save-excursion
+            (end-of-line 1)
+            (insert "\n" new)
+            (or (bolp) (insert "\n"))
+            (delete-region (point) (progn (org-back-to-heading t)
+                                          (outline-next-heading)
+                                          (point))))
+          t)
+         ;; 增加bodymerge选项用来通过merge的方式合并body的修改
+         ((or (memq 'bodymerge org-mobile-force-mobile-change))
+          (save-excursion
+            (let ((fileA (make-temp-file "org-mobile" nil "A" old))
+                  (fileB (make-temp-file "org-mobile" nil "B" new))
+                  (fileC (make-temp-file "org-mobile" nil "C" current))
+                  (fileDiff (make-temp-file "org-mobile" nil "Diff" )))
+              (with-temp-file fileDiff
+                (insert (shell-command-to-string (format "diff %s %s" fileA fileB))))
+              (shell-command (format "patch -f %s %s" fileC fileDiff))
+              (setq current (with-temp-buffer
+                              (insert-file-contents fileC)
+                              (buffer-string)))
+              (delete-file fileA)
+              (delete-file fileB)
+              (delete-file fileC)
+              (delete-file (concat fileC ".orig"))
+              (delete-file fileDiff)
+              (message "current:%s" current))
+            ;; (diff-buffer-with-file )
+            (end-of-line 1)
+            (insert "\n" current)
+            (or (bolp) (insert "\n"))
+            (delete-region (point) (progn (org-back-to-heading t)
+                                          (outline-next-heading)
+                                          (point))))
+          t)
+         (t (error "Body was changed in MobileOrg and on the computer")))))))
+#+END_SRC
+
