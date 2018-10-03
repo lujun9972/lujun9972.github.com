@@ -170,16 +170,15 @@ MobileOrg中其实有一个BUG，就是不能在手机端连续修改同一个en
                                           (outline-next-heading)
                                           (point))))
           t)
-         ;; 增加bodymerge选项用来通过merge的方式合并body的修改
          ((or (memq 'bodymerge org-mobile-force-mobile-change))
           (save-excursion
-            (let ((fileA (make-temp-file "org-mobile" nil "A" old))
-                  (fileB (make-temp-file "org-mobile" nil "B" new))
-                  (fileC (make-temp-file "org-mobile" nil "C" current))
-                  (fileDiff (make-temp-file "org-mobile" nil "Diff" )))
-              (with-temp-file fileDiff
-                (insert (shell-command-to-string (format "diff %s %s" fileA fileB))))
-              (shell-command (format "patch -f %s %s" fileC fileDiff))
+            (let* ((fileA (make-temp-file "org-mobile" nil "A" old))
+                   (fileB (make-temp-file "org-mobile" nil "B" new))
+                   (fileC (make-temp-file "org-mobile" nil "C" current))
+                   (fileDiff (make-temp-file "org-mobile" nil "Diff" (shell-command-to-string (format "diff %s %s" fileA fileB))))
+                   (patch-result (shell-command (format "patch -f %s %s" fileC fileDiff))))
+              (when (string-match-p "FAILED" patch-result) ;patch失败
+                (error patch-result))
               (setq current (with-temp-buffer
                               (insert-file-contents fileC)
                               (buffer-string)))
