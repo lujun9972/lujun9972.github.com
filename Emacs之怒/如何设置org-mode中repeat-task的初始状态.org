@@ -1,0 +1,48 @@
+#+TITLE: 如何设置org-mode中repeat-task的初始状态
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-10-09 二 11:24]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我的习惯是把待完成的事情分成两种状态，一个 =TODO=, 一个是 =NEXT=.
+其中 =NEXT= 是用来标注近期内要完成的事情，而 =TODO= 用来标注长期来看要做，但还没有分配计划的事情。
+
+由于我每天都要用Anki被一下单词，因此我创建了一个 =背单词= 的任务并设置为 =repeat-task=.
+但是却遇到一个问题，就是每次我将state改成 =DONE= 时，这个任务的state会变回 =TODO=, 而不是 =NEXT=.
+
+org-mode的代码是公开的，为了找出是哪个地方影响了repeat task的初始状态，我首先查看了一下 =org-todo= 的代码.
+代码及其复杂，正当我要放弃的时候，突然一行闪亮的注释出现在我面前:
+#+BEGIN_SRC emacs-lisp
+  ;; Do we need to trigger a repeat?
+  (when now-done-p
+    (when (boundp 'org-agenda-headline-snapshot-before-repeat)
+      ;; This is for the agenda, take a snapshot of the headline.
+      (save-match-data
+        (setq org-agenda-headline-snapshot-before-repeat
+              (org-get-heading))))
+    (org-auto-repeat-maybe org-state))
+#+END_SRC
+
+很明显，设置repeat task初始状态是有 =org-auto-repeat-maybe= 函数来实现的。
+
+再来查看 =org-auto-repeat-maybe= 函数的实现，很容易可以发现这么一段代码
+#+BEGIN_SRC emacs-lisp
+  (let ((to-state (or (org-entry-get nil "REPEAT_TO_STATE" 'selective)
+                      org-todo-repeat-to-state)))
+    (org-todo (cond
+               ((and to-state (member to-state org-todo-keywords-1))
+                to-state)
+               ((eq interpret 'type) org-last-state)
+               (head)
+               (t 'none))))
+#+END_SRC
+
+通过查看 =org-todo-repeat-to-state= 的doc-string,可以发现org默认会将repeat task的状态改成 TODO 序列中的第一个状态.
+要修改这个状态可以有三种选择:
+
+1. 修改 =org-todo-repeat-to-state= 的值，这会影响全局所有repeat task的初始状态，显然不符合我的要求
+
+2. 在文件头部通过 =#+TYP_TODO= 关键字(或者在定义org-todo-keywords时)设置interpretation为 =type=, 这样repeat task会自动修改回之前的状态
+
+3. 是设置 =:REPEAT_TO_STATE:= 属性，这仅仅对该repeat task生效，刚好就是我要的内容。
