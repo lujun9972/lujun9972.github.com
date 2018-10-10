@@ -1,0 +1,62 @@
+#+TITLE: 为什么cat命令查看文件不会修改atime
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-10-10 三 21:03]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天在QQ群里有人问了一个问题:“为什么用cat查看文件内容后不会修改它的atime呢？”
+
+我试了一下，发现真的是这样的！例如下面这个例子
+#+BEGIN_SRC shell :results org
+  export LANG=C
+  cd /tmp
+  tmpfile=$(mktemp)
+  echo "-------------------------------" >${tmpfile}
+  stat ${tmpfile} |grep Access
+  sleep 5
+  cat ${tmpfile}
+  stat ${tmpfile} |grep Access
+#+END_SRC
+
+#+BEGIN_SRC org
+Access: (0600/-rw-------)  Uid: ( 1000/lujun9972)   Gid: ( 1000/lujun9972)
+Access: 2018-10-10 21:15:35.195471306 +0800
+-------------------------------
+Access: (0600/-rw-------)  Uid: ( 1000/lujun9972)   Gid: ( 1000/lujun9972)
+Access: 2018-10-10 21:15:40.198804743 +0800
+#+END_SRC
+
+这跟我们所熟知的atime的说法不一样啊。
+
+经过一番探查，最终从 [[https://en.m.wikipedia.org/wiki/Stat_(system_call)#Criticism_of_atime][Criticism of atime]] 中发现了原因。
+
+根据 [[https://en.m.wikipedia.org/wiki/Stat_(system_call)#Criticism_of_atime][Criticism of atime]] 的说法，读取文件要修改atime本身是一件很不合理的事情，因为要修改文件的atime就意味着要对磁盘进行写操作。
+首先，在只读文件系统上你根本不可能修改文件的atime,更重要的是这增加了磁盘IO数量.
+
+为了提高磁盘性能，我们可以完全禁止atime的修改(参看mount的noatime和nodiratime选项)，但这会破坏POSIX兼容性，而且某些备份软件需要通过对比atime和mtime/ctime的时间来判断是否需要进行备份。
+
+针对这个问题，Linux kernel2.6.20开始为mount引入了一个 =relatime= 选项，并从 2.6.30 开始这一选项默认是开启的。
+
+当开启了 =relatime= 选项后，只有当 =atime<mtime= 或 =atime<ctime= 时，才会去更新 =atime=.
+通过这种方式，一方面可以大幅度减少atime引起的磁盘写操作，另一方面又保证了备份软件不受到影响，可谓非常精妙了。
+
+下面这段关于relatime的说明取自 =man mount=
+#+BEGIN_EXAMPLE
+  relatime
+         Update inode access times relative to modify or  change  time.
+         Access  time  is  only updated if the previous access time was
+         earlier than the current modify or change time.   (Similar  to
+         noatime,  but it doesn't break mutt or other applications that
+         need to know if a file has been read since the  last  time  it
+         was modified.)
+
+         Since  Linux  2.6.30, the kernel defaults to the behavior pro‐
+         vided by this option (unless noatime was specified),  and  the
+         strictatime  option  is  required to obtain traditional seman‐
+         tics.  In addition, since Linux 2.6.30, the file's last access
+         time is always updated if it is more than 1 day old.
+#+END_EXAMPLE
+
+另外，Linux kernel4.0开始引入了一个新选项 =lazytime=. 它可以让更新atime的操作缓存在内存中，然后当该文件有非时间相关的IO要写入时以其更新到磁盘中。
+同时它也能设置超过多长时间后强制更新atime. 通过这种方式, =lazytime= 能做到在不影响性能的情况下保持POSIX兼容性。
