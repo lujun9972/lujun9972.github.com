@@ -1,0 +1,93 @@
+#+TITLE: 安全的SSH设置
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-10-11 四 16:34]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+偶尔登陆了一次腾讯云主机的root用户，惊讶地发现有大量失败登陆的记录，把我吓了一跳。
+
+使用 =lastb= 查了一下，发现登陆名称是千奇百怪。其中实验次数最多的用户名分别为:
+#+BEGIN_SRC shell :results org :dir /ssh:root@tencent_cloud#8022:
+  sudo lastb|awk '{print $1}' |sort |uniq -c |sort -n -k 1 |tail
+#+END_SRC
+
+#+BEGIN_SRC org
+    160 guest
+    218 hadoop
+    248 git
+    252 ubuntu
+    356 user
+    406 postgres
+    420 test
+    486 oracle
+   1161 admin
+ 147101 root
+#+END_SRC
+
+之前我一直以为我这小破主机应该是没人会在意的，所以没有对SSH服务进行什么配置。现在看起来我还是太naive了。
+
+迫于无奈，只好对SSH服务进行加固处理。目前找到的加固方法有下面几个:
+
+* 确定 sshd_config 的权限
+确定 =sshd_config= 只有root才能读写，其他用户不能进行任何操作
+#+BEGIN_SRC shell
+  sudo chown root:root /etc/ssh/sshd_config
+  sudo chmod og-rwx /etc/ssh/sshd_config
+#+END_SRC
+* 修改ssh服务端口
+这一步的效果很显著，只从改了ssh服务端口后，就在没有看到任何登陆失败的提示了
+#+BEGIN_SRC conf
+  Port XXXX
+#+END_SRC
+* 只启用SSH Protocol 2
+Protocol 1的安全性相对要差一些
+#+BEGIN_SRC conf
+  Protocol 2
+#+END_SRC
+* 不允许空密码登陆
+#+BEGIN_SRC conf
+  PermitEmptyPasswords no
+#+END_SRC
+* 不允许root登陆
+从上面对 =lastb= 的结果分析可以得知， =root= 是被实验最多的用户，没有之一。
+
+因此禁用 root 登陆很有必要:
+#+BEGIN_SRC conf
+  PermitRootLogin no
+#+END_SRC
+
+若你觉得一股脑儿完全禁用root登陆太过了，而希望只在特定的主机上允许root登陆，则可以禁止 root 用密码登陆
+#+BEGIN_SRC conf
+  PermitRootLogin prohibit-password
+#+END_SRC
+然后在特定主机上建立公私密钥认证关系即可。
+* 限制只能登陆特定用户
+我们可以使用 =DenyUsers=, =AllowUsers=, =DenyGroups= 和 =AllowGroups= 关键字来限定允许登陆的用户。
+
+当某个用户登陆时，该用户依次经过  =DenyUsers=, =AllowUsers=, =DenyGroups= 和 =AllowGroups= 的测试，只有在所有测试都通过的情况下才允许登陆。
+#+BEGIN_SRC conf
+  AllowUsers ramesh john jason
+  AllowGroups sysadmin dba
+  DenyUsers cvs apache jane
+  DenyGroups developers qa
+#+END_SRC
+* 修改未登陆的超时时间
+用户未登陆成功的情况下，默认120秒后会登出。这个时间可以缩短，比如60.
+#+BEGIN_SRC conf
+  LoginGraceTime 1m
+#+END_SRC
+但要注意，若该值缩减为 =0= 则表示没有时间限制
+* 设置会话空闲一段时间后自动退出
+设置空间一段时间自动退出有两种方法，
+
+一种是设置 =TMOUT= 环境变量，比如在 =~/.bash_profile= 中加上
+#+BEGIN_SRC shell
+  export TMOUT=100
+#+END_SRC
+
+还有一种方法是设置 =sshd_config=
+#+BEGIN_SRC conf
+  ClientAliveInterval 100
+  ClientAliveCountMax 0
+#+END_SRC
