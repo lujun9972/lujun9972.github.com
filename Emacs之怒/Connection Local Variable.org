@@ -1,0 +1,82 @@
+#+TITLE: Connection Local Variable
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-10-12 五 12:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+Emacs26开始新增了一种变量:Connection Local Variable. 用来为特定的连接设置特定的变量值.
+
+值得说明的是，严格来说， Connection Local Variable 并不是一种变量，而是用来为buffer设置变量的一种接口！
+
+* 定义Connection Local Variable
+定义Connection Local Variable的步骤如下:
+
+1. 启用connection local variable
+
+   #+BEGIN_SRC emacs-lisp
+     (setq enable-connection-local-variables t)
+   #+END_SRC
+
+2. 定义一个connection profile
+   
+   #+BEGIN_SRC emacs-lisp
+     (connection-local-set-profile-variables
+      'remote-termux
+      '((org-babel-remote-temporary-directory . "/data/data/com.termux/files/usr/tmp")))
+   #+END_SRC
+
+   该函数会更新变量 =connection-local-profile-alist= 的值。
+
+   执行完上面语句后就能从变量 =connection-local-profile-alist= 中看到多了一个 =remote-termux= 的profile，以及对应的变量值
+   
+3. 为特定规则的连接设置profile
+
+   #+BEGIN_SRC emacs-lisp
+     (connection-local-set-profiles
+      '(:application 'tramp :protocol "ssh" :machine "phone" :user "lujun9972")
+      'remote-termux)
+   #+END_SRC
+   
+   该函数会更新变量 =connection-local-criteria-alist= 的值。
+
+   执行完上面语句后就能从变量 =connection-local-criteria-alist= 看到定义的规则和对应profile
+
+   
+* 在Elisp代码中使用Connection Local Variable
+遗憾的是，并不是定义了Connection Local Variable后，之前所有网络连接相关的包都会神奇地自动应用Connection Local Variable的值.
+
+Emacs为我们提供了两个函数来应用Connection Local Variable:
+
+1. (hack-connection-local-variables-apply criteria)
+
+   根据指定的标准，将对应条件的Connection Local Variable应用到当前buffer中
+
+   #+BEGIN_SRC emacs-lisp :results org
+     (hack-connection-local-variables-apply '(:application 'tramp :protocol "ssh" :machine "phone" :user "lujun9972"))
+   #+END_SRC
+
+   这时你再查看 =org-babel-remote-temporary-directory= 的值，你会发现已经变成了新的值
+   #+BEGIN_EXAMPLE
+     org-babel-remote-temporary-directory is a variable defined in ‘ob-core.el’.
+     Its value is ("/data/data/com.termux/files/usr/tmp")
+     Original value was "/tmp/"
+     Local in buffer *scratch*; global value is "/tmp/"
+
+     Documentation:
+     Directory to hold temporary files on remote hosts.
+
+     You can customize this variable.
+
+     [back]
+   #+END_EXAMPLE
+
+2. (with-connection-local-profiles profiles &rest body)
+
+   在应用 profiles 中的connection local variables的环境下执行body中的内容.
+
+   #+BEGIN_SRC emacs-lisp
+     (with-connection-local-profiles '(remote-termux)
+       (message "%s" org-babel-remote-temporary-directory))
+   #+END_SRC
