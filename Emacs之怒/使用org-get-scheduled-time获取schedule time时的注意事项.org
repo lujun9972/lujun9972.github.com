@@ -1,0 +1,60 @@
+#+TITLE: 使用org-get-scheduled-time获取schedule time时的注意事项
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-10-19 五 14:54]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+当使用 =org-get-scheduled-time= 获取某个heading的 =schedule time= 时,请保证 =SCHEDULED: xxxx= 是放在标题的正下方第一行的位置上。
+
+因为 =org-get-scheduled-time= 最终是通过 =org-entry-properties= 来获取属性值的(SCHEDULED,定义在 =org-special-propereties= 中，这些熟悉并不会放在properties drawer中，但依然是属性的一种).
+
+而 =org-entry-properties= 中获取SCHEDULED的代码是下面这一段。
+#+BEGIN_SRC emacs-lisp
+  (when (or (not specific)
+            (member specific '("CLOSED" "DEADLINE" "SCHEDULED")))
+    (forward-line)
+    (when (looking-at-p org-planning-line-re)
+      (end-of-line)
+      (let ((bol (line-beginning-position))
+            ;; Backward compatibility: time keywords used to
+            ;; be configurable (before 8.3).  Make sure we
+            ;; get the correct keyword.
+            (key-assoc `(("CLOSED" . ,org-closed-string)
+                         ("DEADLINE" . ,org-deadline-string)
+                         ("SCHEDULED" . ,org-scheduled-string))))
+        (dolist (pair (if specific (list (assoc specific key-assoc))
+                        key-assoc))
+          (save-excursion
+            (when (search-backward (cdr pair) bol t)
+              (goto-char (match-end 0))
+              (skip-chars-forward " \t")
+              (and (looking-at org-ts-regexp-both)
+                   (push (cons (car pair)
+                               (match-string-no-properties 0))
+                         props)))))))
+    (when specific (throw 'exit props)))
+#+END_SRC
+
+注意看第三行和第四行
+#+BEGIN_SRC emacs-lisp
+  (forward-line)
+  (when (looking-at-p org-planning-line-re)
+    .....)
+#+END_SRC
+
+是的，它要求标题的下一行匹配 =org-planning-line-re= 的正则表达式.
+
+而 =org-planning-line-re= 的值为
+#+BEGIN_EXAMPLE
+  org-planning-line-re is a variable defined in ‘org.el’.
+  Its value is "^[ 	]*\\(\\(?:CLOSED\\|DEADLINE\\|SCHEDULED\\):\\)"
+
+    This variable may be risky if used as a file-local variable.
+
+  Documentation:
+  Matches a line with planning info.
+  Matched keyword is in group 1.
+#+END_EXAMPLE
+
+从上面可以看出，不仅仅是 scheduled-time，deadline-time和closed-time 也是一样的情况。
