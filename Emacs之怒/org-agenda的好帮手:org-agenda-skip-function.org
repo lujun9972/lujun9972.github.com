@@ -1,0 +1,65 @@
+#+TITLE: org-agenda的好帮手:org-agenda-skip-function
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-10-21 日 21:48]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+之前一直想自定义一个angeda视图，用来显示所有 state 为 =NEXT= 且 scheduled time不超过今天的事项。
+
+刷选 state 为 =NEXT= 的事项很容易,只需要在 =org-agenda-custom-commands= 中的 =type= 设为 =todo=, =match= 设为 ="NEXT"= 就行了，
+但是要过滤 scheduled time该怎么做呢？
+
+我一直都找不到实现的方法,直到有一天发现了 =org-agenda-skip-function= 这个变量。
+
+下面是 =org-agenda-skip-function= 的doc-string
+#+BEGIN_EXAMPLE
+  org-agenda-skip-function is a variable defined in ‘org-agenda.el’.
+  Its value is nil
+
+    This variable may be risky if used as a file-local variable.
+
+  Documentation:
+  Function to be called at each match during agenda construction.
+  If this function returns nil, the current match should not be skipped.
+  Otherwise, the function must return a position from where the search
+  should be continued.
+  This may also be a Lisp form, it will be evaluated.
+  Never set this variable using ‘setq’ or so, because then it will apply
+  to all future agenda commands.  If you do want a global skipping condition,
+  use the option ‘org-agenda-skip-function-global’ instead.
+  The correct usage for ‘org-agenda-skip-function’ is to bind it with
+  ‘let’ to scope it dynamically into the agenda-constructing command.
+  A good way to set it is through options in ‘org-agenda-custom-commands’.
+#+END_EXAMPLE
+
+根据这个说法 org-agenda 会在生成 agenda view 时调用 =org-agenda-skip-function= 所指向的函数来过滤不需要的事项。
+也就是说，通过定义这个函数，我们可以以任意条件来过滤要显示的事项。
+
+这个过滤函数的结构一般是这样的
+#+BEGIN_SRC emacs-lisp
+  (let* ((next-headline (save-excursion (or (outline-next-heading) (point-max))))
+         (subtree-end (save-excursion (org-end-of-subtree t)))
+         (subtree-valid (过滤条件判断)))
+    (unless subtree-valid
+      next-headline))
+#+END_SRC
+
+比如我的agenda实现是这样的：
+#+BEGIN_SRC emacs-lisp
+  (defun org/schedule-until (&optional time)
+    "List Agenda items that scheduled until TIME."
+    (let* ((next-headline (save-excursion (or (outline-next-heading) (point-max))))
+           (subtree-end (save-excursion (org-end-of-subtree t)))
+           (scheduled-time (org-get-scheduled-time (point)))
+           (time (or time (format-time-string "%Y-%m-%d 23:59:59")))
+           (time (apply #'encode-time (org-parse-time-string time)))
+           (subtree-valid (or (null scheduled-time) (time-less-p scheduled-time time))))
+      (until subtree-valid
+             next-headline)))
+
+  (setq org-agenda-custom-commands
+        '(("n" "Next" todo "NEXT"
+           ((org-agenda-overriding-header "NEXT")
+            (org-agenda-skip-function 'org/schedule-until)))))
+#+END_SRC
