@@ -1,0 +1,60 @@
+#+TITLE: 如何禁止地址空间布局随机化对调试带来的影响
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2018-10-27 六 22:44]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 《Effective Debugging》中学来的，记录一下。
+
+现代linux内核每次加载程序时会将程序加载到内存的随机位置，以防止缓冲区益处的代码注入攻击。
+
+比如下面程序可以输出自身的栈、堆、代码及数据相关的内存地址:
+#+BEGIN_SRC C :results org
+  #include <stdio.h>
+  #include <stdlib.h>
+
+  int z;
+  int i=1;
+  const int c=1;
+
+  int main(int argc, char *argv[])
+  {
+    printf("Stack:\t%p\n", (void*)&argc);
+    printf("heap:\t%p\n", (void*) malloc(1));
+    printf("code:\t%p\n", (void*) main);
+    printf("data:\t%p (zero)\n", (void*) &z);
+    printf("data:\t%p (initialized)\n", (void*) &i);
+    printf("data:\t%p (constant)\n", (void*) &c);
+    return 0;
+  }
+#+END_SRC
+
+第一次执行结果:
+#+BEGIN_SRC org
+Stack:	0x7ffde6f8cf9c
+heap:	0x55ca3fd9d270
+code:	0x55ca3ee95149
+data:	0x55ca3ee98040 (zero)
+data:	0x55ca3ee98038 (initialized)
+data:	0x55ca3ee96004 (constant)
+#+END_SRC
+
+第二次执行结果:
+#+BEGIN_SRC org
+Stack:	0x7ffebd2eb6ec
+heap:	0x55a72ae36270
+code:	0x55a72ae04149
+data:	0x55a72ae07040 (zero)
+data:	0x55a72ae07038 (initialized)
+data:	0x55a72ae05004 (constant)
+#+END_SRC
+
+然而这种地址空间布局随机化措施(address space layout randomization, ASLR)可能干扰调试工作，比如会使我们记录下来的指针指变得无效。
+
+要禁止ASLR,可以采用下面方法来运行程序
+#+BEGIN_SRC shell
+  setarch $(uname -m) -R myprogram
+  # 这里 -R 表示 --addr-no-randomize
+                # Disables randomization of the virtual address space.  Turns on ADDR_NO_RANDOMIZE.
+#+END_SRC
