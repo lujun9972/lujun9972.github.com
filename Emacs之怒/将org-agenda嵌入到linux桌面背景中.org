@@ -1,0 +1,86 @@
+#+TITLE: 将org-agenda嵌入到linux桌面背景中
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2018-11-02 五 17:47]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+要将org-agenda嵌入linux桌面背景需要两个工具: [[ego-link:org-batch-agenda:%E8%AE%A9%E4%BD%A0%E5%9C%A8%E5%91%BD%E4%BB%A4%E8%A1%8C%E4%B8%AD%E8%BE%93%E5%87%BAorg-agenda.org][org-batch-agenda]] 以及 [[https://github.com/brndnmtthws/conky][conky]]
+
+其中，
+
++ org-batch-agenda 用于让Emacs在batch模式中运行agenda命令并将结果输出到STDOUT
++ conky 则是一个轻量级的系统监控工具，它可以自定义要运行的命令并将结果显示在桌面上。
+
+* 1. 安装conky
+#+BEGIN_SRC shell
+  sudo pacman -S conky --noconfirm
+#+END_SRC
+
+* 2. 配置conky
+创建一个 =~/.conky= 文件并输入下面内容
+#+BEGIN_SRC conf :tangle "~/.conkyrc"
+  conky.config = {
+      background = true,
+      update_interval = 1.5,
+      cpu_avg_samples = 2,
+      net_avg_samples = 2,
+      out_to_console = false,
+      override_utf8_locale = true,
+      double_buffer = true,
+      no_buffers = true,
+      text_buffer_size = 32768,
+      imlib_cache_size = 0,
+      own_window = true,
+      own_window_type = 'desktop',
+      own_window_argb_visual = true,
+      own_window_argb_value = 120,
+      own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
+      border_inner_margin = 10,
+      border_outer_margin = 0,
+      xinerama_head = 1,
+      alignment = 'top_right',
+      gap_x = 90,
+      gap_y = 90,
+      draw_shades = true,
+      draw_outline = false,
+      draw_borders = false,
+      draw_graph_borders = false,
+      use_xft = true,
+      font = 'Ubuntu Mono:size=12',
+      xftalpha = 0.8,
+      uppercase = false,
+      default_color = '#FFFFFF',
+      own_window_colour = '#000000',
+      minimum_width = 0, minimum_height = 0,
+  };
+
+  conky.text = [[
+      ${execpi 300 /usr/bin/emacs --batch -l ~/github/mobileorg-sync/mobileorg-sync.el -eval '(org-batch-agenda "m")' }
+      ${execpi 300 /usr/bin/emacs --batch -l ~/github/mobileorg-sync/mobileorg-sync.el -eval '(org-batch-agenda "s")' }
+  ]];
+#+END_SRC
+
+其中 =conky.config= 这一段用来配置显示效果的，而具体的内容由 =conky.text= 来实现。其中
+#+BEGIN_EXAMPLE
+      ${execpi 300 /usr/bin/emacs --batch -l ~/github/mobileorg-sync/mobileorg-sync.el -eval '(org-batch-agenda "m")' }
+#+END_EXAMPLE
+
+的意思是，每 =300= 秒执行一次 =/usr/bin/emacs --batch -l ~/github/mobileorg-sync/mobileorg-sync.el -eval '(org-batch-agenda "m")'= 命令,并显示其结果。
+
+这里我将所有关于org-agenda的配置都集中在 =~/github/mobileorg-sync/mobileorg-sync.el= 中。
+
+* 3. 在终端执行 conky 命令
+
+#+BEGIN_SRC shell
+  conky
+#+END_SRC
+
+conky默认会加载 =~/.conky= 中的配置，并显示结果。
+
+[[file:./images/screenshot-16.png]]
+
+当然你也可以使用 =-c= 选项指定加载某个配置文件,像这样
+#+BEGIN_SRC shell
+  conky -c ~/.conkyrc.org_agenda
+#+END_SRC
