@@ -1,0 +1,73 @@
+#+TITLE: 使用ZSWAP改善低内存电脑的性能
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-11-27 二 11:56]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们都知道，当电脑物理内存不够操作系统使用时，操作系统会把部分物理内存的内容临时写入磁盘中，在物理内存足够后再从磁盘读回物理内存，这个过程叫做SWAP。
+然而由于磁盘的写入/读取速度要远远慢于内存的读写速度，因此SWAP的过程会严重拖慢电脑性能。
+当电脑内存足够，SWAP交换数据较少的时候还没什么，但若电脑内存不足引起大量SWAP，那电脑性能将会受到严重的影响，这时你会发现你的磁盘在不断地转动。
+
+缓解SWAP的问题有两个方法，一个方法是想办法提高读写磁盘的速率，比如将机械硬盘换成SSD盘。
+另一个方法就是想办法降低SWAP发生的概率。
+
+Linux kernel自3.11开始引入了zswap的功能，它能够将原本要交换到磁盘上的内存压缩，放到内存的一个内存池中，从而减少发生SWAP的概率。
+
+* 启用zswap
+** 临时启用zswap
+临时启用zswap很简单，只需要
+#+BEGIN_SRC shell
+  sudo echo 1|tee /sys/module/zswap/parameters/enabled
+#+END_SRC
+
+** 永久启用zswap
+若想每次重启都自动启用zswap，则可以修改启动时的内核参数，添加上 =zswap.enabled=1= 
+
+1. 编辑 =/etc/default/grub=,在 =GRUB_CMDLINE_LINUX_DEFAULT= 后加上 =zswap.enabled=1=
+2. 运行 =grub-mkconfig -o /boot/grub/grub.cfg= 重新生成GRUB配置文件
+3. 重启电脑
+
+在archlinux上，我们还可以通过 =systemd-swap= 来帮我们开启zswap
+#+BEGIN_SRC shell
+  sudo pacman -S systemd-swap --noconfirm
+  sudo systemctl enable systemd-swap
+  sudo systemctl start systemd-swap
+#+END_SRC
+
+* 配置zswap
+zswap有下面几个配置参数:
+#+BEGIN_SRC shell :results org
+  grep -R . /sys/module/zswap/parameters/
+#+END_SRC
+
+#+BEGIN_SRC org
+/sys/module/zswap/parameters/enabled:Y
+/sys/module/zswap/parameters/max_pool_percent:25
+/sys/module/zswap/parameters/compressor:lz4
+/sys/module/zswap/parameters/zpool:zbud
+#+END_SRC
+
+其中:
+
++ zwap.enabled: 表示是否启用zswap功能
++ zswap.compressor: 表示用来压缩内存的算法，可以是lzo、lz4、lz4hc、deflate
++ zswap.max_pool_percent: 用来表示存放压缩内存的内存池的最大值，内存池本身并不是预先分配好的，而是根据需要慢慢增加，但最大不超过这个限定值
++ zswap.zpool: 内存池的管理算法,可以是zbud或z3fold，其中z3fold要比zbud有更好的压缩率
+  
+你可以手工将上面这些参数加入到启动的内核参数中，比如 =zswap.enabled=1 zswap.compressor=lz4 zswap.max_pool_percent=20 zswap.zpool=z3fold=
+
+若是通过 =systemd.swap= 来管理交换区的，则可以通过修改 =/etc/systemd/swap.conf= 来进行配置
+#+BEGIN_SRC shell :results org
+  grep -i zswap /etc/systemd/swap.conf
+#+END_SRC
+
+#+BEGIN_SRC conf
+# Zswap
+# Zswap create compress cache between swap and memory for reduce IO
+# https://www.kernel.org/doc/Documentation/vm/zswap.txt
+zswap_enabled=1
+zswap_compressor=lz4      # lzo lz4
+zswap_max_pool_percent=25 # 1-99
+zswap_zpool=zbud          # zbud z3fold
+#+END_SRC
