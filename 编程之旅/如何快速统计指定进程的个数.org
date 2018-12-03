@@ -1,0 +1,99 @@
+#+TITLE: 如何快速统计指定进程的个数
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2018-12-03 一 19:33]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近某个系统由于处理来帐报文缓慢而导致被上级部门通报。
+经过排查发现系统中有一段代码用来统计处理来帐的进程数，若进程数大于某个阀值则开始限流,等待一段时间后再开始接受来帐报文。
+
+而比较讽刺的是,统计进程数的这段代码居然是在C语言中通过 =system= 来执行外部shell命令实现的。
+由于执行shell命令耗时太过严重，实际上这个阀值永远也不可能达到。
+
+一个比较快速的统计进程数量的方法是直接在C语言中遍历 =/proc/= 目录中各个 =进程号= 目录下的 =exe= 文件,看它是否是统计进程的软链接。
+
+下面是这两种方法耗时的比较:
+
+1. 通过执行shell命令来统计
+   #+BEGIN_SRC C :results org
+     #include <stdlib.h>
+     #include <stdio.h>
+     #include <sys/time.h>
+
+     int64_t getCurrentTime()
+     {
+       struct timeval tv;
+       gettimeofday(&tv,NULL);
+       return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+     }
+
+     int main()
+     {
+       int64_t start = getCurrentTime();
+       system("ps -ef|grep firefox|grep -v grep|wc -l");
+       int64_t end = getCurrentTime();
+       printf("耗时:%ld\n",(end-start));
+       return 0;
+     }
+
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   6
+   耗时:19
+   #+END_SRC
+
+2. 通过遍历 /proc 目录的方法来统计
+   #+BEGIN_SRC C :results org
+     #include <stdlib.h>
+     #include <stdio.h>
+     #include <unistd.h>
+     #include <sys/types.h>
+     #include <dirent.h>
+
+     int64_t getCurrentTime()
+     {
+       struct timeval tv;
+       gettimeofday(&tv,NULL);
+       return tv.tv_sec * 1000 + tv.tv_usec / 1000;
+     }
+
+     int main()
+     {
+       char szExe[256];
+       int count = 0;
+       DIR* proc = opendir("/proc");
+       struct dirent* file;
+       int64_t start = getCurrentTime();
+       while((file = readdir(proc)) != NULL)
+         {
+            //把当前目录.，上一级目录..及隐藏文件都去掉，避免死循环遍历目录
+             if(strncmp(file->d_name, ".", 1) == 0)
+               {
+                 continue;
+               }
+             if(file->d_name[0]>='0' && file->d_name[0]<='9')
+               {
+                 memset(szExe,0,256);
+                 strcpy(szExe, "/proc/");
+                 strcat(szExe, file->d_name);
+                 strcat(szExe, "/exe");
+                 readlink(szExe, szExe, 256);
+                 if(strcmp(szExe,"/usr/lib/firefox/firefox") == 0)
+                 {
+                   count ++;
+                 }
+               }
+         }
+       int64_t end = getCurrentTime();
+       printf("%d,耗时:%ld",count,(end-start));
+       return closedir(proc);
+     }
+
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   6,耗时:1
+   #+END_SRC
+   
