@@ -1,0 +1,47 @@
+#+TITLE: 在OrangePi上安装Lychee进行照片管理
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-12-08 六 09:14]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://github.com/LycheeOrg/Lychee][Lychee]]是一款易用的照片管理应用，可以很方便地用docker来部署， =lsioarmhf/lychee-aarch64= 就是一个现成的镜像。
+不过这个镜像并不包含数据库，因此还需要做一些改造。
+
+创建一个 =docker-compose.yml=,填入下面内容:
+#+BEGIN_SRC yaml
+  version: "0.1"                                                               
+  services:
+    database:
+      image: mariadb
+      restart: always
+      environment:
+        MYSQL_ROOT_PASSWORD: root
+      volumes:
+        - ./data:/var/lib/mysql
+
+    lychee-aarch64:
+      image: lsioarmhf/lychee-aarch64
+      restart: always
+      links:
+        - database
+      ports:
+        - 2080:80
+      volumes:
+        - ./config:/config
+        - ./pictures:/pictures
+      environment:
+        - PGID=${GID}
+        - PUID=${UID}
+#+END_SRC
+
+然后用下面命令启动服务
+#+BEGIN_SRC shell
+  GID=${GID} UID=${UDI} docker-compose up -d
+#+END_SRC
+
+启动后访问 =http://orangepi:2080= 就会进入安装界面了。
+安装界面中的数据库主机填写 =database=,数据库用户填写 =root=,数据库密码也填写 =root=.
+安装好后就能看到lychee的界面了
+
+[[file:images/Lychee_1544232228.png]]
