@@ -1,0 +1,44 @@
+#+TITLE: ssh使用跳板机访问远程服务器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-12-08 六 21:44]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+处于防火墙内部的主机往往需要通过跳板机才能访问互联网上的远程服务器。如下图所示:
+
+#+BEGIN_EXAMPLE
+   +--------------------+       +---------------------+     +------------------+
+   |                    |       |                     |     |                  |
+   |  YOU(本地主机)      |------>+ HOST1(跳板机)        +---->+   HOST2(远程主机）|
+   |                    |       |                     |     |                  |
+   +--------------------+       +---------------------+     +------------------+
+#+END_EXAMPLE
+
+你通过HOST1作为跳板机，访问远程主机HOST2
+
+* 单跳板机
+通过 ssh 的 =-J= 参数可以指定跳板机，比如
+#+BEGIN_SRC shell
+  ssh -J host1 host2
+#+END_SRC
+若需要指定用户名和端口号则可以扩充为:
+#+BEGIN_SRC shell
+  ssh -J user1@host1:port1 user2@host2:port2
+#+END_SRC
+
+* 多跳板机
+若访问远程主机需要经过多个跳板机，则将多个跳板机的信息用逗号(,)来连接，比如
+#+BEGIN_SRC shell
+  ssh -J user1@host1:port1,user2@host2:port2 user3@host3:port3
+#+END_SRC
+
+* 将跳板机信息存入 ssh_config中
+从OpenSSH7.3开始，我们可以通过 =ssh_config= 中的 =ProxyJump= 指令指定跳板机，比如
+#+BEGIN_SRC conf
+  Host host3
+          HostName XXX.XXX.XXX.XXX
+          ProxyJump user1@host1:port1,user2@host2:port2
+#+END_SRC
+
+这样以后要访问host3,只需要直接 =ssh host3= 就行了，无需指定跳板机信息
