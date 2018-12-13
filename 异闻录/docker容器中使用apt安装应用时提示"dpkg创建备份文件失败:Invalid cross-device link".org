@@ -1,0 +1,51 @@
+#+TITLE: docker容器中使用apt安装应用时提示"dpkg创建备份文件失败:Invalid cross-device link"
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2018-12-13 四 19:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+在ubuntu docker容器中尝试用apt安装应用时报错，提示“Invalid cross-device link”
+
+#+BEGIN_EXAMPLE
+  root@a7a2e07594ca:/# apt update && apt install boxes -y
+  Hit:1 http://archive.ubuntu.com/ubuntu bionic InRelease
+  Hit:2 http://security.ubuntu.com/ubuntu bionic-security InRelease       
+  Hit:3 http://archive.ubuntu.com/ubuntu bionic-updates InRelease         
+  Hit:4 http://archive.ubuntu.com/ubuntu bionic-backports InRelease
+  Reading package lists... Done
+  Building dependency tree       
+  Reading state information... Done
+  4 packages can be upgraded. Run 'apt list --upgradable' to see them.
+  Reading package lists... Done
+  Building dependency tree       
+  Reading state information... Done
+  The following NEW packages will be installed:
+    boxes
+  0 upgraded, 1 newly installed, 0 to remove and 4 not upgraded.
+  Need to get 66.6 kB of archives.
+  After this operation, 194 kB of additional disk space will be used.
+  Get:1 http://archive.ubuntu.com/ubuntu bionic/universe amd64 boxes amd64 1.2-2 [66.6 kB]
+  Fetched 66.6 kB in 1s (49.8 kB/s)
+  debconf: delaying package configuration, since apt-utils is not installed
+  Selecting previously unselected package boxes.
+  (Reading database ... 4038 files and directories currently installed.)
+  Preparing to unpack .../archives/boxes_1.2-2_amd64.deb ...
+  Unpacking boxes (1.2-2) ...
+  dpkg: error: error creating new backup file '/var/lib/dpkg/status-old': Invalid cross-device link
+  E: Sub-process /usr/bin/dpkg returned an error code (2)
+  root@a7a2e07594ca:/# 
+#+END_EXAMPLE
+
+* 解决方案
+根据 https://github.com/docker/for-linux/issues/480 的说法，这是由于docker与Linux Kernel中新加的overlayfs metacopy 特性不兼容导致的。
+
+解决方法是:
+#+BEGIN_SRC shell
+  echo N | sudo tee /sys/module/overlay/parameters/metacopy
+#+END_SRC
+然后重启容器
+
+当然这种方法每次重启都要重新设置，你也可以在grub中添加内核参数 ~overlay.metacopy=N~ 来让系统每次启动时自动设置该参数。
+或者更极端一点，给你的内核打个[[https://www.spinics.net/lists/linux-unionfs/msg06316.html][这个补丁]]
