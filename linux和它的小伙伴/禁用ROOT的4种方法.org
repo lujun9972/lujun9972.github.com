@@ -1,0 +1,62 @@
+#+TITLE: 禁用ROOT的4种方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-12-21 五 11:45]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.tecmint.com/disable-root-login-in-linux/ 中看到的，记录一下。
+
+我们都知道 root 的权限过大，因此一般不推荐直接使用 root 用户操作，而是使用普通用户，在必要时通过 sudo 命令来提权。
+在Ubuntu中，更是直接把root禁用了，那么如何在linux中禁止root登陆呢？有下面几种方法。
+
+* 修改root用户的登陆shell
+可以通过下面将root的登陆shell改为 =/sbin/nologin=
+#+BEGIN_SRC shell
+  sudo sed -i '/^root:/ s?[^:]*$?/sbin/nologin?' /etc/passwd
+#+END_SRC
+
+此后，使用 =root= 登陆只会显示一条信息 “This account is currently not available”. 
+也可以通过修改 =/etc/nologin.txt= 来自定义出错信息
+
+这种方法只能禁止那些需要shell的用户登陆场景，像sudo，ftp之类的操作依然可以使用root账户.
+
+* 禁止root在任何终端设备上登陆
+PAM模块中有一个叫做 =pam_securetty= 的模块，它会限定 root 用户只能在安全终端上登陆。
+而所谓的安全终端由 =/etc/securetty= 来决定，该文件由包含数行tty设备名（每行一个设备名,前面不加 =/dev/=),只有这些设备方允许 root 登录.
+
+所以我们可以通过清空安全终端列表的方式禁止root登陆
+#+BEGIN_SRC shell
+  sudo cp /etc/securetty /etc/securetty.bak
+  sudo echo |tee /etc/securetty
+#+END_SRC
+
+这种方法只会影响需要分配终端的程序，比如login，gdm/kdm/xdm之类的显示管理器等,
+像su,sudo,scp,sftp,ssh之类的操作则无效
+
+* 禁止root通过SSH登陆
+修改 =/etc/ssh/sshd_config=,加上 =PermitRootLogin no=,然后再重启 =sshd= 服务
+#+BEGIN_SRC shell
+  sudo systemctl restart sshd
+#+END_SRC
+
+很明显，这种方法只会影响ssh，scp，sftp之类ssh系列工具
+
+* 通过PAM禁止root访问login和sshd服务
+通过 =/lib/security/pam_listfile.so= 模块，可以限定指定用户禁止访问某些服务。其步骤如下:
+
+1. 创建一个 =/etc/deniedusers=,其中加上 =root= 或任意不想让它访问服务的用户名
+   #+BEGIN_SRC shell
+     sudo echo root |tee -a /etc/deniedusers
+   #+END_SRC
+
+2. 设置权限
+   #+BEGIN_SRC shell
+     sudo chmod 600 /etc/ssh/deniedusers
+   #+END_SRC
+
+3. 在 =/etc/pam.d/login= 和 =/etc/pam.d/sshd= 中加上下面配置
+   #+BEGIN_EXAMPLE
+      auth    required       pam_listfile.so \
+             onerr=succeed  item=user  sense=deny  file=/etc/ssh/deniedusers
+   #+END_EXAMPLE
