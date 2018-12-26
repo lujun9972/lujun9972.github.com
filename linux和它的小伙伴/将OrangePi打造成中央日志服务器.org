@@ -1,0 +1,216 @@
+#+TITLE: 将OrangePi打造成中央日志服务器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-12-23 日 20:29]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 在OrangePi上配置Rsyslog Server
+** 安装、启动rsyslog服务
+首先确定OrangePi上已经启动了rsyslog服务
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.9: :results org
+  sudo systemctl status rsyslog
+#+END_SRC
+
+#+BEGIN_SRC org
+● rsyslog.service - System Logging Service
+   Loaded: loaded (/lib/systemd/system/rsyslog.service; enabled; vendor preset: enabled)
+   Active: active (running) since Wed 2018-12-19 09:36:25 HKT; 4 days ago
+     Docs: man:rsyslogd(8)
+           http://www.rsyslog.com/doc/
+ Main PID: 883 (rsyslogd)
+    Tasks: 4 (limit: 1029)
+   CGroup: /system.slice/rsyslog.service
+           └─883 /usr/sbin/rsyslogd -n
+
+Warning: Journal has been rotated since unit was started. Log output is incomplete or unavailable.
+#+END_SRC
+
+若没有安装rsyslog服务则使用下面语句进行安装
+#+BEGIN_SRC shell
+  sudo apt update && apt install rsyslog
+#+END_SRC
+
+若没有启动rsyslog服务，则使用下面语句启动
+#+BEGIN_SRC shell
+  sudo systemctl enable rsyslog
+  sudo systemctl start rsyslog
+#+END_SRC
+** 配置/etc/rsyslog.conf
+rsyslog的主配置文件是 =/etc/rsyslog.conf=,在该文件中默认还会加载 =/etc/ryslog.d= 中所有的配置信息。
+
+*** 开启TCP/UDP监听服务
+配置文件中的的一部分是加载模块，不同的模块能为rsyslog提供不同的能力。
+#+BEGIN_SRC conf
+  #################
+  #### MODULES ####
+  #################
+
+  module(load="imuxsock") # provides support for local system logging
+  #module(load="immark")  # provides --MARK-- message capability
+
+  # provides UDP syslog reception
+  #module(load="imudp")
+  #input(type="imudp" port="514")
+
+  # provides TCP syslog reception
+  #module(load="imtcp")
+  #input(type="imtcp" port="514")
+
+  # provides kernel logging support and enable non-kernel klog messages
+  module(load="imklog" permitnonkernelfacility="on")
+#+END_SRC
+
+为了可以让其他主机通过网络将日志内容推送到本服务器，必须开启TCP或UDP的监听服务，如上面的例子中可以看出，rsyslog默认监听端口是 =514=,不过你可以改成任意想要的值。
+
+这里我把TCP和UDP的监听服务都打开:
+#+BEGIN_SRC conf
+  # provides UDP syslog reception
+  module(load="imudp")
+  input(type="imudp" port="514")
+
+  # provides TCP syslog reception
+  module(load="imtcp")
+  input(type="imtcp" port="514")
+#+END_SRC
+
+*** 配置日志行为规则
+在默认 =/etc/rsyslog.conf= 文件中最后一行通过 =$IncludeConfig /etc/rsyslog.d/*.conf= 指令，加载了 =/etc/ryslog.d= 下的所有配置文件。
+
+而 =/etc/rsyslog.d/= 目录下默认只有一个 =50-default.conf= 配置文件，配置了默认的日志存储规则。
+这里文件名中的 =50= 决定了加载的顺序，rsyslog按编号顺序从小到大加载各个配置文件。
+
+我们新建一个 =10-remote.conf= 来定义存放远程日志的存储规则.
+#+BEGIN_SRC shell  :dir /ssh:root@192.168.1.9: :results org
+  sudo touch /etc/rsyslog.d/10-remote.conf
+#+END_SRC
+
+一个日志行为规则的格式大概是这样的:
+#+BEGIN_SRC conf
+  服务.级别     行为
+#+END_SRC
+
+其中，
++ 服务: 指定了产生日志信息应用/进程的类型，可以是 auth,cron,daemon,kernel,local0到local7,或者用 * 来表示匹配所有的类型的服务
++ 级别: 指定了日志信息的重要程度，可以是 emerg,alert,crit,err,warn,notice,info,debug，或者 * 来匹配所有级别的消息
++ 行为: rsyslog可以给消息指定多种行为:
+  - 指定一个本地文件路径，表示将日志写入该文件(可以/dev/console这样的终端文件)
+  - 用 =IP:port= 的格式来指定一个远程的rsyslog服务器，表示把消息转发到那个服务器(在IP前加上@则表示通过UDP转发,加上@@表示TCP转发)。
+  - 使用 =stop= 指令表示丢弃该日志信息。
+  - 使用 =|管道文件= 表示把日志写入管道文件中，该管道文件需要先用 =mkfifo= 预先创建好
+  - 使用 =:omusrmsg:用户1,用户2...= 表示若这些用户登陆到系统上，将会收到这些信息.
+  - 可以使用 =:omusrmsg:*= 来表示所有用户
+  - 使用 =^程序;template= 将消息作为程序的命令行参数进行运行
+  - 数据库
+
+**** 模板
+我们可以使用模板来定义 =日志格式= 或者动态生成 =日志文件路径=.
+
+一个模板由 =$template= 指令，模板名，模板内容和可选项这几部分组成,其格式为：
+#+BEGIN_SRC conf
+  $template 模板名,"模板内容",模板可选项
+#+END_SRC
+
+***** 模板内容
+
+在 =模板内容= 中可以使用 =%属性名:截取开始位置:截取结束位置:属性选项%= 这样一种特殊语法来将消息属性嵌入消息内容中。
+
+注意，这些属性名是大小写敏感的，常用属性名包括:
++ msg :: 日志的内容
++ rawmsg :: 从socket收到的日志内容,常用语调试
++ HOSTNAME :: 消息从哪台主机产生的
++ FROMHOST :: 消息从哪台主机上转发过来的，但不一定是最开始产生消息的那个主机
++ syslogtag :: 消息的标签
++ syslogserverity :: 消息级别，用数字表示
++ syslogserverity-text :: 消息级别，用文字说明
++ syslogfacility :: 消息服务，用数字表示
++ syslogfacility-text :: 消息服务，用文字表示
++ timegenerated :: 收到消息的时间戳
++ timereported / TIMESTAMP :: 产生消息的时间戳
++ APP-NAME :: 产生消息的应用名称
++ PROCID :: 产生消息的进程号
++ MSGID :: 消息编号
++ $NOW / $YEAR / $MONTH / $DAY / $HOUR / $MINUTE :: 当前时间信息
+     
+=截取开始位置= 和 =截取结束位置= 用于截取属性的部分内容，要注意的是，它们从 =1= 开始计数
+
+=属性选项= 则用于对属性内容进行格式化，可以是:
++ uppercase :: 转换成大写形式
++ lowercase :: 转换成小写形式
++ drop-last-lf :: 删掉消息中最后一个 =LF=
++ date-mysql :: 格式化成mysql的日期格式
++ date-rfc3164 :: 格式化成RFC 3164的日期格式
++ date-rfc3339 :: 格式化成RFC 3339的日期格式
++ escape-cc :: 使用 =#<XXX>= 的格式转译消息中的控制字符
++ space-cc :: 使用空格代替消息中的控制字符
++ drop-cc :: 删掉消息中的控制字符
+
+***** 模板可选项
+目前定义的可选项包括 =sql= 和 =stdsql=,这两个选项只有在想将日志内容存入数据库中时才有用。其中:
++ =sql= 的意思是按照MYSQL的要求转换模板内容，即将单引号和反斜杠进行转移。
++ =stdsql= 则会将模板内容按标准SQL的要求进行转换,即将内容中单引号替换成双单引号。
+
+**** 定义我们的远程日志模板
+#+BEGIN_SRC conf :tangle "/ssh:root@192.168.1.9:/etc/rsyslog.d/10-remote.conf"
+  $template RemoteLogs,"/var/log/%HOSTNAME%/%APP-NAME%.log"
+  ,*.* ?RemoteLogs 
+  & ~
+#+END_SRC
+这里我们定义了一个远程日志模板，然后定义将所有日志写入远程日志模板指定的文件中
+
+最后这句 =& ~= 表示rsyslog不要继续再处理该信息了
+** 重启syslog服务
+#+BEGIN_SRC shell :dir /ssh:root@192.168.1.9: :results org
+  sudo systemctl restart rsyslog
+#+END_SRC
+
+然后你会看到 =/var/log/= 目录下多了个 =localhost= 目录，里面有很多日志
+#+BEGIN_EXAMPLE
+  lujun9972@orangepipc2:/var/log/localhost$ ls -l                                                                         
+  total 16                                                                                                                
+  -rw-r----- 1 syslog adm 585 Dec 23 23:15 CRON.log                                                                       
+  -rw-r----- 1 syslog adm 558 Dec 23 23:14 rsyslogd.log
+  -rw-r----- 1 syslog adm  85 Dec 23 23:14 sudo.log
+  -rw-r----- 1 syslog adm 216 Dec 23 23:14 systemd.log
+  lujun9972@orangepipc2:/var/log/localhost$ pwd            
+#+END_EXAMPLE
+
+* 客户端配置
+
+** 安装并启动rsyslog服务
+我们首先需要一个rsyslog服务才能将日志转发到中央日志服务器上. 在archlinux上需要通过AUR来安装rsyslog
+#+BEGIN_SRC shell
+  aurman -S rsyslog
+  sudo mkdir -p /var/spool/rsyslog # 手工创建/etc/rsyslog.conf中$WorkDirectory定义的工作目录
+  sudo systemctl enable rsyslog.service
+  sudo systemctl start rsyslog.service
+  systemctl status rsyslog.service
+#+END_SRC
+
+*注意*: 根据 =man rsyslogd= 的说法，rsyslogd默认从 =/dev/log= 这个UNIX域套结字文件中读取日志消息(=/dev/log= 又实际上是 =/run/systemd/journal/dev-log= 的软链接).
+但根据 https://www.freedesktop.org/wiki/Software/systemd/syslog/ 的说法:
+#+BEGIN_EXAMPLE
+  Note that it is now the journal that listens on /dev/log, no longer the BSD syslog daemon directly. If your logging daemon wants to get access to all logging data then it should listen on /run/systemd/journal/syslog instead via the syslog.socket unit file that is shipped along with systemd. On a systemd system it is no longer OK to listen on /dev/log directly, and your daemon may not bind to the /run/systemd/journal/syslog socket on its own. If you do that then you will lose logging from STDOUT/STDERR of services (as well as other stuff).
+#+END_EXAMPLE
+
+** 配置客户端的/etc/rsyslog.conf
+按照实际需求，将指定日志转发到中央日志服务器上。比如要将所有日志都转发到中央日志服务器，则可以在配置文件中加上
+#+BEGIN_SRC conf
+  ,*.*       192.168.1.9:514
+#+END_SRC
+
+其中 =192.168.1.9= 就是中央日志服务器，即OrangePi的IP地址， =514= 则是监听端口
+
+** 重启rsyslog服务
+#+BEGIN_SRC shell
+  sudo systemctl start rsyslog.service
+  systemctl status rsyslog.service
+#+END_SRC
+
+** 修改/etc/systemd/journald.conf
+开启其中的 =ForwardToSyslog=
+#+BEGIN_SRC conf
+  ForwardToSyslog=yes
+#+END_SRC
+
+根据 =man journald.conf= 的说法: ~ForwardToSyslog=~ 表示是否将接收到的日志消息转发给传统的 syslog 守护进程，默认值为"no"。 如果设为"yes"，则会将消息转发到 =/run/systemd/journal/syslog=.
