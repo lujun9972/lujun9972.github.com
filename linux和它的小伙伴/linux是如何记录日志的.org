@@ -1,0 +1,55 @@
+#+TITLE: linux是如何记录日志的
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-12-26 三 18:53]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天看到一个很不错的问题: [[https://unix.stackexchange.com/questions/205883/understand-logging-in-linux][Understand logging in Linux]]，里面的答案特别好，记录一下
+
+在linux中，一个典型的日志记录过程如下:
+
+* 内核空间日志
+内核使用 =printk()= 函数往内核空间的一个 ring buffer 中写入日志消息.
+该消息有三种方法可以被用户空间的应用所获取:
+
+1. 通过 =/proc/kmsg= 文件
+
+   这是一个只读的伪FIFO文件，且里面的消息只能被读取一次。当多个进程同时尝试读取该文件时，每个进程将只能读取到一部分日志内容。
+
+2. 通过 =/dev/kmsg=
+   
+   这是一个可读写的字符设备文件，且允许多个进程进行读取，每个进程都能得到完整的数据流。 而且由于它是可读写的，因此你还可以插入消息到内核日志中。
+
+3. 通过 =sys_syslog= 系统调用
+
+我们可以通过执行 =dmesg= 命令来输出 ring buffer 中的内容. 或者通过 =klogd(Kernel Log Daemon)= 从 =/proc/kmsg(若没有挂载/proc则会调用sys_syslog系统API)= 来读取 ring buffer 中的日志消息，并将之发送到 =syslogd= 或者 输出到终端上。
+
+* 用户空间日志
+
+用户空间一般通过 =syslogd(8)= 来记录日志. 
+syslogd一般通过监听 =/dev/log= UNIX域套接字来获取日志消息,但也可以通过配置同时监听多个其他UNIX域套接字, 同时他也可以监听网络Socket，默认syslog监听UDP协议的 =514= 号端口,但协议和端口都可以进行配置.
+它还能够从 =klogd(8)= 中获取日志消息，但不能直接从 =/proc/kmsg= 中获取日志消息. 
+
+syslogd一般会将获取到的日志消息写入到指定的日志文件中去, 除此之外还可以将日志写入命名管道，转发给给其他主机，作为命令参数甚至是写入数据库中.
+
+用户空间的应用一般通过libc提供的 =syslog(3)= 函数来记录日志. 该函数会将日志信息发送给 =/dev/log=. 
+不过若应用程序通过 =chroot(2)= 切换了root路径，则日志实际上可能被发送到 =/chrooted/named/dev/log=. 这种情况下需要配置 syslogd 监听新位置的UNIX域套接字.
+
+另外，syslog协议仅仅是一个数据包协议,应用程序不一定要通过 =syslog= 函数来写日志，它可以使用任何方式只要能与syslogd监听的套接字通讯就可以了。 
+
+最后，上面讲的都是经典的 =syslogd= 的行为，新的日志守护进程(比如 rsyslog 或者 syslog-ng)在细节上可能会有所不同，比如最新版的 =rsyslogd= 在 =systemd= 系统上已经不再监听 =/dev/log= 而是改为监听 =/run/systemd/journal/syslog=. 
+
+* systemd
+systemd通过 =systemd-journald= 来进行日志管理，它的日志处理方式与经典的linux日志处理方式不太一样:
+
++ 它通过读取 =/dev/kmsg= 获取内核日志.
++ 它通过读取 =/dev/log(/run/systemd/journal/dev-log的软链接)= 获取应用日志(通过syslog函数写入.
++ 它监听UNIX域套接字(AF_LOCAL 流套接字) =/run/systemd/journal/stdout= 来获取由systemd管理的服务的日志,这些服务只需要把日志输出到stdout和stderr就行了.
++ 它还会监听UNIX套接字(AF_LOCAL 数据包套接字) =/run/systemd/journal/socket=,因为有些程序通过systemd特定的日志协议输出日志信息(比如调用 =sd_journal_sendv()= 函数来输出日志).
++ systemd-journald 会将所有上面这些来源中的日志读到一起,然后写入到系统级或用户级的日志文件中，这些日志文件一般在 =/run/log/journal/= 或 =/var/log/journal/= 目录下.
++ 若 =/etc/systemd/journald.conf= 中配置了 =ForwardToSyslog= 为 =yes=, 则会尝试将日志写入 =/run/systemd/journal/syslog= 文件中.
++ 若配置了 =ForwardToKMsg= 为 =true=,则它还会讲日志写入 =/dev/kmsg=.
++ 若配置了 =ForwardToConsole= 或 =ForwardToWall= 为 =true=, 它还会将日志信息输出到终端和控制台上.
+
+
