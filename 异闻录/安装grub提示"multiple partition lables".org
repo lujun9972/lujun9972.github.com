@@ -1,0 +1,59 @@
+#+TITLE: 安装grub提示"multiple partition lables"
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2018-12-30 日 22:25]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+今天尝试在U盘上安装archlinux,进行到安装grub时却失败了:
+
+#+BEGIN_EXAMPLE
+  [root@T430S /]# grub-install --target=i386-pc /dev/sdc
+  Installing for i386-pc platform.
+  grub-install: warning: Attempting to install GRUB to a disk with multiple partition labels.  This is not supported yet..
+  grub-install: warning: 无法嵌入。在此次安装中 GRUB 只能通过使用块列表安装。但是块列表是不可信赖的，不推荐使用。.
+  grub-install：错误： will not proceed with blocklists.
+#+END_EXAMPLE
+
+* 原因
+经过一番o搜索，在网上找到[[https://blog.lilydjwg.me/2012/2/28/rescue-my-partition-table.32281.html][这个帖子]]：
+
+linux下使用fdisk分区时，第一个分区的起始扇区必须大于等于2048.
+#+BEGIN_EXAMPLE
+  [lujun9972@T430S Downloads]$ sudo fdisk -l /dev/sdc
+  [sudo] lujun9972 的密码：
+  Disk /dev/sdc：28.7 GiB，30752000000 字节，60062500 个扇区
+  Disk model: Ultra Fit       
+  单元：扇区 / 1 * 512 = 512 字节
+  扇区大小(逻辑/物理)：512 字节 / 512 字节
+  I/O 大小(最小/最佳)：512 字节 / 512 字节
+  磁盘标签类型：dos
+  磁盘标识符：0x000e793b
+
+  设备       启动     起点     末尾     扇区  大小 Id 类型
+  /dev/sdc1           2048 29296639 29294592   14G 86 NTFS 卷集
+  /dev/sdc2       29296640 37109759  7813120  3.7G 83 Linux
+  /dev/sdc3  *    37109760 60062499 22952740   11G 83 Linux
+  [lujun9972@T430S Downloads]$ 
+#+END_EXAMPLE
+
+而我这个U盘之前使用过 =dd= 写入过ISO文件，导致U盘前2048块中包含了ISO9660文件系统的卷标。
+
+* 解决方案
+
+使用 =dd= 命令清空U盘前2048个块后,即可安装成功
+#+BEGIN_EXAMPLE
+  [root@T430S /]# dd if=/dev/zero of=/dev/sdc seek=1 count=2047 bs=1b
+  记录了2047+0 的读入
+  记录了2047+0 的写出
+  1048064 bytes (1.0 MB, 1.0 MiB) copied, 0.117643 s, 8.9 MB/s
+  [root@T430S /]# grub-install --target=i386-pc /dev/sdc
+  Installing for i386-pc platform.
+  Installation finished. No error reported.
+#+END_EXAMPLE
+
+或者使用 =wipefs= 也能清除原有文件系统中的签名信息
+#+BEGIN_SRC shell
+  wipefs --all <device>
+#+END_SRC
