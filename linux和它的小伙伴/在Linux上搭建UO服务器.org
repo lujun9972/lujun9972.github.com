@@ -1,0 +1,83 @@
+#+TITLE: 在Linux上搭建UO服务器
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-01-18 五 15:10]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+早听说 UO(线上创世纪) 是一款神游戏，一直想试试。刚好在网上发现 [[https://github.com/Sphereserver/Source][SphereServer]] 开源了,遂试着自己搭个私服玩玩。
+
+步骤如下：
+
+1. 安装32位的Ubuntu
+
+   是的，你没看错，就是的32位的操作系统。因为SphereServer本身是32的应用程序，它会引用32为的libmysqlclient.so,而在64位Linux下似乎已经没有32位的libmysql++库可以安装了。
+
+2. 安装依赖库
+
+   #+BEGIN_SRC shell
+     apt update && apt install -y libmysql++ unzip
+   #+END_SRC
+
+   这一步可以通过 =ldd= 命令来检查依赖库
+   #+BEGIN_SRC shell
+     # 查看 ERROR: Missing libs
+     ldd spheresvr |grep ERROR
+   #+END_SRC
+
+3. 新建一个Sphere目录,用来存放SphereServer的内容
+
+   #+BEGIN_SRC shell
+     mkdir Sphere
+     cd Sphere
+   #+END_SRC
+
+4. 下载SphereServer应用和SphereServer Script
+   
+   #+BEGIN_SRC shell
+     wget https://forum.spherecommunity.net/sshare.php?downproj=56 -O Sphere.tar.gz
+     wget https://github.com/Sphereserver/Scripts/archive/master.zip -O scripts.zip
+   #+END_SRC
+
+5. 将SphereServer应用解压到Sphere目录下，将SphereServer Script解压到Sphere/scripts
+   
+   #+BEGIN_SRC shell
+     tar -zxvf Sphere.tar.gz && rmdir scripts
+     unzip scripts.zip && mv Scripts-master scripts
+   #+END_SRC
+
+6. 编辑sphere.ini
+
+   主要做下面这些改动:
+
+   + 将 ~ServName~ 改成你的服务器名称
+
+   + 将 ~//MulFile=mul/~ 改成 ~MulFiles=mul/~ (手工指定mul文件的目录)
+
+   + 将 ~AccApp=0~ 改成 ~AccApp=2~ (任何人可以直接登陆，会自动创建帐号)
+
+   + 将 ~UseNoCrypt=0~ 改成 ~UseNoCrypt=1~ (允许非加密客户端登陆)
+
+7. 将UO客户端目录中的下列文件拷贝到 =Sphere/mul= 目录下
+   
+   #+BEGIN_SRC shell
+     cp multi.idx hues.mul map*.uop multi.mul statics* tiledata.mul staidx* Sphere/mul
+   #+END_SRC
+
+8. 创建空的 =save= 和 =accounts= 文件
+   
+   #+BEGIN_SRC shell
+     echo "[EOF]" > save/sphereworld.scp
+     echo "[EOF]" > save/spheredata.scp
+     echo "[EOF]" > save/spherechars.scp
+     echo "[EOF]" > save/spheremultis.scp
+     echo "[EOF]" > save/spherestatics.scp
+
+     touch accounts/sphereaccu.scp
+   #+END_SRC
+
+9. 启动服务
+   
+   #+BEGIN_SRC shell
+     ./spheresrv
+   #+END_SRC
