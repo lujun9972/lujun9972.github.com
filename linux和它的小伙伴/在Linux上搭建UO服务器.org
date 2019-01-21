@@ -7,7 +7,7 @@
 
 早听说 UO(线上创世纪) 是一款神游戏，一直想试试。刚好在网上发现 [[https://github.com/Sphereserver/Source][SphereServer]] 开源了,遂试着自己搭个私服玩玩。
 
-步骤如下：
+* 安装SphereServer步骤：
 
 1. 安装32位的Ubuntu
 
@@ -61,7 +61,7 @@
 7. 将UO客户端目录中的下列文件拷贝到 =Sphere/mul= 目录下
    
    #+BEGIN_SRC shell
-     cp multi.idx hues.mul map*.uop multi.mul statics* tiledata.mul staidx* Sphere/mul
+     cp multi.idx hues.mul map* multi.mul statics* tiledata.mul staidx* Sphere/mul
    #+END_SRC
 
 8. 创建空的 =save= 和 =accounts= 文件
@@ -81,3 +81,39 @@
    #+BEGIN_SRC shell
      ./spheresrv
    #+END_SRC
+
+* 使用Docker
+为了搭个服务器还得专门装个32位的操作系统，太不划算了，好在我们有Docker啊,而且Docker官方提供32位Ubuntu镜像，简直是太贴心了。
+#+BEGIN_SRC Dockerfile
+  FROM i386/ubuntu
+  ENV DEBIAN_FRONTEND noninteractive
+  RUN apt update && apt install -y libmysql++ unzip && rm -rf /var/lib/apt/lists/*
+  RUN mkdir /Sphere
+  WORKDIR /Sphere
+  ADD https://forum.spherecommunity.net/sshare.php?downproj=56 Sphere.tar.gz
+  ADD https://github.com/Sphereserver/Scripts/archive/master.zip scripts.zip
+  RUN tar -zxvf Sphere.tar.gz && rmdir scripts
+  RUN unzip scripts.zip && mv Scripts-master scripts
+  RUN echo "[eof]">/Sphere/save/sphereworld.scp 
+  RUN echo "[eof]">/Sphere/save/spheredata.scp
+  RUN echo "[eof]">/Sphere/save/spherechars.scp 
+  RUN echo "[eof]">/Sphere/save/spheremultis.scp 
+  RUN echo "[eof]">/Sphere/save/spherestatics.scp 
+  RUN touch /Sphere/accounts/sphereaccu.scp
+  EXPOSE 2593
+  WORKDIR /Sphere
+  ENTRYPOINT ["/Sphere/spheresvr"]
+#+END_SRC
+
+然后准备好 =mul= 目录和 =sphere.ini=,再运行
+#+BEGIN_SRC shell
+  docker run -it --rm -v $(pwd)/sphere.ini:/Sphere/sphere.ini -v $(pwd)/mul:/Sphere/mul -p 2593:2593 sphere
+#+END_SRC
+
+就行了
+
+* 如何让客户端连接本地服务器
+1. 修改 =Login.cfg=,将内容修改为 ~LoginServer=127.0.0.1,2593~
+2. 运行 =client.exe=, *注意不要运行uo.exe*,这会升级你的客户端，而它的升级在我电脑上是不成功
+
+   [[file:images/UO.PNG]]
