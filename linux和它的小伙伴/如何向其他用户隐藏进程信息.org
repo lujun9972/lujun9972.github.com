@@ -1,0 +1,192 @@
+#+TITLE: 如何向其他用户隐藏进程信息
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-01-29 二 17:39]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.cyberciti.biz/faq/linux-hide-processes-from-other-users/ 上看到的，记录一下。
+
+我们都知道，运行 =ps -ef= 命令会列出所有用户的进程信息来。 那么我们是否有办法向其他用户隐藏进程信息呢？
+
+从Linux Kernel3.2开始，可以为 =/proc= 指定 =hidepid= 选项来[[https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=0499680a42141d86417a8fbaa8c8db806bea1201][向其他用户(root除外)隐藏进程信息]]。
+
+=hidepid= 选项可以有三个值，分别是:
+
++ hidepid=0 :: 默认值，表示所有用户都能读取 =/proc/$PID/*= 下的文件
++ hidepid=1 :: 表示用户能看到 =/proc/$PID= 目录，但是只能访问自己所属的进程目录。
++ hidepid=2 :: 表示用户只能看到自己所属进程的 =/proc/$PID= 目录. 相比 ~hidepid=1~ 的情况，它还会把进程的uid和gid都给隐藏掉。
+
+因此，为了向其他用户隐藏进程信息，我们只需要运行下面命令重新挂载 =/proc= 目录即可:
+#+BEGIN_SRC shell
+  sudo mount -o remount,rw,hidepid=2 /proc
+#+END_SRC
+
+然后我们试试看结果:
+#+BEGIN_SRC shell :results org
+  ps -ef 
+#+END_SRC
+
+#+BEGIN_SRC org
+UID        PID  PPID  C STIME TTY          TIME CMD
+lujun99+  1431     1  0 1月28 ?       00:00:00 /usr/lib/systemd/systemd --user
+lujun99+  1437  1431  0 1月28 ?       00:08:27 /usr/bin/emacs --fg-daemon
+lujun99+  1439   994  0 1月28 tty1    00:00:00 /bin/sh /usr/bin/startx
+lujun99+  1721  1439  0 1月28 tty1    00:00:00 xinit /home/lujun9972/.xinitrc -- /etc/X11/xinit/xserverrc :0 vt1 -keeptty -auth /tmp/serverauth.nvc8YwCdcp
+lujun99+  1722  1721  2 1月28 tty1    00:53:06 /usr/lib/Xorg -nolisten tcp :0 vt1 -keeptty -auth /tmp/serverauth.nvc8YwCdcp
+lujun99+  1988  1431  0 1月28 ?       00:00:00 /usr/bin/dbus-daemon --session --address=systemd: --nofork --nopidfile --systemd-activation --syslog-only
+lujun99+  1996  1721  0 1月28 tty1    00:04:54 awesome
+lujun99+  2000     1  0 1月28 ?       00:01:06 fcitx
+lujun99+  2001  1996  0 1月28 tty1    00:00:00 sh /usr/bin/nutstore
+lujun99+  2002  1996  0 1月28 tty1    00:00:00 /usr/bin/python /usr/bin/udiskie
+lujun99+  2003  1996  0 1月28 tty1    00:00:06 redshift
+lujun99+  2004  1996  0 1月28 tty1    00:00:29 xscreensaver
+lujun99+  2006  2001  0 1月28 tty1    00:00:00 python /opt/nutstore/bin/nutstore-pydaemon.py
+lujun99+  2012     1  0 1月28 ?       00:00:00 /usr/bin/dbus-daemon --syslog --fork --print-pid 4 --print-address 6 --config-file /usr/share/fcitx/dbus/daemon.conf
+lujun99+  2016     1  0 1月28 ?       00:00:00 /usr/bin/fcitx-dbus-watcher unix:abstract=/tmp/dbus-936ucAXkaw,guid=2d9847a1b091876db08877285c4e7bb7 2012
+lujun99+  2047  1431  0 1月28 ?       00:00:00 /usr/lib/gvfsd
+lujun99+  2053  1431  0 1月28 ?       00:00:00 /usr/lib/gvfsd-fuse /run/user/1000/gvfs -f -o big_writes
+lujun99+  2055  1431  0 1月28 ?       00:00:00 /usr/lib/at-spi-bus-launcher
+lujun99+  2071  2055  0 1月28 ?       00:00:00 /usr/bin/dbus-daemon --config-file=/usr/share/defaults/at-spi2/accessibility.conf --nofork --print-address 3
+lujun99+  2077  1431  0 1月28 ?       00:00:00 /usr/lib/at-spi2-registryd --use-gnome-session
+lujun99+  2366     1  3 1月28 ?       00:57:42 /usr/lib/firefox/firefox
+lujun99+  2445  2366  1 1月28 ?       00:24:02 /usr/lib/firefox/firefox -contentproc -childID 1 -isForBrowser -prefsLen 1 -prefMapSize 189337 -schedulerPrefs 0001,2 -parentBuildID 20190110060648 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appdir /usr/lib/firefox/browser 2366 true tab
+lujun99+  2513  2366  1 1月28 ?       00:33:10 /usr/lib/firefox/firefox -contentproc -childID 2 -isForBrowser -prefsLen 82 -prefMapSize 189337 -schedulerPrefs 0001,2 -parentBuildID 20190110060648 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appdir /usr/lib/firefox/browser 2366 true tab
+lujun99+  2535  2366  1 1月28 ?       00:18:35 /usr/lib/firefox/firefox -contentproc -childID 3 -isForBrowser -prefsLen 176 -prefMapSize 189337 -schedulerPrefs 0001,2 -parentBuildID 20190110060648 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appdir /usr/lib/firefox/browser 2366 true tab
+lujun99+  2792  2366  2 1月28 ?       00:37:36 /usr/lib/firefox/firefox -contentproc -childID 4 -isForBrowser -prefsLen 5862 -prefMapSize 189337 -schedulerPrefs 0001,2 -parentBuildID 20190110060648 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appdir /usr/lib/firefox/browser 2366 true tab
+lujun99+  2820  2366  0 1月28 ?       00:13:52 /usr/lib/firefox/firefox -contentproc -childID 5 -isForBrowser -prefsLen 5862 -prefMapSize 189337 -schedulerPrefs 0001,2 -parentBuildID 20190110060648 -greomni /usr/lib/firefox/omni.ja -appomni /usr/lib/firefox/browser/omni.ja -appdir /usr/lib/firefox/browser 2366 true tab
+lujun99+  3193  1431  0 1月28 ?       00:00:01 /usr/bin/pulseaudio --daemonize=no
+lujun99+  3239     1  0 11:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+  3940  1437  0 1月28 ?       00:00:00 /usr/bin/aspell -a -m -d en --encoding=utf-8
+lujun99+  5417     1  0 1月28 ?       00:00:08 urxvt
+lujun99+  5418  5417  0 1月28 pts/0   00:00:01 bash
+lujun99+  6168     1  0 12:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+  6313     1  0 15:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+  9220     1  0 13:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 10538     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 11890     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 13271     1  0 16:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 15788     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 16832     1  0 1月28 ?       00:00:05 ss-qt5
+lujun99+ 18590     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 18665     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 21494  2006  0 09:20 tty1     00:02:10 /opt/nutstore/jre/bin/nutstore -ea -client -Dfile.encoding=UTF-8 -Xmx2048M -XX:MinHeapFreeRatio=20 -XX:MaxHeapFreeRatio=40 -Dlog4j.defaultInitOverride=true -Djava.util.logging.config.file=/opt/nutstore/conf/java.logging.properties -Dnutstore.config.dir=/opt/nutstore/conf -Dnutstore.x64=True -Djava.library.path=/opt/nutstore/lib/native -cp /opt/nutstore/lib/nutstore_client-4.1.5.jar:/opt/nutstore/lib/guava-r07.jar:/opt/nutstore/lib/rdiff-java-0.1.0.jar:/opt/nutstore/lib/log4j-1.2.15.jar:/opt/nutstore/lib/jackson-mapper-asl-1.9.13.jar:/opt/nutstore/lib/juds-0.95-osx.jar:/opt/nutstore/lib/commons-codec-1.4.jar:/opt/nutstore/lib/commons-cli-1.2.jar:/opt/nutstore/lib/sqlite4java.jar:/opt/nutstore/lib/junit-4.12.jar:/opt/nutstore/lib/jackson-core-asl-1.9.13.jar:/opt/nutstore/lib/commons-collections4-4.1.jar:/opt/nutstore/lib/inotify-java-2.1.jar:/opt/nutstore/lib/jsr305-3.0.1.jar:/opt/nutstore/lib/swt.jar nutstore.client.gui.NutstoreGUI --restart 1 --use-python-tray
+lujun99+ 23038  5417  0 1月28 pts/1   00:00:00 bash
+lujun99+ 26031  1431  0 1月28 ?       00:00:00 /usr/lib/gvfs-udisks2-volume-monitor
+lujun99+ 26035  1431  0 1月28 ?       00:00:00 /usr/lib/gvfs-mtp-volume-monitor
+lujun99+ 26039  1431  0 1月28 ?       00:00:00 /usr/lib/gvfs-gphoto2-volume-monitor
+lujun99+ 26043  2047  0 1月28 ?       00:00:00 /usr/lib/gvfsd-trash --spawner :1.5 /org/gtk/gvfs/exec_spaw/0
+lujun99+ 26052  2047  0 1月28 ?       00:00:00 /usr/lib/gvfsd-network --spawner :1.5 /org/gtk/gvfs/exec_spaw/1
+lujun99+ 26065  2047  0 1月28 ?       00:00:00 /usr/lib/gvfsd-dnssd --spawner :1.5 /org/gtk/gvfs/exec_spaw/4
+lujun99+ 26079  1431  0 1月28 ?       00:00:00 /usr/lib/dconf-service
+lujun99+ 28941     1  0 1月28 ?       00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30154     1  0 17:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30607  3239  0 17:13 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30608 30607  0 17:13 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30609 30608  0 17:13 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 30610 30608  0 17:13 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 30611 30608  0 17:13 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 30612 30608  0 17:13 ?        00:00:00 shuf
+lujun99+ 30613 30608  0 17:13 ?        00:00:00 head -1
+lujun99+ 30679 15788  0 17:15 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30680 30679  0 17:15 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30681 30680  0 17:15 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 30682 30680  0 17:15 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 30683 30680  0 17:15 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 30684 30680  0 17:15 ?        00:00:00 shuf
+lujun99+ 30685 30680  0 17:15 ?        00:00:00 head -1
+lujun99+ 30894  6313  0 17:20 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30895 30894  0 17:20 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 30896 30895  0 17:20 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 30897 30895  0 17:20 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 30898 30895  0 17:20 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 30899 30895  0 17:20 ?        00:00:00 shuf
+lujun99+ 30900 30895  0 17:20 ?        00:00:00 head -1
+lujun99+ 31020  6168  0 17:23 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31021 31020  0 17:23 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31022 31021  0 17:23 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 31023 31021  0 17:23 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 31024 31021  0 17:23 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 31025 31021  0 17:23 ?        00:00:00 shuf
+lujun99+ 31026 31021  0 17:23 ?        00:00:00 head -1
+lujun99+ 31133 18590  0 17:25 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31134 31133  0 17:25 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31135 31134  0 17:25 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 31136 31134  0 17:25 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 31137 31134  0 17:25 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 31138 31134  0 17:25 ?        00:00:00 shuf
+lujun99+ 31139 31134  0 17:25 ?        00:00:00 head -1
+lujun99+ 31592 13271  0 17:34 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31593 31592  0 17:34 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31594 31593  0 17:34 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 31595 31593  0 17:34 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 31596 31593  0 17:34 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 31597 31593  0 17:34 ?        00:00:00 shuf
+lujun99+ 31598 31593  0 17:34 ?        00:00:00 head -1
+lujun99+ 31672  1431  0 17:35 ?        00:00:00 /usr/lib/gvfsd-metadata
+lujun99+ 31801  9220  0 17:37 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31802 31801  0 17:37 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31803 31802  0 17:37 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 31804 31802  0 17:37 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 31805 31802  0 17:37 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 31806 31802  0 17:37 ?        00:00:00 shuf
+lujun99+ 31807 31802  0 17:37 ?        00:00:00 head -1
+lujun99+ 31941 32080  0 17:39 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31942 31941  0 17:39 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 31943 31942  0 17:39 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 31944 31942  0 17:39 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 31945 31942  0 17:39 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 31946 31942  0 17:39 ?        00:00:00 shuf
+lujun99+ 31947 31942  0 17:39 ?        00:00:00 head -1
+lujun99+ 32080     1  0 10:03 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32084 10538  0 17:42 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32085 32084  0 17:42 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32086 32085  0 17:42 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 32087 32085  0 17:42 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 32088 32085  0 17:42 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 32089 32085  0 17:42 ?        00:00:00 shuf
+lujun99+ 32090 32085  0 17:42 ?        00:00:00 head -1
+lujun99+ 32110 11890  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32111 32110  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32112 32111  0 17:43 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 32113 32111  0 17:43 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 32114 32111  0 17:43 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 32115 32111  0 17:43 ?        00:00:00 shuf
+lujun99+ 32116 32111  0 17:43 ?        00:00:00 head -1
+lujun99+ 32138 18665  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32139 32138  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32140 32139  0 17:43 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 32141 32139  0 17:43 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 32142 32139  0 17:43 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 32143 32139  0 17:43 ?        00:00:00 shuf
+lujun99+ 32144 32139  0 17:43 ?        00:00:00 head -1
+lujun99+ 32161 28941  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32162 32161  0 17:43 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32163 32162  0 17:43 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 32164 32162  0 17:43 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 32165 32162  0 17:43 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 32166 32162  0 17:43 ?        00:00:00 shuf
+lujun99+ 32167 32162  0 17:43 ?        00:00:00 head -1
+lujun99+ 32203  5418  0 10:04 pts/0    00:00:00 ssh tencent_cloud
+lujun99+ 32397 30154  0 17:48 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32398 32397  0 17:48 ?        00:00:00 /bin/bash /home/lujun9972/bin/reddit_wallpaper.sh
+lujun99+ 32399 32398  0 17:48 ?        00:00:00 wget https://www.reddit.com/r/wallpapers -O -
+lujun99+ 32400 32398  0 17:48 ?        00:00:00 grep -o -E href="([^"#]+)"
+lujun99+ 32401 32398  0 17:48 ?        00:00:00 grep -o -E https://www.reddit.com/r/wallpapers/comments/[^"]+/
+lujun99+ 32402 32398  0 17:48 ?        00:00:00 shuf
+lujun99+ 32403 32398  0 17:48 ?        00:00:00 head -1
+lujun99+ 32582  1437  0 17:52 ?        00:00:00 /bin/bash
+lujun99+ 32583 32582  0 17:52 ?        00:00:00 ps -ef
+#+END_SRC
+
+我们也可以编辑 =/etc/fstab=, 在其中加入下面内容来让系统在启动时自动生效
+#+BEGIN_EXAMPLE
+  proc    /proc    proc    defaults,hidepid=2     0     0
+#+END_EXAMPLE
+
+那么如果我希望有些用户能够查看所有用户进程信息怎么办呢？难道要把这些用户加入到 =sudoer= 中去吗？
+这就要用到 =gid= 选项了，它指明了哪些用户组内的用户可以访问所有的进程信息。比如
+#+BEGIN_SRC shell
+  mount -o remount,rw,hidepid=2,gid=all /proc
+#+END_SRC
+那么所有 =all= 用户组内的用户都能看到全局的进程信息了
