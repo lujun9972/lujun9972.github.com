@@ -1,0 +1,79 @@
+#+TITLE: 使用endlessh来保护你的ssh服务
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-11 一 21:06]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://github.com/skeeto/endlessh][endlessh]]是一个小巧的ssh沼泽程序(tarpit:一种用来延时入站连接的服务程序)，它通过不断地发送随机生成的协议版本信息来达到让尝试登陆的ssh客户端卡死的目的。
+
+* 安装
+endlessh是一个简单的的C语言程序，整个源代码只有一个C文件.
+#+BEGIN_SRC shell
+  git clone https://github.com/skeeto/endlessh
+  cd endlessh
+  make
+#+END_SRC
+
+这会生成一个可执行的 =endlessh= 程序. 我们可以把它移动到 =/sbin= 目录下
+#+BEGIN_SRC shell
+  sudo mv endlessh /sbin
+#+END_SRC
+
+* 使用
+通过 =-h= 选项可以输出 =endlessh= 的使用方法
+#+BEGIN_EXAMPLE
+  [root@VM_0_8_centos endlessh]# endlessh -h
+  Usage: endlessh [-vh] [-d MS] [-f CONFIG] [-l LEN] [-m LIMIT] [-p PORT]
+    -d INT    Message millisecond delay [10000]
+    -f        Set and load config file [/etc/endlessh/config]
+    -h        Print this help message and exit
+    -l INT    Maximum banner line length (3-255) [32]
+    -m INT    Maximum number of clients [4096]
+    -p INT    Listening port [2222]
+    -v        Print diagnostics to standard output (repeatable)
+#+END_EXAMPLE
+
+** 配置文件
+从 =endlessh -h= 的帮助信息中可以看到它可以从配置文件中读取参数信息。 =endlessh= 的配置文件跟 =OpenSSH= 的配置信息是否类似:
+#+BEGIN_SRC conf
+  # The port on which to listen for new SSH connections.
+  Port 2222
+
+  # The endless banner is sent one line at a time. This is the delay
+  # in milliseconds between individual lines.
+  Delay 10000
+
+  # The length of each line is randomized. This controls the maximum
+  # length of each line. Shorter lines may keep clients on for longer if
+  # they give up after a certain number of bytes.
+  MaxLineLength 32
+
+  # Maximum number of connections to accept at a time. Connections beyond
+  # this are not immediately rejected, but will wait in the queue.
+  MaxClients 4096
+
+  # Set the detail level for the log.
+  #   0 = Quiet
+  #   1 = Standard, useful log messages
+  #   2 = Very noisy debugging information
+  LogLevel 0
+#+END_SRC
+
+修改配置文件后，我们可以通过发送 =SIGHUP= 信号来让 =endlessh= 重新读取新的配置信息
+#+BEGIN_SRC shell
+  kill -s SIGHUP $(pidof endlessh)
+#+END_SRC
+* 原理
+SSH登陆分三个阶段:
+1. 协议协商阶段
+2. 密钥和算法协商阶段
+3. 认证阶段
+
+   [[file:images/ssh_login_procedure_1.jpg]]
+   
+而在 =协议协商阶段= 中，客户端向服务端建立链接后，服务端应该向客户端发送一个报文，该在报文中包括格式为“协议版本号 次协议版本号 软件版本号”的版本标识字符串。
+
+而 =endlessh= 往客户端发送的是一段不断随机生成的字符串,相当于这个报文没有穷尽，也根本无法从这个字符串中解析出有意义的版本标识.
+
+从而使ssh客户端卡在这一步，无法进行到下一步。
