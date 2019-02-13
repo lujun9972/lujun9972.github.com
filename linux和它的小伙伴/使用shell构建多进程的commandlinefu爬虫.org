@@ -1,0 +1,87 @@
+#+TITLE: 使用shell构建多进程的commandlinefu爬虫
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-13 三 15:03]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://www.commandlinefu.com][commandlinefu]]是一个记录脚本片段的网站,每个片段都有对应的功能说明和对应的标签。我想要做的就是尝试用shell写一个多进程的爬虫把这些代码片段记录在一个org文件中。
+
+* 参数定义
+
+这个脚本需要能够通过 =-n= 参数指定并发的爬虫数(默认为CPU核的数量)，还要能通过 =-f= 指定保存的org文件路径。
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  #!/usr/bin/env bash
+
+  proc_num=$(nproc)
+  while getopts :n:f: OPT; do
+      case $OPT in
+          n|+n)
+              proc_num="$OPTARG"
+              ;;
+          f|+f)
+              store_file="$OPTARG"
+              ;;
+          ,*)
+              echo "usage: ${0##*/} [+-n proc_num] [+-f org_file} [--]"
+              exit 2
+      esac
+  done
+  shift $(( OPTIND - 1 ))
+  OPTIND=1
+#+END_SRC
+
+* 从commandlinefu的命令浏览页面中抽取脚本片段的URL
+
+我们需要一个进程从commandlinefu的浏览列表中抽取各个脚本片段的URL，这个进程将抽取出来的URL存放到一个队列中，再由各个爬虫进程从进程中读取URL并从中抽取出对应的代码片段、描述说明和标签信息写入org文件中。
+
+这里就会遇到三个问题: 
+1. 进程之间通讯的队列如何实现
+2. 如何从页面中抽取出URL、代码片段、描述说明、标签等信息
+3. 多进程写入org文件时如何保持不乱序
+
+** 实现进程之间的通讯队列
+这个问题比较好解决，我们可以通过一个命名管道来实现
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  queue=$(mktemp --dry-run)
+  mkfifo ${queue}
+  exec 99<>${queue}
+  trap "rm ${queue} 2>/dev/null" EXIT
+#+END_SRC
+
+** 从页面中抽取想要的信息
+从页面中提取元素内容主要有两种方法:
+1. 对于简单的HTML页面，我们可以通过 =sed=, =grep=, =awk= 等工具通过正则表达式匹配的方式来从HTML中抽取信息。
+2. 通过 [[https://www.w3.org/Tools/HTML-XML-utils/][html-xml-utils]] 工具集中的 [[https://www.w3.org/Tools/HTML-XML-utils/man1/hxselect.html][hxselect]] 来根据CSS selector提取相关元素
+ 
+这里我们使用 =html-xml-utils= 工具来提取
+#+BEGIN_SRC shell  :tangle "~/bin/commandlinefu_spider.bash"
+    (
+        url="commands/browse"
+        while [[ -n ${url} ]];do
+            echo "url=$url"
+            html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
+            echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)" > ${queue}
+            echo "获取下一页的URL"
+            url=$(echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)")
+            # li.list-group-item:nth-child(26) > a:nth-child(7)
+        done
+        echo "没有下一页了，关闭管道写入端"
+        exec 99<&-
+    ) &
+#+END_SRC
+
+这里有几点值得注意:
+1. 由于要从html页面中抽取"下一页"的URL和"脚本片段"的URL，两个部分的内容，为了避免重复拉取页面，我们这里使用html变量保存curl拉取的页面内容
+2. hxselect对html解析时要求遵循严格的XML规范，因此在用hxselect解析之前需要先经过hxclean矫正一边。
+
+
+#+test
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  while :
+  do
+      echo "read from ${queue}"
+      cat ${queue}
+      echo "read from ${queue} DONE"
+  done
+#+END_SRC

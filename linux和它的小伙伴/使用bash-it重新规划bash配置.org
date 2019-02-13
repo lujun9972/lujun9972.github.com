@@ -1,0 +1,266 @@
+#+TITLE: 使用bash-it重新规划bash配置
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-13 三 10:11]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://github.com/Bash-it/bash-it][bash-it]]是一个组织bash配置的框架，同时它也自带了许多的有用的别名、自动补全脚本、主题和插件。
+你可以把他当成是bash版的[[https://github.com/robbyrussell/oh-my-zsh][oh-my-zsh]]
+
+如果你的bash配置很复杂，把它放在单个 =~/.bashrc= 就会显得很混乱，这种情况下就可以参照 =bash-it= 的规范对配置进行拆分。
+=bash-it= 把所有的bash配置分成四个部分:
++ 别名,放在 =aliases= 目录下
++ 自动补全脚本,放在 =completion= 目录下
++ 主题,放在 =themes= 目录下
++ 其他配置信息,统一作为插件，放在 =plugins= 目录下
+
+  
+* 安装bash-it
+1. 克隆bash-it仓库
+   #+BEGIN_SRC shell
+     git clone --depth=1 https://github.com/Bash-it/bash-it.git ~/.bash_it
+   #+END_SRC
+2. 运行安装脚本
+   #+BEGIN_SRC shell
+     ~/.bash_it/install.sh 
+   #+END_SRC
+   
+   该安装脚本会提示你是否保留原 =.bashrc= 的内容，如果输入 =y= 则会把 =bash-it= 的内容附加到原 =.bashrc= 文件后面,否则会直接用 =bash-it= 的内容替换 =.bashrc= 的内容。
+   不过也不用惊慌， =bash-it= 会同时创建一个 =.bashrc.bak= 的备份文件以供还原。
+3. 加载 =bash-it=
+   #+BEGIN_SRC shell
+     source ~/.bashrc
+   #+END_SRC
+
+* 启用bash-it自带的别名、补全和插件
+直接运行 =bash-it= 就能看到 =bash-it= 的使用方法了:
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ bash-it
+  bash-it             Bash-it help and maintenance
+  parameters:
+                      1: verb [one of: help | show | enable | disable | migrate | update | search | version | reload ]
+                      2: component type [one of: alias(es) | completion(s) | plugin(s) ] or search term(s)
+                      3: specific component [optional]
+  examples:
+                      $ bash-it show plugins
+                      $ bash-it help aliases
+                      $ bash-it enable plugin git [tmux]...
+                      $ bash-it disable alias hg [tmux]...
+                      $ bash-it migrate
+                      $ bash-it update
+                      $ bash-it search [-|@]term1 [-|@]term2 ... [ -e/--enable ] [ -d/--disable ] [ -r/--refresh ] [ -c/--no-color ]
+                      $ bash-it version
+                      $ bash-it reload
+#+END_EXAMPLE
+
+从中我们可以看出 =bash-it= 的使用很直观，都是遵循着  =bash-it 行动 组件类型 [具体组件]= 的格式来设计的.
+
+bash-it自带了大量的别名、补全和插件可供直接使用，这些脚本分别存放在 =$BASH_IT/aliases/available=, =$BASH_IT/completion/available=, =$BASH_IT/plugins/available= 目录中. 
+但是你没有必要直接跑到对应目录下查看有哪些脚本， =bash-it= 提供了 =show= 行动来帮你，比如你想查看 =bash-it= 自带的别名、补全脚本和插件，那么可以执行下面命令:
+
+#+BEGIN_SRC shell
+  bash-it show alisas
+  bash-it show completions
+  bash-it show plugins
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ bash-it show aliases 
+  Alias               Enabled?  Description
+  ag                    [ ]     the silver searcher (ag) aliases
+  ansible               [ ]     ansible abbreviations
+  apt                   [ ]     Apt and dpkg aliases for Ubuntu and Debian distros.
+  atom                  [ ]     Atom.io editor abbreviations
+  bolt                  [ ]     puppet bolt aliases
+  ......
+  yarn                  [ ]     yarn package manager aliases
+
+  to enable an alias, do:
+  $ bash-it enable alias  <alias name> [alias name]... -or- $ bash-it enable alias all
+
+  to disable an alias, do:
+  $ bash-it disable alias <alias name> [alias name]... -or- $ bash-it disable alias all
+#+END_EXAMPLE
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ bash-it show completions 
+  Completion          Enabled?  Description
+  apm                   [ ]     
+  awless                [ ]     
+  awscli                [ ]     
+  bash-it               [x]     
+  .....
+  wpscan                [ ]     
+
+  to enable a completion, do:
+  $ bash-it enable completion  <completion name> [completion name]... -or- $ bash-it enable completion all
+
+  to disable a completion, do:
+  $ bash-it disable completion <completion name> [completion name]... -or- $ bash-it disable completion all
+#+END_EXAMPLE
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ bash-it show plugins 
+  Plugin              Enabled?  Description
+  alias-completion      [x]     Automatic completion of aliases
+  autojump              [ ]     Autojump configuration, see https://github.com/wting/autojump for more details
+  ......
+  z                     [ ]     maintains a jump-list of the directories you actually use
+                                z is DEPRECATED, use fasd instead
+
+  to enable a plugin, do:
+  $ bash-it enable plugin  <plugin name> [plugin name]... -or- $ bash-it enable plugin all
+
+  to disable a plugin, do:
+  $ bash-it disable plugin <plugin name> [plugin name]... -or- $ bash-it disable plugin all
+
+#+END_EXAMPLE
+
+你可以很清晰地看到bash-it上有哪些组件，哪些组件已经被启用，每个组件的说明描述，以及启用/禁止组件的方法。
+#+BEGIN_SRC shell
+  bash-it enable 组件类型 组件列表...
+  bash-it disable 组件类型 组件列表...
+#+END_SRC
+
+启用/禁止新组件后，还需要让bash-it重新加载配置才行，运行下面命令:
+#+BEGIN_SRC shell
+  bash-it reload
+#+END_SRC
+
+你还可以使用 =help= 行为来查看组件的详细信息，比如我想了解 =ansible= 这个alias中定义了哪些别名，可以运行
+#+BEGIN_SRC shell
+  bash-it help alias ansible
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $   bash-it help alias ansible
+  ans=ansible'
+  ap=ansible-playbook'
+#+END_EXAMPLE
+
+* 设置主题
+=bash-it= 还自带了超过50个主题，这些主题存放在 =$BASH_IT/themes= 目录中
+#+BEGIN_SRC shell :results org
+  ls ~/.bash-it/themes
+#+END_SRC
+
+#+BEGIN_SRC org
+90210
+atomic
+axin
+bakke
+base.theme.bash
+binaryanomaly
+bobby
+bobby-python
+brainy
+brunton
+candy
+clean
+codeword
+colors.theme.bash
+cooperkid
+cupcake
+demula
+dos
+doubletime
+doubletime_multiline
+doubletime_multiline_pyonly
+dulcie
+duru
+elixr
+emperor
+envy
+essential
+font
+gallifrey
+githelpers.theme.bash
+hawaii50
+iterate
+kitsune
+liquidprompt
+luan
+mairan
+mbriggs
+metal
+minimal
+modern
+modern-t
+morris
+n0qorg
+norbu
+nwinkler
+nwinkler_random_colors
+p4helpers.theme.bash
+pete
+powerline
+powerline-multiline
+powerline-naked
+powerline-plain
+powerturk
+primer
+pro
+pure
+purity
+rainbowbrite
+rana
+redline
+rjorgenson
+roderik
+sexy
+simple
+sirup
+slick
+standard
+tonka
+tonotdo
+tylenol
+wanelo
+zitron
+zork
+#+END_SRC
+
+然而跟别名、补全和插件不同，我们无法通过 =enable= 行为来更改主题。
+相反，你需要手工打开 =~/.bashrc= 文件，找到 =export BASH_IT_THEME='xxxx'= 这一行，将 =xxxx= 改成想要主题的名称。
+
+另一方面你可以通过 =BASH_PREVIEW=ture bash-it reload= 来预览各个主题的效果。
+
+[[file:images/bash_it_themes.png]]
+
+我比较喜欢简洁点的界面，因此选择了 =clean= 这个主题。
+
+bash-it也允许你使用非 =$BASH_IT= 目录下的主题
+#+BEGIN_SRC shell
+  export BASH_IT_THEME="/home/foo/my_theme/my_theme.theme.bash"
+#+END_SRC
+
+* 自定义配置
+=bash-it= 会从下面位置寻找并加载自定义的配置:
++ aliases/custom.aliases.bash
++ completion/custom.completion.bash
++ lib/custom.bash
++ plugins/custom.plugins.bash
++ custom/*.bash 
++ custom/**/*.bash
+  
+就我自己的习惯来说，我喜欢把所有的自定义配置都集中在 =custom= 目录下。
+
+首先仿照 =bash-it= 的规范在 =custom= 目录下也创建了四个目录分别存放别名、补全和插件:
+#+BEGIN_SRC shell
+  mkdir -p $BASH_IT/custom/{aliases,completion,plugins}/available
+  mkdir -p $BASH_IT/custom/enabled
+#+END_SRC
+
+然后把自己的配置根据拆开放到不同类别下的 =available= 目录下，由于 =bash-it= 只会加载 =custom/**/*.bash=, 因此 =custom/类别/available/= 目录下的bash文件并不会被加载。
+
+然后挑选自己想要启用的配置，做个软链接到 =custom/enabled= 目录中就好了,比如:
+#+BEGIN_SRC shell
+  ln -s $BASH_IT/custom/plugins/available/manpage.plugin.bash $BASH_IT/custom/enabled
+  ln -s $BASH_IT/custom/aliases/available/my.aliases.bash $BASH_IT/custom/enabled
+#+END_SRC
+
+* 升级/卸载bash-it
+运行 =bash-it update= 就能升级 =bash-it= 到最新版本了。
+
+运行 =~/$BASH_IT/uninstall.sh= 就能卸载 =bash-it=, =bash-it= 会根据安装时的备份文件还原原始的 =~/.bashrc=
