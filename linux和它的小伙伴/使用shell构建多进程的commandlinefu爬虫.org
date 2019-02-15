@@ -124,12 +124,35 @@
    2019年 02月 14日 星期四 13:08:00 HKT
    #+END_SRC
 
-2. 当flock与管道文件连用时可能会产生死锁，详见[[ego-link:../%E5%BC%82%E9%97%BB%E5%BD%95/flock%E4%B8%8E%E5%91%BD%E5%90%8D%E7%AE%A1%E9%81%93%E8%AF%BB%E5%86%99%E5%BC%95%E5%8F%91%E7%9A%84%E6%AD%BB%E9%94%81.org][flock与管道文件读写引发的死锁]]
+2. 当flock与管道文件连用时可能会产生死锁，例如下面这段代码
+   #+BEGIN_SRC shell
+     # 创建命名管道
+     mkfifo /tmp/ff
+     exec 99<> /tmp/ff
+     # 创建生产进程往管道中写入数据
+     (while :
+      do
+          flock /tmp/ff -c 'seq 1 10 > /tmp/ff'
+      done
+     ) &
+   
+     # 创建消费进程从管道读取数据
+     (while :
+      do
+          flock /tmp/ff -c 'read i </tmp/ff;echo $i'
+      done
+     ) &
+   #+END_SRC
+   
+   当消费者进程消费速度快于生产进程时就会发生下面步骤:
+   1. 消费者进程持有锁0
+   2. 消费者进程从管道读取消息，被阻塞
+   3. 生产者往管道发送数据前需要先获取锁0,但是该锁被消费者进程持有，导致生产者也被阻塞。
 
 3. flock创建的锁是和文件描述符表相关联而不是fd相关联，也就是说如果通过fork或dup复制了文件，那么通过这两个fd都能操作这个锁。(例如通过一个 fd 加锁，通过另一个 fd 可以释放锁)
    类似的，只关闭其中一个fd并不会释放锁(因为file结构并没有释放)，只有关闭所有复制出的 fd ，锁才会释放。(这段描述参见https://blog.csdn.net/zy531/article/details/51731227)
    
-这里方便期间，我直接使用标准输入作为锁文件
+这里方便起见，我直接使用标准输入作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   LOCKFILE=(mktemp)
   trap "rm $LOCKFILE 2>/dev/null" EXIT
