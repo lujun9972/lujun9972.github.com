@@ -1,0 +1,34 @@
+#+TITLE: flock与命名管道读写引发的死锁
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2019-02-15 五 12:52]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 现象
+尝试用shell写一个多进程爬虫的时候，发现死锁了。代码简化如下:
+#+BEGIN_SRC shell
+  # 创建命名管道
+  mkfifo /tmp/ff
+  exec 99<> /tmp/ff
+  # 创建生产进程往管道中写入数据
+  (while :
+   do
+       flock /tmp/ff -c 'seq 1 10 > /tmp/ff'
+   done
+  ) &
+
+  # 创建消费进程从管道读取数据
+  (while :
+   do
+       flock /tmp/ff -c 'read i </tmp/ff;echo $i'
+   done
+  ) &
+#+END_SRC
+
+* 分析
+当消费者进程消费速度快于生产进程时就会发生下面步骤:
+
+1. 消费者进程持有锁0
+2. 消费者进程从管道读取消息，被阻塞
+3. 生产者往管道发送数据前需要先获取锁0,但是该锁被消费者进程持有，导致生产者也被阻塞。

@@ -59,18 +59,27 @@
 #+BEGIN_SRC shell  :tangle "~/bin/commandlinefu_spider.bash"
   function extract_views_from_browse_page()
   {
-      local html="$*"
+      if [[ $# -eq 0 ]];then
+          local html=$(cat -)
+      else
+          local html="$*"
+      fi
       echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)"
   }
 
   function extract_nextpage_from_browse_page()
   {
-      local html="$*"
+      if [[ $# -eq 0 ]];then
+          local html=$(cat -)
+      else
+          local html="$*"
+      fi
       echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)"
   }
 #+END_SRC
 
 这里需要注意的是: *hxselect对html解析时要求遵循严格的XML规范，因此在用hxselect解析之前需要先经过hxclean矫正*
+另外，为了防止html过大,超过参数列表长度，这里允许通过管道的形式将html内容传入
 
 ** 循环读取下一页的浏览页面，不断抽取代码片段URL写入队列
 这里要解决的是上面提到的第三个问题: *多进程对管道进行读写时如何保障不出现乱序?*
@@ -117,6 +126,8 @@
 
 2. 当flock与管道文件连用时可能会产生死锁，详见[[ego-link:../%E5%BC%82%E9%97%BB%E5%BD%95/flock%E4%B8%8E%E5%91%BD%E5%90%8D%E7%AE%A1%E9%81%93%E8%AF%BB%E5%86%99%E5%BC%95%E5%8F%91%E7%9A%84%E6%AD%BB%E9%94%81.org][flock与管道文件读写引发的死锁]]
 
+   
+这里方便期间，我直接使用标准输入作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   LOCKFILE=(mktemp)
   trap "rm $LOCKFILE 2>/dev/null" EXIT
@@ -127,8 +138,11 @@
       while [[ -n ${url} ]];do
           echo "从$url中抽取"
           html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
-          flock ${queue} -c "extract_views_from_browse_page \"${html}\" >${queue}"
-          url=$(extract_nextpage_from_browse_page "${html}")
+          # echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
+          flock -x 0
+          echo "${html}"|extract_views_from_browse_page >${queue}
+          flock -u 0
+          url=$(echo "${html}"|extract_nextpage_from_browse_page)
       done
       # 让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
       for ((i=0;i<${proc_num};i++))
@@ -171,10 +185,17 @@
         local description=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div.description"|entity2text)
         # tags
         local tags=$(echo ${html} |hxclean |hxselect -c -s ":" ".functions > a")
+        if [[ -n "${tags}" ]];then
+            tags=":${tags}"
+        fi
         # build org content
         cat <<EOF |flock -x ${store_file} tee -a ${store_file}
-  ,* ${headline}      :${tags}
-  ${url}
+  ,* ${headline}      ${tags}
+
+  :PROPERTIES:
+  :URL:       ${url}
+  :END:
+
   ${description}
   ,#+begin_src shell
   ${command}
@@ -198,6 +219,7 @@
 
 
 * 组合起来
+为了防止[[ego-link:../%E5%BC%82%E9%97%BB%E5%BD%95/flock%E4%B8%8E%E5%91%BD%E5%90%8D%E7%AE%A1%E9%81%93%E8%AF%BB%E5%86%99%E5%BC%95%E5%8F%91%E7%9A%84%E6%AD%BB%E9%94%81.org][发生死锁]]，这里从管道中读取URL时设置了超时，当出现超时就意味着生产进程赶不上消费进程的消费速度,因此消费进程休眠一秒后再次检查队列中的URL
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   for ((i=0;i<${proc_num};i++))
   do
