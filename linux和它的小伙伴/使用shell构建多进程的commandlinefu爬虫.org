@@ -127,9 +127,7 @@
       while [[ -n ${url} ]];do
           echo "从$url中抽取"
           html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
-          flock -x 0
-          extract_views_from_browse_page "${html}" >${queue}
-          flock -u 0
+          flock ${queue} -c "extract_views_from_browse_page \"${html}\" >${queue}"
           url=$(extract_nextpage_from_browse_page "${html}")
       done
       # 让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
@@ -210,7 +208,7 @@
               read -t 1 -u 99 url
               read_return=$?
               flock -u 0
-              if [[ ${read_return -ne 0 ]];then
+              if [[ ${read_return} -ne 0 ]];then
                   sleep 1
                   continue
               fi
