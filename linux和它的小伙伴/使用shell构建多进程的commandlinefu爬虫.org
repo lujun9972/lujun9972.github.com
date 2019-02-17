@@ -9,11 +9,12 @@
 
 * 参数定义
 
-这个脚本需要能够通过 =-n= 参数指定并发的爬虫数(默认为CPU核的数量)，还要能通过 =-f= 指定保存的org文件路径。
+这个脚本需要能够通过 =-n= 参数指定并发的爬虫数(默认为CPU核的数量)，还要能通过 =-f= 指定保存的org文件路径(默认输出到stdout)。
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   #!/usr/bin/env bash
 
   proc_num=$(nproc)
+  store_file=/dev/stdout
   while getopts :n:f: OPT; do
       case $OPT in
           n|+n)
@@ -31,14 +32,14 @@
   OPTIND=1
 #+END_SRC
 
-* 从commandlinefu的命令浏览页面中抽取脚本片段的URL
+* 解析命令浏览页面
 
 我们需要一个进程从commandlinefu的浏览列表中抽取各个脚本片段的URL，这个进程将抽取出来的URL存放到一个队列中，再由各个爬虫进程从进程中读取URL并从中抽取出对应的代码片段、描述说明和标签信息写入org文件中。
 
 这里就会遇到三个问题: 
 1. 进程之间通讯的队列如何实现
 2. 如何从页面中抽取出URL、代码片段、描述说明、标签等信息
-3. 多进程写入org文件时如何保持不乱序
+3. 多进程对同一文件进行读写时的乱序问题
 
 ** 实现进程之间的通讯队列
 这个问题比较好解决，我们可以通过一个命名管道来实现
@@ -56,32 +57,234 @@
  
 这里我们使用 =html-xml-utils= 工具来提取
 #+BEGIN_SRC shell  :tangle "~/bin/commandlinefu_spider.bash"
-    (
-        url="commands/browse"
-        while [[ -n ${url} ]];do
-            echo "url=$url"
-            html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
-            echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)" > ${queue}
-            echo "获取下一页的URL"
-            url=$(echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)")
-            # li.list-group-item:nth-child(26) > a:nth-child(7)
-        done
-        echo "没有下一页了，关闭管道写入端"
-        exec 99<&-
-    ) &
+  function extract_views_from_browse_page()
+  {
+      if [[ $# -eq 0 ]];then
+          local html=$(cat -)
+      else
+          local html="$*"
+      fi
+      echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)"
+  }
+
+  function extract_nextpage_from_browse_page()
+  {
+      if [[ $# -eq 0 ]];then
+          local html=$(cat -)
+      else
+          local html="$*"
+      fi
+      echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)"
+  }
 #+END_SRC
 
-这里有几点值得注意:
-1. 由于要从html页面中抽取"下一页"的URL和"脚本片段"的URL，两个部分的内容，为了避免重复拉取页面，我们这里使用html变量保存curl拉取的页面内容
-2. hxselect对html解析时要求遵循严格的XML规范，因此在用hxselect解析之前需要先经过hxclean矫正一边。
+这里需要注意的是: *hxselect对html解析时要求遵循严格的XML规范，因此在用hxselect解析之前需要先经过hxclean矫正*
+另外，为了防止html过大,超过参数列表长度，这里允许通过管道的形式将html内容传入
 
+** 循环读取下一页的浏览页面，不断抽取代码片段URL写入队列
+这里要解决的是上面提到的第三个问题: *多进程对管道进行读写时如何保障不出现乱序?*
+为此，我们需要在写入文件时对文件加锁，然后在写完文件后对文件解锁，在shell中我们可以使用 =flock= 来对文件进行枷锁。
+=flock= 有三种使用形式:
 
-#+test
+1. flock 文件或目录 命令 [参数...]
+
+   这是flock最简单的使用方式, 它会执行 =命令 参数...= 并在命令执行期间对 =文件或路径= 加排他锁，然后在命令执行完毕后再释放该锁.
+
+   但这种形式只能执行单个命令，且无法在命令中进行管道和IO重定向操作
+
+2. flock 文件或目录 -c command
+   
+   这种方式其实就是 =flock 文件或目录 bash -c "command"= 的简写形式
+
+   这种形式理论上可以在 =command= 中写任意复杂的表达式，但是由于是通过 =bash -c= 来运行的，它的运行环境并不是在当前shell中，因此并不能修改当前shell中的变量
+
+3. flock 文件描述符;commands;flock -u 文件描述符
+
+   这种方式对文件描述符进行加锁，并且在当前shell环境中执行完任意复杂的commands后通过 =-u= 选项对文件描述符进行解锁。
+   
+   另外，当文件描述符被关闭后，flock也会自动进行解锁。这种方法最灵活，但使用起来不太方便。
+
+*使用flock需要注意几点:*
+
+1. 使用flock对文件加的锁是劝告锁，而不是强制锁,其他程序依然可以在不用flock的情况下写如该文件,比如
+   #+BEGIN_SRC shell :results org
+     flock /tmp/t sleep 5&
+     date |tee -a /tmp/t                # 会执行成功，而且会把date写入到 /tmp/t 中，但
+     flock /tmp/t -c "date |tee -a /tmp/t" # 则会等待sleep命令执行完，锁释放后才把date写入到 /tmp/t 中
+     echo "------------------------"
+     cat /tmp/t
+   #+END_SRC
+   
+   #+RESULTS:
+   #+BEGIN_SRC org
+   2019年 02月 14日 星期四 13:07:55 HKT
+   2019年 02月 14日 星期四 13:08:00 HKT
+   ------------------------
+   2019年 02月 14日 星期四 13:07:55 HKT
+   2019年 02月 14日 星期四 13:08:00 HKT
+   #+END_SRC
+
+2. 当flock与管道文件连用时可能会产生死锁，例如下面这段代码
+   #+BEGIN_SRC shell
+     # 创建命名管道
+     mkfifo /tmp/ff
+     exec 99<> /tmp/ff
+     # 创建生产进程往管道中写入数据
+     (while :
+      do
+          flock /tmp/ff -c 'seq 1 10 > /tmp/ff'
+      done
+     ) &
+   
+     # 创建消费进程从管道读取数据
+     (while :
+      do
+          flock /tmp/ff -c 'read i </tmp/ff;echo $i'
+      done
+     ) &
+     wait
+   #+END_SRC
+   
+   当消费者进程消费速度快于生产进程时就会发生下面步骤:
+   1. 消费者进程持有锁0
+   2. 消费者进程从管道读取消息，被阻塞
+   3. 生产者往管道发送数据前需要先获取锁0,但是该锁被消费者进程持有，导致生产者也被阻塞。
+
+3. flock创建的锁是和文件描述符表相关联而不是fd相关联，也就是说如果通过fork或dup复制了文件，那么通过这两个fd都能操作这个锁。(例如通过一个 fd 加锁，通过另一个 fd 可以释放锁)
+   类似的，只关闭其中一个fd并不会释放锁(因为file结构并没有释放)，只有关闭所有复制出的 fd ，锁才会释放。(这段描述参见https://blog.csdn.net/zy531/article/details/51731227)
+   
+   例如，相对上面的代码，下面这段代码就不会死锁
+   #+BEGIN_SRC shell
+     # 创建命名管道
+     # mkfifo /tmp/ff
+     exec 99<> /tmp/ff
+     # 创建生产进程往管道中写入数据
+     (while :
+      do
+          flock /tmp/ff -c 'seq 1 10 > /tmp/ff'
+          sleep 1
+      done
+     ) &
+
+     # 创建消费进程从管道读取数据
+     (while :
+      do
+          flock /tmp/ff -c 'read i </tmp/ff;echo $i'
+      done
+     ) &
+     wait
+   #+END_SRC
+   
+这里方便起见，我直接使用标准输入作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
-  while :
+  (
+      url="commands/browse"
+      while [[ -n ${url} ]];do
+          echo "从$url中抽取"
+          html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
+          # echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
+          flock -x 0
+          echo "${html}"|extract_views_from_browse_page >${queue}
+          flock -u 0
+          url=$(echo "${html}"|extract_nextpage_from_browse_page)
+      done
+      # 让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
+      for ((i=0;i<${proc_num};i++))
+      do
+          echo >${queue}
+      done
+  ) &
+#+END_SRC
+
+这里要注意的是， *在找不到下一页URL后，我们用一个for循环往队列里写入了 =proc_num= 个空行*, 这一步的目的是让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
+
+* 解析脚本片段页面
+我们需要从脚本片段的页面中抽取标题、代码片段、描述说明以及标签信息，同时将这些内容按org-mode的格式写入存储文件中.
+
+这里抽取信息的方法跟上面的类似，不过代码片段和描述说明中有一些特舒符号在HTML中是通过转义来表示的，我们还需要转义回来,我们定义一个函数来做这件事情。
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  function entity2text()
+  {
+      cat - |sed '{
+        s/&quot;/"/g
+        s/&gt;/>/g
+        s/&lt;/</g
+        s/&amp;/&/g
+  }'
+  }
+#+END_SRC
+
+然后从脚本片段的页面中抽取标题、代码片段、描述说明以及标签信息，同时将这些内容按org-mode的格式写入存储文件中.
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+    function view_page_to_org_content()
+    {
+        local url="$1"
+        local html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
+        # headline
+        local headline=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > h1:nth-child(1)")
+        # command
+        local command=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div:nth-child(2) > span:nth-child(2)"|entity2text)
+
+        # description
+        local description=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div.description"|entity2text)
+        # tags
+        local tags=$(echo ${html} |hxclean |hxselect -c -s ":" ".functions > a")
+        if [[ -n "${tags}" ]];then
+            tags=":${tags}"
+        fi
+        # build org content
+        cat <<EOF |flock -x ${store_file} tee -a ${store_file}
+  ,* ${headline}      ${tags}
+
+  :PROPERTIES:
+  :URL:       ${url}
+  :END:
+
+  ${description}
+  ,#+begin_src shell
+  ${command}
+  ,#+end_src
+
+  EOF
+    }
+#+END_SRC
+
+注意最后输出org-mode的格式并写入存储文件中的代码不要写成下面这样
+#+BEGIN_SRC shell
+      flock -x ${store_file} cat <<EOF >${store_file}
+      ,* ${headline}\t\t ${tags}
+      ${description}
+      ,#+begin_src shell
+      ${command}
+      ,#+end_src
+  EOF
+#+END_SRC
+它的意思是使用 =flock= 对 =cat= 命令进行加锁，再把 =flock= 整个命令的结果通过重定向输出到存储文件中，而重定向输出的这个过程是没有加锁的。
+
+
+* 组合起来
+为了防止发生死锁，这里从管道中读取URL时设置了超时，当出现超时就意味着生产进程赶不上消费进程的消费速度,因此消费进程休眠一秒后再次检查队列中的URL
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  for ((i=0;i<${proc_num};i++))
   do
-      echo "read from ${queue}"
-      cat ${queue}
-      echo "read from ${queue} DONE"
+      (
+          while :
+          do
+              flock -x 0
+              read -t 1 -u 99 url
+              read_return=$?
+              flock -u 0
+              if [[ ${read_return} -ne 0 ]];then
+                  sleep 1
+                  continue
+              fi
+
+              if [[ -z "$url" ]];then
+                  break
+              fi
+              view_page_to_org_content ${url}
+          done
+  ) &
   done
+  wait
 #+END_SRC
