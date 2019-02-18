@@ -86,17 +86,22 @@
 为此，我们需要在写入文件时对文件加锁，然后在写完文件后对文件解锁，在shell中我们可以使用 =flock= 来对文件进行枷锁。
 关于flock的使用方法和注意事项，请参见另一片博文 =linux shell flock文件锁的用法及注意事项=
    
-这里方便起见，我直接使用标准输入作为锁文件
+由于需要在 =flock= 子进程中使用函数 =extract_views_from_browse_page=, 因此需要先导出该函数
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  export -f extract_views_from_browse_page
+#+END_SRC
+
+使用管道文件作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   (
       url="commands/browse"
       while [[ -n ${url} ]];do
           echo "从$url中抽取"
           html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
-          # echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
-          flock -x 0
-          echo "${html}"|extract_views_from_browse_page >${queue}
-          flock -u 0
+          echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
+          # flock -x 0
+          # echo "${html}"|extract_views_from_browse_page >${queue}
+          # flock -u 0
           url=$(echo "${html}"|extract_nextpage_from_browse_page)
       done
       # 让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
@@ -112,34 +117,19 @@
 * 解析脚本片段页面
 我们需要从脚本片段的页面中抽取标题、代码片段、描述说明以及标签信息，同时将这些内容按org-mode的格式写入存储文件中.
 
-这里抽取信息的方法跟上面的类似，不过代码片段和描述说明中有一些特舒符号在HTML中是通过转义来表示的，我们还需要转义回来,我们定义一个函数来做这件事情。
-#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
-  function entity2text()
-  {
-      cat - |sed '{
-        s/&quot;/"/g
-        s/&gt;/>/g
-        s/&lt;/</g
-        s/&amp;/&/g
-  }'
-  }
-#+END_SRC
-
-然后从脚本片段的页面中抽取标题、代码片段、描述说明以及标签信息，同时将这些内容按org-mode的格式写入存储文件中.
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
     function view_page_to_org_content()
     {
         local url="$1"
-        local html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
+        local html="$(curl https://www.commandlinefu.com/${url} 2>/dev/null)"
         # headline
-        local headline=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > h1:nth-child(1)")
+        local headline="$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > h1:nth-child(1)")"
         # command
-        local command=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div:nth-child(2) > span:nth-child(2)"|entity2text)
-
+        local command="$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div:nth-child(2) > span:nth-child(2)"|pandoc -f html -t org)"
         # description
-        local description=$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div.description"|entity2text)
+        local description="$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > div.description"|pandoc -f html -t org)"
         # tags
-        local tags=$(echo ${html} |hxclean |hxselect -c -s ":" ".functions > a")
+        local tags="$(echo ${html} |hxclean |hxselect -c -s ":" ".functions > a")"
         if [[ -n "${tags}" ]];then
             tags=":${tags}"
         fi
@@ -159,6 +149,7 @@
   EOF
     }
 #+END_SRC
+这里抽取信息的方法跟上面的类似，不过代码片段和描述说明中可能有一些HTML代码，因此通过pandoc将之转换为org格式的内容
 
 注意最后输出org-mode的格式并写入存储文件中的代码不要写成下面这样
 #+BEGIN_SRC shell
@@ -181,11 +172,8 @@
       (
           while :
           do
-              flock -x 0
-              read -t 1 -u 99 url
-              read_return=$?
-              flock -u 0
-              if [[ ${read_return} -ne 0 ]];then
+              if ! url=$(flock ${queue} -c 'read -t 1 -u 99 url && echo $url')
+              then
                   sleep 1
                   continue
               fi
