@@ -1,0 +1,97 @@
+#+TITLE: 如何保留命令替换结果中的换行符
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-18 一 14:28]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们在用变量保存命令执行的输出时经常会发现命令替换结果中的换行符会被替换成空格，例如下面这个例子:
+#+BEGIN_SRC shell :results org
+  seq 1 2
+  echo "---------------------------------"
+  a=$(seq 1 2)
+  echo $a
+#+END_SRC
+
+#+BEGIN_SRC org
+1
+2
+---------------------------------
+1 2
+#+END_SRC
+
+命令替换结果中的换行符之所以被替换成空格是因为bash对其进行了词划分(word splitting).
+
+下面这段说明引用至 =Bash Manual= 的 =Command Substitution= 章节
+#+BEGIN_SRC org
+  Command Substitution
+
+         .......
+
+         Bash  performs  the  expansion by executing command and replacing the
+         command substitution with the standard output of  the  command,  with
+         any  trailing  newlines  deleted.  *Embedded newlines are not deleted,
+         but they may be removed during word splitting.*  The command substitu‐
+         tion  $(cat  file)  can  be replaced by the equivalent but faster $(<
+         file).
+
+         .......
+
+         *,If  the substitution appears within double quotes, word splitting and
+         pathname expansion are not performed on the results.*
+#+END_SRC
+
+而关于 =Word Splitting= 的说明如下:
+#+BEGIN_SRC org
+  Word Splitting
+         The shell scans the results of parameter expansion, command substitu‐
+         tion,  and  arithmetic  expansion  that  *did  not occur within double
+         quotes for word splitting*.
+
+         The shell treats each character of IFS as a delimiter, and splits the
+         results  of  the other expansions into words on these characters.  If
+         IFS is unset, or its  value  is  exactly  <space><tab><newline>,  the
+         default,  then  sequences  of  <space>,  <tab>,  and <newline> at the
+         beginning and end of the  results  of  the  previous  expansions  are
+         ignored,  and  any sequence of IFS characters not at the beginning or
+         end serves to delimit words.  If IFS  has  a  value  other  than  the
+         default,  then  sequences  of the whitespace characters space and tab
+         are ignored at the beginning and end of the  word,  as  long  as  the
+         whitespace  character is in the value of IFS (an IFS whitespace char‐
+         acter).  Any character in IFS that is not IFS whitespace, along  with
+         any adjacent IFS whitespace characters, delimits a field.  A sequence
+         of IFS whitespace characters is also treated as a delimiter.  If  the
+         value of IFS is null, no word splitting occurs.
+
+         Explicit  null  arguments ("" or '') are retained.  Unquoted implicit
+         null arguments, resulting from the expansion of parameters that  have
+         no  values,  are  removed.   If a parameter with no value is expanded
+         within double quotes, a null argument results and is retained.
+
+         Note that if no expansion occurs, no splitting is performed.
+#+END_SRC
+
+从这两个说明中我们可以发现，要保留命令替换结果中的换行符，有两种方法:
+
+1. 把命令替换放到双引号中,如下所示:
+   #+BEGIN_SRC shell :results org
+     a="$(seq 1 2)"
+     echo "$a"
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   1
+   2
+   #+END_SRC
+
+2. 将 =IFS= 设置为空，如下所示:
+   #+BEGIN_SRC shell :results org
+     IFS=''
+     a=$(seq 1 2)
+     echo $a
+   #+END_SRC
+
+   #+BEGIN_SRC org
+   1
+   2
+   #+END_SRC

@@ -1,0 +1,43 @@
+#+TITLE: 如何在xargs中使用自定义函数
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-18 一 15:03]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+当我们想在xargs（或者flock等其他子程序中）使用函数时，会发现提示“没有那个文件或目录”，如下例所示:
+#+BEGIN_SRC shell :results org
+  exec 2>&1
+  function c()
+  {
+      wc -c $1
+  }
+
+  ls *sed* |xargs -I{} bash -c "c {}"
+  echo ret_code is $?
+#+END_SRC
+
+#+BEGIN_SRC org
+bash: c：未找到命令
+bash: c：未找到命令
+ret_code is 123
+#+END_SRC
+
+类似 =环境变量=,要让函数在子进程中可见也需要将函数导出，方法是 =export -f 函数=,例如下面这个例子
+#+BEGIN_SRC shell :results org
+  exec 2>&1
+  function c()
+  {
+      wc -c $1
+  }
+  
+  export -f c
+  ls *sed* |xargs -I{} bash -c 'c {}'
+  echo ret_code is $?
+#+END_SRC
+
+#+BEGIN_SRC org
+1835 不死的sed.org
+805 sed中的alpha到底包含哪些字符.org
+ret_code is 0
+#+END_SRC
