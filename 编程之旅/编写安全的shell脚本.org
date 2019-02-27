@@ -1,0 +1,42 @@
+#+TITLE: 编写安全的shell脚本
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2019-02-25 一 13:02]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 确保运行的命令是你想要的
++ 使用绝对路径引用命令
++ 不要在 =PATH= 中设置 =.=, 如果一定要放，把 =.= 放到最后一项
+
+* 不要在脚本中记录密码
+
+* 对用户输入进行转义处理
+例如下面这段代码
+#+BEGIN_SRC shell
+  echo -n "What file do you seek? "
+  read name
+  ls -l $name
+#+END_SRC
+
+若用户输入 =.;/bin/rm -Rf /= 那问题就大发了。
+
+一个简单的处理方式是用双引号将用户输入引起来，即改成
+#+BEGIN_SRC shell
+  ls -l "$name"
+#+END_SRC
+
+但依然存在危险，比如用户可以输入 =.;$(/bin/rm -Rf /)=
+
+因此一个比较好的方法是扫描用户输入，若发现特殊字符则提示错误。
+#+BEGIN_SRC shell
+  shopt -s extglob
+  echo -n "What file do you seek? "
+  read name
+  if [[ "$name" != +([[:word:][:space:]]) ]];
+  then
+      echo "ERROR FILE"
+      exit 1
+  fi
+  ls -l $name
+#+END_SRC
