@@ -1,0 +1,98 @@
+#+TITLE: 我所不知道的printf命令特性
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-02-27 三 10:45]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 [[https://www.linuxjournal.com/content/bashs-built-printf-function][Bash's Built-in printf Function]] 上看到的，记录一下
+
+* printf有多个版本
+除了 =/usr/bin/printf= 外，每个shell一般都会定义自己内置的printf命令。而且通过查看 =man printf= 你会看到这么一段说明:
+
+#+BEGIN_EXAMPLE
+  NOTE: your shell may have its own version of printf, which usually supersedes the version described here. Please refer to your shell's documentation for details about the options it supports.
+#+END_EXAMPLE
+
+也就是说，我们通常使用的printf命令都是shell内置的printf命令。
+
+* 格式字符串可以被复用
+参数列表中的参数个数可以多于格式字符串中要求的参数个数，这种情况下格式字符串会被复用,例如下面这段程序
+#+BEGIN_SRC shell :results org
+  printf "%-20s: %4d\n" "string 1" 12 "string 2" 122
+#+END_SRC
+
+#+BEGIN_SRC org
+            string 1:   12
+            string 2:  122
+#+END_SRC
+
+* 不足的参数列表将会用空字符串或0补足
+若参数列表中的参数个数少于格式字符串中要求的参数个数，则会使用空字符串(格式对应字符串时)或0(格式对应数字时)进行填充
+#+BEGIN_SRC shell :results org
+  printf "%s: %d\n" "string 1"
+  printf "%d: %s\n" "1"
+#+END_SRC
+
+#+BEGIN_SRC org
+string 1: 0
+1: 
+#+END_SRC
+
+* 支持由参数指定的长度
+使用*来标识长度, 这种情况下表示长度由下一个参数决定
+#+BEGIN_SRC shell :results org
+  printf "%*s: %*d\n" -20 "a string" 4 12
+#+END_SRC
+
+#+BEGIN_SRC org
+a string            :   12
+#+END_SRC
+
+需要说明的是，若同时需要指明用0填充空白域和由参数指定长度, 请保证0放在*之前:
+#+BEGIN_SRC shell :results org
+  printf "%*s: %0*d\n" -20 "a string" 4 12
+#+END_SRC
+
+#+BEGIN_SRC org
+a string            : 0012
+#+END_SRC
+
+* bash内置printf独特的 %(datefmt)T 占位符
+bash内置的printf支持占位符 =%(datefmt)T=, 它的值是从纪元开始经过的秒钟数(可以通过 =date +%s= 里获取).
+
+其中 =datefmt= 的格式跟 =strftime(3)= 一样.
+
+#+BEGIN_SRC shell :results org
+  printf "%(%m-%d-%Y %H:%M:%S)T\n" -$(date +%s)
+#+END_SRC
+
+#+BEGIN_SRC org
+11-05-1920 04:41:16
+#+END_SRC
+
+当使用 =%(datefmt)T= 格式时，有两个特殊值需要注意:
+
++ -1 表示当前时间，同时也是缺少参数时的缺省值
+
+  #+BEGIN_SRC shell :results org
+    printf "%(%m-%d-%Y %H:%M:%S)T\n"
+    printf "%(%m-%d-%Y %H:%M:%S)T\n" -1
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  02-27-2019 11:22:20
+  02-27-2019 11:22:20
+  #+END_SRC
+
++ -2 表示shell启动的时间
+  #+BEGIN_SRC shell :results org
+    sleep 5
+    printf "%(%m-%d-%Y %H:%M:%S)T\n"
+    printf "%(%m-%d-%Y %H:%M:%S)T\n" -2
+  #+END_SRC
+
+  #+BEGIN_SRC org
+  02-27-2019 11:23:04
+  02-27-2019 11:22:59
+  #+END_SRC

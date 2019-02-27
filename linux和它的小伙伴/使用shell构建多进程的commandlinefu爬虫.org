@@ -91,13 +91,24 @@
   export -f extract_views_from_browse_page
 #+END_SRC
 
+由于网络问题，使用curl获取内容可能失败，需要重复获取
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  function fetch()
+  {
+      local url="$1"
+      while ! curl -L ${url} 2>/dev/null;do
+          :
+      done
+  }
+#+END_SRC
+
 使用管道文件作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
   (
       url="commands/browse"
       while [[ -n ${url} ]];do
           echo "从$url中抽取"
-          html=$(curl https://www.commandlinefu.com/${url} 2>/dev/null)
+          html=$(fetch "https://www.commandlinefu.com/${url}")
           echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
           # flock -x 0
           # echo "${html}"|extract_views_from_browse_page >${queue}
@@ -121,7 +132,7 @@
     function view_page_to_org_content()
     {
         local url="$1"
-        local html="$(curl https://www.commandlinefu.com/${url} 2>/dev/null)"
+        local html="$(fetch "https://www.commandlinefu.com/${url}")"
         # headline
         local headline="$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > h1:nth-child(1)")"
         # command
