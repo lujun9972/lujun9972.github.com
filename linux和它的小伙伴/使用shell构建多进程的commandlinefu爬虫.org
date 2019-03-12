@@ -64,7 +64,7 @@
       else
           local html="$*"
       fi
-      echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)"
+      echo ${html} |hxclean |hxselect -c -s "\n" "li.list-group-item > div:nth-child(1) > div:nth-child(1) > a:nth-child(1)::attr(href)"|sed 's@^@https://www.commandlinefu.com/@'
   }
 
   function extract_nextpage_from_browse_page()
@@ -74,7 +74,7 @@
       else
           local html="$*"
       fi
-      echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)"
+      echo ${html} |hxclean |hxselect -s "\n" "li.list-group-item:nth-child(26) > a"|grep '&gt;'|hxselect -c "::attr(href)"|sed 's@^@https://www.commandlinefu.com/@'
   }
 #+END_SRC
 
@@ -102,17 +102,15 @@
   }
 #+END_SRC
 
-使用管道文件作为锁文件
+collector用来从种子URL中抓取待爬的URL，写入管道文件中，写操作期间管道文件同时作为锁文件
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
-  (
-      url="commands/browse"
+  function collector()
+  {
+      url="$*"
       while [[ -n ${url} ]];do
           echo "从$url中抽取"
-          html=$(fetch "https://www.commandlinefu.com/${url}")
+          html=$(fetch "${url}")
           echo "${html}"|flock ${queue} -c "extract_views_from_browse_page >${queue}"
-          # flock -x 0
-          # echo "${html}"|extract_views_from_browse_page >${queue}
-          # flock -u 0
           url=$(echo "${html}"|extract_nextpage_from_browse_page)
       done
       # 让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
@@ -120,7 +118,8 @@
       do
           echo >${queue}
       done
-  ) &
+  }
+
 #+END_SRC
 
 这里要注意的是， *在找不到下一页URL后，我们用一个for循环往队列里写入了 =proc_num= 个空行*, 这一步的目的是让后面解析代码片段的爬虫进程能够正常退出，而不至于被阻塞.
@@ -129,10 +128,10 @@
 我们需要从脚本片段的页面中抽取标题、代码片段、描述说明以及标签信息，同时将这些内容按org-mode的格式写入存储文件中.
 
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
-    function view_page_to_org_content()
+    function view_page_handler()
     {
         local url="$1"
-        local html="$(fetch "https://www.commandlinefu.com/${url}")"
+        local html="$(fetch "${url}")"
         # headline
         local headline="$(echo ${html} |hxclean |hxselect -c -s "\n" ".col-md-8 > h1:nth-child(1)")"
         # command
@@ -175,26 +174,69 @@
 它的意思是使用 =flock= 对 =cat= 命令进行加锁，再把 =flock= 整个命令的结果通过重定向输出到存储文件中，而重定向输出的这个过程是没有加锁的。
 
 
-* 组合起来
-为了防止发生死锁，这里从管道中读取URL时设置了超时，当出现超时就意味着生产进程赶不上消费进程的消费速度,因此消费进程休眠一秒后再次检查队列中的URL
+spider 从管道文件中读取待抓取的URL，然后实施真正的抓取动作.
 #+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+  function spider()
+  {
+      while :
+      do
+          if ! url=$(flock ${queue} -c 'read -t 1 -u 99 url && echo $url')
+          then
+              sleep 1
+              continue
+          fi
+
+          if [[ -z "$url" ]];then
+              break
+          fi
+          view_page_handler ${url}
+      done
+  }
+#+END_SRC
+这里要注意的是，为了防止发生死锁，从管道中读取URL时设置了超时，当出现超时就意味着生产进程赶不上消费进程的消费速度,因此消费进程休眠一秒后再次检查队列中的URL
+
+* 组合起来
+#+BEGIN_SRC shell :tangle "~/bin/commandlinefu_spider.bash"
+
+  collector "https://www.commandlinefu.com/commands/browse" &
+
   for ((i=0;i<${proc_num};i++))
   do
-      (
-          while :
-          do
-              if ! url=$(flock ${queue} -c 'read -t 1 -u 99 url && echo $url')
-              then
-                  sleep 1
-                  continue
-              fi
-
-              if [[ -z "$url" ]];then
-                  break
-              fi
-              view_page_to_org_content ${url}
-          done
-  ) &
+      spider &
   done
   wait
+#+END_SRC
+
+* 抓取其他网站
+通过重新定义 =extract_views_from_browse_page=, =extract_nextpage_from-browse_page=, =view_page_handler= 这几个函数，
+以及提供一个新的种子URL，我们可以很容易将其改造成抓取其他网站的多进程爬虫。
+
+例如通过下面这段代码，就可以用来爬取 [[https://xkcd.com/][xkcd]] 上的漫画
+#+BEGIN_SRC shell
+  function extract_views_from_browse_page()
+  {
+      if [[ $# -eq 0 ]];then
+          local html=$(cat -)
+      else
+          local html="$*"
+      fi
+      max=$(echo "${html}"|hxclean |hxselect -c -s "\n" "#middleContainer"|grep "Permanent link to this comic" |awk -F "/" '{print $4}')
+      seq 1 ${max}|sed 's@^@https://xkcd.com/@'
+  }
+
+  function extract_nextpage_from_browse_page()
+  {
+      echo ""
+  }
+
+  function view_page_handler()
+  {
+      local url="$1"
+      local html="$(fetch "${url}/")"
+      local image="https:$(echo ${html} |hxclean |hxselect -c -s "\n" "#comic > img:nth-child(1)::attr(src)")"
+      echo ${image}
+      wget ${image}
+  }
+
+  collector "https://xkcd.com/" &
 #+END_SRC
