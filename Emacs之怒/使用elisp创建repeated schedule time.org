@@ -1,0 +1,73 @@
+#+TITLE: 使用elisp创建repeated schedule time
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-03-24 日 19:01]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们都直到使用 =(org-schedule ARG &optional TIME)= 函数能够给任务分配一个规划的任务开始时间。
+下面是关于 =org-schedule= 的函数说明
+#+begin_example
+  (org-schedule ARG &optional TIME)
+
+  Insert the SCHEDULED: string with a timestamp to schedule a TODO item.
+  With one universal prefix argument, remove any scheduling date from the item.
+  With two universal prefix arguments, prompt for a delay cookie.
+  With argument TIME, scheduled at the corresponding date.  TIME can
+  either be an Org date like "2011-07-24" or a delta like "+2d".
+#+end_example
+
+但是从它的doc-string中你应该看不出来它其实可以用来给任务分配一个 =repeated schedule time=.
+
+一个 =repeated schedule time= 由两部分组成，一个是 =规划的任务开始时间=,一个是 =重复的时间间隔=.
+比如 =SCHEDULED: <2005-10-01 Sat +1m>= 就表示 该任务规划的任务开始时间是 =2005-10-01=,同时它是一个月度[[https://orgmode.org/org.html#Repeated-tasks][重复任务]]。
+
+但是若你试着使用 =(org-schedule 4 "2005-10-01 +1m")=,你会发现生成的规划时间并不带有 =+1m= 这个重复的部分。
+
+#+begin_src org
+  ,* test
+  SCHEDULED: <2005-10-01 六>
+#+end_src
+
+通过查看 =org-schedule= 的代码你会发现它实际调用的 =org--deadline-or-schedule= 函数来生成规划日期，而 =org--deadline-or-schedule= 中有这么一段代码
+#+begin_src emacs-lisp
+  ;; Save repeater cookie from either TIME or current scheduled
+  ;; time stamp.  We are going to insert it back at the end of
+  ;; the process.
+  (repeater (or (and (org-string-nw-p time)
+                     ;; We use `org-repeat-re' because we need
+                     ;; to tell the difference between a real
+                     ;; repeater and a time delta, e.g. "+2d".
+                     (string-match org-repeat-re time)
+                     (match-string 1 time))
+                (and (org-string-nw-p old-date)
+                     (string-match "\\([.+-]+[0-9]+[hdwmy]\
+  \\(?:[/ ][-+]?[0-9]+[hdwmy]\\)?\\)"
+                                   old-date)
+                     (match-string 1 old-date)))))
+#+end_src
+
+也就是说，要想保留 =重复时间间隔= 部分的信息，要求输入的 =TIME= 符合 =org-repeate-re= 的正则表达式。
+
+而 =org-repeate-re= 的默认值为:
+#+begin_example
+  org-repeat-re is a variable defined in ‘org.el’.
+  Its value is
+  "[[<][0-9]\\{4\\}-[0-9][0-9]-[0-9][0-9] [^]>
+  ]*?\\([.+]?\\+[0-9]+[hdwmy]\\(/[0-9]+[hdwmy]\\)?\\)"
+
+    This variable may be risky if used as a file-local variable.
+
+  Documentation:
+  Regular expression for specifying repeated events.
+  After a match, group 1 contains the repeat expression.
+#+end_example
+
+也就是需要以 =<= 或 =[= 开头. 因此,要让 =org-schedule= 生成repeated schedule time只需要将时间写入 =<>= 或 =[]= 中即可:
+
+比如将上面语句改成 =(org-schedule 4 "<2005-10-01 +1m>")=, 就能看到结果
+#+begin_src org
+  ,* test
+    SCHEDULED: <2005-10-01 六 +1m>
+#+end_src
