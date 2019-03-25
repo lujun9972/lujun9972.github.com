@@ -1,0 +1,104 @@
+#+TITLE: 使用parallel加速单线程程序
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-03-25 一 16:56]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 [[http://xensoft.com/use-multiple-cpu-cores-parallelize-with-single-threaded-linux-commands/][Use Multiple CPU Cores(Parallelize) with Single Threaded Linux Commands]] 看到的，记录一下。
+
+* 使用parallel加速单线程程序的原理
+使用parallel加速单线程程序的原理在于使用 =--pipe/--spreadstdin= 将标准输入的内容切成多段，然后每段调用一个进程来处理，最后将处理结果整合在一起。比如:
+#+BEGIN_SRC shell
+  ls -lh big.txt  
+  -rw-r--r--  1 westlund  staff   102M Nov  1 21:23 big.txt
+
+  time grep regex bigfile.txt  
+  real    0m2.376s  
+  user    0m2.354s  
+  sys     0m0.021s
+
+  time cat big.txt | parallel --pipe grep regex  
+  real    0m2.592s  
+  user    0m5.908s  
+  sys     0m2.498s  
+#+END_SRC
+
+但是你会发现上面用 =parallel= 进行并行处理后所花费的时间反而更多了，这是因为 =--pipe= 默认将stdin的内容分成每块1M，而且默认的并发量是CPU的个数。
+也就是说上面 =102M= 的文件内容会分成 =102= 个块，然后调用 =102= 个 =grep= 进程来处理，最后将结果进行合并，这个过程显然是太繁杂了。
+
+为此我们可以使用 =--block= 参数来指定每块的大小，比如
+#+BEGIN_SRC shell
+  time cat big.txt | parallel --block 25M --pipe grep regex
+  real    0m1.626s
+  user    0m4.634s
+  sys     0m0.620s
+#+END_SRC
+这就明显快了很多了。
+
+* 使用parallel加速单线程程序可能遇到的问题
+将STDIN拆分成多块后再并发处理在提高效率的同时也会带来一些问题:
+
+** 乱序问题
+
+并发运行多个进程时，就无法保证输出结果的一致性了， 比如下面这个例子:
+#+BEGIN_SRC shell :results org
+  echo -n 2 1 4 3 | parallel -d " " -j4 "sleep {}; echo {}" # -d的意思是设定分隔符，-j的意思是指定并发数
+#+END_SRC
+
+#+BEGIN_SRC org
+1
+2
+3
+4
+#+END_SRC
+   
+你会发现输出的顺序发生了改变。但这个问题可以通过 =-k/--keep-order= 来解决，比如:
+#+BEGIN_SRC shell :results org
+  echo -n 2 1 4 3 | parallel -d " " -k -j4 "sleep {}; echo {}" # -d的意思是设定分隔符，-j的意思是指定并发数
+#+END_SRC
+
+#+BEGIN_SRC org
+2
+1
+4
+3
+#+END_SRC
+
+这次输出的顺序一样了
+
+** 不是所有的任务都能够进行分拆
+比如，我要计算一系列数字的总和，很明显这种任务不能单纯的用拆分来解决，拆分后还需要有一个合并的过程。比如
+#+BEGIN_SRC shell
+  ls -lh random_numbers.txt
+  -rw-r--r--  1 westlund  staff    22M Nov  1 21:56 random_numbers.txt
+
+  time cat random_numbers.txt | awk '{sum+=$1} END {print sum}'
+  65538384640
+  real    0m2.408s
+  user    0m2.402s
+  sys     0m0.021s
+
+  time cat random_numbers.txt | parallel --block 2M --pipe awk \'{sum+=\$1} END {print sum}\'
+  6067097462
+  6064980068
+  6074889658
+  6068292593
+  6073256962
+  6065663642
+  6068441658
+  6071296753
+  4846052534
+  6072985491
+  6065427819
+  real    0m1.436s
+  user    0m4.390s
+  sys     0m0.358s
+
+  time cat random_numbers.txt | parallel --block 2M --pipe awk \'{sum+=\$1} END {print sum}\' | awk '{sum+=$1} END {print sum}'
+  65538384640
+  real    0m1.408s
+  user    0m4.341s
+  sys     0m0.356s
+#+END_SRC
