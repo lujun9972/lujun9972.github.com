@@ -1,0 +1,54 @@
+#+TITLE: 将视频转换成gif的方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-04-20 六 12:11]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 使用ffmpeg从视频文件中抽取帧
+#+begin_src shell
+  ffmpeg -i ${video} -r ${FPS} -vf scale=${height}:-1 output/frame-%4d.png
+#+end_src
+
+** 说明
+其中 =height= 指定了输出图片的高度，单位为像素，而宽度则自动根据比率进行缩放。
+
+而 =FPS= 指定一秒钟抽取多少帧, =output/frame-%4d.png= 指定存放帧图片的目录，文件名，以及图片格式
+
+我们也可以不指定 =FPS=,直接使用 =ffmpege -i ${vidoe} output/frame-%4d.png= 将每一帧抽取出来，但由于视频文件的FPS可能很高，这样抽出来的图片内容会特别的大。
+
+我们可以通过 =ffprobe= 来查看视频的 =FPS= 数:
+#+begin_src shell :results org :exports both
+  ffprobe ~/github/baby/家/VID_20190410_202840.mp4 2>&1 |grep -i fps
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+    Stream #0:0(eng): Video: h264 (Baseline) (avc1 / 0x31637661), yuvj420p(pc, smpte170m), 1280x720, 14104 kb/s, SAR 1:1 DAR 16:9, 30.01 fps, 30 tbr, 90k tbn, 180k tbc (default)
+#+end_src
+
+* 使用convert将帧图片整合成gif文件
+#+begin_src shell
+  convert -delay ${delay} -loop ${num} output/*.png ${video}.gif
+#+end_src
+
+** 说明
+
+其中 =delay= 指的每帧图片的间隔时间，单位为毫秒，该时间一般跟上面的 =FPS= 对应。比如
+若 =FPS= 为 =5= 则说明每秒产生5个帧，也就是说每个帧之间的间隔为0.2秒，也就是20ms，这样 =delay= 的值就应该是 =20=
+
+另外 =num= 指定gif文件循环播放的次数， =0= 表示无限循环
+
+* 压缩gif文件
+#+begin_src shell
+  convert -fuzz 10% -layers Optimize ${video}.gif ${video}_optimized.gif
+#+end_src
+
+** 说明
+
+在压缩过程中会大量消耗CPU和内存，因此不要在对体积庞大的gif进行压缩时可能会让系统Hang住。
+
+另外,convert在处理图片的过程中会往临时目录中写入大量中间的处理文件，若 =/tmp= 目录不够大可能会提示 "convert: unable to write pixel cache"，这种情况可以通过修改 =MAGICK_TMPDIR= 环境变量指向另一个空闲内存较多的分区目录。
+
+关于优化gif文件的更详细说明，可以参见 [[http://www.imagemagick.org/Usage/anim_opt/#frame_opt][ImageMagick v6 Examples -- Animation Optimization]]
