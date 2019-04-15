@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>btrfs文件系统管理 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">btrfs文件系统管理</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org959a2e1">格式化btrfs格式的文件系统</a></li>
+<li><a href="#orgd500dfc">挂载btrfs文件系统</a></li>
+<li><a href="#org20cf35a">修改Btrfs文件系统的大小</a></li>
+<li><a href="#org21fc852">创建快照</a></li>
+<li><a href="#org66075c7">子卷</a>
+<ul>
+<li><a href="#org17ea7fb">创建子卷</a></li>
+<li><a href="#org604e3a0">列出子卷</a></li>
+<li><a href="#orgc4abd97">挂载子卷</a></li>
+<li><a href="#orgdbb6cad">删除子卷</a></li>
+</ul>
+</li>
+<li><a href="#org911d109">RAID</a></li>
+<li><a href="#org4dc2fa0">添加/删除新设备</a></li>
+<li><a href="#org72c540e">文件系统转换</a></li>
+<li><a href="#org06cefc9">检查btrfs文件系统</a></li>
+</ul>
+</div>
+</div>
+<p>
+记录btrfs文件系统的常用操作
+</p>
+
+<div id="outline-container-org959a2e1" class="outline-2">
+<h2 id="org959a2e1">格式化btrfs格式的文件系统</h2>
+<div class="outline-text-2" id="text-org959a2e1">
+<div class="org-src-container">
+<pre class="src src-shell">sudo mkfs.btrfs /dev/sdc1
+</pre>
+</div>
+
+<p>
+通过 <code>-O</code> 选项可以设置btrfs文件系统的fature，这些feature可以通过下面命令看到
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkfs.btrfs -O list-all <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Filesystem features available:
+mixed-bg            - mixed data and metadata block groups (0x4, compat=2.6.37, safe=2.6.37)
+extref              - increased hardlink limit per file to 65536 (0x40, compat=3.7, safe=3.12, default=3.12)
+raid56              - raid56 extended format (0x80, compat=3.9)
+skinny-metadata     - reduced-size metadata extent refs (0x100, compat=3.10, safe=3.18, default=3.18)
+no-holes            - no explicit hole extents for files (0x200, compat=3.14, safe=4.0)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd500dfc" class="outline-2">
+<h2 id="orgd500dfc">挂载btrfs文件系统</h2>
+<div class="outline-text-2" id="text-orgd500dfc">
+<div class="org-src-container">
+<pre class="src src-shell">sudo mount -t btrds -o rw /dev/sdc1 /mnt
+</pre>
+</div>
+
+<p>
+btrfs还有许多feature，可以通过 <code>-o</code> 来指定。比较特别的选项有:
+</p>
+
+<dl class="org-dl">
+<dt>ssd</dt><dd>btrfs 针对ssd硬盘进行过特殊的优化，尽可能的将写入的数据分散到磁盘的各个位置，防止出现单个位置过多次的写入导致</dd>
+<dt>compress=lzo</dt><dd>启用自动压缩,压缩算法为lzo。其他可选压缩算法有zlib,zstd,或者no</dd>
+</dl>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo mount -t btrds -o rw,ssd,<span style="color: #7590db;">compress</span>=lzo /dev/sdc1 /mnt/mybtrfs
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org20cf35a" class="outline-2">
+<h2 id="org20cf35a">修改Btrfs文件系统的大小</h2>
+<div class="outline-text-2" id="text-org20cf35a">
+<p>
+我们还可以修改创建好的btrfs文件系统的大小.
+</p>
+
+<p>
+下面命令将文件系统减少2G
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs filesystem resize -2g /mnt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Resize '/mnt' of '-2g'
+</pre>
+</div>
+
+<p>
+或者通过下面命令增加文件系统大小
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs filesystem resize +2g /mnt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Resize '/mnt' of '+2g'
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org21fc852" class="outline-2">
+<h2 id="org21fc852">创建快照</h2>
+<div class="outline-text-2" id="text-org21fc852">
+<p>
+快照是对文件系统某一时刻的完全备份。建立快照后，对文件系统的修改不会影响快照中的内容
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs subvolume snapshot /mnt /mnt/snap1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Create a snapshot of '/mnt' in '/mnt/snap1'
+</pre>
+</div>
+
+<p>
+若要创建只读快照，则可以使用 <code>-r</code> 选项
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs subvolume snapshot -r /mnt /mnt/snap2
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Create a readonly snapshot of '/mnt' in '/mnt/snap2'
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org66075c7" class="outline-2">
+<h2 id="org66075c7">子卷</h2>
+<div class="outline-text-2" id="text-org66075c7">
+<p>
+我们可以把btrfs文件系统的一部分配置为一个完整的子文件系统，这些子文件系统被称为subvolume(子卷).
+这些子卷共享底层的设备空间，在需要磁盘空间时便从底层设备中分配。
+</p>
+</div>
+
+<div id="outline-container-org17ea7fb" class="outline-3">
+<h3 id="org17ea7fb">创建子卷</h3>
+<div class="outline-text-3" id="text-org17ea7fb">
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs subvolume create /mnt/sub1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Create subvolume '/mnt/sub1'
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org604e3a0" class="outline-3">
+<h3 id="org604e3a0">列出子卷</h3>
+<div class="outline-text-3" id="text-org604e3a0">
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs subvolume list  /mnt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">ID 259 gen 12 top level 5 path sub1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc4abd97" class="outline-3">
+<h3 id="orgc4abd97">挂载子卷</h3>
+<div class="outline-text-3" id="text-orgc4abd97">
+<p>
+通过 <code>subvol=/path/to/subvolumne</code> 或 <code>subvolid=objectid</code> 选项可以指定挂载那个子卷
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo mount -t btrfs -o <span style="color: #7590db;">subvol</span>=/mnt/sub1 /home/lujun9972/btrfs.img /media
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdbb6cad" class="outline-3">
+<h3 id="orgdbb6cad">删除子卷</h3>
+<div class="outline-text-3" id="text-orgdbb6cad">
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs subvolume delete /mnt/sub1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Delete subvolume (no-commit): '/mnt/sub1'
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org911d109" class="outline-2">
+<h2 id="org911d109">RAID</h2>
+<div class="outline-text-2" id="text-org911d109">
+<p>
+执行mkfs时可以指定多个设备，并设定RAID级别，比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkfs.btrfs -draid1 /dev/sde1 /dev/sdf1
+mount -t btrfs /dev/sde1 /mnt/raid
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4dc2fa0" class="outline-2">
+<h2 id="org4dc2fa0">添加/删除新设备</h2>
+<div class="outline-text-2" id="text-org4dc2fa0">
+<p>
+当设备空间快要被用完时，可以通过 <code>btrfs device add</code> 命令为文件系统添加新磁盘设备，从而增加存储空间
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">df -h /mnt
+sudo btrfs device add -f /dev/loop1 /mnt
+df -h /mnt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0      6.0G   17M  5.1G   1% /mnt
+Performing full device TRIM /dev/loop1 (4.00GiB) ...
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0       10G   17M  9.1G   1% /mnt
+</pre>
+</div>
+
+<p>
+同样的，也可以通过命令删除所添加的设备
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">df -h /mnt
+sudo btrfs device delete  /dev/loop1 /mnt
+df -h /mnt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0       10G   17M  9.1G   1% /mnt
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/loop0      6.0G   17M  5.1G   1% /mnt
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org72c540e" class="outline-2">
+<h2 id="org72c540e">文件系统转换</h2>
+<div class="outline-text-2" id="text-org72c540e">
+<p>
+可以通过命令将非Btrfs文件系统转换为Btrfs文件系统
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs-convert ~lujun9972/ext4.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">create btrfs filesystem:
+  blocksize: 4096
+  nodesize:  16384
+  features:  extref, skinny-metadata (default)
+creating ext2 image file
+creating btrfs metadata
+copy inodes [o] [         0/        11]
+conversion complete
+</pre>
+</div>
+
+<p>
+我们也可以通过命令将文件系统回滚转换前的状态
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfs-convert -r ~lujun9972/ext4.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">rollback succeeded
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org06cefc9" class="outline-2">
+<h2 id="org06cefc9">检查btrfs文件系统</h2>
+<div class="outline-text-2" id="text-org06cefc9">
+<p>
+可以通过以下命令检查Btrfs文件系统
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo btrfsck ~lujun9972/btrfs.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Opening filesystem to check...
+Checking filesystem on /home/lujun9972/btrfs.img
+UUID: 658b38c7-d9a0-4c36-aeab-e4dc072269d0
+found 229376 bytes used, no error found
+total csum bytes: 0
+total tree bytes: 163840
+total fs tree bytes: 65536
+total extent tree bytes: 16384
+btree space waste bytes: 153939
+file data blocks allocated: 65536
+ referenced 65536
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-09-05</span>
+    <span title="last modification date" class="post-info">2018-09-05</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

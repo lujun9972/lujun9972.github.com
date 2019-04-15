@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>编译linux kernel - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">编译linux kernel</h1>
+<ol class="org-ol">
+<li><p>
+从<a href="https://www.kernel.org/">kernel.org</a>下载内核源码
+</p>
+
+<p>
+在kernel.org上你能看到几种类型的内核存在:
+</p>
+
+<dl class="org-dl">
+<dt>mainline</dt><dd>最新版本的linux内核，发布新版本后会打开一个合并窗口，接受下一版本要做出的该病，合并窗口关闭后，就会发布新的rc(即release candidate，发布候选)版内核</dd>
+
+<dt>stable</dt><dd>这是一个主要针对过去发布的内核进行bug修复的树，它更加的稳定</dd>
+
+<dt>linux-next</dt><dd>为发布将来的版本而累积新代码并进行测试的源码树</dd>
+
+<dt>longterm</dt><dd>Long Term Support,长期维护的意思</dd>
+</dl>
+
+<div class="org-src-container">
+<pre class="src src-shell">curl -L https://git.kernel.org/torvalds/t/linux-4.17-rc3.tar.gz -o linux-4.17-rc3.tar.gz
+</pre>
+</div>
+
+<p>
+如果下载的是stable或longterm内核，还有对应的sign文件进行校验
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">gpg2 --locate-keys torvalds@kernel.org gregkh@kernel.org
+xz -cd $<span style="color: #7590db;">&#20195;&#30721;&#25991;&#20214;</span> | gpg2 --verify $<span style="color: #7590db;">sign&#25991;&#20214;</span> -
+</pre>
+</div></li>
+
+<li><p>
+安装必要的软件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo yum install -y gcc elfutils-libelf-devel ncurses-devel bc openssl-devel flex bison
+</pre>
+</div></li>
+
+<li><p>
+解压源代码
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tar -zxvf linux-4.17-rc3.tar.gz
+</pre>
+</div></li>
+
+<li><p>
+将当前kernel的配置信息应用到新kernel
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cp /boot/config-$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">uname</span> -r<span style="color: #4f97d7;">)</span> linux-4.17-rc3/.config
+</pre>
+</div>
+
+<p>
+<code>.config</code> 中保存的就是内核编译的相关设置。它的内容大致是这样的:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tail linux-4.17-rc3/.config
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span style="color: #2aa1ae; background-color: #292e34;"># CONFIG_FONTS is not set</span>
+CONFIG_FONT_8x8=y
+CONFIG_FONT_8x16=y
+CONFIG_SG_POOL=y
+CONFIG_ARCH_HAS_SG_CHAIN=y
+CONFIG_ARCH_HAS_PMEM_API=y
+CONFIG_ARCH_HAS_UACCESS_FLUSHCACHE=y
+CONFIG_SBITMAP=y
+CONFIG_PARMAN=m
+<span style="color: #2aa1ae; background-color: #292e34;"># CONFIG_STRING_SELFTEST is not set</span>
+</pre>
+</div>
+
+<p>
+其中，以 <code>#</code> 开头的行就是注视行，这些 <code>CONFIG_*</code> 就是设置项，这些设置项与linux内核的各功能相对应，它的值有三种分别表示编译时的三种操作：
+</p>
+
+<dl class="org-dl">
+<dt>CONFIG_*=y</dt><dd>表示该项目所对应的功能会被静态地添加到内核中</dd>
+
+<dt>CONFIG_*=m</dt><dd>表示该项目对应的功能会被编译成模块，在内核需要时再加载入内核</dd>
+
+<dt># CONFIG_* is not set</dt><dd>表示不编译该项目对应的功能</dd>
+</dl>
+
+<p>
+注意： 由于内核间功能的相互依赖十分复杂，因此不要尝试手工编辑 <code>.config</code> 文件,否则可能出现编译失败，或者编译后内核无法执行的情况！
+</p></li>
+
+<li><p>
+配置kernel
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> linux-4.17-rc3
+make menuconfig
+</pre>
+</div>
+
+<div class="figure">
+<p><img src="/assets/blog/2018/05/02/编译linux-kernel/linux_kernel_menuconfig.png" alt="linux_kernel_menuconfig.png" />
+</p>
+</div>
+
+<p>
+启用/禁用好模块后，选择 <code>Exit</code> 退出
+</p></li>
+
+<li><p>
+编译kernel
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">make
+</pre>
+</div>
+
+<p>
+这一步的耗时非常长，而且会占用很多空间，比如我编译完之后，大约占据了11G的空间。
+</p></li>
+
+<li><p>
+将内核安装到系统中
+</p>
+
+<p>
+编译完成后，就可以将生成的内核安装到系统中了，安装时需要root权限
+</p>
+
+<p>
+安装过程分为两个阶段进行。第一个阶段是模块的安装:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo make modules_install
+</pre>
+</div>
+
+<p>
+这会把编译后的模块安装到 <code>/lib/modules</code> 下
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls /lib/modules
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">3.10.0-693.17.1.el7.x86_64  4.17.0-rc3
+</pre>
+</div>
+<p>
+这里 <code>4.17.0-rc3</code> 就是新安装的模块
+</p>
+
+<p>
+第二阶段是安装内核二进制映像文件,并生成boot初始化文件系统映像
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo make install
+</pre>
+</div>
+
+<p>
+这会在 <code>/boot</code> 下生成新的内核映射文件。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -l /boot/*4.17*
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-rw-------. 1 root root 38754397 May  5 06:59 /boot/initramfs-4.17.0-rc3.img
+-rw-r--r--. 1 root root  3512799 May  5 06:21 /boot/System.map-4.17.0-rc3
+-rw-r--r--. 1 root root  7238272 May  5 06:21 /boot/vmlinuz-4.17.0-rc3
+</pre>
+</div>
+
+<p>
+其中
+</p>
+
+<ul class="org-ul">
+<li>initramfs-内核版本 / initrd.img-内核版本 为boot初始化文件系统映像</li>
+
+<li>System.map-内核版本 为地址信息文件</li>
+
+<li>vmlinuz-内核版本 为内核映像文件</li>
+</ul>
+
+<p>
+若在Debian及其衍生版本中编译内核，你会发现不会自动生成 <code>initramfs-内核版本</code> 文件，则需要执行下面命令手工生成
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo update-initramfs -c -k &#20869;&#26680;&#29256;&#26412;
+</pre>
+</div></li>
+
+<li><p>
+设置GRUB，从当前安装的内核启动
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo grub2-set-default linux-4.17-rc3
+</pre>
+</div>
+<p>
+重启后就能看到新内核了
+</p>
+
+
+<div class="figure">
+<p><img src="/assets/blog/2018/05/02/编译linux-kernel/screenshot-54.png" alt="screenshot-54.png" />
+</p>
+</div></li>
+</ol>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-05-02</span>
+    <span title="last modification date" class="post-info">2018-05-05</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

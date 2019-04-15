@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用ZSWAP改善低内存电脑的性能 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用ZSWAP改善低内存电脑的性能</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org9042464">启用zswap</a>
+<ul>
+<li><a href="#org5a7f3f3">临时启用zswap</a></li>
+<li><a href="#org7ea168b">永久启用zswap</a></li>
+</ul>
+</li>
+<li><a href="#org9d8ce1e">配置zswap</a></li>
+</ul>
+</div>
+</div>
+<p>
+我们都知道，当电脑物理内存不够操作系统使用时，操作系统会把部分物理内存的内容临时写入磁盘中，在物理内存足够后再从磁盘读回物理内存，这个过程叫做SWAP。
+然而由于磁盘的写入/读取速度要远远慢于内存的读写速度，因此SWAP的过程会严重拖慢电脑性能。
+当电脑内存足够，SWAP交换数据较少的时候还没什么，但若电脑内存不足引起大量SWAP，那电脑性能将会受到严重的影响，这时你会发现你的磁盘在不断地转动。
+</p>
+
+<p>
+缓解SWAP的问题有两个方法，一个方法是想办法提高读写磁盘的速率，比如将机械硬盘换成SSD盘。
+另一个方法就是想办法降低SWAP发生的概率。
+</p>
+
+<p>
+Linux kernel自3.11开始引入了zswap的功能，它能够将原本要交换到磁盘上的内存压缩，放到内存的一个内存池中，从而减少发生SWAP的概率。
+</p>
+
+<div id="outline-container-org9042464" class="outline-2">
+<h2 id="org9042464">启用zswap</h2>
+<div class="outline-text-2" id="text-org9042464">
+</div>
+<div id="outline-container-org5a7f3f3" class="outline-3">
+<h3 id="org5a7f3f3">临时启用zswap</h3>
+<div class="outline-text-3" id="text-org5a7f3f3">
+<p>
+临时启用zswap很简单，只需要
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo echo <span style="color: #a45bad;">1</span>|tee /sys/module/zswap/parameters/enabled
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7ea168b" class="outline-3">
+<h3 id="org7ea168b">永久启用zswap</h3>
+<div class="outline-text-3" id="text-org7ea168b">
+<p>
+若想每次重启都自动启用zswap，则可以修改启动时的内核参数，添加上 <code>zswap.enabled=1</code> 
+</p>
+
+<ol class="org-ol">
+<li>编辑 <code>/etc/default/grub</code>,在 <code>GRUB_CMDLINE_LINUX_DEFAULT</code> 后加上 <code>zswap.enabled=1</code></li>
+<li>运行 <code>grub-mkconfig -o /boot/grub/grub.cfg</code> 重新生成GRUB配置文件</li>
+<li>重启电脑</li>
+</ol>
+
+<p>
+在archlinux上，我们还可以通过 <code>systemd-swap</code> 来帮我们开启zswap
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S systemd-swap --noconfirm
+sudo systemctl enable systemd-swap
+sudo systemctl start systemd-swap
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9d8ce1e" class="outline-2">
+<h2 id="org9d8ce1e">配置zswap</h2>
+<div class="outline-text-2" id="text-org9d8ce1e">
+<p>
+zswap有下面几个配置参数:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">grep -R . /sys/module/zswap/parameters/
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/sys/module/zswap/parameters/enabled:Y
+/sys/module/zswap/parameters/max_pool_percent:25
+/sys/module/zswap/parameters/compressor:lz4
+/sys/module/zswap/parameters/zpool:zbud
+</pre>
+</div>
+
+<p>
+其中:
+</p>
+
+<ul class="org-ul">
+<li>zwap.enabled: 表示是否启用zswap功能</li>
+<li>zswap.compressor: 表示用来压缩内存的算法，可以是lzo、lz4、lz4hc、deflate</li>
+<li>zswap.max_pool_percent: 用来表示存放压缩内存的内存池的最大值，内存池本身并不是预先分配好的，而是根据需要慢慢增加，但最大不超过这个限定值</li>
+<li>zswap.zpool: 内存池的管理算法,可以是zbud或z3fold，其中z3fold要比zbud有更好的压缩率</li>
+</ul>
+
+<p>
+你可以手工将上面这些参数加入到启动的内核参数中，比如 <code>zswap.enabled=1 zswap.compressor=lz4 zswap.max_pool_percent=20 zswap.zpool=z3fold</code>
+</p>
+
+<p>
+若是通过 <code>systemd.swap</code> 来管理交换区的，则可以通过修改 <code>/etc/systemd/swap.conf</code> 来进行配置
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">grep -i zswap /etc/systemd/swap.conf
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-conf"><span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">Zswap</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">Zswap create compress cache between swap and memory for reduce IO</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">https://www.kernel.org/doc/Documentation/vm/zswap.txt</span>
+<span style="color: #7590db;">zswap_enabled</span>=1
+<span style="color: #7590db;">zswap_compressor</span>=lz4      <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">lzo lz4</span>
+<span style="color: #7590db;">zswap_max_pool_percent</span>=25 <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">1-99</span>
+<span style="color: #7590db;">zswap_zpool</span>=zbud          <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">zbud z3fold</span>
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-11-27</span>
+    <span title="last modification date" class="post-info">2018-11-27</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

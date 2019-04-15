@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Duck Typing vs Type Erasure - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="英文必须死" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">Duck Typing vs Type Erasure</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgc1e9ac6">Java Duck Typing</a></li>
+<li><a href="#org498b8be">Signals and Slots and Events! Oh My!</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文URL: <a href="http://nullprogram.com/blog/2014/04/01/">http://nullprogram.com/blog/2014/04/01/</a>                              
+</p>
+
+<p>
+假设有这么一个 C++ 类.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">iostream</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #4f97d7; font-weight: bold;">template</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #4f97d7; font-weight: bold;">typename</span> <span style="color: #ce537a; font-weight: bold;">T</span><span style="color: #4f97d7;">&gt;</span>
+<span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">Caller</span> <span style="color: #4f97d7;">{</span>
+  <span style="color: #4f97d7; font-weight: bold;">const</span> <span style="color: #ce537a; font-weight: bold;">T</span> <span style="color: #7590db;">callee_</span>;
+  <span style="color: #bc6ec5; font-weight: bold;">Caller</span><span style="color: #bc6ec5;">(</span><span style="color: #4f97d7; font-weight: bold;">const</span> <span style="color: #ce537a; font-weight: bold;">T</span> <span style="color: #7590db;">callee</span><span style="color: #bc6ec5;">)</span> : callee_<span style="color: #bc6ec5;">(</span>callee<span style="color: #bc6ec5;">)</span> <span style="color: #bc6ec5;">{}</span>
+  <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">go</span><span style="color: #bc6ec5;">()</span> <span style="color: #bc6ec5;">{</span> callee_.call<span style="color: #2d9574;">()</span>; <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>;
+</pre>
+</div>
+
+<p>
+Caller可以接受任何类型的参数,只要该参数有 <code>call()</code> 方法就成.
+比如,定义两个类 <code>Foo</code> 和 <code>Bar</code>:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">Foo</span> <span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">call</span><span style="color: #bc6ec5;">()</span> <span style="color: #4f97d7; font-weight: bold;">const</span> <span style="color: #bc6ec5;">{</span> <span style="color: #a45bad;">std</span>::cout &lt;&lt; <span style="color: #2d9574;">"Foo"</span>; <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>;
+
+<span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">Bar</span> <span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">call</span><span style="color: #bc6ec5;">()</span> <span style="color: #4f97d7; font-weight: bold;">const</span> <span style="color: #bc6ec5;">{</span> <span style="color: #a45bad;">std</span>::cout &lt;&lt; <span style="color: #2d9574;">"Bar"</span>; <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>;
+
+<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #4f97d7;">()</span> <span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #bc6ec5;">&lt;</span><span style="color: #ce537a; font-weight: bold;">Foo</span><span style="color: #bc6ec5;">&gt;</span> <span style="color: #7590db;">foo</span><span style="color: #bc6ec5;">{</span>Foo<span style="color: #2d9574;">()</span><span style="color: #bc6ec5;">}</span>;
+  <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #bc6ec5;">&lt;</span><span style="color: #ce537a; font-weight: bold;">Bar</span><span style="color: #bc6ec5;">&gt;</span> <span style="color: #7590db;">bar</span><span style="color: #bc6ec5;">{</span>Bar<span style="color: #2d9574;">()</span><span style="color: #bc6ec5;">}</span>;
+  foo.go<span style="color: #bc6ec5;">()</span>;
+  bar.go<span style="color: #bc6ec5;">()</span>;
+  <span style="color: #a45bad;">std</span>::cout &lt;&lt; <span style="color: #a45bad;">std</span>::endl;
+  <span style="color: #4f97d7; font-weight: bold;">return</span> <span style="color: #a45bad;">0</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+这段代码可以正常编译,运行后会显示“FooBar”. 
+这就是所谓的"鸭子类型"(Duck Typing) — 也就是说, “如果它看起来像鸭子,游起来像鸭子,叫起来像鸭子,那你就认为它是鸭子.”
+<code>Foo</code> 和 <code>Bar</code> 是完全无关的两个类型. 他们并没有继承自同一个类,但是只要他们都提供了需要的接口,就都能被 <code>Caller</code> 所用.
+这是一种很不一样的多态.
+</p>
+
+<p>
+"鸭子类型"一般在动态语言中比较常见. 不过通过模板,像 C++ 这样的静态强类型语言也能使用"鸭子类型",而无需损害其保障类型安全的能力. 
+without sacrificing any type safety.
+</p>
+
+<div id="outline-container-orgc1e9ac6" class="outline-2">
+<h2 id="orgc1e9ac6">Java Duck Typing</h2>
+<div class="outline-text-2" id="text-orgc1e9ac6">
+<p>
+让我们再试试Java的泛型.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #4f97d7;">&lt;</span><span style="color: #ce537a; font-weight: bold;">T</span><span style="color: #4f97d7;">&gt;</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #4f97d7; font-weight: bold;">final</span> <span style="color: #ce537a; font-weight: bold;">T</span> <span style="color: #7590db;">callee</span>;
+    <span style="color: #bc6ec5; font-weight: bold;">Caller</span><span style="color: #bc6ec5;">(</span><span style="color: #ce537a; font-weight: bold;">T</span> <span style="color: #7590db;">callee</span><span style="color: #bc6ec5;">)</span> <span style="color: #bc6ec5;">{</span>
+        <span style="color: #4f97d7; font-weight: bold;">this</span>.callee = callee;
+    <span style="color: #bc6ec5;">}</span>
+    <span style="color: #4f97d7; font-weight: bold;">public</span> <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">go</span><span style="color: #bc6ec5;">()</span> <span style="color: #bc6ec5;">{</span>
+        callee.call<span style="color: #2d9574;">()</span>;  <span style="color: #2aa1ae; background-color: #292e34;">// </span><span style="color: #2aa1ae; background-color: #292e34;">compiler error: cannot find symbol call</span>
+    <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Foo</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #4f97d7; font-weight: bold;">public</span> <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">call</span><span style="color: #bc6ec5;">()</span> <span style="color: #bc6ec5;">{</span> System.out.print<span style="color: #2d9574;">(</span><span style="color: #2d9574;">"Foo"</span><span style="color: #2d9574;">)</span>; <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Bar</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #4f97d7; font-weight: bold;">public</span> <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">call</span><span style="color: #bc6ec5;">()</span> <span style="color: #bc6ec5;">{</span> System.out.print<span style="color: #2d9574;">(</span><span style="color: #2d9574;">"Bar"</span><span style="color: #2d9574;">)</span>; <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #4f97d7; font-weight: bold;">public</span> <span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Main</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #4f97d7; font-weight: bold;">public</span> <span style="color: #4f97d7; font-weight: bold;">static</span> <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #bc6ec5;">(</span><span style="color: #ce537a; font-weight: bold;">String</span> <span style="color: #7590db;">args</span><span style="color: #2d9574;">[]</span><span style="color: #bc6ec5;">)</span> <span style="color: #bc6ec5;">{</span>
+        <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #2d9574;">&lt;</span><span style="color: #ce537a; font-weight: bold;">Foo</span><span style="color: #2d9574;">&gt;</span> <span style="color: #7590db;">f</span> = <span style="color: #4f97d7; font-weight: bold;">new</span> <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #2d9574;">&lt;&gt;(</span><span style="color: #4f97d7; font-weight: bold;">new</span> <span style="color: #ce537a; font-weight: bold;">Foo</span><span style="color: #67b11d;">()</span><span style="color: #2d9574;">)</span>;
+        <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #2d9574;">&lt;</span><span style="color: #ce537a; font-weight: bold;">Bar</span><span style="color: #2d9574;">&gt;</span> <span style="color: #7590db;">b</span> = <span style="color: #4f97d7; font-weight: bold;">new</span> <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #2d9574;">&lt;&gt;(</span><span style="color: #4f97d7; font-weight: bold;">new</span> <span style="color: #ce537a; font-weight: bold;">Bar</span><span style="color: #67b11d;">()</span><span style="color: #2d9574;">)</span>;
+        f.go<span style="color: #2d9574;">()</span>;
+        b.go<span style="color: #2d9574;">()</span>;
+        System.out.println<span style="color: #2d9574;">()</span>;
+    <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+这几乎就是上一个程序的翻版, 但是该程序在编译时会由于类型擦除(type erasure)而报错. 
+与C++的模板不同,这里 <code>Caller</code> 编译后只会产生一个版本的类, 其中 <code>T</code> 会变成 <code>Object</code>. 
+由于Object类型并没有 <code>call()</code> 方法,因此编译会失败.
+这里泛型的作用只是推迟了编译器对类型的检查而已.
+</p>
+
+<p>
+C++模板有点类似于宏, 它由编译器负责进行扩展,每一个类型的参数都会产生不同版本的实现.
+检查 <code>call</code> 方法的时机实在类型已经完全确认之后,而不是在模板刚定义的时候.
+</p>
+
+<p>
+为了解决这个问题, <code>Foo</code> 和 <code>Bar</code> 需要公用同一个祖先. 假设我们定义这个祖先为 <code>Callee</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span style="color: #4f97d7; font-weight: bold;">interface</span> <span style="color: #ce537a; font-weight: bold;">Callee</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">call</span><span style="color: #bc6ec5;">()</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+在 <code>Caller</code> 的实现中需要声明T为 <code>Callee</code> 的子类.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Caller</span><span style="color: #4f97d7;">&lt;</span><span style="color: #ce537a; font-weight: bold;">T</span> <span style="color: #4f97d7; font-weight: bold;">extends</span> <span style="color: #ce537a; font-weight: bold;">Callee</span><span style="color: #4f97d7;">&gt;</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #2aa1ae; background-color: #292e34;">// </span><span style="color: #2aa1ae; background-color: #292e34;">...</span>
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+现在编译可以通过了,因为 <code>Callee</code> 中有 <code>call()</code> 方法. 
+最后实现接口 <code>Callee</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Foo</span> <span style="color: #4f97d7; font-weight: bold;">implements</span> <span style="color: #ce537a; font-weight: bold;">Callee</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #2aa1ae; background-color: #292e34;">// </span><span style="color: #2aa1ae; background-color: #292e34;">...</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #4f97d7; font-weight: bold;">class</span> <span style="color: #ce537a; font-weight: bold;">Bar</span> <span style="color: #4f97d7; font-weight: bold;">implements</span> <span style="color: #ce537a; font-weight: bold;">Callee</span> <span style="color: #4f97d7;">{</span>
+    <span style="color: #2aa1ae; background-color: #292e34;">// </span><span style="color: #2aa1ae; background-color: #292e34;">...</span>
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+这已经不能算是"鸭子类型"了, 只是普通的多态而已. 类型擦除机制使得在Java中无法实现"鸭子类型"(除非使用反射机制).
+</p>
+</div>
+</div>
+
+<div id="outline-container-org498b8be" class="outline-2">
+<h2 id="org498b8be">Signals and Slots and Events! Oh My!</h2>
+<div class="outline-text-2" id="text-org498b8be">
+<p>
+"鸭子类型" 在是现在观察者模型时非常有用,它无需让你定义那么多的模板(boilerplate). 
+它并不要求一个类必须 <a href="http://raganwald.com/2014/03/31/class-hierarchies-dont-do-that.htmlL">继承自特定的类</a> 或者实现特定的接口(interface).
+这里有一个很好的例子: <a href="http://en.wikipedia.org/wiki/Signals_and_slots">the various signal and slots systems for C++</a>. 
+相比之下Java <a href="http://docs.oracle.com/javase/7/docs/api/java/util/EventListener.html">需要让所有的类型都实现EventListener接口</a>:
+</p>
+
+<ul class="org-ul">
+<li>KeyListener</li>
+<li>MouseListener</li>
+<li>MouseMotionListener</li>
+<li>FocusListener</li>
+<li>ActionListener, etc.</li>
+</ul>
+
+<p>
+如果一个类涉及到多种类型的事件的话,比如说想实现一个时间记录器,那么就需要实现多个接口了.
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2017-03-07</span>
+    <span title="last modification date" class="post-info">2017-03-08</span>
+    <span title="tags" class="post-info"><a href="/tags/英文必须死">英文必须死</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>linux是如何记录日志的 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">linux是如何记录日志的</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org2c5406d">内核空间日志</a></li>
+<li><a href="#orge0c5f21">用户空间日志</a></li>
+<li><a href="#org5130aee">systemd</a></li>
+<li><a href="#orgcd1f5e3">rsyslogd在systemd系统中的行为</a></li>
+</ul>
+</div>
+</div>
+<p>
+今天看到一个很不错的问题: <a href="https://unix.stackexchange.com/questions/205883/understand-logging-in-linux">Understand logging in Linux</a>，里面的答案特别好，记录一下
+</p>
+
+<p>
+在linux中，一个典型的日志记录过程如下:
+</p>
+
+<div id="outline-container-org2c5406d" class="outline-2">
+<h2 id="org2c5406d">内核空间日志</h2>
+<div class="outline-text-2" id="text-org2c5406d">
+<p>
+内核使用 <code>printk()</code> 函数往内核空间的一个 ring buffer 中写入日志消息.
+该消息有三种方法可以被用户空间的应用所获取:
+</p>
+
+<ol class="org-ol">
+<li><p>
+通过 <code>/proc/kmsg</code> 文件
+</p>
+
+<p>
+这是一个只读的伪FIFO文件，且里面的消息只能被读取一次。当多个进程同时尝试读取该文件时，每个进程将只能读取到一部分日志内容。
+</p></li>
+
+<li><p>
+通过 <code>/dev/kmsg</code>
+</p>
+
+<p>
+这是一个可读写的字符设备文件，且允许多个进程进行读取，每个进程都能得到完整的数据流。 而且由于它是可读写的，因此你还可以插入消息到内核日志中。
+</p></li>
+
+<li>通过 <code>sys_syslog</code> 系统调用</li>
+</ol>
+
+<p>
+我们可以通过执行 <code>dmesg</code> 命令来输出 ring buffer 中的内容. 或者通过 <code>klogd(Kernel Log Daemon)</code> 从 <code>/proc/kmsg(若没有挂载/proc则会调用sys_syslog系统API)</code> 来读取 ring buffer 中的日志消息，并将之发送到 <code>syslogd</code> 或者 输出到终端上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge0c5f21" class="outline-2">
+<h2 id="orge0c5f21">用户空间日志</h2>
+<div class="outline-text-2" id="text-orge0c5f21">
+<p>
+用户空间一般通过 <code>syslogd(8)</code> 来记录日志. 
+syslogd一般通过监听 <code>/dev/log</code> UNIX域套接字来获取日志消息,但也可以通过配置同时监听多个其他UNIX域套接字, 同时他也可以监听网络Socket，默认syslog监听UDP协议的 <code>514</code> 号端口,但协议和端口都可以进行配置.
+它还能够从 <code>klogd(8)</code> 中获取日志消息，但不能直接从 <code>/proc/kmsg</code> 中获取日志消息. 
+</p>
+
+<p>
+syslogd一般会将获取到的日志消息写入到指定的日志文件中去, 除此之外还可以将日志写入命名管道，转发给给其他主机，作为命令参数甚至是写入数据库中.
+</p>
+
+<p>
+用户空间的应用一般通过libc提供的 <code>syslog(3)</code> 函数来记录日志. 该函数会将日志信息发送给 <code>/dev/log</code>. 
+不过若应用程序通过 <code>chroot(2)</code> 切换了root路径，则日志实际上可能被发送到 <code>/chrooted/named/dev/log</code>. 这种情况下需要配置 syslogd 监听新位置的UNIX域套接字.
+</p>
+
+<p>
+另外，syslog协议仅仅是一个数据包协议,应用程序不一定要通过 <code>syslog</code> 函数来写日志，它可以使用任何方式只要能与syslogd监听的套接字通讯就可以了。 
+</p>
+
+<p>
+最后，上面讲的都是经典的 <code>syslogd</code> 的行为，新的日志守护进程(比如 rsyslog 或者 syslog-ng)在细节上可能会有所不同，比如最新版的 <code>rsyslogd</code> 在 <code>systemd</code> 系统上已经不再监听 <code>/dev/log</code> 而是改为监听 <code>/run/systemd/journal/syslog</code>. 
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5130aee" class="outline-2">
+<h2 id="org5130aee">systemd</h2>
+<div class="outline-text-2" id="text-org5130aee">
+<p>
+systemd通过 <code>systemd-journald</code> 来进行日志管理，它的日志处理方式与经典的linux日志处理方式不太一样:
+</p>
+
+<ul class="org-ul">
+<li>它通过读取 <code>/dev/kmsg</code> 获取内核日志.</li>
+<li>它通过读取 <code>/dev/log(/run/systemd/journal/dev-log的软链接)</code> 获取应用日志(通过syslog函数写入.</li>
+<li>它监听UNIX域套接字(AF_LOCAL 流套接字) <code>/run/systemd/journal/stdout</code> 来获取由systemd管理的服务的日志,这些服务只需要把日志输出到stdout和stderr就行了.</li>
+<li>它还会监听UNIX套接字(AF_LOCAL 数据包套接字) <code>/run/systemd/journal/socket</code>,因为有些程序通过systemd特定的日志协议输出日志信息(比如调用 <code>sd_journal_sendv()</code> 函数来输出日志).</li>
+<li>systemd-journald 会将所有上面这些来源中的日志读到一起,然后写入到系统级或用户级的日志文件中，这些日志文件一般在 <code>/run/log/journal/</code> 或 <code>/var/log/journal/</code> 目录下.</li>
+<li>若 <code>/etc/systemd/journald.conf</code> 中配置了 <code>ForwardToSyslog</code> 为 <code>yes</code>, 则会尝试将日志写入 <code>/run/systemd/journal/syslog</code> 文件中.</li>
+<li>若配置了 <code>ForwardToKMsg</code> 为 <code>true</code>,则它还会讲日志写入 <code>/dev/kmsg</code>.</li>
+<li>若配置了 <code>ForwardToConsole</code> 或 <code>ForwardToWall</code> 为 <code>true</code>, 它还会将日志信息输出到终端和控制台上.</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgcd1f5e3" class="outline-2">
+<h2 id="orgcd1f5e3">rsyslogd在systemd系统中的行为</h2>
+<div class="outline-text-2" id="text-orgcd1f5e3">
+<p>
+rsyslogd在systemd系统中可以通过两种方式来获取日志消息。
+</p>
+
+<ol class="org-ol">
+<li>rsyslogd在systemd系统中不再监听 <code>/dev/log</code> 而是通过加载 <code>imuxsock</code> 模块,改成监听 <code>/run/systemd/journal/syslog</code>.</li>
+
+<li>rsyslogd通过加载 <code>imjournal</code> 模块来读取systemd-journald生成的日志文件，从中抽取日志消息。</li>
+</ol>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-12-26</span>
+    <span title="last modification date" class="post-info">2018-12-27</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

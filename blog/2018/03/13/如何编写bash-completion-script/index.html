@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何编写bash completion script - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,bash,completion" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何编写bash completion script</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org3a6f74a">静态补全</a></li>
+<li><a href="#org1616b8b">动态补全</a>
+<ul>
+<li><a href="#orgdc26ea6">compgen命令</a></li>
+<li><a href="#orgec5cc70">注册动态补全函数</a></li>
+<li><a href="#orgf53dbcd">举个例子</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org3a6f74a" class="outline-2">
+<h2 id="org3a6f74a">静态补全</h2>
+<div class="outline-text-2" id="text-org3a6f74a">
+<p>
+创建静态补全很简单，只需要使用 <code>complete</code> 的 <code>-W</code> (wordlist) 选项为脚本注册补全的单词列表就行了。
+</p>
+
+<p>
+比如，假设有一个 <code>myscript</code> 脚本，可以接参数 <code>him,her,me,you</code>, 那么我们可以执行：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">complete</span> -W <span style="color: #2d9574;">"him her me you"</span> myscript
+</pre>
+</div>
+
+<p>
+这样输入 <code>myscript</code> 后按两下TAB，就会列出所有可能的参数了：
+</p>
+<pre class="example">
+[lujun9972@T520 .spacemacs.d]$ myscript 
+her  him  me   you  
+</pre>
+
+<p>
+甚至，当你输入首字母后再按 TAB，bash会自动筛选出以首字母开头的参数
+</p>
+<pre class="example">
+[lujun9972@T520 .spacemacs.d]$ myscript h
+her  him  
+</pre>
+
+<p>
+除了 <code>-W</code> 之外， <code>complete</code> 还有很多其他选项，比如可以使用
+</p>
+
+<dl class="org-dl">
+<dt>-A alias / -a</dt><dd>列出别名</dd>
+<dt>-A directory / -d</dt><dd>列出目录</dd>
+<dt>-A command / -c</dt><dd>列出命令</dd>
+<dt>-A file / -f</dt><dd>列出文件</dd>
+<dt>-A service / -s</dt><dd>列出服务名称</dd>
+<dt>-A signal</dt><dd>列出信号名称</dd>
+<dt>-A user / -u</dt><dd>列出用户名</dd>
+<dt>-A group / -g</dt><dd>列出组名</dd>
+<dt>-A variable / -v</dt><dd>列出shell变量</dd>
+</dl>
+
+<p>
+详细的说明可以看<a href="https://www.gnu.org/software/bash/manual/html_node/Programmable-Completion-Builtins.html#Programmable-Completion-Builtins">这里</a>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1616b8b" class="outline-2">
+<h2 id="org1616b8b">动态补全</h2>
+<div class="outline-text-2" id="text-org1616b8b">
+<p>
+动态补全能够根据用户的环境动态的生成补全的内容。 当出发动态补全时，bash会在当前shell中执行一个补全函数，然后从变量 <code>COMPREPLY</code> 中读取补全的内容。
+</p>
+
+<p>
+在这个补全函数中，我们可以通过几个变量来获取当前用户输入命令的环境：
+</p>
+
+<dl class="org-dl">
+<dt>COMP_WORDS</dt><dd>一个数组，包含了程序名称和已经输入的参数</dd>
+<dt>COMP_CWORD</dt><dd>这是一个指向COMP_WORDS数组的索引，指明了当前光标所在的位置(从0开始)</dd>
+<dt>COMP_LINE</dt><dd>当前命令行的内容</dd>
+</dl>
+</div>
+<div id="outline-container-orgdc26ea6" class="outline-3">
+<h3 id="orgdc26ea6">compgen命令</h3>
+<div class="outline-text-3" id="text-orgdc26ea6">
+<p>
+compgen是一款内置命令,它与 <code>complete</code> 命令类似，但可以根据已经输入的内容对补全内容进行过滤，比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">compgen</span> -W <span style="color: #2d9574;">"him her me you"</span> h
+</pre>
+</div>
+
+<p>
+会输出结果:
+</p>
+<div class="org-src-container">
+<pre class="src src-org">him
+her
+</pre>
+</div>
+
+<p>
+该命令常在动态补全的补全函数中使用
+</p>
+</div>
+</div>
+<div id="outline-container-orgec5cc70" class="outline-3">
+<h3 id="orgec5cc70">注册动态补全函数</h3>
+<div class="outline-text-3" id="text-orgec5cc70">
+<p>
+要为命令注册动态补全函数，则需要使用 <code>completion</code> 的 <code>-F 函数</code> 参数:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">completion -F &#34917;&#20840;&#20989;&#25968; &#31243;&#24207;&#21517;&#31216;
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgf53dbcd" class="outline-3">
+<h3 id="orgf53dbcd">举个例子</h3>
+<div class="outline-text-3" id="text-orgf53dbcd">
+<p>
+比如，我想为 <code>myscript</code> 增加一个补全，这个补全的逻辑是:
+</p>
+
+<ul class="org-ul">
+<li>第一个参数可以是 <code>-f</code> 或 <code>-d</code></li>
+<li>第二个参数补全的内容由第一个参数的值来决定，如果第一个参数为 <code>-f</code> 则补全文件名，如果第一个参数为 <code>-d</code> 则补全目录名。</li>
+</ul>
+
+<p>
+那么我们可以这么做:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#39318;&#20808;&#65292;&#23450;&#20041;&#19968;&#20010;&#34917;&#20840;&#20989;&#25968;</span>
+<span style="color: #4f97d7; font-weight: bold;">function</span> <span style="color: #bc6ec5; font-weight: bold;">_myscript_completion</span><span style="color: #4f97d7;">()</span>
+<span style="color: #4f97d7;">{</span>
+    <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #bc6ec5;">[</span><span style="color: #2d9574;">[</span> <span style="color: #2d9574;">"${COMP_CWORD}"</span> == <span style="color: #2d9574;">"1"</span> <span style="color: #2d9574;">]</span><span style="color: #bc6ec5;">]</span>;<span style="color: #4f97d7; font-weight: bold;">then</span>
+        <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#33509;&#34917;&#20840;&#30340;&#26159;&#31532;&#19968;&#20010;&#21442;&#25968;&#65292;&#21017;&#21487;&#20197;&#26159; -f &#25110; -d</span>
+        <span style="color: #7590db;">COMPREPLY</span>=<span style="color: #bc6ec5;">(</span>$<span style="color: #2d9574;">(</span><span style="color: #fa8072;">compgen</span> -W <span style="color: #2d9574;">"-f -d"</span> $<span style="color: #67b11d;">{</span><span style="color: #7590db;">COMP_WORDS</span><span style="color: #b1951d;">[</span>$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">COMP_CWORD</span><span style="color: #4f97d7;">}</span><span style="color: #b1951d;">]</span><span style="color: #67b11d;">}</span><span style="color: #2d9574;">)</span><span style="color: #bc6ec5;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">elif</span> <span style="color: #bc6ec5;">[</span><span style="color: #2d9574;">[</span> <span style="color: #2d9574;">"${COMP_WORDS[1]}"</span> == <span style="color: #2d9574;">"-f"</span> <span style="color: #2d9574;">]</span><span style="color: #bc6ec5;">]</span>;<span style="color: #4f97d7; font-weight: bold;">then</span>
+        <span style="color: #7590db;">COMPREPLY</span>=<span style="color: #bc6ec5;">(</span>$<span style="color: #2d9574;">(</span><span style="color: #fa8072;">compgen</span> -f $<span style="color: #67b11d;">{</span><span style="color: #7590db;">COMP_WORDS</span><span style="color: #b1951d;">[</span>$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">COMP_CWORD</span><span style="color: #4f97d7;">}</span><span style="color: #b1951d;">]</span><span style="color: #67b11d;">}</span><span style="color: #2d9574;">)</span><span style="color: #bc6ec5;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">elif</span> <span style="color: #bc6ec5;">[</span><span style="color: #2d9574;">[</span> <span style="color: #2d9574;">"${COMP_WORDS[1]}"</span> == <span style="color: #2d9574;">"-d"</span> <span style="color: #2d9574;">]</span><span style="color: #bc6ec5;">]</span>;<span style="color: #4f97d7; font-weight: bold;">then</span>
+        <span style="color: #7590db;">COMPREPLY</span>=<span style="color: #bc6ec5;">(</span>$<span style="color: #2d9574;">(</span><span style="color: #fa8072;">compgen</span> -d $<span style="color: #67b11d;">{</span><span style="color: #7590db;">COMP_WORDS</span><span style="color: #b1951d;">[</span>$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">COMP_CWORD</span><span style="color: #4f97d7;">}</span><span style="color: #b1951d;">]</span><span style="color: #67b11d;">}</span><span style="color: #2d9574;">)</span><span style="color: #bc6ec5;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">fi</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#27880;&#20876;&#34917;&#20840;&#20989;&#25968;</span>
+<span style="color: #4f97d7;">complete</span> -F _myscript_completion myscript
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-03-13</span>
+    <span title="last modification date" class="post-info">2018-03-13</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/bash">bash</a> : <a href="/tags/completion">completion</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

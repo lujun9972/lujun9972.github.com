@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>在Linux上搭建UO服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">在Linux上搭建UO服务器</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgdc7b2fe">安装SphereServer步骤：</a></li>
+<li><a href="#org48fa4b7">使用Docker</a></li>
+<li><a href="#org1f27657">如何让客户端连接本地服务器</a></li>
+</ul>
+</div>
+</div>
+<p>
+早听说 UO(线上创世纪) 是一款神游戏，一直想试试。刚好在网上发现 <a href="https://github.com/Sphereserver/Source">SphereServer</a> 开源了,遂试着自己搭个私服玩玩。
+</p>
+
+<div id="outline-container-orgdc7b2fe" class="outline-2">
+<h2 id="orgdc7b2fe">安装SphereServer步骤：</h2>
+<div class="outline-text-2" id="text-orgdc7b2fe">
+<ol class="org-ol">
+<li><p>
+安装32位的Ubuntu
+</p>
+
+<p>
+是的，你没看错，就是的32位的操作系统。因为SphereServer本身是32的应用程序，它会引用32为的libmysqlclient.so,而在64位Linux下似乎已经没有32位的libmysql++库可以安装了。
+</p></li>
+
+<li><p>
+安装依赖库
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">apt update &amp;&amp; apt install -y libmysql++ unzip
+</pre>
+</div>
+
+<p>
+这一步可以通过 <code>ldd</code> 命令来检查依赖库
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#26597;&#30475; ERROR: Missing libs</span>
+ldd spheresvr |grep ERROR
+</pre>
+</div></li>
+
+<li><p>
+新建一个Sphere目录,用来存放SphereServer的内容
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mkdir Sphere
+<span style="color: #4f97d7;">cd</span> Sphere
+</pre>
+</div></li>
+
+<li><p>
+下载SphereServer应用和SphereServer Script
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">wget https://forum.spherecommunity.net/sshare.php?<span style="color: #7590db;">downproj</span>=<span style="color: #a45bad;">56</span> -O Sphere.tar.gz
+wget https://github.com/Sphereserver/Scripts/archive/master.zip -O scripts.zip
+</pre>
+</div></li>
+
+<li><p>
+将SphereServer应用解压到Sphere目录下，将SphereServer Script解压到Sphere/scripts
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tar -zxvf Sphere.tar.gz &amp;&amp; rmdir scripts
+unzip scripts.zip &amp;&amp; mv Scripts-master scripts
+</pre>
+</div></li>
+
+<li><p>
+编辑sphere.ini
+</p>
+
+<p>
+主要做下面这些改动:
+</p>
+
+<ul class="org-ul">
+<li>将 <code>ServName</code> 改成你的服务器名称</li>
+
+<li>将 <code>//MulFile=mul/</code> 改成 <code>MulFiles=mul/</code> (手工指定mul文件的目录)</li>
+
+<li>将 <code>AccApp=0</code> 改成 <code>AccApp=2</code> (任何人可以直接登陆，会自动创建帐号)</li>
+
+<li>将 <code>UseNoCrypt=0</code> 改成 <code>UseNoCrypt=1</code> (允许非加密客户端登陆)</li>
+</ul></li>
+
+<li><p>
+将UO客户端目录中的下列文件拷贝到 <code>Sphere/mul</code> 目录下
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cp multi.idx hues.mul map* multi.mul statics* tiledata.mul staidx* Sphere/mul
+</pre>
+</div></li>
+
+<li><p>
+创建空的 <code>save</code> 和 <code>accounts</code> 文件
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"[EOF]"</span> &gt; save/sphereworld.scp
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"[EOF]"</span> &gt; save/spheredata.scp
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"[EOF]"</span> &gt; save/spherechars.scp
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"[EOF]"</span> &gt; save/spheremultis.scp
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"[EOF]"</span> &gt; save/spherestatics.scp
+
+touch accounts/sphereaccu.scp
+</pre>
+</div></li>
+
+<li><p>
+启动服务
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">./spheresrv
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org48fa4b7" class="outline-2">
+<h2 id="org48fa4b7">使用Docker</h2>
+<div class="outline-text-2" id="text-org48fa4b7">
+<p>
+为了搭个服务器还得专门装个32位的操作系统，太不划算了，好在我们有Docker啊,而且Docker官方提供32位Ubuntu镜像，简直是太贴心了。
+</p>
+<div class="org-src-container">
+<pre class="src src-Dockerfile">FROM i386/ubuntu
+ENV DEBIAN_FRONTEND noninteractive
+RUN apt update &amp;&amp; apt install -y libmysql++ unzip &amp;&amp; rm -rf /var/lib/apt/lists/*
+RUN mkdir /Sphere
+WORKDIR /Sphere
+ADD https://forum.spherecommunity.net/sshare.php?downproj=56 Sphere.tar.gz
+ADD https://github.com/Sphereserver/Scripts/archive/master.zip scripts.zip
+RUN tar -zxvf Sphere.tar.gz &amp;&amp; rmdir scripts
+RUN unzip scripts.zip &amp;&amp; mv Scripts-master scripts
+RUN echo "[eof]"&gt;/Sphere/save/sphereworld.scp 
+RUN echo "[eof]"&gt;/Sphere/save/spheredata.scp
+RUN echo "[eof]"&gt;/Sphere/save/spherechars.scp 
+RUN echo "[eof]"&gt;/Sphere/save/spheremultis.scp 
+RUN echo "[eof]"&gt;/Sphere/save/spherestatics.scp 
+RUN touch /Sphere/accounts/sphereaccu.scp
+EXPOSE 2593
+WORKDIR /Sphere
+ENTRYPOINT ["/Sphere/spheresvr"]
+</pre>
+</div>
+
+<p>
+然后准备好 <code>mul</code> 目录和 <code>sphere.ini</code>,再运行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run -it --rm -v $<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/sphere.ini:/Sphere/sphere.ini -v $<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/mul:/Sphere/mul -p <span style="color: #a45bad;">2593:2593</span> sphere
+</pre>
+</div>
+
+<p>
+就行了
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1f27657" class="outline-2">
+<h2 id="org1f27657">如何让客户端连接本地服务器</h2>
+<div class="outline-text-2" id="text-org1f27657">
+<ol class="org-ol">
+<li>修改 <code>Login.cfg</code>,将内容修改为 <code>LoginServer=127.0.0.1,2593</code></li>
+<li><p>
+运行 <code>client.exe</code>, <b>注意不要运行uo.exe</b>,这会升级你的客户端，而它的升级在我电脑上是不成功
+</p>
+
+
+<div class="figure">
+<p><img src="/assets/blog/2019/01/18/在linux上搭建uo服务器/UO.PNG" alt="UO.PNG" />
+</p>
+</div></li>
+</ol>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-01-18</span>
+    <span title="last modification date" class="post-info">2019-01-21</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

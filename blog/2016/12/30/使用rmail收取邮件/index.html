@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用Rmail收取邮件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用Rmail收取邮件</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org53ee618">配置</a></li>
+<li><a href="#org07eb0c5">阅读邮件</a></li>
+<li><a href="#org39e4a65">修改邮件</a></li>
+<li><a href="#org9033c7f">删除邮件</a></li>
+<li><a href="#orgfca3331">保存邮件</a></li>
+<li><a href="#orgbc124d1">回复邮件</a></li>
+<li><a href="#org88c6b75">邮件标签</a>
+<ul>
+<li><a href="#org876f4a5">邮件属性</a></li>
+</ul>
+</li>
+<li><a href="#orge6cd812">邮件概览</a>
+<ul>
+<li><a href="#org0cf3a8b">进入Summary buffer</a></li>
+<li><a href="#org132cdab">Summary buffer的操作</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org53ee618" class="outline-2">
+<h2 id="org53ee618">配置</h2>
+<div class="outline-text-2" id="text-org53ee618">
+<p>
+Rmail启动时会调用 <code>movemail</code> 这个程序来从各个inbox中获取新邮件并合并到一个所谓的 <code>primary Rmail file</code> 中,然后读取其中的第一个未读邮件.
+</p>
+
+<p>
+因此我们首先要设置 <code>movemail</code> 这个程序的路径. 需要注意的是,存在两个版本的 <code>movemail</code>, 一个是Emacs版的movemail,一个是mailutil版本的movemail. 其中Emacs版的movemail功能很受限,不支持imap协议,也不支持TLS加密. 因此比较推荐使用mailutil版的movemail.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">setq</span> rmail-movemail-program <span style="color: #2d9574;">"/usr/bin/movemail"</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+另外,参数 <code>rmail-movemail-flags</code> 中可以传递额外的命令行参数给movemail程序, 例如要反转下载邮件的顺序可以添加 <code>-r</code> 选项,要支持TLS加密,可以添加 <code>--tls</code> 参数.
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">setq</span> rmail-movemail-flags <span style="color: #bc6ec5;">(</span>cons <span style="color: #2d9574;">"--tls"</span> rmail-movemail-flags<span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+不过 <b>如果想让movemail下载邮件后依然让服务器保持原邮件,不要向 <code>rmail-movemail-flags</code> 添加 <code>-p</code> 参数,而应该配置 <code>rmail-preserve-inbox</code> 参数</b>
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">setq</span> rmail-preserve-inbox t<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+设置好了movemail之后,我们还需要通过设置变量 <code>rmail-primary-inbox-list</code> 来指定从哪些inbox中获取邮件. 
+</p>
+
+<p>
+指定inbox的格式为:
+</p>
+<pre class="example">
+PROTO://[USER[:PASSWORD]@]HOST-OR-FILE-NAME
+</pre>
+
+<p>
+其中PROTO可以是:
+</p>
+
+<dl class="org-dl">
+<dt>mbox</dt><dd>常用的Unix mailbox各式</dd>
+<dt>mh</dt><dd>MH各式的本地mailbox</dd>
+<dt>maildir</dt><dd>maildir的本地mailbox</dd>
+<dt>file</dt><dd>本地的mailbox,但具体什么各式由rmail自动探测. 这种情况下可以省略PROTO部分,例如  <code>/var/spool/mail/USER</code> ≡ <code>file://var/spool/mail/USER</code></dd>
+<dt>pop</dt><dd>pop3协议</dd>
+<dt>imap</dt><dd>imap协议</dd>
+</dl>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">push</span> <span style="color: #2d9574;">"imap://lujun9972@imap.sina.com"</span> rmail-primary-inbox-list<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+最后我们告诉Rmail,读取远程server上的mail需要密码
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">setq</span> rmail-remote-password-required t<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org07eb0c5" class="outline-2">
+<h2 id="org07eb0c5">阅读邮件</h2>
+<div class="outline-text-2" id="text-org07eb0c5">
+<p>
+设置完之后就可以直接运行 <code>M-x rmail</code> 了,rmail会从自动进入Rmail文件中第一个未读的邮件中.
+</p>
+
+<p>
+在阅读邮件时可以使用:
+</p>
+
+<dl class="org-dl">
+<dt>&lt;SPC&gt; (scroll-up-command)</dt><dd>向下翻一页</dd>
+<dt>&lt;DEL&gt; / S-&lt;SPC&gt; (scroll-down-command)</dt><dd>向上翻一页</dd>
+<dt>n (rmail-next-undeleted-message)</dt><dd>阅读下一个没有被删除的邮件</dd>
+<dt>p (rmail-previous-undeleted-message)</dt><dd>阅读上一个没有被删除的邮件</dd>
+<dt>M-n (rmail-next-message)</dt><dd>阅读下一个邮件,即时该邮件已经被标记为已删除,被删除的邮件会在mode-line上显示 <code>deleted</code> 字样.</dd>
+<dt>M-p (rmail-previous-message)</dt><dd>阅读上一个邮件,即时该邮件已经被标记为已删除,被删除的邮件会在mode-line上显示 <code>deleted</code> 字样.</dd>
+<dt>C-c C-n (rmail-next-same-subject)</dt><dd>阅读下一个同标题的邮件</dd>
+<dt>C-c C-p (rmail-previous-same-subject)</dt><dd>阅读上一个同标题的邮件</dd>
+<dt>j (rmail-show-message)</dt><dd>阅读指定 <code>message number</code> 的邮件,默认是第一封邮件</dd>
+<dt>&gt; (rmail-last-message)</dt><dd>阅读最后一封邮件</dd>
+<dt>&lt; (rmail-first-message)</dt><dd>阅读第一封邮件</dd>
+<dt>M-s REGEXP &lt;RET&gt;</dt><dd>往下搜索匹配正则的邮件</dd>
+<dt>- M-s REGEXP &lt;RET&gt;</dt><dd>往上搜索匹配正则的邮件</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-org39e4a65" class="outline-2">
+<h2 id="org39e4a65">修改邮件</h2>
+<div class="outline-text-2" id="text-org39e4a65">
+<p>
+默认情况下Rmail阅读邮件时是只读的. 但是你可以通过 <code>e (rmail-edit-current-message)</code> 编辑当前邮件.
+</p>
+
+<p>
+修改好邮件后,按下 <code>C-c C-c</code> 表示保存修改的内容, 按下 <code>C-c C-j</code> 表示取消修改.
+</p>
+
+<p>
+在进入Rmail Edit Mode时会先触发 <code>text-mode-hook</code>, 然后再触发 <code>rmail-edit-mode-hook</code>.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9033c7f" class="outline-2">
+<h2 id="org9033c7f">删除邮件</h2>
+<div class="outline-text-2" id="text-org9033c7f">
+<p>
+有两种删除邮件的方法:
+</p>
+
+<ul class="org-ul">
+<li><code>delete</code> 表示将邮件标记为可忽略的,这样Rmail会将这些邮件当成是已经被删除掉的邮件,然而在物理上这些文件依然保存在 Rmail文件中.</li>
+<li><code>Expunging</code> 则表示真正的将邮件从Rmail文件中物理删除掉.</li>
+</ul>
+
+<p>
+Rmail提供了如下命令来删除邮件:
+</p>
+
+<dl class="org-dl">
+<dt>d (rmail-delete-forward)</dt><dd>将当前邮件标记为已删除,并阅读下一个未删除的邮件</dd>
+<dt>C-d (rmail-delete-backward)</dt><dd>将当前邮件标记为已删除,并阅读上一个未删除的邮件</dd>
+<dt>u (rmail-undelete-previous-message)</dt><dd>取消当前邮件的已删除标记,如果当前邮件本来就是未删除的,则会跳到上一个被删除的邮件并回复它</dd>
+<dt>x (rmail-expunge)</dt><dd>将那些标记为已删除的邮件,真正的从文件中删除掉.</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orgfca3331" class="outline-2">
+<h2 id="orgfca3331">保存邮件</h2>
+<div class="outline-text-2" id="text-orgfca3331">
+<p>
+以下命令可以将邮件保存到其他文件:
+</p>
+
+<dl class="org-dl">
+<dt>o FILE &lt;RET&gt; (rmail-output)</dt><dd>将当前邮件的所有内容添加到FILE中</dd>
+<dt>C-o FILE &lt;RET&gt; (rmail-output-as-seen)</dt><dd>将当前邮件的可见部分的内容添加到FILE中</dd>
+<dt>w FILE &lt;RET&gt;</dt><dd>保存邮件body到FILE中,默认的文件名为邮件的标题</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orgbc124d1" class="outline-2">
+<h2 id="orgbc124d1">回复邮件</h2>
+<div class="outline-text-2" id="text-orgbc124d1">
+<p>
+除了 <code>C-x m</code> 之外,Rmail还提供了以下快捷键帮你发送邮件:
+</p>
+
+<dl class="org-dl">
+<dt>m (rmail-mail)</dt><dd>创建一封新邮件</dd>
+<dt>c (rmail-continue)</dt><dd>继续编辑已经发送过的那封邮件</dd>
+<dt>r (rmail-reply)</dt><dd>回复当前邮件(会同时回复给原邮件发送者以及抄送者,若不希望回复的邮件发给 <code>CC</code> 的那些人,则可以使用 <code>C-u r</code>,则表示只回复给发送该邮件的人.)</dd>
+<dt>f (rmail-forward)</dt><dd>转发当前邮件给别人</dd>
+<dt>C-u f (rmail-resend)</dt><dd>重发当前邮件给别人</dd>
+<dt>M-m (rmail-retry-failure)</dt><dd>重发之前发送失败的邮件,但是变量 <code>rmail-retry-ignored-headers</code> 控制了header复核哪些条件的邮件将不会被重发.</dd>
+</dl>
+
+<p>
+在回复邮件时,你可以直接使用 <code>C-c C-y</code> 来粘贴原邮件的内容.
+</p>
+
+<p>
+此外,若变量 <code>rmail-mail-new-frame</code> 设置为非nil,则回复邮件时会新开一个frame,同时该frame会在发送该邮件后被删除掉.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org88c6b75" class="outline-2">
+<h2 id="org88c6b75">邮件标签</h2>
+<div class="outline-text-2" id="text-org88c6b75">
+<p>
+你可以为邮件添加各式的标签并以此作为邮件分类的一种方法:
+</p>
+
+<dl class="org-dl">
+<dt>a LABEL &lt;RET&gt; (rmail-add-label)</dt><dd>为当前邮件添加标签</dd>
+<dt>k LABEL &lt;RET&gt; (rmail-kill-label)</dt><dd>从当前邮件中删除指定标签</dd>
+<dt>C-M-n LABELS &lt;RET&gt;</dt><dd>跳转到下一个有 <code>LABELS</code> 中某个标签的邮件,其中 <code>LABELS</code> 中的标签之前用逗号分隔.</dd>
+<dt>C-M-p LABELS &lt;RET&gt;</dt><dd>跳转到上一个有 <code>LABELS</code> 中某个标签的邮件</dd>
+<dt>l LABELS &lt;RET&gt; / C-M-l LABELS &lt;RET&gt; (rmail-summary-by-labels)</dt><dd>列出所有包含 <code>LABELS</code> 中任意标签的所有邮件的概览信息</dd>
+</dl>
+</div>
+
+<div id="outline-container-org876f4a5" class="outline-3">
+<h3 id="org876f4a5">邮件属性</h3>
+<div class="outline-text-3" id="text-org876f4a5">
+<p>
+某些特定的标签有其特定的意义,这些标签被称之为属性,一般由Rmail自己维护:
+</p>
+
+<dl class="org-dl">
+<dt>unseen</dt><dd>未读</dd>
+<dt>deleted</dt><dd>已删</dd>
+<dt>filed</dt><dd>已经保存到其他文件中了.</dd>
+<dt>answered</dt><dd>已回复过了</dd>
+<dt>forwarded</dt><dd>已转发过了</dd>
+<dt>edited</dt><dd>该邮件被修改过了</dd>
+<dt>resent</dt><dd>该邮件被重发过</dd>
+<dt>retried</dt><dd>该邮件曾经发送失败,后来又尝试重发过</dd>
+</dl>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge6cd812" class="outline-2">
+<h2 id="orge6cd812">邮件概览</h2>
+<div class="outline-text-2" id="text-orge6cd812">
+<p>
+你可以以概览的方式浏览所有的邮件,这时buffer中的每一行都代表一个邮件,并列出了该邮件的编号,日期,发送者,行数,标签以及标题.
+若觉得邮件的总行数显示了也没有意义,可以设置变量 <code>rmail-summary-line-count-flag</code> 为 <code>nil</code>. 这样在概览信息中就不会显示邮件的总行数了.
+</p>
+
+<p>
+而随着光标在不同行之间跳转,Rmail buffer中会同步显示光标所在行的邮件内容.
+</p>
+
+<p>
+一个Rmail文件对应着一个概览buffer,不过你可以同时打开多个Rmail文件,因此你可以同时拥有多个概览buffer.
+</p>
+</div>
+
+<div id="outline-container-org0cf3a8b" class="outline-3">
+<h3 id="org0cf3a8b">进入Summary buffer</h3>
+<div class="outline-text-3" id="text-org0cf3a8b">
+<p>
+概览buffer中的信息会随着Rmail文件的改变而自动更新.
+</p>
+
+<dl class="org-dl">
+<dt>h / C-M-h (rmail-summary)</dt><dd>显示所有邮件的概览</dd>
+<dt>l LABLES &lt;RET&gt; C-M-l LABELS &lt;RET&gt; (rmail-summary-by-labels)</dt><dd>显示那些拥有指定标签的邮件概览</dd>
+<dt>C-M-r RECIPIENTS &lt;RET&gt; (rmail-summary-by-recipients)</dt><dd>显示那些匹配指定接受者的邮件概览</dd>
+<dt>C-M-t TOPIC &lt;RET&gt; (rmail-summary-by-topic)</dt><dd>显示标题匹配某正则表达式的邮件概览</dd>
+<dt>C-M-s REGEXP &lt;RET&gt; (rmail-summary-by-regexp)</dt><dd>所有header匹配指定表达式的邮件概览</dd>
+<dt>C-M-f SENDERS &lt;RET&gt; (rmail-summary-by-sender)</dt><dd>显示所有指定发送者的邮件概览</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-org132cdab" class="outline-3">
+<h3 id="org132cdab">Summary buffer的操作</h3>
+<div class="outline-text-3" id="text-org132cdab">
+<p>
+在概览buffer中,可以使用几乎所有的Rmail命令,这些命令会作用于光标所在行的邮件上. 例如
+</p>
+
+<dl class="org-dl">
+<dt>d</dt><dd>给邮件加上删除标记</dd>
+<dt>u</dt><dd>去掉邮件的删除标记</dd>
+<dt>x</dt><dd>物理删除该邮件</dd>
+<dt>o / C-o</dt><dd>将邮件保存到文件中</dd>
+<dt>r</dt><dd>回复该邮件</dd>
+<dt>(no term)</dt><dd>n ::跳到下一封未删除邮件的位置</dd>
+<dt>(no term)</dt><dd>p ::跳到上一封未删除邮件的位置</dd>
+<dt>M-n / M-p</dt><dd>跳到下一封/上一封邮件的位置</dd>
+<dt>&lt; / &gt;</dt><dd>跳到第一封/最后一封邮件的位置</dd>
+<dt>j</dt><dd>跳到指定编号邮件的位置.</dd>
+</dl>
+
+<p>
+不过概览buffer中也有特有的命令:
+</p>
+
+<dl class="org-dl">
+<dt>M-u (rmail-summary-undelete-many)</dt><dd>取消summary buffer中所有邮件的删除标记.</dd>
+</dl>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2016-12-30</span>
+    <span title="last modification date" class="post-info">2017-01-01</span>
+    <span title="tags" class="post-info"><a href="/tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

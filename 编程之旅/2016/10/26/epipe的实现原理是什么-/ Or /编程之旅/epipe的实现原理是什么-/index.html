@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>epipe的实现原理是什么? - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="&lt;Add description here&gt;" />
+  <meta name="keywords" content="bash, pipe, emacs" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">epipe的实现原理是什么?</h1>
+<p>
+最近发现一个好玩的脚本，可以在管道中调用外部编辑器来编辑内容:
+</p>
+
+<p>
+<a href="https://github.com/cute-jumper/epipe5">https://github.com/cute-jumper/epipe5</a>
+</p>
+
+<p>
+它的实现方式只有寥寥数行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">$!/usr/bin/env bash  -*- mode: sh; -*-</span>
+<span style="color: #7590db;">tty</span>=<span style="color: #2d9574;">"/dev/$(</span><span style="color: #fa8072;">ps</span><span style="color: #2d9574;"> -o tty= -p $$)"</span>
+<span style="color: #7590db;">temp_file</span>=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">mktemp</span><span style="color: #4f97d7;">)</span>
+<span style="color: #7590db;">default_editor</span>=<span style="color: #2d9574;">"emacs"</span>
+<span style="color: #4f97d7;">[</span> <span style="color: #a45bad;">!</span> -t <span style="color: #a45bad;">0</span> <span style="color: #4f97d7;">]</span> &amp;&amp; cat &gt; $<span style="color: #7590db;">temp_file</span>
+$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">EDITOR</span>:-$<span style="color: #bc6ec5;">{</span><span style="color: #7590db;">VISUAL</span>:-$<span style="color: #7590db;">default_editor</span><span style="color: #bc6ec5;">}</span><span style="color: #4f97d7;">}</span> $<span style="color: #7590db;">temp_file</span> &lt;$<span style="color: #7590db;">tty</span> &gt;$<span style="color: #7590db;">tty</span> &amp;&amp; cat $<span style="color: #7590db;">temp_file</span>
+rm $<span style="color: #7590db;">temp_file</span>
+</pre>
+</div>
+
+<p>
+然而就这么几行的脚本,我却发现看不懂~~~
+</p>
+
+<p>
+主要有三点:
+</p>
+
+<ol class="org-ol">
+<li>[ ! -t 0 ] 是什么意思</li>
+<li>用编辑器来编辑临时文件时为什么要重定向stdio呢?</li>
+<li>为什么重定向的时候不直接重定向到 <code>/dev/tty</code> 而要显示的获取编辑器实际的tty呢?</li>
+</ol>
+
+<p>
+在经过与大伙的<a href="https://emacs-china.org/t/epipe/1439">讨论</a>后, 最终引来原作者的解释,才最终恍然大悟. 现在把讨论的结果整理如下(其中大量引用了讨论时的原文):
+</p>
+
+<p>
+首先第一个问题其实很简单, <code>-t fd</code> 用来检查 <code>fd</code> 是否是是表示tty设备的文件描述符,所以这句话就是确保只有在该脚本的stdin被管道连接后才用cat从管道中读出内容放到临时文件中.
+</p>
+
+<p>
+第二个问题,为什么要重定向编辑器的stdio呢? 这个问题可以通过几个实验来解答.
+</p>
+
+<ol class="org-ol">
+<li><p>
+Vim 要求 stdout 必须是 terminal
+</p>
+<pre class="example">
+ ~ $ ( vim tmp &amp;&amp; cat tmp ) | nl 
+Vim: Warning: Output is not to a terminal
+</pre>
+
+<p>
+解决方案是将stdout重定向到terminal
+</p>
+<pre class="example">
+~ $ tty=`tty`
+~ $ ( 1&gt;$tty vim tmp &amp;&amp; cat tmp ) | nl
+</pre></li>
+
+<li><p>
+Vim 要求 stdin 也必须是 terminal
+</p>
+<pre class="example">
+~ $ pwd | ( vim tmp &amp;&amp; cat tmp )
+Vim: Warning: Input is not from a terminal
+</pre>
+
+<p>
+解决方案是将stdin重定向到terminal
+</p>
+<pre class="example">
+~ $ pwd | ( 0&lt;$tty vim tmp &amp;&amp; cat tmp )
+</pre></li>
+</ol>
+
+<p>
+也就是说,至少对于某些编辑器而言,是要求stdio必须为terminal的.
+</p>
+
+<p>
+那么为什么不能直接重定向到 <code>/dev/tty</code> 呢? 毕竟即使 stdin 和 stdout 被重定向过了，/dev/tty 仍然还是指向原来的 terminal （严格地说，/dev/tty 是当前 process 的 terminal），这也是“找回”原有的标准输入输出的一种很普遍的做法啊.
+</p>
+
+<p>
+对于大部分情况来说，这样是没问题的，比如 Vim，Emacs。但是对于 emacsclient，这样却行不通,这实际上与emacsclient的实现有关.
+</p>
+
+<p>
+查看 emacsclient.c，能看见里面会根据当前的 stdout 来获取 ttyname:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span style="color: #bc6ec5; font-weight: bold;">ttyname</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">fileno</span><span style="color: #bc6ec5;">(</span><span style="color: #7590db;">stdout</span><span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+emacsclient将当前的 ttyname 发送给 server后。如果此时 stdout 是 /dev/tty 的话 ，这时候发送的就是 /dev/tty，然而 /dev/tty 对于 client 和 server 来说，含义是不一样的（他们不在同一个 terminal）。发送到 server 后，server 会以为是 server 本身的 process 所在的 tty，而这个 tty 和 client 所在的 tty 不一样，这就会导致无法创建 client 的frame。
+</p>
+
+<p>
+解决方案是：显式获得 emacsclient 实际的 tty，然后将 stdout 设成该 tty，而不是发送类似别名一样的 /dev/tty，这也就是第一行的作用。
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2016-10-26</span>
+    <span title="last modification date" class="post-info">2016-10-26</span>
+    <span title="tags" class="post-info"><a href="/tags/bash">bash</a> : <a href="/tags/pipe">pipe</a> : <a href="/tags/emacs">emacs</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; lujun9972-desktop">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

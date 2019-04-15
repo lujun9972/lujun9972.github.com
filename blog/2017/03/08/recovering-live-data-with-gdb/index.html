@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Recovering Live Data with GDB - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="英文必须死" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">Recovering Live Data with GDB</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org529a581">Buffered Output Review</a></li>
+<li><a href="#org09bc71b">Debugger to the Rescue</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文地址: <a href="http://nullprogram.com/blog/2015/09/15/">http://nullprogram.com/blog/2015/09/15/</a>
+</p>
+
+<p>
+我最近遇到个问题, 有一个 <a href="https://github.com/skeeto/reddit-related">运行很长时间的程序</a> ,它的输出被卡在一个C语言FILE变量的buffer中了. 
+这个程序已经运行两天了,它会把结果直接输出来,但是最后几k的内容要等到程序完成它的清理动作并退出后才能输出来.
+而这个清理动作耗时可能要花几天(甚至更多). 
+这个问题本身要修复很简单 — 这个清理的动作其实完全是没有必要的 — 但是我不想又要花两天的时间把结果重新再计算一遍.
+</p>
+
+<p>
+下面这段代码简单模拟一下这个问题. 第一个循环代表了长时间的运算过程,而后面的无限循环代表了那个无尽的清理动作.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c++"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">stdio.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">int</span>
+<span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">void</span><span style="color: #4f97d7;">)</span>
+<span style="color: #4f97d7;">{</span>
+  <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">Compute output. */</span>
+  <span style="color: #4f97d7; font-weight: bold;">for</span> <span style="color: #bc6ec5;">(</span><span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #7590db;">i</span> = <span style="color: #a45bad;">0</span>; i &lt; <span style="color: #a45bad;">10</span>; i++<span style="color: #bc6ec5;">)</span>
+    printf<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">"%d/%d "</span>, i, i * i<span style="color: #bc6ec5;">)</span>;
+  putchar<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">'\n'</span><span style="color: #bc6ec5;">)</span>;
+
+  <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">"Slow" cleanup operation ... */</span>
+  <span style="color: #4f97d7; font-weight: bold;">for</span> <span style="color: #bc6ec5;">(</span>;;<span style="color: #bc6ec5;">)</span>
+    ;
+  <span style="color: #4f97d7; font-weight: bold;">return</span> <span style="color: #a45bad;">0</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<div id="outline-container-org529a581" class="outline-2">
+<h2 id="org529a581">Buffered Output Review</h2>
+<div class="outline-text-2" id="text-org529a581">
+<p>
+<code>printf</code> and <code>putchar</code> 这两个C库函数,都会以某种方式来缓存输出的内容. 这意味着不是每次调用这些函数都会实际输出数据.
+另一方面, POSIX定义的函数 <code>read</code> 和 <code>write</code> 则是不带buffer的系统调用.
+由于系统调用相对来说比较昂贵,因此一般会用带缓存的输入/输出来将大量针对小buffer的系统调用转换成一个针对大buffer的系统调用.
+</p>
+
+<p>
+一般来说,若程序的标准输出为终端的话,它是按行来缓存的. 毕竟当程序完成了一行的输出内容后,用户很可能立即就想看到输出结果.
+因此,若你编译该程序后是在终端上直接运行改程序的话,那么很可能在程序陷入无限循环之前就已经把结果输出来了.
+</p>
+
+<pre class="example">
+$ cc -std=c99 example.c
+$ ./a.out
+0/0 1/1 2/4 3/9 4/16 5/25 6/36 7/49 8/64 9/81
+</pre>
+
+<p>
+然而若把标准输出重定向到文件或管道中的话, 这个输出很有可能就会被缓存起来了,这个缓存大小一般为4KB.
+这样一来,不管你等多长时间,改程序的输出始终都为空. 
+真正的输出内容被卡在进程内存中的一个FILE对象的buffer中了.
+</p>
+
+<pre class="example">
+$ ./a.out &gt; output.txt
+</pre>
+
+<p>
+修复这个问题的主流方法是调用 <code>fflush</code> 函数, 在开始一段耗时漫长而无输出结果的操作前可以用它来强行将buffer中的内容输出.
+可惜,我早在两天前并没有想到这一出.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org09bc71b" class="outline-2">
+<h2 id="org09bc71b">Debugger to the Rescue</h2>
+<div class="outline-text-2" id="text-org09bc71b">
+<p>
+幸运的是,有一个东西可以暂停正在运行的程序并帮我们维护程序的状态:那就是调试器.
+</p>
+
+<p>
+第一步,找出进程号(上面输入 output.txt 的那个进程).
+</p>
+
+<pre class="example">
+$ pgrep a.out
+12934
+</pre>
+
+<p>
+现在让启动GDB,让它attach那个进程,这会暂停程序的运行.
+</p>
+
+<pre class="example">
+$ gdb ./a.out
+Reading symbols from ./a.out...(no debugging symbols found)...done.
+gdb&gt; attach 12934
+Attaching to program: /tmp/a.out, process 12934
+... snip ...
+0x0000000000400598 in main ()
+gdb&gt;
+</pre>
+
+<p>
+到了这一步,我就可以手工检查 <code>stdout</code> 的FILE结构,并从中抽取出buffer中的内容了. 
+不过最简单的方法是执行我一开始忘掉的条语句 <code>fflush(stdout)</code>.
+</p>
+
+<pre class="example">
+gdb&gt; call fflush(stdout)
+$1 = 0
+gdb&gt; quit
+Detaching from program: /tmp/a.out, process 12934
+</pre>
+
+<p>
+程序依旧还在执行,我们已经得到结果了.
+</p>
+
+<pre class="example">
+$ cat output.txt
+0/0 1/1 2/4 3/9 4/16 5/25 6/36 7/49 8/64 9/81
+</pre>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2017-03-08</span>
+    <span title="last modification date" class="post-info">2017-03-08</span>
+    <span title="tags" class="post-info"><a href="/tags/英文必须死">英文必须死</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

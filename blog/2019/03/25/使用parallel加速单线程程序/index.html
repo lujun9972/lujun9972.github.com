@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用parallel加速单线程程序 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用parallel加速单线程程序</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org353de4c">使用parallel加速单线程程序的原理</a></li>
+<li><a href="#org3574127">使用parallel加速单线程程序可能遇到的问题</a>
+<ul>
+<li><a href="#org3b0857f">乱序问题</a></li>
+<li><a href="#orgcacdbaa">不是所有的任务都能够进行分拆</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+从 <a href="http://xensoft.com/use-multiple-cpu-cores-parallelize-with-single-threaded-linux-commands/">Use Multiple CPU Cores(Parallelize) with Single Threaded Linux Commands</a> 看到的，记录一下。
+</p>
+
+<div id="outline-container-org353de4c" class="outline-2">
+<h2 id="org353de4c">使用parallel加速单线程程序的原理</h2>
+<div class="outline-text-2" id="text-org353de4c">
+<p>
+使用parallel加速单线程程序的原理在于使用 <code>--pipe/--spreadstdin</code> 将标准输入的内容切成多段，然后每段调用一个进程来处理，最后将处理结果整合在一起。比如:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -lh big.txt  
+-rw-r--r--  <span style="color: #a45bad;">1</span> westlund  staff   <span style="color: #a45bad;">102M</span> Nov  <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">21:23</span> big.txt
+
+<span style="color: #4f97d7; font-weight: bold;">time</span> grep regex bigfile.txt  
+real    <span style="color: #a45bad;">0m2.376s</span>  
+user    <span style="color: #a45bad;">0m2.354s</span>  
+sys     <span style="color: #a45bad;">0m0.021s</span>
+
+<span style="color: #4f97d7; font-weight: bold;">time</span> cat big.txt | parallel --pipe grep regex  
+real    <span style="color: #a45bad;">0m2.592s</span>  
+user    <span style="color: #a45bad;">0m5.908s</span>  
+sys     <span style="color: #a45bad;">0m2.498s</span>  
+</pre>
+</div>
+
+<p>
+但是你会发现上面用 <code>parallel</code> 进行并行处理后所花费的时间反而更多了，这是因为 <code>--pipe</code> 默认将stdin的内容分成每块1M，而且默认的并发量是CPU的个数。
+也就是说上面 <code>102M</code> 的文件内容会分成 <code>102</code> 个块，然后调用 <code>102</code> 个 <code>grep</code> 进程来处理，最后将结果进行合并，这个过程显然是太繁杂了。
+</p>
+
+<p>
+为此我们可以使用 <code>--block</code> 参数来指定每块的大小，比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7; font-weight: bold;">time</span> cat big.txt | parallel --block <span style="color: #a45bad;">25M</span> --pipe grep regex
+real    <span style="color: #a45bad;">0m1.626s</span>
+user    <span style="color: #a45bad;">0m4.634s</span>
+sys     <span style="color: #a45bad;">0m0.620s</span>
+</pre>
+</div>
+<p>
+这就明显快了很多了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3574127" class="outline-2">
+<h2 id="org3574127">使用parallel加速单线程程序可能遇到的问题</h2>
+<div class="outline-text-2" id="text-org3574127">
+<p>
+将STDIN拆分成多块后再并发处理在提高效率的同时也会带来一些问题:
+</p>
+</div>
+
+<div id="outline-container-org3b0857f" class="outline-3">
+<h3 id="org3b0857f">乱序问题</h3>
+<div class="outline-text-3" id="text-org3b0857f">
+<p>
+并发运行多个进程时，就无法保证输出结果的一致性了， 比如下面这个例子:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> -n <span style="color: #a45bad;">2</span> <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">4</span> <span style="color: #a45bad;">3</span> | parallel -d <span style="color: #2d9574;">" "</span> -j4 <span style="color: #2d9574;">"sleep {}; echo {}"</span> <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">1
+2
+3
+4
+</pre>
+</div>
+
+<p>
+你会发现输出的顺序发生了改变。但这个问题可以通过 <code>-k/--keep-order</code> 来解决，比如:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> -n <span style="color: #a45bad;">2</span> <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">4</span> <span style="color: #a45bad;">3</span> | parallel -d <span style="color: #2d9574;">" "</span> -k -j4 <span style="color: #2d9574;">"sleep {}; echo {}"</span> <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">2
+1
+4
+3
+</pre>
+</div>
+
+<p>
+这次输出的顺序一样了
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcacdbaa" class="outline-3">
+<h3 id="orgcacdbaa">不是所有的任务都能够进行分拆</h3>
+<div class="outline-text-3" id="text-orgcacdbaa">
+<p>
+比如，我要计算一系列数字的总和，很明显这种任务不能单纯的用拆分来解决，拆分后还需要有一个合并的过程。比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -lh random_numbers.txt
+-rw-r--r--  <span style="color: #a45bad;">1</span> westlund  staff    <span style="color: #a45bad;">22M</span> Nov  <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">21:56</span> random_numbers.txt
+
+<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | awk <span style="color: #2d9574;">'{sum+=$1} END {print sum}'</span>
+<span style="color: #a45bad;">65538384640</span>
+real    <span style="color: #a45bad;">0m2.408s</span>
+user    <span style="color: #a45bad;">0m2.402s</span>
+sys     <span style="color: #a45bad;">0m0.021s</span>
+
+<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | parallel --block <span style="color: #a45bad;">2M</span> --pipe awk <span style="color: #2d9574;">\'</span><span style="color: #4f97d7;">{</span><span style="color: #7590db;">sum</span>+=<span style="color: #2d9574;">\$</span><span style="color: #a45bad;">1</span><span style="color: #4f97d7;">}</span> END <span style="color: #4f97d7;">{</span>print sum<span style="color: #4f97d7;">}</span><span style="color: #2d9574;">\'</span>
+<span style="color: #a45bad;">6067097462</span>
+<span style="color: #a45bad;">6064980068</span>
+<span style="color: #a45bad;">6074889658</span>
+<span style="color: #a45bad;">6068292593</span>
+<span style="color: #a45bad;">6073256962</span>
+<span style="color: #a45bad;">6065663642</span>
+<span style="color: #a45bad;">6068441658</span>
+<span style="color: #a45bad;">6071296753</span>
+<span style="color: #a45bad;">4846052534</span>
+<span style="color: #a45bad;">6072985491</span>
+<span style="color: #a45bad;">6065427819</span>
+real    <span style="color: #a45bad;">0m1.436s</span>
+user    <span style="color: #a45bad;">0m4.390s</span>
+sys     <span style="color: #a45bad;">0m0.358s</span>
+
+<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | parallel --block <span style="color: #a45bad;">2M</span> --pipe awk <span style="color: #2d9574;">\'</span><span style="color: #4f97d7;">{</span><span style="color: #7590db;">sum</span>+=<span style="color: #2d9574;">\$</span><span style="color: #a45bad;">1</span><span style="color: #4f97d7;">}</span> END <span style="color: #4f97d7;">{</span>print sum<span style="color: #4f97d7;">}</span><span style="color: #2d9574;">\'</span> | awk <span style="color: #2d9574;">'{sum+=$1} END {print sum}'</span>
+<span style="color: #a45bad;">65538384640</span>
+real    <span style="color: #a45bad;">0m1.408s</span>
+user    <span style="color: #a45bad;">0m4.341s</span>
+sys     <span style="color: #a45bad;">0m0.356s</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-03-25</span>
+    <span title="last modification date" class="post-info">2019-03-25</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

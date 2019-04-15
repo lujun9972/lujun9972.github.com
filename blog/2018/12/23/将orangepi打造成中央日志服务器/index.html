@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>将OrangePi打造成中央日志服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">将OrangePi打造成中央日志服务器</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org2267af9">在OrangePi上配置Rsyslog Server</a>
+<ul>
+<li><a href="#org170c9b2">安装、启动rsyslog服务</a></li>
+<li><a href="#orgd5c52f9">配置/etc/rsyslog.conf</a>
+<ul>
+<li><a href="#org981b97b">开启TCP/UDP监听服务</a></li>
+<li><a href="#orgf1a930e">配置日志行为规则</a>
+<ul>
+<li><a href="#orgfc9b3be">模板</a>
+<ul>
+<li><a href="#org88a0609">模板内容</a></li>
+<li><a href="#orge6e4d8a">模板可选项</a></li>
+</ul>
+</li>
+<li><a href="#org8594f44">定义我们的远程日志模板</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#org5f01929">重启syslog服务</a></li>
+</ul>
+</li>
+<li><a href="#orgcaf1a34">客户端配置</a>
+<ul>
+<li><a href="#orgdb94f06">安装并启动rsyslog服务</a></li>
+<li><a href="#org8bfdc07">配置客户端的/etc/rsyslog.conf</a></li>
+<li><a href="#orgcee875a">重启rsyslog服务</a></li>
+<li><a href="#org72b263e">修改/etc/systemd/journald.conf</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2267af9" class="outline-2">
+<h2 id="org2267af9">在OrangePi上配置Rsyslog Server</h2>
+<div class="outline-text-2" id="text-org2267af9">
+</div>
+<div id="outline-container-org170c9b2" class="outline-3">
+<h3 id="org170c9b2">安装、启动rsyslog服务</h3>
+<div class="outline-text-3" id="text-org170c9b2">
+<p>
+首先确定OrangePi上已经启动了rsyslog服务
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl status rsyslog
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#9679; rsyslog.service - System Logging Service
+   Loaded: loaded (/lib/systemd/system/rsyslog.service; enabled; vendor preset: enabled)
+   Active: active (running) since Wed 2018-12-19 09:36:25 HKT; 4 days ago
+     Docs: man:rsyslogd(8)
+           <span style="color: #2aa1ae; text-decoration: underline;"><a href="http://www.rsyslog.com/doc/">http://www.rsyslog.com/doc/</a></span>
+ Main PID: 883 (rsyslogd)
+    Tasks: 4 (limit: 1029)
+   CGroup: /system.slice/rsyslog.service
+           &#9492;&#9472;883 /usr/sbin/rsyslogd -n
+
+Warning: Journal has been rotated since unit was started. Log output is incomplete or unavailable.
+</pre>
+</div>
+
+<p>
+若没有安装rsyslog服务则使用下面语句进行安装
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt update &amp;&amp; apt install rsyslog
+</pre>
+</div>
+
+<p>
+若没有启动rsyslog服务，则使用下面语句启动
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl enable rsyslog
+sudo systemctl start rsyslog
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgd5c52f9" class="outline-3">
+<h3 id="orgd5c52f9">配置/etc/rsyslog.conf</h3>
+<div class="outline-text-3" id="text-orgd5c52f9">
+<p>
+rsyslog的主配置文件是 <code>/etc/rsyslog.conf</code>,在该文件中默认还会加载 <code>/etc/ryslog.d</code> 中所有的配置信息。
+</p>
+</div>
+
+<div id="outline-container-org981b97b" class="outline-4">
+<h4 id="org981b97b">开启TCP/UDP监听服务</h4>
+<div class="outline-text-4" id="text-org981b97b">
+<p>
+配置文件中的的一部分是加载模块，不同的模块能为rsyslog提供不同的能力。
+</p>
+<div class="org-src-container">
+<pre class="src src-conf"><span style="color: #2aa1ae; background-color: #292e34;">#################</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#### </span><span style="color: #2aa1ae; background-color: #292e34;">MODULES ####</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#################</span>
+
+<span style="color: #7590db;">module(load</span>=<span style="color: #2d9574;">"imuxsock"</span>) <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides support for local system logging</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">module(load="immark")  # provides --MARK-- message capability</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides UDP syslog reception</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">module(load="imudp")</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">input(type="imudp" port="514")</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides TCP syslog reception</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">module(load="imtcp")</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">input(type="imtcp" port="514")</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides kernel logging support and enable non-kernel klog messages</span>
+<span style="color: #7590db;">module(load</span>=<span style="color: #2d9574;">"imklog"</span> permitnonkernelfacility=<span style="color: #2d9574;">"on"</span>)
+</pre>
+</div>
+
+<p>
+为了可以让其他主机通过网络将日志内容推送到本服务器，必须开启TCP或UDP的监听服务，如上面的例子中可以看出，rsyslog默认监听端口是 <code>514</code>,不过你可以改成任意想要的值。
+</p>
+
+<p>
+这里我把TCP和UDP的监听服务都打开:
+</p>
+<div class="org-src-container">
+<pre class="src src-conf"><span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides UDP syslog reception</span>
+<span style="color: #7590db;">module(load</span>=<span style="color: #2d9574;">"imudp"</span>)
+<span style="color: #7590db;">input(type</span>=<span style="color: #2d9574;">"imudp"</span> port=<span style="color: #2d9574;">"514"</span>)
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">provides TCP syslog reception</span>
+<span style="color: #7590db;">module(load</span>=<span style="color: #2d9574;">"imtcp"</span>)
+<span style="color: #7590db;">input(type</span>=<span style="color: #2d9574;">"imtcp"</span> port=<span style="color: #2d9574;">"514"</span>)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf1a930e" class="outline-4">
+<h4 id="orgf1a930e">配置日志行为规则</h4>
+<div class="outline-text-4" id="text-orgf1a930e">
+<p>
+在默认 <code>/etc/rsyslog.conf</code> 文件中最后一行通过 <code>$IncludeConfig /etc/rsyslog.d/*.conf</code> 指令，加载了 <code>/etc/ryslog.d</code> 下的所有配置文件。
+</p>
+
+<p>
+而 <code>/etc/rsyslog.d/</code> 目录下默认只有一个 <code>50-default.conf</code> 配置文件，配置了默认的日志存储规则。
+这里文件名中的 <code>50</code> 决定了加载的顺序，rsyslog按编号顺序从小到大加载各个配置文件。
+</p>
+
+<p>
+我们新建一个 <code>10-remote.conf</code> 来定义存放远程日志的存储规则.
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo touch /etc/rsyslog.d/10-remote.conf
+</pre>
+</div>
+
+<p>
+一个日志行为规则的格式大概是这样的:
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">  &#26381;&#21153;.&#32423;&#21035;     &#34892;&#20026;
+</pre>
+</div>
+
+<p>
+其中，
+</p>
+<ul class="org-ul">
+<li>服务: 指定了产生日志信息应用/进程的类型，可以是 auth,cron,daemon,kernel,local0到local7,或者用 * 来表示匹配所有的类型的服务</li>
+<li>级别: 指定了日志信息的重要程度，可以是 emerg,alert,crit,err,warn,notice,info,debug，或者 * 来匹配所有级别的消息</li>
+<li>行为: rsyslog可以给消息指定多种行为:
+<ul class="org-ul">
+<li>指定一个本地文件路径，表示将日志写入该文件(可以/dev/console这样的终端文件)</li>
+<li>用 <code>IP:port</code> 的格式来指定一个远程的rsyslog服务器，表示把消息转发到那个服务器(在IP前加上@则表示通过UDP转发,加上@@表示TCP转发)。</li>
+<li>使用 <code>stop</code> 指令表示丢弃该日志信息。</li>
+<li>使用 <code>|管道文件</code> 表示把日志写入管道文件中，该管道文件需要先用 <code>mkfifo</code> 预先创建好</li>
+<li>使用 <code>:omusrmsg:用户1,用户2...</code> 表示若这些用户登陆到系统上，将会收到这些信息.</li>
+<li>可以使用 <code>:omusrmsg:*</code> 来表示所有用户</li>
+<li>使用 <code>^程序;template</code> 将消息作为程序的命令行参数进行运行</li>
+<li>数据库</li>
+</ul></li>
+</ul>
+</div>
+
+<div id="outline-container-orgfc9b3be" class="outline-5">
+<h5 id="orgfc9b3be">模板</h5>
+<div class="outline-text-5" id="text-orgfc9b3be">
+<p>
+我们可以使用模板来定义 <code>日志格式</code> 或者动态生成 <code>日志文件路径</code>.
+</p>
+
+<p>
+一个模板由 <code>$template</code> 指令，模板名，模板内容和可选项这几部分组成,其格式为：
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">$template &#27169;&#26495;&#21517;,<span style="color: #2d9574;">"&#27169;&#26495;&#20869;&#23481;"</span>,&#27169;&#26495;&#21487;&#36873;&#39033;
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org88a0609" class="outline-6">
+<h6 id="org88a0609">模板内容</h6>
+<div class="outline-text-6" id="text-org88a0609">
+<p>
+在 <code>模板内容</code> 中可以使用 <code>%属性名:截取开始位置:截取结束位置:属性选项%</code> 这样一种特殊语法来将消息属性嵌入消息内容中。
+</p>
+
+<p>
+注意，这些属性名是大小写敏感的，常用属性名包括:
+</p>
+<dl class="org-dl">
+<dt>msg</dt><dd>日志的内容</dd>
+<dt>rawmsg</dt><dd>从socket收到的日志内容,常用语调试</dd>
+<dt>HOSTNAME</dt><dd>消息从哪台主机产生的</dd>
+<dt>FROMHOST</dt><dd>消息从哪台主机上转发过来的，但不一定是最开始产生消息的那个主机</dd>
+<dt>syslogtag</dt><dd>消息的标签</dd>
+<dt>syslogserverity</dt><dd>消息级别，用数字表示</dd>
+<dt>syslogserverity-text</dt><dd>消息级别，用文字说明</dd>
+<dt>syslogfacility</dt><dd>消息服务，用数字表示</dd>
+<dt>syslogfacility-text</dt><dd>消息服务，用文字表示</dd>
+<dt>timegenerated</dt><dd>收到消息的时间戳</dd>
+<dt>timereported / TIMESTAMP</dt><dd>产生消息的时间戳</dd>
+<dt>APP-NAME</dt><dd>产生消息的应用名称</dd>
+<dt>PROCID</dt><dd>产生消息的进程号</dd>
+<dt>MSGID</dt><dd>消息编号</dd>
+<dt>$NOW / $YEAR / $MONTH / $DAY / $HOUR / $MINUTE</dt><dd>当前时间信息</dd>
+</dl>
+
+<p>
+<code>截取开始位置</code> 和 <code>截取结束位置</code> 用于截取属性的部分内容，要注意的是，它们从 <code>1</code> 开始计数
+</p>
+
+<p>
+<code>属性选项</code> 则用于对属性内容进行格式化，可以是:
+</p>
+<dl class="org-dl">
+<dt>uppercase</dt><dd>转换成大写形式</dd>
+<dt>lowercase</dt><dd>转换成小写形式</dd>
+<dt>drop-last-lf</dt><dd>删掉消息中最后一个 <code>LF</code></dd>
+<dt>date-mysql</dt><dd>格式化成mysql的日期格式</dd>
+<dt>date-rfc3164</dt><dd>格式化成RFC 3164的日期格式</dd>
+<dt>date-rfc3339</dt><dd>格式化成RFC 3339的日期格式</dd>
+<dt>escape-cc</dt><dd>使用 <code>#&lt;XXX&gt;</code> 的格式转译消息中的控制字符</dd>
+<dt>space-cc</dt><dd>使用空格代替消息中的控制字符</dd>
+<dt>drop-cc</dt><dd>删掉消息中的控制字符</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orge6e4d8a" class="outline-6">
+<h6 id="orge6e4d8a">模板可选项</h6>
+<div class="outline-text-6" id="text-orge6e4d8a">
+<p>
+目前定义的可选项包括 <code>sql</code> 和 <code>stdsql</code>,这两个选项只有在想将日志内容存入数据库中时才有用。其中:
+</p>
+<ul class="org-ul">
+<li><code>sql</code> 的意思是按照MYSQL的要求转换模板内容，即将单引号和反斜杠进行转移。</li>
+<li><code>stdsql</code> 则会将模板内容按标准SQL的要求进行转换,即将内容中单引号替换成双单引号。</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8594f44" class="outline-5">
+<h5 id="org8594f44">定义我们的远程日志模板</h5>
+<div class="outline-text-5" id="text-org8594f44">
+<div class="org-src-container">
+<pre class="src src-conf">$template RemoteLogs,<span style="color: #2d9574;">"/var/log/%HOSTNAME%/%APP-NAME%.log"</span>
+*.* ?RemoteLogs 
+&amp; ~
+</pre>
+</div>
+<p>
+这里我们定义了一个远程日志模板，然后定义将所有日志写入远程日志模板指定的文件中
+</p>
+
+<p>
+最后这句 <code>&amp; ~</code> 表示rsyslog不要继续再处理该信息了
+</p>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org5f01929" class="outline-3">
+<h3 id="org5f01929">重启syslog服务</h3>
+<div class="outline-text-3" id="text-org5f01929">
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl restart rsyslog
+</pre>
+</div>
+
+<p>
+然后你会看到 <code>/var/log/</code> 目录下多了个 <code>localhost</code> 目录，里面有很多日志
+</p>
+<pre class="example">
+lujun9972@orangepipc2:/var/log/localhost$ ls -l                                                                         
+total 16                                                                                                                
+-rw-r----- 1 syslog adm 585 Dec 23 23:15 CRON.log                                                                       
+-rw-r----- 1 syslog adm 558 Dec 23 23:14 rsyslogd.log
+-rw-r----- 1 syslog adm  85 Dec 23 23:14 sudo.log
+-rw-r----- 1 syslog adm 216 Dec 23 23:14 systemd.log
+lujun9972@orangepipc2:/var/log/localhost$ pwd            
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcaf1a34" class="outline-2">
+<h2 id="orgcaf1a34">客户端配置</h2>
+<div class="outline-text-2" id="text-orgcaf1a34">
+</div>
+<div id="outline-container-orgdb94f06" class="outline-3">
+<h3 id="orgdb94f06">安装并启动rsyslog服务</h3>
+<div class="outline-text-3" id="text-orgdb94f06">
+<p>
+我们首先需要一个rsyslog服务才能将日志转发到中央日志服务器上. 在archlinux上需要通过AUR来安装rsyslog
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">aurman -S rsyslog
+sudo mkdir -p /var/spool/rsyslog <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#25163;&#24037;&#21019;&#24314;/etc/rsyslog.conf&#20013;$WorkDirectory&#23450;&#20041;&#30340;&#24037;&#20316;&#30446;&#24405;</span>
+sudo systemctl enable rsyslog.service
+sudo systemctl start rsyslog.service
+systemctl status rsyslog.service
+</pre>
+</div>
+
+<p>
+或者，如果安装有Docker，可以通过下面命令运行Rsyslog Docker容器
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run -ti rsyslog/syslog_appliance_alpine
+</pre>
+</div>
+
+<p>
+<b>注意</b>: 根据 <code>man rsyslogd</code> 的说法，rsyslogd默认从 <code>/dev/log</code> 这个UNIX域套结字文件中读取日志消息(<code>/dev/log</code> 又实际上是 <code>/run/systemd/journal/dev-log</code> 的软链接).
+但根据 <a href="https://www.freedesktop.org/wiki/Software/systemd/syslog/">https://www.freedesktop.org/wiki/Software/systemd/syslog/</a> 的说法:
+</p>
+<pre class="example">
+Note that it is now the journal that listens on /dev/log, no longer the BSD syslog daemon directly. If your logging daemon wants to get access to all logging data then it should listen on /run/systemd/journal/syslog instead via the syslog.socket unit file that is shipped along with systemd. On a systemd system it is no longer OK to listen on /dev/log directly, and your daemon may not bind to the /run/systemd/journal/syslog socket on its own. If you do that then you will lose logging from STDOUT/STDERR of services (as well as other stuff).
+</pre>
+
+<p>
+也就是说，在systemd的系统中，rsyslogd并不监听 <code>/dev/log</code> 文件，它通过 <code>imuxsock</code> 模块来监听 <code>/run/systemd/journal/socket</code> 文件
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8bfdc07" class="outline-3">
+<h3 id="org8bfdc07">配置客户端的/etc/rsyslog.conf</h3>
+<div class="outline-text-3" id="text-org8bfdc07">
+<p>
+按照实际需求，将指定日志转发到中央日志服务器上。比如要将所有日志都转发到中央日志服务器，则可以在配置文件中加上
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">*.*       192.168.1.9:514
+</pre>
+</div>
+
+<p>
+其中 <code>192.168.1.9</code> 就是中央日志服务器，即OrangePi的IP地址， <code>514</code> 则是监听端口
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcee875a" class="outline-3">
+<h3 id="orgcee875a">重启rsyslog服务</h3>
+<div class="outline-text-3" id="text-orgcee875a">
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl start rsyslog.service
+systemctl status rsyslog.service
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org72b263e" class="outline-3">
+<h3 id="org72b263e">修改/etc/systemd/journald.conf</h3>
+<div class="outline-text-3" id="text-org72b263e">
+<p>
+开启其中的 <code>ForwardToSyslog</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-conf"><span style="color: #7590db;">ForwardToSyslog</span>=yes
+</pre>
+</div>
+
+<p>
+根据 <code>man journald.conf</code> 的说法: <code>ForwardToSyslog=</code> 表示是否将接收到的日志消息转发给传统的 syslog 守护进程，默认值为"no"。 如果设为"yes"，则会将消息转发到 <code>/run/systemd/journal/syslog</code>.
+</p>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-12-23</span>
+    <span title="last modification date" class="post-info">2018-12-27</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

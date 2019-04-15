@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>安全的SSH设置 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">安全的SSH设置</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org6786077">确定 sshd_config 的权限</a></li>
+<li><a href="#org5282f1e">修改ssh服务端口</a></li>
+<li><a href="#orga5023e1">只启用SSH Protocol 2</a></li>
+<li><a href="#org2f3a34b">不允许空密码登陆</a></li>
+<li><a href="#orgb463279">不允许root登陆</a></li>
+<li><a href="#org26cfdc6">限制只能登陆特定用户</a></li>
+<li><a href="#orge41dddc">修改未登陆的超时时间</a></li>
+<li><a href="#org6688b91">设置会话空闲一段时间后自动退出</a></li>
+</ul>
+</div>
+</div>
+<p>
+偶尔登陆了一次腾讯云主机的root用户，惊讶地发现有大量失败登陆的记录，把我吓了一跳。
+</p>
+
+<p>
+使用 <code>lastb</code> 查了一下，发现登陆名称是千奇百怪。其中实验次数最多的用户名分别为:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo lastb|awk <span style="color: #2d9574;">'{print $1}'</span> |sort |uniq -c |sort -n -k <span style="color: #a45bad;">1</span> |tail
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">   160 guest
+   218 hadoop
+   248 git
+   252 ubuntu
+   356 user
+   406 postgres
+   420 test
+   486 oracle
+  1161 admin
+147101 root
+</pre>
+</div>
+
+<p>
+之前我一直以为我这小破主机应该是没人会在意的，所以没有对SSH服务进行什么配置。现在看起来我还是太naive了。
+</p>
+
+<p>
+迫于无奈，只好对SSH服务进行加固处理。目前找到的加固方法有下面几个:
+</p>
+
+<div id="outline-container-org6786077" class="outline-2">
+<h2 id="org6786077">确定 sshd_config 的权限</h2>
+<div class="outline-text-2" id="text-org6786077">
+<p>
+确定 <code>sshd_config</code> 只有root才能读写，其他用户不能进行任何操作
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo chown root:root /etc/ssh/sshd_config
+sudo chmod og-rwx /etc/ssh/sshd_config
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org5282f1e" class="outline-2">
+<h2 id="org5282f1e">修改ssh服务端口</h2>
+<div class="outline-text-2" id="text-org5282f1e">
+<p>
+这一步的效果很显著，只从改了ssh服务端口后，就在没有看到任何登陆失败的提示了
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">Port XXXX
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orga5023e1" class="outline-2">
+<h2 id="orga5023e1">只启用SSH Protocol 2</h2>
+<div class="outline-text-2" id="text-orga5023e1">
+<p>
+Protocol 1的安全性相对要差一些
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">Protocol 2
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org2f3a34b" class="outline-2">
+<h2 id="org2f3a34b">不允许空密码登陆</h2>
+<div class="outline-text-2" id="text-org2f3a34b">
+<div class="org-src-container">
+<pre class="src src-conf">PermitEmptyPasswords no
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgb463279" class="outline-2">
+<h2 id="orgb463279">不允许root登陆</h2>
+<div class="outline-text-2" id="text-orgb463279">
+<p>
+从上面对 <code>lastb</code> 的结果分析可以得知， <code>root</code> 是被实验最多的用户，没有之一。
+</p>
+
+<p>
+因此禁用 root 登陆很有必要:
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">PermitRootLogin no
+</pre>
+</div>
+
+<p>
+若你觉得一股脑儿完全禁用root登陆太过了，而希望只在特定的主机上允许root登陆，则可以禁止 root 用密码登陆
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">PermitRootLogin prohibit-password
+</pre>
+</div>
+<p>
+然后在特定主机上建立公私密钥认证关系即可。
+</p>
+</div>
+</div>
+<div id="outline-container-org26cfdc6" class="outline-2">
+<h2 id="org26cfdc6">限制只能登陆特定用户</h2>
+<div class="outline-text-2" id="text-org26cfdc6">
+<p>
+我们可以使用 <code>DenyUsers</code>, <code>AllowUsers</code>, <code>DenyGroups</code> 和 <code>AllowGroups</code> 关键字来限定允许登陆的用户。
+</p>
+
+<p>
+当某个用户登陆时，该用户依次经过  <code>DenyUsers</code>, <code>AllowUsers</code>, <code>DenyGroups</code> 和 <code>AllowGroups</code> 的测试，只有在所有测试都通过的情况下才允许登陆。
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">AllowUsers ramesh john jason
+AllowGroups sysadmin dba
+DenyUsers cvs apache jane
+DenyGroups developers qa
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orge41dddc" class="outline-2">
+<h2 id="orge41dddc">修改未登陆的超时时间</h2>
+<div class="outline-text-2" id="text-orge41dddc">
+<p>
+用户未登陆成功的情况下，默认120秒后会登出。这个时间可以缩短，比如60.
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">LoginGraceTime 1m
+</pre>
+</div>
+<p>
+但要注意，若该值缩减为 <code>0</code> 则表示没有时间限制
+</p>
+</div>
+</div>
+<div id="outline-container-org6688b91" class="outline-2">
+<h2 id="org6688b91">设置会话空闲一段时间后自动退出</h2>
+<div class="outline-text-2" id="text-org6688b91">
+<p>
+设置空间一段时间自动退出有两种方法，
+</p>
+
+<p>
+一种是设置 <code>TMOUT</code> 环境变量，比如在 <code>~/.bash_profile</code> 中加上
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">export</span> <span style="color: #7590db;">TMOUT</span>=<span style="color: #a45bad;">100</span>
+</pre>
+</div>
+
+<p>
+还有一种方法是设置 <code>sshd_config</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-conf">ClientAliveInterval 100
+ClientAliveCountMax 0
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-10-11</span>
+    <span title="last modification date" class="post-info">2018-10-11</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

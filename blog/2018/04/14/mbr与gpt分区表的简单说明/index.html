@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>MBR与GPT分区表的简单说明 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,MBR,GPT" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">MBR与GPT分区表的简单说明</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org9bdf920">MBR分区表说明</a>
+<ul>
+<li><a href="#org725adc2">MBR的局限性</a></li>
+</ul>
+</li>
+<li><a href="#orgc602296">GPT分区表说明</a></li>
+<li><a href="#org0e83f10">4KB扇区的磁盘</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9bdf920" class="outline-2">
+<h2 id="org9bdf920">MBR分区表说明</h2>
+<div class="outline-text-2" id="text-org9bdf920">
+
+<div class="figure">
+<p><img src="/assets/blog/2018/04/14/mbr与gpt分区表的简单说明/MBR_Struct.png" alt="MBR_Struct.png" />
+</p>
+</div>
+
+<p>
+在传统的MBR分区方案中，第0号扇区的的0~512个字节存储的是引导程序，用于服务器启动时引导BIOS的加电自检以及GRUB stage1的加载。
+而446~509的这64个字节存放的是分区表信息,其中每个分区占用16字节，因此最多只能包含4个分区的信息。若想要创建超过5个分区，则需要将其中一个分区转换成逻辑分区，再对逻辑分区进行划分。
+最后多出来的510～511字节按惯例为0xAA55。若磁盘此处的值不为0xAA55,则判断该磁盘的MBR被损坏。
+</p>
+
+<p>
+由于每个分区只有16个字节，因此能记录的信息十分有限，只包括引导标志、分区格式ID、用CHS(磁头、柱面、扇区)方式描述的分区开始位置和结束位置、用LBA方式(逻辑块)描述的分区开始位置以及包含的扇区数，这些信息。
+</p>
+
+<p>
+我们可以通过 hexdump 命令输出MBR中分区表的内容。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">[</span>vagrant@localhost ~<span style="color: #4f97d7;">]</span>$   sudo hexdump -s <span style="color: #a45bad;">446</span> -n <span style="color: #a45bad;">66</span> -e <span style="color: #2d9574;">'1/1 "%02x" " " 3/1 "%02x" " " 1/1 "%02x" " " 3/1 "%02x" " " 2/4 "%10d" "\n"'</span> /dev/sda
+<span style="color: #a45bad;">00</span> <span style="color: #a45bad;">202100</span> <span style="color: #a45bad;">83</span> <span style="color: #a45bad;">410100</span>       <span style="color: #a45bad;">2048</span>      <span style="color: #a45bad;">2048</span>
+<span style="color: #a45bad;">80</span> <span style="color: #a45bad;">410200</span> <span style="color: #a45bad;">83</span> cb0982       <span style="color: #a45bad;">4096</span>   <span style="color: #a45bad;">2097152</span>
+<span style="color: #a45bad;">00</span> cb0a82 <span style="color: #a45bad;">8e</span> feffff    <span style="color: #a45bad;">2101248</span>  <span style="color: #a45bad;">81784832</span>
+<span style="color: #a45bad;">00</span> <span style="color: #a45bad;">000000</span> <span style="color: #a45bad;">00</span> <span style="color: #a45bad;">000000</span>          <span style="color: #a45bad;">0</span>         <span style="color: #a45bad;">0</span>
+<span style="color: #a45bad;">55</span> aa                                   
+</pre>
+</div>
+
+<p>
+从中可以看出，这个硬盘有三个分区(第四个分区信息全是0),其中：
+</p>
+
+<ul class="org-ul">
+<li>第0个字节是引导标志,80表示引导,也就是系统从第二块分区引导</li>
+<li>第1～3个字节是CHS方式表示的起始位置,目前CHS表示法已经被淘汰了，没有意义</li>
+<li>第4个字节是分区类型ID号</li>
+<li>第5～7个字节是CHS方式表示的结束位置,目前CHS表示法已经被淘汰了，没有意义</li>
+<li>地8～11个字节是LBA方式描述的起始扇区号</li>
+<li>地12～15个字节是LBA方式描述的扇区数</li>
+</ul>
+
+<p>
+这个数据跟 <code>fdisk</code> 显示的数据是匹配的
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">[</span>vagrant@localhost ~<span style="color: #4f97d7;">]</span>$ sudo fdisk -lu /dev/sda
+
+Disk /dev/sda: <span style="color: #a45bad;">42.9</span> GB, <span style="color: #a45bad;">42949672960</span> bytes, <span style="color: #a45bad;">83886080</span> sectors
+Units = sectors of <span style="color: #a45bad;">1</span> * <span style="color: #a45bad;">512</span> = <span style="color: #a45bad;">512</span> bytes
+Sector size <span style="color: #4f97d7;">(</span>logical/physical<span style="color: #4f97d7;">)</span>: <span style="color: #a45bad;">512</span> bytes / <span style="color: #a45bad;">512</span> bytes
+I/O size <span style="color: #4f97d7;">(</span>minimum/optimal<span style="color: #4f97d7;">)</span>: <span style="color: #a45bad;">512</span> bytes / <span style="color: #a45bad;">512</span> bytes
+Disk label type: dos
+Disk identifier: <span style="color: #a45bad;">0x000abd1e</span>
+
+   Device Boot      Start         End      Blocks   Id  System
+/dev/sda1            <span style="color: #a45bad;">2048</span>        <span style="color: #a45bad;">4095</span>        <span style="color: #a45bad;">1024</span>   <span style="color: #a45bad;">83</span>  Linux
+/dev/sda2   *        <span style="color: #a45bad;">4096</span>     <span style="color: #a45bad;">2101247</span>     <span style="color: #a45bad;">1048576</span>   <span style="color: #a45bad;">83</span>  Linux
+/dev/sda3         <span style="color: #a45bad;">2101248</span>    <span style="color: #a45bad;">83886079</span>    <span style="color: #a45bad;">40892416</span>   <span style="color: #a45bad;">8e</span>  Linux LVM
+<span style="color: #4f97d7;">[</span>vagrant@localhost ~<span style="color: #4f97d7;">]</span>$ 
+</pre>
+</div>
+
+<p>
+此外，图中第一个分区的开始扇区块是从2048号扇区开始的，也就是说0～2047号扇区是保留扇区不用做分区的。
+这其中，第0号扇区为主引导扇区，1～2047号扇区用于存储stage1.5
+</p>
+
+<p>
+最后要说明的是，最后那两个字节显示的是 <code>55 aa</code>, 这个实际上就是 <code>0xAA55</code>,原因请参见<a href="https://baike.baidu.com/item/%E5%A4%A7%E5%B0%8F%E7%AB%AF%E6%A8%A1%E5%BC%8F">小端模式</a>
+</p>
+</div>
+<div id="outline-container-org725adc2" class="outline-3">
+<h3 id="org725adc2">MBR的局限性</h3>
+<div class="outline-text-3" id="text-org725adc2">
+<p>
+MBR存在已经有超过30年的历史了，它存在以下几个局限性：
+</p>
+
+<ul class="org-ul">
+<li>只有64个字节可以用来存放分区表，导致最多只能存放4个分区</li>
+<li>从分区结构中可以看到一个分区只能有4个字节来表达扇区起始数，也就是说一个磁盘只能有 <code>2^32次方</code> 个扇区，一个扇区一般是512个字节，也就是最大2T容量。</li>
+<li>所有的分区信息都放在0号扇区的这64个字节中，一旦损坏所有的分区都不能读出来了。</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-orgc602296" class="outline-2">
+<h2 id="orgc602296">GPT分区表说明</h2>
+<div class="outline-text-2" id="text-orgc602296">
+
+<div class="figure">
+<p><img src="/assets/blog/2018/04/14/mbr与gpt分区表的简单说明/GPT_Struct.png" alt="GPT_Struct.png" />
+</p>
+</div>
+
+<p>
+为了解决MBR的这些局限性，1990年Intel引入了GPT分区格式。
+</p>
+
+<p>
+相比MBR，GPT有很多优点：
+</p>
+
+<ul class="org-ul">
+<li>它支持多达128个分区(通过改变GPT头的设置，其实也可以创建超过128个分区)</li>
+<li>支持的磁盘容量高达8ZB</li>
+<li>为了降低分区表损坏的风险，GPT在硬盘最后保存了一份相同内容的分区表副本，这就使得即使不小心分区表非覆盖也能够被还原。</li>
+</ul>
+
+<p>
+MBR分区表只占据0号扇区的64个字节，而GPT分区占据的是1号扇区～33号扇区中。
+其中1好扇区存储的是GPT磁头，2号扇区～33号扇区存储的是各个分区的信息。
+</p>
+
+<p>
+GPT中每个分区信息用128个字节来存储，一个普通扇区512个字节就能存储4个分区信息，32个扇区就能存储128个分区信息。
+</p>
+
+<p>
+此外每个分区的开始扇区和结束扇区是用8个字节来记录的，也就是支持硬盘的扇区数高达 <code>2^64</code> 个，按每个扇区512个字节算就是8ZB容量。
+</p>
+
+<p>
+GPT的每个分区都有一个全球唯一的GUID标签。尤其是用来存储引导装载程序的分区，会附上一个EFI系统分区(ESP)的标签，这样支持UEFI的服务器在启动时就可以根据GUID直接定位ESP分区并启动其中的grub.efi,而不再需要 GRUB stage1和stage1.5了.
+</p>
+
+<p>
+下面是MBR分区和GPT分区的比较表
+</p>
+
+<p>
+#+MBR分区和GPT分区比较
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">&#xa0;</th>
+<th scope="col" class="org-left">MBR分区</th>
+<th scope="col" class="org-left">GPT分区</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">分区表的位置</td>
+<td class="org-left">0号扇区</td>
+<td class="org-left">1～33号扇区</td>
+</tr>
+
+<tr>
+<td class="org-left">最大磁盘容量</td>
+<td class="org-left">2TB</td>
+<td class="org-left">8ZB</td>
+</tr>
+
+<tr>
+<td class="org-left">最大分区数</td>
+<td class="org-left">4个主分区</td>
+<td class="org-left">128</td>
+</tr>
+
+<tr>
+<td class="org-left">分区工具</td>
+<td class="org-left">fdisk</td>
+<td class="org-left">parted</td>
+</tr>
+</tbody>
+</table>
+
+
+<p>
+下面是parted命令的主要内部命令
+#+parted命令的主要内部命令
+</p>
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">命令</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">check</td>
+<td class="org-left">对文件系统进行检查</td>
+</tr>
+
+<tr>
+<td class="org-left">cp</td>
+<td class="org-left">复制分区</td>
+</tr>
+
+<tr>
+<td class="org-left">help</td>
+<td class="org-left">显示帮助分区</td>
+</tr>
+
+<tr>
+<td class="org-left">mkfs</td>
+<td class="org-left">创建文件系统</td>
+</tr>
+
+<tr>
+<td class="org-left">mklabel</td>
+<td class="org-left">指定分区表类型</td>
+</tr>
+
+<tr>
+<td class="org-left">mkpart</td>
+<td class="org-left">创建分区</td>
+</tr>
+
+<tr>
+<td class="org-left">mkpartfs</td>
+<td class="org-left">创建分区和文件系统</td>
+</tr>
+
+<tr>
+<td class="org-left">move</td>
+<td class="org-left">移动分区</td>
+</tr>
+
+<tr>
+<td class="org-left">print</td>
+<td class="org-left">显示当前分区表状态</td>
+</tr>
+
+<tr>
+<td class="org-left">quit</td>
+<td class="org-left">退出</td>
+</tr>
+
+<tr>
+<td class="org-left">resize</td>
+<td class="org-left">改变分区大小</td>
+</tr>
+
+<tr>
+<td class="org-left">rm</td>
+<td class="org-left">删除分区</td>
+</tr>
+
+<tr>
+<td class="org-left">select</td>
+<td class="org-left">选择要分区的设备</td>
+</tr>
+
+<tr>
+<td class="org-left">set</td>
+<td class="org-left">设置各种标志，包括引导标志</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-org0e83f10" class="outline-2">
+<h2 id="org0e83f10">4KB扇区的磁盘</h2>
+<div class="outline-text-2" id="text-org0e83f10">
+<p>
+为了突破传统MBR最大只支持2TB磁盘的限制，除了GPT外，增大磁盘扇区的大小也能让MBR支持超过2TB的磁盘。
+</p>
+
+<p>
+比如若每个扇区大小是4KB的话，那么理论上MBR支持的最大容量就变成了 <code>2TB*8=16TB</code> 大小了.
+</p>
+
+<p>
+此外，硬盘内部记录了每个扇区错误校验所需要的信息，增加扇区的大小也就降低了这类信息的占比，从而增大了数据的空间使用率。
+</p>
+
+<p>
+然而由于操作系统的设备驱动很可能是按照之前512个字节来设计的，因此就可能需要通过硬盘中的控制器来从逻辑上模拟512个字节扇区的运作方式。
+从服务器的角度来看扇区的大小依然是512个字节，但实际上数据读取和写入都是在4KB扇区上进行的。
+也就是说，即使服务器要求读取和写入的是512个字节，但实际上也是会对整个4KB扇区进行操作。
+</p>
+
+<p>
+要使用4KB扇区的磁盘，需要注意:
+</p>
+
+<ol class="org-ol">
+<li>分区的开始位置和结束位置需要与4KB扇区的起始边界对齐，也就是说在分配分区扇区数时，必须是8的倍数</li>
+<li>设置文件系统的块大小为4KB大小</li>
+</ol>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-14</span>
+    <span title="last modification date" class="post-info">2018-04-15</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/mbr">MBR</a> : <a href="/tags/gpt">GPT</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

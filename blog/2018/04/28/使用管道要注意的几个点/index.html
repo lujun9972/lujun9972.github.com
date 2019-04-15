@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用管道要注意的几个点 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,bash" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用管道要注意的几个点</h1>
+<ol class="org-ol">
+<li><p>
+管道中的每个命令都是在自己的子shell中执行的，因此管道中的命令不要尝试去修改父shell中的变量，那样是无效的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #7590db;">last_line</span>=<span style="color: #2d9574;">'NULL'</span>
+seq <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">2</span> | <span style="color: #4f97d7; font-weight: bold;">while </span><span style="color: #4f97d7;">read</span> line; <span style="color: #4f97d7; font-weight: bold;">do</span>
+    <span style="color: #7590db;">last_line</span>=<span style="color: #2d9574;">"${line}"</span>
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">echo ${last_line}</span>
+<span style="color: #4f97d7; font-weight: bold;">done</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">This will output 'NULL'</span>
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"${last_line}"</span>
+</pre>
+</div>
+
+<p>
+正确的做法是改成
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #7590db;">last_line</span>=<span style="color: #2d9574;">'NULL'</span>
+<span style="color: #4f97d7; font-weight: bold;">while </span><span style="color: #4f97d7;">read</span> line; <span style="color: #4f97d7; font-weight: bold;">do</span>
+    <span style="color: #7590db;">last_line</span>=<span style="color: #2d9574;">"${line}"</span>
+<span style="color: #4f97d7; font-weight: bold;">done</span>&lt; &lt;<span style="color: #4f97d7;">(</span>seq <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">2</span><span style="color: #4f97d7;">)</span>   <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#27880;&#24847;&lt; &#21644; &lt; &#20043;&#38388;&#26377;&#20010;&#31354;&#26684;</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">This will output '2'</span>
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"${last_line}"</span>
+</pre>
+</div></li>
+
+<li><p>
+管道的返回值只由最后哪个命令的返回值来决定，除非指定了 <code>pipefail</code>
+</p>
+
+<p>
+比如，下面这个命令的 <code>$?</code> 会是 <code>0</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">wrong command1 |<span style="color: #4f97d7;">[</span><span style="color: #bc6ec5;">[</span> <span style="color: #2d9574;">"a"</span> == <span style="color: #2d9574;">"b"</span> <span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">]</span> |true
+<span style="color: #4f97d7;">echo</span> $<span style="color: #7590db;">?</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">0
+</pre>
+</div>
+
+<p>
+若指定了 <code>pipefail</code> 选项，则管道的返回值最后的那个执行失败的命令来决定
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">set</span> -o pipefail
+wrong command1 |<span style="color: #4f97d7;">[</span><span style="color: #bc6ec5;">[</span> <span style="color: #2d9574;">"a"</span> == <span style="color: #2d9574;">"b"</span> <span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">]</span> |true
+<span style="color: #4f97d7;">echo</span> $<span style="color: #7590db;">?</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">1
+</pre>
+</div>
+
+<p>
+若你想要知道管道中每条命令的执行情况，则需要查看 <code>PIPESTATUE</code> 变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">wrong command1 |<span style="color: #4f97d7;">[</span><span style="color: #bc6ec5;">[</span> <span style="color: #2d9574;">"a"</span> == <span style="color: #2d9574;">"b"</span> <span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">]</span> |true
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"${PIPESTATUS[0]}"</span> <span style="color: #2d9574;">"${PIPESTATUS[1]}"</span> <span style="color: #2d9574;">"${PIPESTATUS[2]}"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">127 1 0
+</pre>
+</div></li>
+
+<li><p>
+打开命名管道时，若只打开它的一端，则该操作会被挂起，直到它的读写两端都被打开。
+</p>
+
+<p>
+下面操作会被挂起
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkfifo t
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #a45bad;">4</span>&gt;t
+</pre>
+</div>
+
+<p>
+而下面操作不会挂起
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkfifo t
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #a45bad;">4</span>&lt;&gt;t
+</pre>
+</div></li>
+
+<li>有些程序会把输出内容缓存起来，直到缓存区满了或者收到结束符号才将内容真正输出。
+当使用这种程序写入命名管道时，要特别注意，确保程序真的有把内容输出道命名管道，而不是缓存起来，否则很容易导致操作挂起</li>
+
+<li>不要真的把命名管道当成文件来用，当命名管道的读写两端都关闭后，里面的内容会被清掉。</li>
+</ol>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-28</span>
+    <span title="last modification date" class="post-info">2018-04-28</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/bash">bash</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

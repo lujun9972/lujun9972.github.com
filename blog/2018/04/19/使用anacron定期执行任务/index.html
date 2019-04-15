@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用anacron定期执行任务 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,sysadmin" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用anacron定期执行任务</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org3fd2868">anacron与cron的不同点</a></li>
+<li><a href="#org1753d6f">/etc/anacrontab配置文件说明</a></li>
+<li><a href="#orge64f8d1">anacron常用的选项</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org3fd2868" class="outline-2">
+<h2 id="org3fd2868">anacron与cron的不同点</h2>
+<div class="outline-text-2" id="text-org3fd2868">
+<p>
+在网上可以可以看到很多文章都把anacron与cron来做比较，但实际上这两者之间的差距还是蛮大的。
+</p>
+
+<ol class="org-ol">
+<li>cron任务同通过常驻的守护进程crond来定期执行的。
+而anacron则不是守护进程，它需要被别人定期掉起，比如跟cron或systemd timer配合</li>
+
+<li>crond每分钟检查一次是否有需要执行的任务，若这次任务错过了时间则需要等下次触发点才能再次执行。
+而anacron会立即执行错过时间的任务,而正是由于这个特点，为了防止在不恰当的时刻执行命令，anacron专门有一个参数START_HOURS_RANGE来设置允许执行命令的时间段。</li>
+
+<li>cron的粒度能精确到分钟，而anacron的粒度只能到天（即执行频率不能超过1天1次）</li>
+
+<li>cron的执行时间是很精确的.
+而anacron可以设置一个延迟时间(RANDOMDELAY),anacron会在这个延迟时间内的某一个随机时间点执行。
+这样做的好处在于可以让任务的执行时间分散，防止一瞬间对服务器产生太大压力。</li>
+
+<li>cron有多个设置任务的地方(<code>/var/spool/cron/用户名</code>, <code>/etc/crontab</code>, <code>/etc/cron.d/*</code>).
+而anacron只有一个设置任务的地方(默认为 <code>/etc/anacrontab</code>, 也可以通过 -t 设置其他路径的配置文件)。</li>
+</ol>
+
+<p>
+从上面可以看出，anacron其实并不是设计来定时执行任务的，它的主要功能还是为了缓解cron中一瞬间大量任务并发执行而导致系统压力过大的问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1753d6f" class="outline-2">
+<h2 id="org1753d6f">/etc/anacrontab配置文件说明</h2>
+<div class="outline-text-2" id="text-org1753d6f">
+<p>
+一个 <code>/etc/anacrontab</code> 内容大致如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat /etc/anacrontab
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span style="color: #2aa1ae; background-color: #292e34;"># /etc/anacrontab: configuration file for anacron</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># See anacron(8) and anacrontab(5) for details.</span>
+
+SHELL=/bin/sh
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+MAILTO=root
+<span style="color: #2aa1ae; background-color: #292e34;"># the maximal random delay added to the base delay of the jobs</span>
+RANDOM_DELAY=45
+<span style="color: #2aa1ae; background-color: #292e34;"># the jobs will be started during the following hours only</span>
+START_HOURS_RANGE=3-22
+
+#period in days   delay in minutes   job-identifier   command
+1 5 cron.daily    nice run-parts /etc/cron.daily
+7 25  cron.weekly   nice run-parts /etc/cron.weekly
+@monthly 45 cron.monthly    nice run-parts /etc/cron.monthly
+</pre>
+</div>
+
+<p>
+看起来跟 <code>cron</code> 的配置文件有点像。都是先定义环境变量，再定义执行计划。
+</p>
+
+<p>
+定义环境变量的部分跟cron一样，只是这些环境变量中，有一些特殊变量值得说明一下：
+</p>
+
+<dl class="org-dl">
+<dt>RANDOME_DELAY=45</dt><dd>表示anacron在执行任务前先延时一段随记的时间再执行，这段随机的时间为0-45分钟之内的随机数。</dd>
+
+<dt>START_HOURS_RANGE=3-22</dt><dd>指定了只有在凌晨3点到晚上22点这个时间段内才允许执行任务。</dd>
+</dl>
+
+
+<p>
+定义执行计划部分就跟 <code>cron</code> 差别很大了。
+</p>
+
+<p>
+执行计划由四部分组成：
+</p>
+
+<dl class="org-dl">
+<dt>period in days</dt><dd>轮回天数，表示任务多少天执行一次。</dd>
+
+<dt>delay in minutes</dt><dd>表示启动Anacron和运行作业时间之间的延迟，单位为分钟. 当然前提是自最后一次运行之后所经过的时间超出了轮回天数。
+但是它并不是作业真正运行的时间，真正运行的时间还需要加上RANDOME_DELAY中设置的随机分钟数。</dd>
+
+<dt>job-identifier</dt><dd>作业的标识符。anacron在执行任务时会将日期写入 <code>/var/spool/anacron/$job-identifier</code> 文件中</dd>
+
+<dt>command</dt><dd>实际运行的命令。这里的 <code>run-parts</code> 是一个运行指定目录中所有程序与脚本的命令，可以通过 <code>man run-parts</code> 来查看它的说明</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orge64f8d1" class="outline-2">
+<h2 id="orge64f8d1">anacron常用的选项</h2>
+<div class="outline-text-2" id="text-orge64f8d1">
+<p>
+anacron的常用选项有下面几个:
+</p>
+
+<dl class="org-dl">
+<dt>-t 配置文件路径</dt><dd>让anacron从指定配置文件中读取配置，常用于普通用户来管理个人任务</dd>
+<dt>-S spooldir</dt><dd>设定新的spool目录来记录任务执行的时间戳，常用于普通用户来管理个人任务</dd>
+<dt>-T</dt><dd>测试配置文件是否正确</dd>
+<dt>-f</dt><dd>强制执行所有的任务，而不管之前的执行日期是否超过轮回天数</dd>
+<dt>-u</dt><dd>将所有任务的执行日期都更新为当前日期，而不真正的执行任务</dd>
+<dt>-s</dt><dd>串行地执行任务，只有前一个任务完成后才开始下一个任务</dd>
+</dl>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-19</span>
+    <span title="last modification date" class="post-info">2018-04-19</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/sysadmin">sysadmin</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

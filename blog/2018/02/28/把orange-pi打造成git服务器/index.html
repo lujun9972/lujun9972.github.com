@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>把Orange Pi打造成git服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,OrangePi,git,gogs" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">把Orange Pi打造成git服务器</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org5b7c619">安装golang</a></li>
+<li><a href="#org351aac4">安装git</a></li>
+<li><a href="#org8234ee6">安装Gogs</a></li>
+<li><a href="#org9cc50c5">自动运行Gogs服务器</a></li>
+</ul>
+</div>
+</div>
+<p>
+目前主流的开源git服务器有 <code>gitlab</code> 和 <code>gogs</code> ，考虑到 <code>gogs</code> 相对轻量级，而OrangePi的性能普遍不高，因此这里选择 <code>gogs</code>
+</p>
+
+<div id="outline-container-org5b7c619" class="outline-2">
+<h2 id="org5b7c619">安装golang</h2>
+<div class="outline-text-2" id="text-org5b7c619">
+<p>
+gogs要求Go语言版本&gt;=1.6，Ubuntu上的golang刚好是1.6版的，因此我们直接用 <code>apt</code> 安装
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt install golang
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org351aac4" class="outline-2">
+<h2 id="org351aac4">安装git</h2>
+<div class="outline-text-2" id="text-org351aac4">
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt install git
+</pre>
+</div>
+
+<p>
+然后创建 <code>git</code> 用户
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo adduser --disabled-login --gecos <span style="color: #2d9574;">'Gogs'</span> git
+</pre>
+</div>
+
+<p>
+设置环境变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo su - git
+<span style="color: #4f97d7;">cd</span> ~
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">'export GOPATH=$HOME/go'</span> &gt;&gt; $<span style="color: #7590db;">HOME</span>/.bashrc
+<span style="color: #4f97d7;">source</span> $<span style="color: #7590db;">HOME</span>/.bashrc
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8234ee6" class="outline-2">
+<h2 id="org8234ee6">安装Gogs</h2>
+<div class="outline-text-2" id="text-org8234ee6">
+<p>
+由于我们只是自己使用，需求很低，因此让Gogs直接使用SQLite3数据库
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">go get -u -tags <span style="color: #2d9574;">"sqlite"</span> github.com/gogits/gogs <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#27880;&#24847;&#65292;&#36825;&#19968;&#27493;&#35201;&#30340;&#26102;&#38388;&#36229;&#32423;&#38271;</span>
+<span style="color: #4f97d7;">cd</span> $<span style="color: #7590db;">GOPATH</span>/src/github.com/gogits/gogs
+go build -tags <span style="color: #2d9574;">"sqlite"</span>
+</pre>
+</div>
+
+<p>
+安装好后，试试运行 <code>./gogs web</code> ，当出现类似下面的内容时启动成功了
+</p>
+<pre class="example">
+git@orangepipc2:~/go/src/github.com/gogits/gogs$ ./gogs web
+2018/02/28 23:08:16 [ WARN] Custom config '/home/git/go/src/github.com/gogits/gogs/custom/conf/app.ini' not found, ignore this if you're running first time
+2018/02/28 23:08:16 [TRACE] Custom path: /home/git/go/src/github.com/gogits/gogs/custom
+2018/02/28 23:08:16 [TRACE] Log path: /home/git/go/src/github.com/gogits/gogs/log
+2018/02/28 23:08:16 [TRACE] Log Mode: Console (Trace)
+2018/02/28 23:08:16 [ INFO] Gogs 0.11.34.1122
+2018/02/28 23:08:16 [ INFO] Cache Service Enabled
+2018/02/28 23:08:16 [ INFO] Session Service Enabled
+2018/02/28 23:08:16 [ INFO] SQLite3 Supported
+2018/02/28 23:08:16 [ INFO] Run Mode: Development
+2018/02/28 23:08:18 [ INFO] Listen: http://0.0.0.0:3000
+
+</pre>
+
+<p>
+从启动内容可以看出 <code>gogs</code> 监听了3000端口。
+</p>
+
+<p>
+在第一次访问该URL后会出现安装配置页面，这里只需要注意我们要选择数据库类型为 <code>sqlite3</code>, 其他的按照需求自己填就好了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9cc50c5" class="outline-2">
+<h2 id="org9cc50c5">自动运行Gogs服务器</h2>
+<div class="outline-text-2" id="text-org9cc50c5">
+<p>
+Gogs提供了一个默认的service文件供我们使用： <code>~/go/src/github.com/gogits/gogs/scripts/systemd/gogs.service</code>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">su -
+cp /home/git/go/src/github.com/gogits/gogs/scripts/systemd/gogs.service /etc/systemd/system
+</pre>
+</div>
+
+<p>
+修改gogs.service配置文件
+由于我们只用sqlite，因此把 <code>After=mariadb.service mysqld.service postgresql.service memcached.service redis.service</code> 注释掉
+</p>
+
+<p>
+然后创建一个软连接
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> ~/go/src/github.com/gogits/gogs
+ln -s $<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span> /home/git/gogs
+</pre>
+</div>
+
+<p>
+重载系统服务器
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">systemctl daemon-reload
+</pre>
+</div>
+
+<p>
+设置Gogs服务器并设置为开机启动
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">systemctl start gogs
+systemctl enable gogs
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-02-28</span>
+    <span title="last modification date" class="post-info">2018-03-01</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/orangepi">OrangePi</a> : <a href="/tags/git">git</a> : <a href="/tags/gogs">gogs</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

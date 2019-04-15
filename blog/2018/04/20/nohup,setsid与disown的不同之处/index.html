@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>nohup,setsid与disown的不同之处 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">nohup,setsid与disown的不同之处</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org81a6471">退出终端时发生了什么</a></li>
+<li><a href="#org281ce7b">nohup,setsid以及disown</a>
+<ul>
+<li><a href="#org941bd69">nohup</a></li>
+<li><a href="#org11f60cb">setsid</a></li>
+<li><a href="#org3a86262">disown</a></li>
+</ul>
+</li>
+<li><a href="#org1a9b159">关于 &amp;</a></li>
+</ul>
+</div>
+</div>
+<p>
+nohup,setsid与disown都可以用来让需要长期运行的程序在退出终端后继续在后台运行。
+然而它们实现这一目的的原理不同，因此使用起来也有一些不同。
+</p>
+
+<div id="outline-container-org81a6471" class="outline-2">
+<h2 id="org81a6471">退出终端时发生了什么</h2>
+<div class="outline-text-2" id="text-org81a6471">
+<p>
+让我们先看看终端退出时发生什么：
+</p>
+
+<p>
+当终端被挂断或伪终端程序被关掉，若终端的CLOCAL标志没有被设置，则SIGHUP信号会被发送到与该终端相关的控制进程（即会话首进程，通常为shell）。
+而SIGHUP的默认行为是终止程序的运行。
+当会话首进程终止，也会将SIGHUP信号发送给前台进程组中的每一个进程（根据shell的具体实现，还可能会把SIGNHUP发送给后台进程组）
+</p>
+</div>
+</div>
+
+<div id="outline-container-org281ce7b" class="outline-2">
+<h2 id="org281ce7b">nohup,setsid以及disown</h2>
+<div class="outline-text-2" id="text-org281ce7b">
+<p>
+那么很自然就会发现，要实现终端退出后进程依然在后台运行，有两种途径：
+</p>
+
+<ol class="org-ol">
+<li>进程收到SIGHUP后忽略该信号</li>
+<li>进程根本没有收到SIGHUP信号</li>
+</ol>
+</div>
+
+
+<div id="outline-container-org941bd69" class="outline-3">
+<h3 id="org941bd69">nohup</h3>
+<div class="outline-text-3" id="text-org941bd69">
+<p>
+nohup的使用方法很简单，只需要在要执行的命令前加上 <code>nohup</code> 就行了。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">nohup commands
+</pre>
+</div>
+
+<p>
+它的原理就是第一种途径。其核心代码为：
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5; font-weight: bold;">signal</span> <span style="color: #4f97d7;">(</span>SIGHUP, SIG_IGN<span style="color: #4f97d7;">)</span>;
+
+<span style="color: #ce537a; font-weight: bold;">char</span> **<span style="color: #7590db;">cmd</span> = argv + optind;
+execvp <span style="color: #4f97d7;">(</span>*cmd, cmd<span style="color: #4f97d7;">)</span>;
+</pre>
+</div>
+
+<p>
+除此之外，它还做了以下动作：
+</p>
+
+<ul class="org-ul">
+<li>关闭进程的stdin，当进程尝试读取输入时，只会得到EOF</li>
+<li>重定向进程的stdout和stderr到nohup.out中</li>
+</ul>
+
+<p>
+由于进程的stdin，stdout和stderr都脱离了终端,因此让它在前台运行似乎意义不大，一般我们会在后面加上 <code>&amp;</code> 让它在后台运行。
+</p>
+</div>
+</div>
+<div id="outline-container-org11f60cb" class="outline-3">
+<h3 id="org11f60cb">setsid</h3>
+<div class="outline-text-3" id="text-org11f60cb">
+<p>
+nohup是通过忽略HUP信号来使我们的进程避免中途被中断，而setsid可以使我们的进程不属于接受HUP号的会话首进程的会话，从而避免受到HUP信号。
+</p>
+
+<p>
+setsid的使用方法跟 <code>nohup</code> 很类似，只需要在要执行的命令前加上 <code>setsid</code> 即可。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">setsid command
+</pre>
+</div>
+
+<p>
+它的核心代码是 <code>setsid</code> 函数
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #bc6ec5; font-weight: bold;">setsid</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">void</span><span style="color: #4f97d7;">)</span>;
+</pre>
+</div>
+
+<p>
+调用setsid函数的进程若不是一个进程组的组长就会创建一个新会话。具体来说会发生下面3件事情
+</p>
+
+<ul class="org-ul">
+<li>该进程会变成新会话的会话首进程（会话首进程即创建该会话的进程）,此时新会话中只有该进程这么一个进程</li>
+<li>该进程会变成一个新进程组的组长进程，新进程组ID就是该进程的PID</li>
+<li>该进程与控制终端的联系被切断。</li>
+</ul>
+
+<p>
+若调用setsid函数的进程就是一个进程组的组长，则该函数会返回出错。
+为了解决这种情况，通常函数需要先fork，然后父进程退出，由子进程执行setsid。
+由于子进程继承的是父进程的进程组ID，而其PID是新分配的ID，因此这两者不可能相等，即子进程不可能是进程组的组长。
+这种情况下，由于父进程先于子进程退出，因此子进程的父进程会有init进程接管。
+而这就是sid命令的实现原理。
+</p>
+
+<p>
+下面这个实验可以看书setsid所做的事情：
+</p>
+
+<p>
+先编译一个测试程序(假设编译后的执行文件为s.out)，源代码如下:
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">unistd.h</span><span style="color: #4f97d7;">&gt;</span>
+<span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">stdio.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #4f97d7;">()</span>
+<span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #7590db;">sid</span>=getsid<span style="color: #bc6ec5;">(</span><span style="color: #a45bad;">0</span><span style="color: #bc6ec5;">)</span>;          <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#20250;&#35805; id </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #7590db;">pgrp</span>=getpgrp<span style="color: #bc6ec5;">()</span>;         <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#36827;&#31243;&#32452;id </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #7590db;">ppid</span>=getppid<span style="color: #bc6ec5;">()</span>;         <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#29238;&#36827;&#31243;id </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #7590db;">pid</span>=getpid<span style="color: #bc6ec5;">()</span>;           <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#36827;&#31243;ID </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  printf<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">"&#20250;&#35805;id:%d\n&#36827;&#31243;&#32452;id:%d\n&#29238;&#36827;&#31243;id:%d\n&#36827;&#31243;id:%d\n"</span>,sid,pgrp,ppid,pid<span style="color: #bc6ec5;">)</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">  &#20250;&#35805;<span style="color: #2aa1ae; text-decoration: underline;"><a href="id:17791">id:17791</a></span>
+  &#36827;&#31243;&#32452;<span style="color: #2aa1ae; text-decoration: underline;"><a href="id:17791">id:17791</a></span>
+  &#29238;&#36827;&#31243;<span style="color: #2aa1ae; text-decoration: underline;"><a href="id:5732">id:5732</a></span>
+  &#36827;&#31243;<span style="color: #2aa1ae; text-decoration: underline;"><a href="id:17791">id:17791</a></span>
+</pre>
+</div>
+
+<p>
+在shell下直接执行的输出是:
+</p>
+<pre class="example">
+[lujun9972@X61 ~]$ ./s.out 
+会话id:5235
+进程组id:17095
+父进程id:5235
+进程id:17095
+</pre>
+<p>
+其中5235就是bash的进程ID
+</p>
+
+<p>
+而使用setsid的执行输出为:
+</p>
+<pre class="example">
+[lujun9972@X61 ~]$ setsid ./s.out 
+[lujun9972@X61 ~]$ 会话id:17146
+进程组id:17146
+父进程id:1
+进程id:17146
+</pre>
+
+
+<p>
+对比这两个输出，你会发现，setsid新建了一个全新的会话，而且其父进程变成了init京城。
+</p>
+
+<p>
+由于会话和父进程都与shell无关了，因此无论如何shell都无法向该进程发送SIGHUP命令。
+</p>
+</div>
+</div>
+<div id="outline-container-org3a86262" class="outline-3">
+<h3 id="org3a86262">disown</h3>
+<div class="outline-text-3" id="text-org3a86262">
+<p>
+前面提到的nohup和setsid都是外部命令，跟具体的shell无关。
+即无论shell(同时也是终端相关的控制进程)的具体实现是怎样的都能保证执行的进程不会被SIGHUP挂断。
+而且使用他们的一个限制就是必须在执行命令前，事先在命令前加上 nohup 或者 setsid 
+</p>
+
+<p>
+是如果我们未加任何处理就已经提交了命令，那就只能使用disown命令了。
+然而disown是bash的内置命令，它只能在bash下使用。
+</p>
+
+<p>
+比较常用的disown有以下三种方式
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">disown</span> -h $<span style="color: #7590db;">jobspec</span>               <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">&#20351;&#26576;&#20010;&#20316;&#19994;&#24573;&#30053;HUP&#20449;&#21495;&#12290;</span>
+<span style="color: #4f97d7;">disown</span> -ah                       <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">&#20351;&#25152;&#26377;&#30340;&#20316;&#19994;&#37117;&#24573;&#30053;HUP&#20449;&#21495;&#12290;</span>
+<span style="color: #4f97d7;">disown</span> -rh                       <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">&#20351;&#27491;&#22312;&#36816;&#34892;&#30340;&#20316;&#19994;&#24573;&#30053;HUP&#20449;&#21495;&#12290;</span>
+</pre>
+</div>
+
+<p>
+disown命令会将命令从bash的job list中删除。
+这样，当bash收到SIGHUP信号后，并不会将SIGHUP信号发送给该命令。
+</p>
+
+<p>
+然而，使用disown并不会切断命令与终端的关联关系，这样当终端被关闭后，若命令尝试从stdin中读取或输出到stdout中,可能会导致异常退出。
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-org1a9b159" class="outline-2">
+<h2 id="org1a9b159">关于 &amp;</h2>
+<div class="outline-text-2" id="text-org1a9b159">
+<p>
+事实上，在新版本的bash上，bash并不会向后台程序发送SIGHUP命令，也就是说任何以 <code>&amp;</code> 结尾运行在后台的进程都不会因为终端退出的SIGHUP信号而退出。
+</p>
+
+<p>
+我们可以做个实验：
+</p>
+
+<p>
+先准备一个测试文件，代码如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">signal.h</span><span style="color: #4f97d7;">&gt;</span>
+<span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">stdio.h</span><span style="color: #4f97d7;">&gt;</span>
+<span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">unistd.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">void</span> <span style="color: #bc6ec5; font-weight: bold;">sig_handler</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #7590db;">signo</span><span style="color: #4f97d7;">)</span>
+<span style="color: #4f97d7;">{</span>
+  <span style="color: #4f97d7; font-weight: bold;">if</span><span style="color: #bc6ec5;">(</span>signo == SIGHUP<span style="color: #bc6ec5;">)</span>
+    <span style="color: #bc6ec5;">{</span>
+      printf<span style="color: #2d9574;">(</span><span style="color: #2d9574;">"RECV SIGHUP\n"</span><span style="color: #2d9574;">)</span>;
+    <span style="color: #bc6ec5;">}</span>
+  <span style="color: #4f97d7; font-weight: bold;">else</span>
+    <span style="color: #bc6ec5;">{</span>
+      printf<span style="color: #2d9574;">(</span><span style="color: #2d9574;">"RECV signal %d\n"</span>,signo<span style="color: #2d9574;">)</span>;
+    <span style="color: #bc6ec5;">}</span>
+<span style="color: #4f97d7;">}</span>
+
+<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #4f97d7;">()</span>
+<span style="color: #4f97d7;">{</span>
+  signal<span style="color: #bc6ec5;">(</span>SIGHUP,sig_handler<span style="color: #bc6ec5;">)</span>;
+  sleep<span style="color: #bc6ec5;">(</span><span style="color: #a45bad;">180</span><span style="color: #bc6ec5;">)</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+编译后(假设编译出来的执行文件是a.out)在终端中执行:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">a.out &gt;a.txt &amp;
+</pre>
+</div>
+
+<p>
+让程序在后台运行，然后关闭终端，再打开新终端，查看a.txt没有发现有内容，用ps也能查到a.out没有被杀掉,只是它的父进程变成了init
+</p>
+
+<p>
+但若在终端中执行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">a.out &gt;a.txt
+</pre>
+</div>
+
+<p>
+让程序在前台运行，然后关闭终端，再打开新终端，查看a.txt则会发现有“RECV SIGHUP”的内容，用ps也无法再查到a.out了,说明a.out也被杀掉了。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-20</span>
+    <span title="last modification date" class="post-info">2019-04-13</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

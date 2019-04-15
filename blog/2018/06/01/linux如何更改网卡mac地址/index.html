@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>linux如何更改网卡MAC地址 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,network" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">linux如何更改网卡MAC地址</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org70bb247">查看网卡MAC地址</a></li>
+<li><a href="#orgc16e771">手工修改MAC地址</a></li>
+<li><a href="#org93991f0">自动更改</a>
+<ul>
+<li><a href="#orgdca70d3">Match小节</a></li>
+<li><a href="#orga7d627f">Link小节</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org70bb247" class="outline-2">
+<h2 id="org70bb247">查看网卡MAC地址</h2>
+<div class="outline-text-2" id="text-org70bb247">
+<p>
+使用ip命令就能查看MAC地址了:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ip link show $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">interface</span><span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">2: enp0s25: &lt;NO-CARRIER,BROADCAST,MULTICAST,UP&gt; mtu 1500 qdisc fq_codel state DOWN mode DEFAULT group default qlen 1000
+    link/ether f0:de:f1:ad:1d:f0 brd ff:ff:ff:ff:ff:ff
+</pre>
+</div>
+
+
+<p>
+其中 <code>link/ether</code> 后面那一串用 <code>:</code> 分割的6字节十六进制数就是网卡的MAC地址了，也就是 <code>f0:de:f1:ad:1d:f0</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc16e771" class="outline-2">
+<h2 id="orgc16e771">手工修改MAC地址</h2>
+<div class="outline-text-2" id="text-orgc16e771">
+<p>
+使用ip命令也能修改MAC地址，但是需要root权限：
+</p>
+
+<ol class="org-ol">
+<li><p>
+禁用网卡
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo ip link set dev $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">interface</span><span style="color: #4f97d7;">}</span> down
+</pre>
+</div></li>
+
+<li><p>
+修改MAC地址
+</p>
+
+<p>
+有的网络运营商可能会拒绝为不正确的 MAC 分配 IP 地址,因此推荐前三个字节用真实的MAC地址前缀，后三个字节可以随机更改。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo ip link set dev $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">interface</span><span style="color: #4f97d7;">}</span> address $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">new_mac</span><span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+我们再查看一下网卡的MAC地址
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ip link show $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">interface</span><span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">2: enp0s25: &lt;BROADCAST,MULTICAST&gt; mtu 1500 qdisc fq_codel state DOWN mode DEFAULT group default qlen 1000
+    link/ether f0:de:f1:ff:ff:ff brd ff:ff:ff:ff:ff:ff
+</pre>
+</div>
+
+<p>
+你会发现网卡已经被改成新的MAC地址了.
+</p></li>
+
+<li><p>
+最后重启网卡
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo ip link set dev $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">interface</span><span style="color: #4f97d7;">}</span> up
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org93991f0" class="outline-2">
+<h2 id="org93991f0">自动更改</h2>
+<div class="outline-text-2" id="text-org93991f0">
+<p>
+systemd-networkd服务能通过 <code>link</code> 文件(底层物理网络设备配置)来设置MAC地址
+</p>
+
+<p>
+我们通过 <code>[Match]</code> 小节来匹配某个网卡，然后通过 <code>[Link]</code> 小节来对网卡进行配置
+</p>
+</div>
+
+<div id="outline-container-orgdca70d3" class="outline-3">
+<h3 id="orgdca70d3">Match小节</h3>
+<div class="outline-text-3" id="text-orgdca70d3">
+<p>
+如果 "[Match]" 小节中的每一项都与某个网卡匹配， 那么视为该Link文件与该网卡匹配。若 "[Match]" 小节为空则表示匹配任意网卡。 
+</p>
+
+<p>
+所有可用于匹配的选项如下：
+</p>
+
+<dl class="org-dl">
+<dt>MACAddress</dt><dd>匹配网卡的物理地址(MAC地址)</dd>
+<dt>OriginalName</dt><dd>匹配网卡的"INTERFACE"属性值(网卡的内核名称)。 接收一个空格分隔的匹配模式列表(使用shell风格的通配符)。 不可用于匹配已经被用户空间改了名字的网卡。 应该小心使用此选项， 因为网卡的内核名称有可能是不稳定的。</dd>
+<dt>Path</dt><dd>匹配网卡的 "ID_PATH" 属性值(网卡的总线路径)。 接收一个空格分隔的匹配模式列表(使用shell风格的通配符)。</dd>
+<dt>Driver</dt><dd>匹配网卡的 "DRIVER" 属性值(网卡的驱动名称)。 接收一个空格分隔的匹配模式列表(使用shell风格的通配符)。 注意，如果网卡的 "DRIVER" 属性不存在， 那么将使用 "ethtool -i" 命令中输出的驱动名称。</dd>
+<dt>Type</dt><dd>匹配网卡的 "DEVTYPE" 属性值(网卡的设备类型)。 接收一个空格分隔的匹配模式列表(使用shell风格的通配符)。</dd>
+<dt>Host</dt><dd>匹配主机的 hostname 或"machine ID"，参见 systemd.unit(5) 中的 "ConditionHost=" 选项。</dd>
+<dt>Virtualization</dt><dd>检查是否运行于特定的虚拟环境中， 参见 systemd.unit(5) 中的 "ConditionVirtualization=" 选项。</dd>
+<dt>KernelCommandLine</dt><dd>检查是否设置了(或者以"!"开头表示未设置)特定的内核引导选项， 参见 systemd.unit(5) 中的 "ConditionKernelCommandLine=" 选项。</dd>
+<dt>Architecture</dt><dd>检查是否运行于特定的硬件平台， 参见 systemd.unit(5) 中的 "ConditionArchitecture=" 选项。</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orga7d627f" class="outline-3">
+<h3 id="orga7d627f">Link小节</h3>
+<div class="outline-text-3" id="text-orga7d627f">
+<p>
+Link小节可以对网卡进行多种配置，其中与修改MAC有关的选项有：
+</p>
+
+<dl class="org-dl">
+<dt>MACAddressPolicy</dt><dd>应该如何设置网卡的MAC地址：
+
+<dl class="org-dl">
+<dt>"persistent"</dt><dd>如果内核使用了网卡硬件固有的MAC地址(绝大多数网卡都有)， 那么啥也不做，直接使用内核的MAC地址。 否则，将会随机新生成一个 确保在多次启动之间保持固定不变的MAC地址(针对给定的主板与网卡)。 自动生成MAC地址的特性 要求网卡必须存在 ID_NET_NAME_* 属性， 否则无法自动生成MAC地址。</dd>
+
+<dt>"random"</dt><dd>如果内核使用了随机生成的MAC地址(而不是网卡硬件固有的MAC地址)， 那么啥也不做，直接使用内核的MAC地址。 否则，将在网卡每次出现的时候(一般在启动过程中)随机新生成一个MAC地址。 无论使用上述哪种方式生成的MAC地址， 都将设置 "unicast" 与 "locally administered" 位。</dd>
+
+<dt>"none"</dt><dd>无条件的直接使用内核的MAC地址。</dd>
+</dl></dd>
+
+<dt>MACAddress</dt><dd>在未设置 "MACAddressPolicy=" 时所使用MAC地址。</dd>
+</dl>
+
+
+<p>
+另外，Link小节中，我们必须为某个网卡进行命名，因此肯定会有 <code>NamePolicy</code> 或者 <code>Name</code> 选项
+</p>
+
+<dl class="org-dl">
+<dt>NamePolicy</dt><dd>应该如何设置网卡的名称， 仅在未使用 "net.ifnames=0" 内核引导选项时有意义。 接受一个空格分隔的策略列表， 顺序尝试每个策略，并以第一个成功的策略为准。 所得的名字将被用于设置网卡的 "ID_NET_NAME" 属性。 注意，默认的udev规则会用 "ID_NET_NAME" 的值设置 "NAME" 属性(也就是网卡的名称)。 如果网卡已经被空户空间命名，那么将不会进行任何重命名操作。 可用的策略如下：
+
+<dl class="org-dl">
+<dt>"kernel"</dt><dd>如果内核已经为此网卡设置了固定的可预测名称， 那么不进行任何重命名操作。</dd>
+
+<dt>"database"</dt><dd>基于网卡的 "ID_NET_NAME_FROM_DATABASE" 属性值(来自于udev硬件数据库)设置网卡的名称。</dd>
+
+<dt>"onboard"</dt><dd>基于网卡的 "ID_NET_NAME_ONBOARD" 属性值(来自于板载网卡固件)设置网卡的名称。</dd>
+
+<dt>"slot"</dt><dd>基于网卡的 "ID_NET_NAME_SLOT" 属性值(来自于可插拔网卡固件)设置网卡的名称。</dd>
+
+<dt>"path"</dt><dd>基于网卡的 "ID_NET_NAME_PATH" 属性值(来自于网卡的总线位置)设置网卡的名称。</dd>
+
+<dt>"mac"</dt><dd>基于网卡的 "ID_NET_NAME_MAC" 属性值(来自于网卡的固定MAC地址)设置网卡的名称。</dd>
+</dl></dd>
+
+<dt>Name</dt><dd><p>
+在 NamePolicy= 无效时应该使用的网卡名称。 无效的情况包括： (1)未设置 NamePolicy= ； (2)NamePolicy= 中的策略全失败； (3)使用了"net.ifnames=0"内核引导选项
+</p>
+
+<p>
+注意， 千万不要设置可能被内核用于其他网口的名称(例如 "eth0")， 这可能会导致 udev 在分配名称时与内核产生竞争， 从而导致不可预期的后果。 最好的做法是使用一些永远不会导致冲突名称或前缀，例如： "internal0"<i>"external0" 或 "lan0"</i>"lan1"/"lan3" 
+</p></dd>
+</dl>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-06-01</span>
+    <span title="last modification date" class="post-info">2018-06-01</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/network">network</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

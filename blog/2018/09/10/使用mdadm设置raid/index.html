@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用mdadm设置RAID - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用mdadm设置RAID</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org13511b9">RAID简介</a></li>
+<li><a href="#org6002e40">mdadm: RAID设置工具</a></li>
+<li><a href="#orgb1033d3">mdadm操作说明</a>
+<ul>
+<li><a href="#org6df7b91">创建RAID阵列</a>
+<ul>
+<li><a href="#org141eb8d">自动启用RAID</a></li>
+</ul>
+</li>
+<li><a href="#org2c6e071">查看RAID阵列信息</a></li>
+<li><a href="#org133f2bc">使用RAID阵列</a></li>
+<li><a href="#orgd2dd816">关闭RAID</a></li>
+<li><a href="#org3c3a73e">模拟RAID故障</a></li>
+<li><a href="#orgd33191d">移除RAID阵列中的磁盘</a></li>
+<li><a href="#org3f5e910">更换新磁盘</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org13511b9" class="outline-2">
+<h2 id="org13511b9">RAID简介</h2>
+<div class="outline-text-2" id="text-org13511b9">
+<p>
+RAID是一种使用磁盘驱动器的方法，它将一组磁盘驱动器用某种逻辑方式联系起来，作为一个逻辑磁盘驱动器来使用的.
+</p>
+
+<p>
+比较常用的的RAID级别包括：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">级别</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">RAID0</td>
+<td class="org-left">条带化,数据被拆分到多个驱动器中，但并没有数据镜像或校验信息</td>
+</tr>
+
+<tr>
+<td class="org-left">RAID1</td>
+<td class="org-left">镜像化,完全磁盘镜像，在独立的磁盘上创建数据的两份拷贝。这个级别提供最好的数据安全，但写速度慢，接代价最昂贵</td>
+</tr>
+
+<tr>
+<td class="org-left">RAID5</td>
+<td class="org-left">分布式奇偶校验,将奇偶校验信息分布在多个磁盘上，每个磁盘上的校验信息都通过其他磁盘上的数据来构建</td>
+</tr>
+
+<tr>
+<td class="org-left">RAID6</td>
+<td class="org-left">双分布式奇偶校验,和 RAID 5 相似但它有两个分布式奇偶校验。大多用在大数量的阵列中。我们最少需要4个驱动器，即使有2个驱动器发生故障，我们依然可以更换新的驱动器后重建数据。</td>
+</tr>
+
+<tr>
+<td class="org-left">RAID10</td>
+<td class="org-left">镜像+条带,RAID 10 可以被称为1 + 0或0 +1。它将做镜像+条带两个工作。在 RAID 10 中首先做镜像然后做条带。在 RAID 01 上首先做条带，然后做镜像。RAID 10 比 01 好。</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org6002e40" class="outline-2">
+<h2 id="org6002e40">mdadm: RAID设置工具</h2>
+<div class="outline-text-2" id="text-org6002e40">
+<p>
+madam命令是Linux下用于构建、管理和监控RAID阵列(也被称为md设备)的工具.
+它的语法为
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mdadm <span style="color: #4f97d7;">[</span>&#27169;&#24335;<span style="color: #4f97d7;">]</span> <span style="color: #4f97d7;">[</span>&#35774;&#22791;<span style="color: #4f97d7;">]</span> <span style="color: #4f97d7;">[</span>&#36873;&#39033;<span style="color: #4f97d7;">]</span>
+</pre>
+</div>
+
+<p>
+其中模式有下面几个:
+</p>
+
+<dl class="org-dl">
+<dt>--create</dt><dd>使用空闲设备创建新阵列，每个设备具有元数据快</dd>
+<dt>--assemble</dt><dd>将设备加入一个已经定义好的磁盘阵列</dd>
+<dt>--build</dt><dd>创建一个没有元数据块的磁盘阵列</dd>
+<dt>--manage</dt><dd>管理已经存储在阵列中的设备</dd>
+<dt>--misc</dt><dd>查询或修改磁盘阵列中相关设备的信息</dd>
+<dt>--grow</dt><dd>改变阵列中每个设备使用的容量或阵列中设备的数量</dd>
+<dt>--incremental</dt><dd>根据需要在阵列中添加/删除设备</dd>
+<dt>--monitor</dt><dd>监控一个或多个阵列，上报指定事件</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-orgb1033d3" class="outline-2">
+<h2 id="orgb1033d3">mdadm操作说明</h2>
+<div class="outline-text-2" id="text-orgb1033d3">
+</div>
+<div id="outline-container-org6df7b91" class="outline-3">
+<h3 id="org6df7b91">创建RAID阵列</h3>
+<div class="outline-text-3" id="text-org6df7b91">
+<p>
+我们可以通过 <code>mdadm</code> 命令来创建软件RAID，比如下面命令可以创建一个RAID5
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm --create /dev/md0 -a yes -l <span style="color: #a45bad;">5</span> -n <span style="color: #a45bad;">3</span> /dev/sdb /dev/sdc /dev/sdd
+</pre>
+</div>
+<p>
+其中
+</p>
+
+<dl class="org-dl">
+<dt>--create /dev/md0</dt><dd>创建一个新RAID，名字叫做 <code>/dev/md0</code></dd>
+<dt>-a yes</dt><dd>自动在/dev/下创建对应的RAID阵列设备</dd>
+<dt>-l 5</dt><dd>指定RAID级别为5</dd>
+<dt>-n 3</dt><dd>指定硬盘数量。表示用三块硬盘来创建RAID5,分别为 <code>/dev/sdb</code>, <code>/dev/sdc</code>, <code>/dev/sdd</code></dd>
+</dl>
+
+<p>
+我们会发现 <code>/dev</code> 下出现了一个名为 md0 的设备
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -l /dev/md0
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">brw-rw----. 1 root disk 9, 0 Sep 11 09:40 /dev/md0
+</pre>
+</div>
+</div>
+<div id="outline-container-org141eb8d" class="outline-4">
+<h4 id="org141eb8d">自动启用RAID</h4>
+<div class="outline-text-4" id="text-org141eb8d">
+<p>
+在创建好RAID以后，可以将RAID信息保存到 <code>/etc/mdadm.conf</code> 文件中，这样在下次操作系统重新启动时，系统会自动加载这个文件来启用RAID
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm -D --scan &gt;/etc/mdadm.conf
+cat /etc/mdadm.conf
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">ARRAY /dev/md0 metadata=1.2 name=MiWiFi-R3-srv:0 UUID=ece6c656:c9999ff6:9d17c0ec:08a0e3af
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2c6e071" class="outline-3">
+<h3 id="org2c6e071">查看RAID阵列信息</h3>
+<div class="outline-text-3" id="text-org2c6e071">
+<p>
+创建好RAID阵列后，我们可以通过 <code>mdadm --misc</code> 模式来查看刚创建好的RAID的详细信息
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mdadm --misc --detail /dev/md0
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 09:40:45 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:03:35 2018
+             State : clean 
+    Active Devices : 3
+   Working Devices : 3
+    Failed Devices : 0
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : ece6c656:c9999ff6:9d17c0ec:08a0e3af
+            Events : 18
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       3       8       48        2      active sync   /dev/sdd
+</pre>
+</div>
+
+<p>
+或者我们也可以通过 <code>/proc/mdstat</code> 文件来查看RAID的简洁信息
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/mdstat
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Personalities : [raid6] [raid5] [raid4] 
+md0 : active raid5 sdd[3] sdc[1] sdb[0]
+      16758784 blocks super 1.2 level 5, 512k chunk, algorithm 2 <span style="color: #86dc2f; background-color: #293235; font-weight: bold;">[3/3]</span> [UUU]
+      
+unused devices: &lt;none&gt;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org133f2bc" class="outline-3">
+<h3 id="org133f2bc">使用RAID阵列</h3>
+<div class="outline-text-3" id="text-org133f2bc">
+<p>
+在创建好RAID阵列后，我们就不能直接操作组成阵列的磁盘了，否则会损坏刚创建好的RAID阵列。
+我们通过 <code>/dev/md0</code> 这个设备来进行文件格式化和挂载
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">set</span> -x
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span>
+mkfs.xfs -f /dev/md0
+mount /dev/md0 /mnt
+mount |grep md0
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">+ mkfs.xfs -f /dev/md0
+meta-data=/dev/md0               isize=512    agcount=16, agsize=261760 blks
+         =                       sectsz=512   attr=2, projid32bit=1
+         =                       crc=1        finobt=0, sparse=0
+data     =                       bsize=4096   blocks=4188160, imaxpct=25
+         =                       sunit=128    swidth=256 blks
+naming   =version 2              bsize=4096   ascii-ci=0 ftype=1
+log      =internal log           bsize=4096   blocks=2560, version=2
+         =                       sectsz=512   sunit=8 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
++ mount /dev/md0 /mnt
++ mount
++ grep md0
+/dev/md0 on /mnt type xfs (rw,relatime,seclabel,attr2,inode64,sunit=1024,swidth=2048,noquota)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd2dd816" class="outline-3">
+<h3 id="orgd2dd816">关闭RAID</h3>
+<div class="outline-text-3" id="text-orgd2dd816">
+<p>
+我们可以通过 <code>mdadm --misc</code> 模式来关闭RAID。这会释放所有资源
+</p>
+
+<p>
+在关闭RAID之前需要先卸载RAID:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo umount /mnt
+</pre>
+</div>
+
+<p>
+然后关闭RAID
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm --misc --stop /dev/md0
+</pre>
+</div>
+
+<p>
+关闭RAID后，我们可以通过 <code>mdadm --misc --zero-superblock</code> 来清空磁盘中RAID阵列的超级块信息。
+清空就能够正常使用这些磁盘了
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mdadm --misc --zero-superblock /dev/sdb
+mdadm --misc --zero-superblock /dev/sdc
+mdadm --misc --zero-superblock /dev/sdd
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3c3a73e" class="outline-3">
+<h3 id="org3c3a73e">模拟RAID故障</h3>
+<div class="outline-text-3" id="text-org3c3a73e">
+<p>
+我们可以通过 <code>mdadm --manage /dev/md0 --fail</code> 来将某块磁盘设置成故障状态
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm /dev/md0 -f /dev/sdd <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">mdadm: set /dev/sdd faulty in /dev/md0
+</pre>
+</div>
+
+<p>
+然后我们再来查一下这个RAID的信息
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm --misc --detail /dev/md0
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 10:32:21 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:35:12 2018
+             State : clean, degraded 
+    Active Devices : 2
+   Working Devices : 2
+    Failed Devices : 1
+     Spare Devices : 0
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : c031d0c9:998a4e86:5cf90e71:52b229cd
+            Events : 20
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       -       0        0        2      removed
+
+       3       8       48        -      faulty   /dev/sdd
+</pre>
+</div>
+
+<p>
+你会发现 <code>/dev/sdd</code> 的状态现在变成了 <code>faulty</code>, 但是RAID5这个级别是允许一块磁盘损坏而不造成数据损坏的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd33191d" class="outline-3">
+<h3 id="orgd33191d">移除RAID阵列中的磁盘</h3>
+<div class="outline-text-3" id="text-orgd33191d">
+<div class="org-src-container">
+<pre class="src src-shell">sudo mdadm --manage /dev/md0 --remove /dev/sdd
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3f5e910" class="outline-3">
+<h3 id="org3f5e910">更换新磁盘</h3>
+<div class="outline-text-3" id="text-org3f5e910">
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">set</span> -x
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span>
+sudo mdadm --manage /dev/md0 --add /dev/sdd
+sudo mdadm --misc --detail /dev/md0
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">+ sudo mdadm --manage /dev/md0 --add /dev/sdd
+mdadm: added /dev/sdd
++ sudo mdadm --misc --detail /dev/md0
+/dev/md0:
+           Version : 1.2
+     Creation Time : Tue Sep 11 10:32:21 2018
+        Raid Level : raid5
+        Array Size : 16758784 (15.98 GiB 17.16 GB)
+     Used Dev Size : 8379392 (7.99 GiB 8.58 GB)
+      Raid Devices : 3
+     Total Devices : 3
+       Persistence : Superblock is persistent
+
+       Update Time : Tue Sep 11 10:40:41 2018
+             State : clean, degraded 
+    Active Devices : 2
+   Working Devices : 3
+    Failed Devices : 0
+     Spare Devices : 1
+
+            Layout : left-symmetric
+        Chunk Size : 512K
+
+Consistency Policy : resync
+
+              Name : MiWiFi-R3-srv:0  (local to host MiWiFi-R3-srv)
+              UUID : c031d0c9:998a4e86:5cf90e71:52b229cd
+            Events : 22
+
+    Number   Major   Minor   RaidDevice State
+       0       8       16        0      active sync   /dev/sdb
+       1       8       32        1      active sync   /dev/sdc
+       -       0        0        2      removed
+
+       3       8       48        -      spare   /dev/sdd
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-09-10</span>
+    <span title="last modification date" class="post-info">2018-09-11</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

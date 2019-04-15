@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何获取Python对象的源代码 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅,python" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何获取Python对象的源代码</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orga2d0180">inspect库</a></li>
+<li><a href="#org4211384">dill库</a></li>
+</ul>
+</div>
+</div>
+<p>
+有时候我们会想要知道某个Python函数、类或者模块(我们把这些东西统称为Python的对象)是怎么定义的，或者找出它们是在哪个文件中定义的。
+</p>
+
+<p>
+有两个库能够帮我们做到这一点，一个是内置的 <code>inspect</code> 库，一个是第三方的 <code>dill</code> 库
+</p>
+
+<div id="outline-container-orga2d0180" class="outline-2">
+<h2 id="orga2d0180">inspect库</h2>
+<div class="outline-text-2" id="text-orga2d0180">
+<p>
+用 <code>help(inspect)</code> 能看到关于 <code>inspect</code> 的描述如下：
+</p>
+<pre class="example">
+DESCRIPTION
+    This module encapsulates the interface provided by the internal special
+    attributes (co_*, im_*, tb_*, etc.) in a friendlier fashion.
+    It also provides some help for examining source code and class layout.
+</pre>
+
+<p>
+我们主要是使用该模块的  <code>getsource*</code> 系列函数，即：
+</p>
+
+<ol class="org-ol">
+<li><p>
+<code>inspect.getsource(object)</code> 函数以单字符串的形式返回某个python对象的源代码
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> inspect
+<span style="color: #4f97d7; font-weight: bold;">return</span> inspect.getsource<span style="color: #4f97d7;">(</span>inspect.getsource<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">def</span> <span style="color: #bc6ec5; font-weight: bold;">getsource</span><span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>:
+    <span style="color: #2aa1ae;">"""Return the text of the source code for an object.</span>
+
+<span style="color: #2aa1ae;">    The argument may be a module, class, method, function, traceback, frame,</span>
+<span style="color: #2aa1ae;">    or code object.  The source code is returned as a single string.  An</span>
+<span style="color: #2aa1ae;">    OSError is raised if the source code cannot be retrieved."""</span>
+    <span style="color: #7590db;">lines</span>, <span style="color: #7590db;">lnum</span> = getsourcelines<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">return</span> <span style="color: #2d9574;">''</span>.join<span style="color: #4f97d7;">(</span>lines<span style="color: #4f97d7;">)</span>
+</pre>
+</div></li>
+
+<li><p>
+<code>inspect.getsourcefile(object)</code> 函数返回某个python对象在哪个文件中定义
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> inspect
+<span style="color: #4f97d7; font-weight: bold;">return</span> inspect.getsourcefile<span style="color: #4f97d7;">(</span>inspect.getsourcefile<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/usr/lib/python3.6/inspect.py
+</pre>
+</div></li>
+
+<li><p>
+<code>inspect.getsourcelines(object)</code> 函数返回一个元组，其中包含了python对象源代码的list，以及其在源代码中定义的起始行
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> inspect
+<span style="color: #4f97d7; font-weight: bold;">return</span> inspect.getsourcelines<span style="color: #4f97d7;">(</span>inspect.getsourcelines<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7;">(</span><span style="color: #bc6ec5;">[</span><span style="color: #2d9574;">'def getsourcelines(object):\n'</span>, <span style="color: #2d9574;">'    """Return a list of source lines and starting line number for an object.\n'</span>, <span style="color: #2d9574;">'\n'</span>, <span style="color: #2d9574;">'    The argument may be a module, class, method, function, traceback, frame,\n'</span>, <span style="color: #2d9574;">'    or code object.  The source code is returned as a list of the lines\n'</span>, <span style="color: #2d9574;">'    corresponding to the object and the line number indicates where in the\n'</span>, <span style="color: #2d9574;">'    original source file the first line of code was found.  An OSError is\n'</span>, <span style="color: #2d9574;">'    raised if the source code cannot be retrieved."""\n'</span>, <span style="color: #2d9574;">'    object = unwrap(object)\n'</span>, <span style="color: #2d9574;">'    lines, lnum = findsource(object)\n'</span>, <span style="color: #2d9574;">'\n'</span>, <span style="color: #2d9574;">'    if ismodule(object):\n'</span>, <span style="color: #2d9574;">'        return lines, 0\n'</span>, <span style="color: #2d9574;">'    else:\n'</span>, <span style="color: #2d9574;">'        return getblock(lines[lnum:]), lnum + 1\n'</span><span style="color: #bc6ec5;">]</span>, <span style="color: #a45bad;">946</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div></li>
+</ol>
+
+<p>
+然而, <code>inspect</code> 有一个缺陷，那就是无法获取interactive python session中定义对象的源代码:
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> inspect
+<span style="color: #4f97d7; font-weight: bold;">def</span> <span style="color: #bc6ec5; font-weight: bold;">sum</span><span style="color: #4f97d7;">(</span>a,b<span style="color: #4f97d7;">)</span>:
+    <span style="color: #4f97d7; font-weight: bold;">return</span> a+b
+<span style="color: #4f97d7; font-weight: bold;">return</span> inspect.getsource<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">sum</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Traceback (most recent call last):
+  File "&lt;stdin&gt;", line 8, in &lt;module&gt;
+  File "&lt;stdin&gt;", line 6, in main
+  File "/usr/lib/python3.6/inspect.py", line 968, in getsource
+    lines, lnum = getsourcelines(object)
+  File "/usr/lib/python3.6/inspect.py", line 955, in getsourcelines
+    lines, lnum = findsource(object)
+  File "/usr/lib/python3.6/inspect.py", line 786, in findsource
+    raise OSError('could not get source code')
+OSError: could not get source code
+
+</pre>
+</div>
+
+<p>
+若想要能够获取interactive python session中定义对象的源代码,则可以使用第三方的 <code>dill</code> 库
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4211384" class="outline-2">
+<h2 id="org4211384">dill库</h2>
+<div class="outline-text-2" id="text-org4211384">
+<p>
+<code>dill</code> 有一个 <code>source</code> 子module，它提供了跟 <code>inspect</code> 非常类似的API接口:
+</p>
+
+<ol class="org-ol">
+<li><p>
+dill.source.getsource函数
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> dill
+<span style="color: #4f97d7; font-weight: bold;">return</span> dill.source.getsource<span style="color: #4f97d7;">(</span>dill.source.getsource<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">def</span> <span style="color: #bc6ec5; font-weight: bold;">getsource</span><span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, alias=<span style="color: #2d9574;">''</span>, lstrip=<span style="color: #a45bad;">False</span>, enclosing=<span style="color: #a45bad;">False</span>, \
+                                              force=<span style="color: #a45bad;">False</span>, builtin=<span style="color: #a45bad;">False</span><span style="color: #4f97d7;">)</span>:
+    <span style="color: #2aa1ae;">"""Return the text of the source code for an object. The source code for</span>
+<span style="color: #2aa1ae;">    interactively-defined objects are extracted from the interpreter's history.</span>
+
+<span style="color: #2aa1ae;">    The argument may be a module, class, method, function, traceback, frame,</span>
+<span style="color: #2aa1ae;">    or code object.  The source code is returned as a single string.  An</span>
+<span style="color: #2aa1ae;">    IOError is raised if the source code cannot be retrieved, while a</span>
+<span style="color: #2aa1ae;">    TypeError is raised for objects where the source code is unavailable</span>
+<span style="color: #2aa1ae;">    (e.g. builtins).</span>
+
+<span style="color: #2aa1ae;">    If alias is provided, then add a line of code that renames the object.</span>
+<span style="color: #2aa1ae;">    If lstrip=True, ensure there is no indentation in the first line of code.</span>
+<span style="color: #2aa1ae;">    If enclosing=True, then also return any enclosing code.</span>
+<span style="color: #2aa1ae;">    If force=True, catch (TypeError,IOError) and try to use import hooks.</span>
+<span style="color: #2aa1ae;">    If builtin=True, force an import for any builtins</span>
+<span style="color: #2aa1ae;">    """</span>
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">hascode denotes a callable</span>
+    <span style="color: #7590db;">hascode</span> = _hascode<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">is a class instance type (and not in builtins)</span>
+    <span style="color: #7590db;">instance</span> = _isinstance<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>
+
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">get source lines; if fail, try to 'force' an import</span>
+    <span style="color: #4f97d7; font-weight: bold;">try</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">fails for builtins, and other assorted object types</span>
+        <span style="color: #7590db;">lines</span>, <span style="color: #7590db;">lnum</span> = getsourcelines<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, enclosing=enclosing<span style="color: #4f97d7;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">except</span> <span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">TypeError</span>, <span style="color: #ce537a; font-weight: bold;">IOError</span><span style="color: #4f97d7;">)</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">failed to get source, resort to import hooks</span>
+        <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #4f97d7; font-weight: bold;">not</span> force: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">don't try to get types that findsource can't get</span>
+            <span style="color: #4f97d7; font-weight: bold;">raise</span>
+        <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #4f97d7; font-weight: bold;">not</span> getmodule<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">get things like 'None' and '1'</span>
+            <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #4f97d7; font-weight: bold;">not</span> instance: <span style="color: #4f97d7; font-weight: bold;">return</span> getimport<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, alias, builtin=builtin<span style="color: #4f97d7;">)</span>
+            <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">special handling (numpy arrays, ...)</span>
+            <span style="color: #7590db;">_import</span> = getimport<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, builtin=builtin<span style="color: #4f97d7;">)</span>
+            <span style="color: #7590db;">name</span> = getname<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, force=<span style="color: #a45bad;">True</span><span style="color: #4f97d7;">)</span>
+            <span style="color: #7590db;">_alias</span> = <span style="color: #2d9574;">"%s = "</span> % alias <span style="color: #4f97d7; font-weight: bold;">if</span> alias <span style="color: #4f97d7; font-weight: bold;">else</span> <span style="color: #2d9574;">""</span>
+            <span style="color: #4f97d7; font-weight: bold;">if</span> alias == name: <span style="color: #7590db;">_alias</span> = <span style="color: #2d9574;">""</span>
+            <span style="color: #4f97d7; font-weight: bold;">return</span> _import+_alias+<span style="color: #2d9574;">"%s\n"</span> % name
+        <span style="color: #4f97d7; font-weight: bold;">else</span>: <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #cc9393;">FIXME</span><span style="color: #2aa1ae; background-color: #292e34;">: could use a good bit of cleanup, since using getimport...</span>
+            <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #4f97d7; font-weight: bold;">not</span> instance: <span style="color: #4f97d7; font-weight: bold;">return</span> getimport<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, alias, builtin=builtin<span style="color: #4f97d7;">)</span>
+            <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">now we are dealing with an instance...</span>
+            <span style="color: #7590db;">name</span> = <span style="color: #4f97d7;">object</span>.__class__.<span style="color: #4f97d7;">__name__</span>
+            <span style="color: #7590db;">module</span> = <span style="color: #4f97d7;">object</span>.__module__
+            <span style="color: #4f97d7; font-weight: bold;">if</span> module <span style="color: #4f97d7; font-weight: bold;">in</span> <span style="color: #4f97d7;">[</span><span style="color: #2d9574;">'builtins'</span>,<span style="color: #2d9574;">'__builtin__'</span><span style="color: #4f97d7;">]</span>:
+                <span style="color: #4f97d7; font-weight: bold;">return</span> getimport<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, alias, builtin=builtin<span style="color: #4f97d7;">)</span>
+            <span style="color: #4f97d7; font-weight: bold;">else</span>: <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #cc9393;">FIXME</span><span style="color: #2aa1ae; background-color: #292e34;">: leverage getimport? use 'from module import name'?</span>
+                <span style="color: #7590db;">lines</span>, <span style="color: #7590db;">lnum</span> = <span style="color: #4f97d7;">[</span><span style="color: #2d9574;">"%s = __import__('%s', fromlist=['%s']).%s\n"</span> % <span style="color: #bc6ec5;">(</span>name,module,name,name<span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">]</span>, <span style="color: #a45bad;">0</span>
+                <span style="color: #7590db;">obj</span> = <span style="color: #4f97d7;">eval</span><span style="color: #4f97d7;">(</span>lines<span style="color: #bc6ec5;">[</span><span style="color: #a45bad;">0</span><span style="color: #bc6ec5;">]</span>.lstrip<span style="color: #bc6ec5;">(</span>name + <span style="color: #2d9574;">' = '</span><span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+                <span style="color: #7590db;">lines</span>, <span style="color: #7590db;">lnum</span> = getsourcelines<span style="color: #4f97d7;">(</span>obj, enclosing=enclosing<span style="color: #4f97d7;">)</span>
+
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">strip leading indent (helps ensure can be imported)</span>
+    <span style="color: #4f97d7; font-weight: bold;">if</span> lstrip <span style="color: #4f97d7; font-weight: bold;">or</span> alias:
+        <span style="color: #7590db;">lines</span> = _outdent<span style="color: #4f97d7;">(</span>lines<span style="color: #4f97d7;">)</span>
+
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">instantiate, if there's a nice repr  #</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: BAD IDEA???</span>
+    <span style="color: #4f97d7; font-weight: bold;">if</span> instance: <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">and force: #</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: move into findsource or getsourcelines ?</span>
+        <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #2d9574;">'('</span> <span style="color: #4f97d7; font-weight: bold;">in</span> <span style="color: #4f97d7;">repr</span><span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>: lines.append<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'%r\n'</span> % <span style="color: #4f97d7;">object</span><span style="color: #4f97d7;">)</span>
+       <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">else: #</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: better to somehow to leverage __reduce__ ?</span>
+       <span style="color: #2aa1ae; background-color: #292e34;">#    </span><span style="color: #2aa1ae; background-color: #292e34;">reconstructor,args = object.__reduce__()</span>
+       <span style="color: #2aa1ae; background-color: #292e34;">#    </span><span style="color: #2aa1ae; background-color: #292e34;">_ = reconstructor(*args)</span>
+        <span style="color: #4f97d7; font-weight: bold;">else</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">fall back to serialization #</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: bad idea?</span>
+            <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: better not duplicate work? #</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: better new/enclose=True?</span>
+            <span style="color: #7590db;">lines</span> = dumpsource<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, alias=<span style="color: #2d9574;">''</span>, new=force, enclose=<span style="color: #a45bad;">False</span><span style="color: #4f97d7;">)</span>
+            <span style="color: #7590db;">lines</span>, <span style="color: #7590db;">lnum</span> = <span style="color: #4f97d7;">[</span>line+<span style="color: #2d9574;">'\n'</span> <span style="color: #4f97d7; font-weight: bold;">for</span> line <span style="color: #4f97d7; font-weight: bold;">in</span> lines.split<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">'\n'</span><span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">][</span>:-<span style="color: #a45bad;">1</span><span style="color: #4f97d7;">]</span>, <span style="color: #a45bad;">0</span>
+       <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">else: object.__code__ # raise AttributeError</span>
+
+    <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">add an alias to the source code</span>
+    <span style="color: #4f97d7; font-weight: bold;">if</span> alias:
+        <span style="color: #4f97d7; font-weight: bold;">if</span> hascode:
+            <span style="color: #7590db;">skip</span> = <span style="color: #a45bad;">0</span>
+            <span style="color: #4f97d7; font-weight: bold;">for</span> line <span style="color: #4f97d7; font-weight: bold;">in</span> lines: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">skip lines that are decorators</span>
+                <span style="color: #4f97d7; font-weight: bold;">if</span> <span style="color: #4f97d7; font-weight: bold;">not</span> line.startswith<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'@'</span><span style="color: #4f97d7;">)</span>: <span style="color: #4f97d7; font-weight: bold;">break</span>
+                <span style="color: #7590db;">skip</span> += <span style="color: #a45bad;">1</span>
+            <span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #cc9393;">XXX</span><span style="color: #2aa1ae; background-color: #292e34;">: use regex from findsource / getsourcelines ?</span>
+            <span style="color: #4f97d7; font-weight: bold;">if</span> lines<span style="color: #4f97d7;">[</span>skip<span style="color: #4f97d7;">]</span>.lstrip<span style="color: #4f97d7;">()</span>.startswith<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'def '</span><span style="color: #4f97d7;">)</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">we have a function</span>
+                <span style="color: #4f97d7; font-weight: bold;">if</span> alias != <span style="color: #4f97d7;">object</span>.<span style="color: #4f97d7;">__name__</span>:
+                    lines.append<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'\n%s = %s\n'</span> % <span style="color: #bc6ec5;">(</span>alias, <span style="color: #4f97d7;">object</span>.<span style="color: #4f97d7;">__name__</span><span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+            <span style="color: #4f97d7; font-weight: bold;">elif</span> <span style="color: #2d9574;">'lambda '</span> <span style="color: #4f97d7; font-weight: bold;">in</span> lines<span style="color: #4f97d7;">[</span>skip<span style="color: #4f97d7;">]</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">we have a lambda</span>
+                <span style="color: #4f97d7; font-weight: bold;">if</span> alias != lines<span style="color: #4f97d7;">[</span>skip<span style="color: #4f97d7;">]</span>.split<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'='</span><span style="color: #4f97d7;">)[</span><span style="color: #a45bad;">0</span><span style="color: #4f97d7;">]</span>.strip<span style="color: #4f97d7;">()</span>:
+                    <span style="color: #7590db;">lines</span><span style="color: #4f97d7;">[</span>skip<span style="color: #4f97d7;">]</span> = <span style="color: #2d9574;">'%s = %s'</span> % <span style="color: #4f97d7;">(</span>alias, lines<span style="color: #bc6ec5;">[</span>skip<span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">)</span>
+            <span style="color: #4f97d7; font-weight: bold;">else</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">...try to use the object's name</span>
+                <span style="color: #4f97d7; font-weight: bold;">if</span> alias != <span style="color: #4f97d7;">object</span>.<span style="color: #4f97d7;">__name__</span>:
+                    lines.append<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'\n%s = %s\n'</span> % <span style="color: #bc6ec5;">(</span>alias, <span style="color: #4f97d7;">object</span>.<span style="color: #4f97d7;">__name__</span><span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+        <span style="color: #4f97d7; font-weight: bold;">else</span>: <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">class or class instance</span>
+            <span style="color: #4f97d7; font-weight: bold;">if</span> instance:
+                <span style="color: #4f97d7; font-weight: bold;">if</span> alias != lines<span style="color: #4f97d7;">[</span>-<span style="color: #a45bad;">1</span><span style="color: #4f97d7;">]</span>.split<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'='</span><span style="color: #4f97d7;">)[</span><span style="color: #a45bad;">0</span><span style="color: #4f97d7;">]</span>.strip<span style="color: #4f97d7;">()</span>:
+                    <span style="color: #7590db;">lines</span><span style="color: #4f97d7;">[</span>-<span style="color: #a45bad;">1</span><span style="color: #4f97d7;">]</span> = <span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'%s = '</span> % alias<span style="color: #4f97d7;">)</span> + lines<span style="color: #4f97d7;">[</span>-<span style="color: #a45bad;">1</span><span style="color: #4f97d7;">]</span>
+            <span style="color: #4f97d7; font-weight: bold;">else</span>:
+                <span style="color: #7590db;">name</span> = getname<span style="color: #4f97d7;">(</span><span style="color: #4f97d7;">object</span>, force=<span style="color: #a45bad;">True</span><span style="color: #4f97d7;">)</span> <span style="color: #4f97d7; font-weight: bold;">or</span> <span style="color: #4f97d7;">object</span>.<span style="color: #4f97d7;">__name__</span>
+                <span style="color: #4f97d7; font-weight: bold;">if</span> alias != name:
+                    lines.append<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">'\n%s = %s\n'</span> % <span style="color: #bc6ec5;">(</span>alias, name<span style="color: #bc6ec5;">)</span><span style="color: #4f97d7;">)</span>
+    <span style="color: #4f97d7; font-weight: bold;">return</span> <span style="color: #2d9574;">''</span>.join<span style="color: #4f97d7;">(</span>lines<span style="color: #4f97d7;">)</span>
+</pre>
+</div></li>
+
+<li><p>
+dill.source.getsourcefile函数
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> dill
+<span style="color: #4f97d7; font-weight: bold;">return</span> dill.source.getsourcefile<span style="color: #4f97d7;">(</span>dill.source.getsourcefile<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/usr/lib/python3.6/inspect.py
+</pre>
+</div></li>
+
+<li><p>
+dill.source.getsourcelines函数
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span style="color: #4f97d7; font-weight: bold;">import</span> dill
+<span style="color: #4f97d7; font-weight: bold;">return</span> dill.source.getsourcelines<span style="color: #4f97d7;">(</span>dill.source.getsourcelines<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">(['def getsourcelines(object, lstrip=False, enclosing=False):\n', '    """Return a list of source lines and starting line number for an object.\n', "    Interactively-defined objects refer to lines in the interpreter's history.\n", '\n', '    The argument may be a module, class, method, function, traceback, frame,\n', '    or code object.  The source code is returned as a list of the lines\n', '    corresponding to the object and the line number indicates where in the\n', '    original source file the first line of code was found.  An IOError is\n', '    raised if the source code cannot be retrieved, while a TypeError is\n', '    raised for objects where the source code is unavailable (e.g. builtins).\n', '\n', '    If lstrip=True, ensure there is no indentation in the first line of code.\n', '    If enclosing=True, then also return any enclosing code."""\n', '    code, n = getblocks(object, lstrip=lstrip, enclosing=enclosing, locate=True)\n', '    return code[-1], n[-1]\n'], 300)
+</pre>
+</div></li>
+</ol>
+
+
+<p>
+不过它还支持获取interactive python session中定义对象的源代码:
+<img src="/assets/blog/2018/05/18/如何获取python对象的源代码/screenshot-01.png" alt="screenshot-01.png" />
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-05-18</span>
+    <span title="last modification date" class="post-info">2018-05-18</span>
+    <span title="tags" class="post-info"><a href="/tags/编程之旅">编程之旅</a> : <a href="/tags/python">python</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

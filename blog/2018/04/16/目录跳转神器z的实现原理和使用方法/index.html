@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>目录跳转神器z的实现原理和使用方法 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,bash" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">目录跳转神器z的实现原理和使用方法</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgc4dc89d">安装</a></li>
+<li><a href="#org82b2c99">实现原理</a></li>
+<li><a href="#orgca39882">使用方法</a></li>
+</ul>
+</div>
+</div>
+<p>
+z是一个很不寻常的目录跳转工具，它的不同点在于：
+</p>
+
+<ol class="org-ol">
+<li>它根据正则表达式来匹配你想进入的目录</li>
+
+<li>它会记录你的目录跳转信息，然后根据你在目录中执行命令的频率和最近所在目录的时间来推测你想要进入的是哪个目录</li>
+</ol>
+
+<div id="outline-container-orgc4dc89d" class="outline-2">
+<h2 id="orgc4dc89d">安装</h2>
+<div class="outline-text-2" id="text-orgc4dc89d">
+<p>
+z的安装很简单，它只不过是一个shell脚本而已。
+</p>
+
+<ol class="org-ol">
+<li><p>
+下载z脚本
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">wget https://raw.githubusercontent.com/rupa/z/master/z.sh -O ~/bin/z.sh
+</pre>
+</div></li>
+
+<li><p>
+在 <code>~/.bashrc</code> 中加载 <code>z.sh</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">". ~/bin/z.sh"</span> &gt;&gt; ~/.bashrc
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org82b2c99" class="outline-2">
+<h2 id="org82b2c99">实现原理</h2>
+<div class="outline-text-2" id="text-org82b2c99">
+<p>
+z的工作原理是通过 <code>PROMPT_COMMAND</code> 来在每次显示主提示符之前将当前目录加入到数据文件中去。
+</p>
+
+<p>
+相关代码如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #7590db;">PROMPT_COMMAND</span>=<span style="color: #2d9574;">"$PROMPT_COMMAND"</span>$<span style="color: #2d9574;">'\n''(_z --add "$(</span><span style="color: #fa8072;">command</span><span style="color: #2d9574;"> pwd '</span>$<span style="color: #7590db;">_Z_RESOLVE_SYMLINKS</span><span style="color: #2d9574;">' 2&gt;/dev/null)" 2&gt;/dev/null &amp;);'</span>
+</pre>
+</div>
+
+<p>
+在将当前目录添加入数据文件中时会同时更新该目录的频率和时间。
+若频率总数大于9000,则所有命令的频率都缩小到原来的0.99
+若有路径的频率小于1,则该条记录会在下次执行z命令时被删掉.
+</p>
+
+<p>
+相关代码如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">_z_dirs | awk -v <span style="color: #7590db;">path</span>=<span style="color: #2d9574;">"$*"</span> -v <span style="color: #7590db;">now</span>=<span style="color: #2d9574;">"$(</span><span style="color: #fa8072;">date</span><span style="color: #2d9574;"> +%s)"</span> -F<span style="color: #2d9574;">"|"</span> <span style="color: #2d9574;">'</span>
+<span style="color: #2d9574;">            BEGIN {</span>
+<span style="color: #2d9574;">                rank[path] = 1</span>
+<span style="color: #2d9574;">                time[path] = now</span>
+<span style="color: #2d9574;">            }</span>
+<span style="color: #2d9574;">            $2 &gt;= 1 {</span>
+<span style="color: #2d9574;">                # drop ranks below 1</span>
+<span style="color: #2d9574;">                if( $1 == path ) {</span>
+<span style="color: #2d9574;">                    rank[$1] = $2 + 1</span>
+<span style="color: #2d9574;">                    time[$1] = now</span>
+<span style="color: #2d9574;">                } else {</span>
+<span style="color: #2d9574;">                    rank[$1] = $2</span>
+<span style="color: #2d9574;">                    time[$1] = $3</span>
+<span style="color: #2d9574;">                }</span>
+<span style="color: #2d9574;">                count += $2</span>
+<span style="color: #2d9574;">            }</span>
+<span style="color: #2d9574;">            END {</span>
+<span style="color: #2d9574;">                if( count &gt; 9000 ) {</span>
+<span style="color: #2d9574;">                    # aging</span>
+<span style="color: #2d9574;">                    for( x in rank ) print x "|" 0.99*rank[x] "|" time[x]</span>
+<span style="color: #2d9574;">                } else for( x in rank ) print x "|" rank[x] "|" time[x]</span>
+<span style="color: #2d9574;">            }</span>
+<span style="color: #2d9574;">        '</span> <span style="color: #a45bad;">2</span>&gt;/dev/null &gt;| <span style="color: #2d9574;">"$tempfile"</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgca39882" class="outline-2">
+<h2 id="orgca39882">使用方法</h2>
+<div class="outline-text-2" id="text-orgca39882">
+<p>
+z的使用方法很简单，打开 <code>z.sh</code> 就能在头部看到一些使用的例子
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">USE:</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z foo     # cd to most frecent dir matching foo</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z foo bar # cd to most frecent dir matching foo and bar</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z -r foo  # cd to highest ranked dir matching foo</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z -t foo  # cd to most recently accessed dir matching foo</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z -l foo  # list matches instead of cd</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#     </span><span style="color: #2aa1ae; background-color: #292e34;">* z -c foo  # restrict matches to subdirs of $PWD</span>
+</pre>
+</div>
+
+<p>
+直接执行 <code>z</code> 命令会列出数据库中记录的各个目录及其权重，并按照权重从低到高的顺序排列。
+</p>
+<pre class="example">
+[lujun9972@T520 github]$ z
+0.25       /home/lujun9972/github/lujun9972.github.com/linux和它的小伙伴
+2.5        /home/lujun9972/github/GraphicsMagick.docker
+16         /home/lujun9972/github/lctt-scripts
+40         /home/lujun9972/github
+44         /
+</pre>
+
+<p>
+使用 <code>z</code> 命令跳转目录最简单的方法就是给它一个正则表达式作为参数，z会按照权重依次匹配该正则表达式，进入第一个匹配该正则表达式的目录
+</p>
+<pre class="example">
+[lujun9972@T520 github]$ z linux
+[lujun9972@T520 linux和它的小伙伴]$ 
+</pre>
+
+<p>
+<code>z</code> 也支持一些参数：
+</p>
+<pre class="example">
+[lujun9972@T520 linux和它的小伙伴]$ z -h
+z [-cehlrtx] args
+</pre>
+
+<p>
+比较常用的参数有：
+</p>
+
+<dl class="org-dl">
+<dt>-c</dt><dd>只进入当前目录下的子目录中</dd>
+<dt>-e</dt><dd>只显示要进入的目录而不真正cd. 需要注意的是，你执行该命令本身会增加当前目录的频率，可能会对你下次执行z命令产生影响。</dd>
+<dt>-l</dt><dd>列出所有匹配正则的目录，但不真正cd。</dd>
+<dt>-r</dt><dd>只根据访问频率来排序</dd>
+<dt>-t</dt><dd>只根据最近访问时间来排序</dd>
+<dt>-x</dt><dd>将当前目录从数据库文件中删除掉。</dd>
+</dl>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-16</span>
+    <span title="last modification date" class="post-info">2018-04-17</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/bash">bash</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

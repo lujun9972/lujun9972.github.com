@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用shell控制OrangePi的发光二极管 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,OrangePi" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用shell控制OrangePi的发光二极管</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org336c410">触发LED的条件(trigger)</a></li>
+<li><a href="#org003303c">点亮/熄灭LED灯</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文以安装了Armbian的OrangePi PC2为例。
+</p>
+
+<p>
+在OrangePi PC2中有两个LED灯可以被软件控制:一个红灯，一个绿灯。
+</p>
+
+<p>
+在Linux中，LED是通过 /sys 目录里的文件来控制的，这个目录是由内核驱动程序实现的。
+</p>
+
+<p>
+这两个LED灯相关的目录分别为 <code>/sys/class/leds/orangepi:green:pwr</code> 以及 <code>/sys/class/leds/orangepi:red:status</code>.
+</p>
+
+<p>
+从名字上也很容易看出，前者是控制绿灯，后者是控制红灯的。
+</p>
+
+<p>
+而在具体的LED灯目录中，有各种文件和目录可以用来改变LED灯的行为和获取LED灯的状态：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -F /sys/class/leds/orangepi:green:pwr/
+</pre>
+</div>
+
+<p>
+结果为:
+</p>
+<div class="org-src-container">
+<pre class="src src-org">brightness  device@  max_brightness  power/  subsystem@  trigger  uevent
+</pre>
+</div>
+
+<div id="outline-container-org336c410" class="outline-2">
+<h2 id="org336c410">触发LED的条件(trigger)</h2>
+<div class="outline-text-2" id="text-org336c410">
+<p>
+我们可以使用LED灯来表现各种事件，通过查看 <code>trigger</code> 文件能够看到哪些事件可以用来出发LED闪亮：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat /sys/class/leds/orangepi:green:pwr/trigger
+</pre>
+</div>
+
+<p>
+结果为:
+</p>
+<div class="org-src-container">
+<pre class="src src-org">[none] kbd-scrolllock kbd-numlock kbd-capslock kbd-kanalock kbd-shiftlock kbd-altgrlock kbd-ctrllock kbd-altlock kbd-shiftllock kbd-shiftrlock kbd-ctrlllock kbd-ctrlrlock usbport usb-gadget usb-host mmc0 heartbeat cpu cpu0 cpu1 cpu2 cpu3 rc-feedback 0.2:01:1Gbps 0.2:01:100Mbps 0.2:01:10Mbps 
+</pre>
+</div>
+
+<p>
+可以看到，支持的触发器有很多，但是 <code>none</code> 外面的方括号表明当前的选择是 <code>none</code> 。
+</p>
+
+<p>
+<b>只有当触发器源为none的情况下，才能用软件来控制LED灯</b>
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-org003303c" class="outline-2">
+<h2 id="org003303c">点亮/熄灭LED灯</h2>
+<div class="outline-text-2" id="text-org003303c">
+<p>
+在LED灯目录中，还有一个 <code>brightness</code> 的文件，用来表示LED灯的亮度。其中0表示完全熄灭，255表示最大亮度。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /sys/class/leds/orangepi:green:pwr/brightness
+</pre>
+</div>
+
+<p>
+结果：
+</p>
+<div class="org-src-container">
+<pre class="src src-org">255
+</pre>
+</div>
+
+<p>
+这说明，绿灯是亮着的。
+</p>
+
+<p>
+目前，OrangePi的LED只能亮或者不亮，也就是说，任何不为0的亮度值都会让LED完全点亮。
+</p>
+
+<p>
+要点亮或者熄灭LED灯，可以直接通过修改 <code>brightness</code> 的值来实现，比如：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> <span style="color: #a45bad;">0</span>|sudo tee /sys/class/leds/orangepi:green:pwr/brightness
+</pre>
+</div>
+
+<p>
+就会让绿灯熄灭了。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-03-10</span>
+    <span title="last modification date" class="post-info">2018-03-27</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/orangepi">OrangePi</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

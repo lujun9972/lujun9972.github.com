@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>docker-machine初体验 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,docker" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">docker-machine初体验</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org8ab1ba3">在本地创建带Docker的虚拟机</a></li>
+<li><a href="#org85b983e">在远程主机上安装Docker</a></li>
+<li><a href="#org6dae26d">管理Docker Machine</a>
+<ul>
+<li><a href="#orgd31c5fb">查看被管主机信息</a></li>
+<li><a href="#orgfeacc43">升级被管主机</a></li>
+<li><a href="#orgc1f2f3d">停止被管主机</a></li>
+<li><a href="#orgfeeb4d3">启动被管主机</a></li>
+<li><a href="#orgd7da6ca">删除被管主机</a></li>
+<li><a href="#org60e63f7">管理远程Docker</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+Docker Machine是Docker官方提供的一个帮助我们在远程机器上安装Docker和在本地安装带Docker的虚拟机的工具。
+我们还可以通过docker=machine命令来对远程主机的Docker进行管理。
+</p>
+
+<p>
+Docker Machine自带了很多驱动，这些驱动将不同的虚拟机引擎与云服务商与Docker Machine整合在一起。
+Docker Machine自带的驱动有:
+</p>
+<pre class="example">
+amazonec2        digitalocean     generic          hyperv           rackspace        virtualbox       vmwarevcloudair
+azure            exoscale         google           openstack        softlayer        vmwarefusion     vmwarevsphere
+</pre>
+
+<div id="outline-container-org8ab1ba3" class="outline-2">
+<h2 id="org8ab1ba3">在本地创建带Docker的虚拟机</h2>
+<div class="outline-text-2" id="text-org8ab1ba3">
+<p>
+通过 <code>docker-machine create</code> 命令可以创建主机并安装虚拟机，比如下面命令会创建三个使用VirtualBox驱动的主机并且在每台主机上安装好Docker
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine create --driver virtualbox host1
+docker-machine create --driver virtualbox host2
+docker-machine create --driver virtualbox host3
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Running pre-create checks...
+Creating machine...
+(host1) Copying <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/cache/boot2docker.iso to <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/machines/host1/boot2docker.iso...
+(host1) Creating VirtualBox VM...
+(host1) Creating SSH key...
+(host1) Starting the VM...
+(host1) Check network to re-create if needed...
+(host1) Waiting for an IP...
+Waiting for machine to be running, this may take a few minutes...
+Detecting operating system of created instance...
+Waiting for SSH to be available...
+Detecting the provisioner...
+Provisioning with boot2docker...
+Copying certs to the local machine directory...
+Copying certs to the remote machine...
+Setting Docker configuration on the remote daemon...
+Checking connection to Docker...
+Docker is up and running!
+To see how to connect your Docker Client to the Docker Engine running on this virtual machine, run: docker-machine env host1
+Running pre-create checks...
+Creating machine...
+(host2) Copying <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/cache/boot2docker.iso to <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/machines/host2/boot2docker.iso...
+(host2) Creating VirtualBox VM...
+(host2) Creating SSH key...
+(host2) Starting the VM...
+(host2) Check network to re-create if needed...
+(host2) Waiting for an IP...
+Waiting for machine to be running, this may take a few minutes...
+Detecting operating system of created instance...
+Waiting for SSH to be available...
+Detecting the provisioner...
+Provisioning with boot2docker...
+Copying certs to the local machine directory...
+Copying certs to the remote machine...
+Setting Docker configuration on the remote daemon...
+Checking connection to Docker...
+Docker is up and running!
+To see how to connect your Docker Client to the Docker Engine running on this virtual machine, run: docker-machine env host2
+Running pre-create checks...
+Creating machine...
+(host3) Copying <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/cache/boot2docker.iso to <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/machines/host3/boot2docker.iso...
+(host3) Creating VirtualBox VM...
+(host3) Creating SSH key...
+(host3) Starting the VM...
+(host3) Check network to re-create if needed...
+(host3) Waiting for an IP...
+Waiting for machine to be running, this may take a few minutes...
+Detecting operating system of created instance...
+Waiting for SSH to be available...
+Detecting the provisioner...
+Provisioning with boot2docker...
+Copying certs to the local machine directory...
+Copying certs to the remote machine...
+Setting Docker configuration on the remote daemon...
+Checking connection to Docker...
+Docker is up and running!
+To see how to connect your Docker Client to the Docker Engine running on this virtual machine, run: docker-machine env host3
+</pre>
+</div>
+
+<p>
+同时，你会发现virtualbox创建了名为host1,host2,host3的三台主机
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">vboxmanage list vms
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">"winxp_default_1529148278389_22373" {5d100a8e-a670-4f84-8ea4-eb22f3dab94d}
+"win7" {dddcdefb-5002-4bcd-bef2-ee37f0ba6197}
+"rhel7.5" {bbf01330-070b-4663-b8e3-52734297c112}
+"redis-host" {f5576790-7d12-4ee8-884f-7352c04f4e04}
+"rhel_default_1532386536492_17873" {449040f4-21ef-436d-8648-a4026a547875}
+"centos_default_1532472936791_11249" {86ffd1ee-681a-4062-a233-e29ac966fc81}
+"freebsd" {2924b43b-da8b-4f59-ac32-ee4420923055}
+"RHEL7" {33e98062-f82e-49df-9a8a-91b0eb31e80d}
+"arch_default_1532990644081_68335" {2d5206ba-c07a-4691-8c3b-63e941113f15}
+"ctf-tools_default_1533510374954_98487" {edd5c5d6-95e5-47af-a462-1d66aab8e640}
+"host1" {ee738687-3981-4582-b2d3-3540a1cbff1c}
+"host2" {d2907cef-5018-4476-a6e8-5e7c1c321cfe}
+"host3" {222d485e-26c2-46e8-bc6e-cfc490d4c34a}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org85b983e" class="outline-2">
+<h2 id="org85b983e">在远程主机上安装Docker</h2>
+<div class="outline-text-2" id="text-org85b983e">
+<p>
+若远程主机是在Docker Machine支持的云服务商的，那么可以直接通过对应的驱动来帮助安装Docker，方法跟上面很类似。
+</p>
+
+<p>
+然若远程主机并不是在云服务商上，或者是Docker Machine所不支持的云服务商，那么可以通过 <code>generic</code> 驱动来进行安装。
+</p>
+
+<p>
+在使用 <code>generic</code> 进行远程安装前，我们需要一些准备工作:
+</p>
+
+<ol class="org-ol">
+<li><p>
+在目标主机创建一个无需输入密码即可sudo操作的用户
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo adduser $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">user</span><span style="color: #4f97d7;">}</span>
+sudo usermod -a -G sudo wheel $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">user</span><span style="color: #4f97d7;">}</span>
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"${user} ALL=(ALL:ALL) NOPASSWD: ALL"</span> &gt;&gt;/etc/sudoers
+</pre>
+</div></li>
+
+<li><p>
+在目标主机上添加密钥认证，使得登陆远程主机不同输入密码
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ssh-copy-id $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">user</span><span style="color: #4f97d7;">}</span>@$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">remote_host</span><span style="color: #4f97d7;">}</span>
+</pre>
+</div></li>
+</ol>
+
+
+<p>
+准备工作完成后，我们可以在本地主机上运行下面命令
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine create -d generic <span style="color: #2d9574;">\</span>
+    --generic-ip-address=xxx.xxx.xxx.xxx <span style="color: #2d9574;">\</span>
+    --generic-ssh-user=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">user</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+    --generic-ssh-key ~/.ssh/id_rsa <span style="color: #2d9574;">\</span>
+    $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">name</span><span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<p>
+其中 <code>${name}</code> 就是 Docker-Machine 用来管理目标主机上Docker的一个指代名称。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6dae26d" class="outline-2">
+<h2 id="org6dae26d">管理Docker Machine</h2>
+<div class="outline-text-2" id="text-org6dae26d">
+</div>
+<div id="outline-container-orgd31c5fb" class="outline-3">
+<h3 id="orgd31c5fb">查看被管主机信息</h3>
+<div class="outline-text-3" id="text-orgd31c5fb">
+<p>
+Docker Machine可以用来列出、检查和升级被管主机，我们可以通过 <code>ls</code> 子命令来获得被管理的机器列表
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine ls
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">NAME         ACTIVE   DRIVER       STATE     URL                         SWARM   DOCKER        ERRORS
+host1        -        virtualbox   Running   tcp://192.168.99.100:2376           v18.06.0-ce   
+host2        -        virtualbox   Running   tcp://192.168.99.101:2376           v18.06.0-ce   
+host3        -        virtualbox   Running   tcp://192.168.99.102:2376           v18.06.0-ce   
+redis-host   -        virtualbox   Stopped                                       Unknown       
+</pre>
+</div>
+
+<p>
+这个命令列出了每台被管主机的名称、创建时的驱动、状态、以及Docker Daemon访问的URL。
+ACTIVE这一列若带星号，则表示这台机器是活跃的，也就是任何在本地运行的docker命令连接上的都是活跃机器上的Docker Daemon。
+</p>
+
+<p>
+类似于 <code>docker</code>, 我们也可以使用 <code>inspect</code> 子命令来查看某台主机的配置
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine inspect --format <span style="color: #2d9574;">"{{.Driver.IPAddress}}"</span> host2
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">192.168.99.101
+</pre>
+</div>
+
+<p>
+当然，如果只是想看被管主机IP，那么可以直接通过 <code>ip</code> 子命令来查看
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine ip host2
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">192.168.99.101
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-orgfeacc43" class="outline-3">
+<h3 id="orgfeacc43">升级被管主机</h3>
+<div class="outline-text-3" id="text-orgfeacc43">
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine upgrade host1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Waiting for SSH to be available...
+Detecting the provisioner...
+Upgrading docker...
+Stopping machine to do the upgrade...
+Upgrading machine "host1"...
+Copying <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/cache/boot2docker.iso to <span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/machines/host1/boot2docker.iso...
+Starting machine back up...
+(host1) Check network to re-create if needed...
+(host1) Waiting for an IP...
+Restarting docker...
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc1f2f3d" class="outline-3">
+<h3 id="orgc1f2f3d">停止被管主机</h3>
+<div class="outline-text-3" id="text-orgc1f2f3d">
+<p>
+使用 <code>stop</code> 子命令来停止被管主机
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine stop host2
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Stopping "host2"...
+Machine "host2" was stopped.
+</pre>
+</div>
+
+<p>
+如果使用 <code>stop</code> 子命令迟迟无法关闭被管主机，那么也可以直接使用 <code>kill</code> 命令来强制关机
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfeeb4d3" class="outline-3">
+<h3 id="orgfeeb4d3">启动被管主机</h3>
+<div class="outline-text-3" id="text-orgfeeb4d3">
+<p>
+使用 <code>start</code> 子命令来启动被停止的主机
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine start host2
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Starting "host2"...
+(host2) Check network to re-create if needed...
+(host2) Waiting for an IP...
+Machine "host2" was started.
+Waiting for SSH to be available...
+Detecting the provisioner...
+Started machines may have new IP addresses. You may need to re-run the `docker-machine env` command.
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd7da6ca" class="outline-3">
+<h3 id="orgd7da6ca">删除被管主机</h3>
+<div class="outline-text-3" id="text-orgd7da6ca">
+<p>
+使用 <code>rm</code> 子命令来删除被管主机
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">yes|docker-machine rm host3
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">About to remove host3
+WARNING: This action will delete both local reference and remote instance.
+Are you sure? (y/n): Successfully removed host3
+</pre>
+</div>
+
+<p>
+再次查看一下virtualbox还剩下哪些主机
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">vboxmanage list vms
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">"winxp_default_1529148278389_22373" {5d100a8e-a670-4f84-8ea4-eb22f3dab94d}
+"win7" {dddcdefb-5002-4bcd-bef2-ee37f0ba6197}
+"rhel7.5" {bbf01330-070b-4663-b8e3-52734297c112}
+"redis-host" {f5576790-7d12-4ee8-884f-7352c04f4e04}
+"rhel_default_1532386536492_17873" {449040f4-21ef-436d-8648-a4026a547875}
+"centos_default_1532472936791_11249" {86ffd1ee-681a-4062-a233-e29ac966fc81}
+"freebsd" {2924b43b-da8b-4f59-ac32-ee4420923055}
+"RHEL7" {33e98062-f82e-49df-9a8a-91b0eb31e80d}
+"arch_default_1532990644081_68335" {2d5206ba-c07a-4691-8c3b-63e941113f15}
+"ctf-tools_default_1533510374954_98487" {edd5c5d6-95e5-47af-a462-1d66aab8e640}
+"host1" {ee738687-3981-4582-b2d3-3540a1cbff1c}
+"host2" {d2907cef-5018-4476-a6e8-5e7c1c321cfe}
+</pre>
+</div>
+
+<p>
+host3虚拟机被干掉了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org60e63f7" class="outline-3">
+<h3 id="org60e63f7">管理远程Docker</h3>
+<div class="outline-text-3" id="text-org60e63f7">
+<p>
+我们只需要更改更改环境变量就能让Docker客户端连接上远程主机上的Docker Daemon来进行操作。
+</p>
+
+<p>
+Docker Machine提供了一个 <code>env</code> 子命令来告诉你输入哪些命令可以连接到特定的机器上。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">docker-machine env host1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">export DOCKER_TLS_VERIFY="1"
+export DOCKER_HOST="tcp://192.168.99.100:2376"
+export DOCKER_CERT_PATH="<span style="font-style: italic;">/home/lujun9972/</span>.docker/machine/machines/host1"
+export DOCKER_MACHINE_NAME="host1"
+<span style="color: #2aa1ae; background-color: #292e34;"># Run this command to configure your shell: </span>
+<span style="color: #2aa1ae; background-color: #292e34;"># eval $(docker-machine env host1)</span>
+</pre>
+</div>
+
+<p>
+按照说明，只需要执行 <code>eval $(docker-machine env host1)</code>, 之后Docker客户端的操作就都是在 <code>host1</code> 主机上进行的了。比如
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"&#28608;&#27963;host1&#21069;"</span>
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"check docker machines"</span>
+docker-machine ls
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"check docker images"</span>
+docker images |head -n <span style="color: #a45bad;">5</span>
+
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"&#28608;&#27963;host1&#21518;"</span>
+<span style="color: #4f97d7;">eval</span> $<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">docker-machine</span> env host1<span style="color: #4f97d7;">)</span>
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"check docker machines"</span>
+docker-machine ls
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"check docker images"</span>
+docker images |head -n <span style="color: #a45bad;">5</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#28608;&#27963;host1&#21069;
+check docker machines
+NAME         ACTIVE   DRIVER       STATE     URL                         SWARM   DOCKER        ERRORS
+host1        -        virtualbox   Running   tcp://192.168.99.100:2376           v18.06.0-ce   
+host2        -        virtualbox   Running   tcp://192.168.99.101:2376           v18.06.0-ce   
+redis-host   -        virtualbox   Stopped                                       Unknown       
+check docker images
+REPOSITORY                     TAG                 IMAGE ID            CREATED             SIZE
+eaf                            latest              85aaf245545d        14 hours ago        1.97GB
+&lt;none&gt;                         &lt;none&gt;              071e13965b57        24 hours ago        1.97GB
+&lt;none&gt;                         &lt;none&gt;              2717978972e0        24 hours ago        1.97GB
+&lt;none&gt;                         &lt;none&gt;              86ac9d427d3f        24 hours ago        1.97GB
+&#28608;&#27963;host1&#21518;
+check docker machines
+NAME         ACTIVE   DRIVER       STATE     URL                         SWARM   DOCKER        ERRORS
+host1        *        virtualbox   Running   tcp://192.168.99.100:2376           v18.06.0-ce   
+host2        -        virtualbox   Running   tcp://192.168.99.101:2376           v18.06.0-ce   
+redis-host   -        virtualbox   Stopped                                       Unknown       
+check docker images
+REPOSITORY          TAG                 IMAGE ID            CREATED             SIZE
+</pre>
+</div>
+
+<p>
+可以发现，激活host1前和激活host1主机后有两个不同点:
+</p>
+
+<ol class="org-ol">
+<li>激活host1主机后，ACTIVE这一列，在 <code>host1</code> 这一行有一个 <code>*</code> 号标识</li>
+<li>激活host1主机后，docker images变成空了，因为 <code>host1</code> 主机上并没有任何镜像。</li>
+</ol>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-08-13</span>
+    <span title="last modification date" class="post-info">2018-08-18</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/docker">docker</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

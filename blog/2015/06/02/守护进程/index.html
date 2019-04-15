@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>守护进程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="DarkSun" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">守护进程</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org92103f5">1. 守护进程的特点</a></li>
+<li><a href="#org8e7f94f">2. 编写守护进程的基本规则</a></li>
+<li><a href="#orga876e59">3. 编写守护进程的惯例</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org92103f5" class="outline-2">
+<h2 id="org92103f5"><span class="section-number-2">1</span> 守护进程的特点</h2>
+<div class="outline-text-2" id="text-1">
+<ul class="org-ul">
+<li><b>大多数</b> 守护进程以超级用户特权运行</li>
+<li>守护进程不具有控制终端</li>
+<li>所有用户层守护进程都是进程组的组长进程以及会话的首进程,且是这些进程组和会话中的唯一进程</li>
+<li><b>大多数</b> 守护进程的父进程为init进程</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org8e7f94f" class="outline-2">
+<h2 id="org8e7f94f"><span class="section-number-2">2</span> 编写守护进程的基本规则</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+编写守护进程需要遵循一些基本规则,以防止产生并不需要的交互作用.
+</p>
+<ol class="org-ol">
+<li><p>
+调用umask将文件模式创建屏蔽字设置为0.
+</p>
+
+<p>
+这样做的目的是为了防止继承得来的文件模式创建屏蔽字在创建文件时会拒绝设置某些权限
+</p></li>
+
+<li><p>
+调用fork
+</p>
+
+<p>
+这样作的目的是:子进程不是一个进程组的组长进程,这为下面执行setsid创建新会话创建条件
+</p></li>
+
+<li><p>
+(子进程)调用setsid以创建一个新会话.
+</p>
+
+<p>
+这使得进程(a)成为新会话的首进程. (b)成为新进程组的组长进程. (3)没有控制终端与之相连
+</p></li>
+
+<li><p>
+继续fork出孙进程作为守护进程,并退出子进程.
+</p>
+
+<p>
+这样做的目的是(a)孙进程的父进程变为init进程. (b)孙进程不是会话首进程,这就阻止了它取得控制终端(<b>只有会话首进程长才有权利打开一个控制终端</b>)
+</p></li>
+
+<li><p>
+更改守护进程的当前目录
+</p>
+
+<p>
+由于守护进程一般在系统重启之前都是存在的,它会占着当前目录无法被被卸载. 因此一般会将守护进程的当前目录更改为一直不会被卸载的目录,比如根目录
+</p></li>
+
+<li>关闭不必要的文件描述符</li>
+
+<li><p>
+将stdin,stdout,stderr重定向到/dev/null
+</p>
+
+<p>
+守护进程不应该在终端上有任何输入/输出信息,因此一般用dup函数将stdin,stdout,stderr重定向到/dev/null. 这样任何一个试图读标准输入,写标准输出和标准出错的函数都不会有任何效果.
+</p></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orga876e59" class="outline-2">
+<h2 id="orga876e59"><span class="section-number-2">3</span> 编写守护进程的惯例</h2>
+<div class="outline-text-2" id="text-3">
+<ul class="org-ul">
+<li>若守护进程使用锁文件(<b>可以保证只有一个守护进程副本运行</b>),那么该文件通常存放在`/var/run'目录下,且名称通常为`守护进程或服务名称.pid'. 例如cron守护进程额锁文件为`/var/run/crond.pid'</li>
+
+<li>若守护进程支持配置文件,那么配置文件通常存放在`/etc'目录中.且名称格式为`守护进程或服务名字.conf'</li>
+
+<li>守护进程通常在启动时或捕捉到SIGHUP信号时会读取配置文件. 其他时候一般不会再读取配置文件信息.</li>
+
+<li>守护进程可以用命令启动,但一般由系统初始化脚本启动</li>
+</ul>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2015-06-02</span>
+    <span title="last modification date" class="post-info">2016-10-24</span>
+    <span title="tags" class="post-info">N/A</span>
+    <span title="author" class="post-info">DarkSun</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">DarkSun</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

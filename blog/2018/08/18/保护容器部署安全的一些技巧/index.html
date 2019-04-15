@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>保护容器部署安全的一些技巧 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,docker" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">保护容器部署安全的一些技巧</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org11a007a">设置容器内运行用户或开启USER NAMESPACE</a></li>
+<li><a href="#orgdeb58de">限制容器联网</a></li>
+<li><a href="#orgabb4d74">删除容器中的setuid和setgid文件</a></li>
+<li><a href="#orga2f84b6">限制内存使用</a></li>
+<li><a href="#orgc7deed7">限制CPU使用</a></li>
+<li><a href="#orgfd1bb43">限制IO</a></li>
+<li><a href="#orgf011cca">限制重启次数</a></li>
+<li><a href="#orgbe1cdb6">设置文件系统只读</a></li>
+<li><a href="#org00c5496">限制内核能力</a></li>
+<li><a href="#org00fa564">应用资源限制</a>
+<ul>
+<li><a href="#org4082f66">cpu</a></li>
+<li><a href="#org846fcd5">nofile</a></li>
+<li><a href="#org24284b1">nproc</a></li>
+</ul>
+</li>
+<li><a href="#orgc3aa435">启用Linux安全模块(LSM)</a></li>
+<li><a href="#org598b80e">审核容器和镜像</a></li>
+<li><a href="#org9fc6416">为Docker Daemon开启TLS加密传输</a></li>
+<li><a href="#org39f2a08">注意那些未隔离的内核资源</a></li>
+<li><a href="#orgdabc08e"></a></li>
+</ul>
+</div>
+</div>
+<p>
+摘录自 《Docker开发指南》 13.7 "安全建议"
+</p>
+
+<div id="outline-container-org11a007a" class="outline-2">
+<h2 id="org11a007a">设置容器内运行用户或开启USER NAMESPACE</h2>
+<div class="outline-text-2" id="text-org11a007a">
+<p>
+永远不要以root用户的身份在容器内运行正式的应用，否则一旦攻击者攻破了应用就能获取容器的全部访问权限。
+</p>
+
+<p>
+而且在未开启USER NAMESPACE的情况下，该权限会蔓延到主机挂载到容器中的卷上。
+</p>
+
+<p>
+更糟糕的是，若他能突破容器的限制，则它就能获得主机上的root权限了。
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-orgdeb58de" class="outline-2">
+<h2 id="orgdeb58de">限制容器联网</h2>
+<div class="outline-text-2" id="text-orgdeb58de">
+<p>
+容器应该仅仅打开必须的端口，且只对所需的容器开放。
+</p>
+
+<p>
+为了实现这一点，Docker守护进程启动时需要加上 <code>--icc=false</code> 参数以关容器间的默认通讯。
+</p>
+
+<p>
+另外，在主机上发布端口时，Docker默认在主机所有接口上发布，最好明确指定希望绑定的接口以减少攻击面
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run -p <span style="color: #a45bad;">192.168.1.9:8080:8080</span> -d httpd
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgabb4d74" class="outline-2">
+<h2 id="orgabb4d74">删除容器中的setuid和setgid文件</h2>
+<div class="outline-text-2" id="text-orgabb4d74">
+<p>
+这类文件一般只在构建镜像时有用，但却极易被利用来发动提权攻击。
+</p>
+
+<p>
+可以通过下面命令来找出并移除二进制文件的suid/sgid设置
+</p>
+<pre class="example">
+RUN find / -perm /6000 -type f -exec chmod a-s {} \;||true
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orga2f84b6" class="outline-2">
+<h2 id="orga2f84b6">限制内存使用</h2>
+<div class="outline-text-2" id="text-orga2f84b6">
+<p>
+限制容器内存使用可以防止DoS攻击和应用程序的内存泄漏。
+</p>
+</div>
+</div>
+<div id="outline-container-orgc7deed7" class="outline-2">
+<h2 id="orgc7deed7">限制CPU使用</h2>
+<div class="outline-text-2" id="text-orgc7deed7">
+<p>
+若不限制容器的CPU使用率，则攻击者可以通过一个容器将主机CPU完全占用，从而导致系统被DoS攻击瘫痪。
+</p>
+
+<p>
+CPU的限制参数包括如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --help|grep cpu
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">    --cpu-period int                 Limit CPU CFS (Completely Fair
+    --cpu-quota int                  Limit CPU CFS (Completely Fair
+    --cpu-rt-period int              Limit CPU real-time period in
+    --cpu-rt-runtime int             Limit CPU real-time runtime in
+-c, --cpu-shares int                 CPU shares (relative weight)
+    --cpus decimal                   Number of CPUs
+    --cpuset-cpus string             CPUs in which to allow execution
+    --cpuset-mems string             MEMs in which to allow execution
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgfd1bb43" class="outline-2">
+<h2 id="orgfd1bb43">限制IO</h2>
+<div class="outline-text-2" id="text-orgfd1bb43">
+<div class="org-src-container">
+<pre class="src src-shell">docker help run |grep -E <span style="color: #2d9574;">'jbps|IO'</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Usage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]
+      --blkio-weight uint16            Block IO (relative weight),
+      --blkio-weight-device list       Block IO weight (relative device
+      --device-read-iops list          Limit read rate (IO per second)
+      --device-write-iops list         Limit write rate (IO per second)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf011cca" class="outline-2">
+<h2 id="orgf011cca">限制重启次数</h2>
+<div class="outline-text-2" id="text-orgf011cca">
+<p>
+若系统不断崩溃又不断重启，将会造成大量系统时间和资源浪费。
+</p>
+
+<p>
+为了防止这种情况出现，我们可以将重启策略由 <code>always</code> 改成 <code>on-failure</code> 并指定重启次数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">docker run -d --restart=on-failure:10 $<span style="color: #7590db;">image</span>
+</pre>
+</div>
+
+<p>
+容器的重启次数可以通过 <code>docker inspect</code> 的 <code>.RestartCount</code> 元数据找到
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker inspect -f <span style="color: #2d9574;">"{{.RestartCount}}"</span> $<span style="color: #7590db;">container</span>
+</pre>
+</div>
+
+<p>
+另外，Docker重启容器的时间间隔采用指数递增的方式进行，即第一次重启等待100ms，第二次200ms，第三次400ms，这个措施能有效防止利用重启机制引发DoS攻击
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbe1cdb6" class="outline-2">
+<h2 id="orgbe1cdb6">设置文件系统只读</h2>
+<div class="outline-text-2" id="text-orgbe1cdb6">
+<p>
+阻止攻击者对容器内文件系统的写入可以抵御系统的攻击。
+</p>
+
+<p>
+在 <code>docker run</code> 中使用 <code>--read-only</code> 参数可以把容器的文件系统设置为只读:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --read-only ubuntu touch x <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span> || <span style="color: #4f97d7; font-weight: bold;">exit</span> <span style="color: #a45bad;">0</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">touch: cannot touch 'x': Read-only file system
+</pre>
+</div>
+
+<p>
+给数据卷参数后加上 <code>:ro</code> 则能够把卷设为只读
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run -v $<span style="color: #4f97d7;">{</span><span style="color: #4f97d7;">pwd</span><span style="color: #4f97d7;">}</span>:/pwd:ro ubuntu touch /touch /pwd/x <span style="color: #a45bad;">2</span>&gt;&amp;<span style="color: #a45bad;">1</span> ||<span style="color: #4f97d7; font-weight: bold;">exit</span> <span style="color: #a45bad;">0</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">touch: cannot touch '/pwd/x': No such file or directory
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org00c5496" class="outline-2">
+<h2 id="org00c5496">限制内核能力</h2>
+<div class="outline-text-2" id="text-org00c5496">
+<p>
+我们可以通过 <code>docker run</code> 的 <code>--cap-add</code> 和 <code>--cap-drop</code> 参数来控制容器允许使用的内核能力。
+</p>
+
+<p>
+最不安全的做法就是通过 <code>--privileged</code> 参数放开权限。
+</p>
+
+<p>
+一般的做法是先把所有权限清空，再把需要的权限添加回去
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --cap-drop all --cap-add CHOWN ubuntu chown <span style="color: #a45bad;">770</span> /tmp
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org00fa564" class="outline-2">
+<h2 id="org00fa564">应用资源限制</h2>
+<div class="outline-text-2" id="text-org00fa564">
+<p>
+Linux内核定义了一些用于进程的资源限制，可以限制进程允许fork的子进程数，或者允许打开的文件描述符数量等。
+</p>
+
+<p>
+通过 docker run 的 <code>--ulimit</code> 选项可以将限制也用于容器上。
+同时，我们可以在启动Docker守护进程时加上 <code>--default-ulimit</code> 选项来给所有容器设置资源限制的默认值。
+选项参数中包括两个数值，其格式为 <code>资源=软限制:硬限制</code> ,若只提供一个值，则表示同时作为软限制和硬限制。
+</p>
+
+<p>
+比较常用的限制包括以下几个:
+</p>
+</div>
+
+<div id="outline-container-org4082f66" class="outline-3">
+<h3 id="org4082f66">cpu</h3>
+<div class="outline-text-3" id="text-org4082f66">
+<p>
+把CPU时间限制为给定参数，以秒为单位。
+</p>
+
+<p>
+当达到软限制后，会发送一个 SIGXCPU给容器，达到硬限制后则会发送一个 SIGKILL 信号给容器
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --ulimit <span style="color: #7590db;">cpu</span>=<span style="color: #a45bad;">12:14</span> stress stress --cpu <span style="color: #a45bad;">1</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org846fcd5" class="outline-3">
+<h3 id="org846fcd5">nofile</h3>
+<div class="outline-text-3" id="text-org846fcd5">
+<p>
+制定容器中能够同时打开的最多文件描述符数量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --ulimit <span style="color: #7590db;">nofile</span>=<span style="color: #a45bad;">5</span> ubuntu cat /etc/hostname
+</pre>
+</div>
+
+<p>
+需要注意的是，操作系统本身会占用3个文件描述符，分别对应stdin,stdout,stderr
+</p>
+</div>
+</div>
+
+<div id="outline-container-org24284b1" class="outline-3">
+<h3 id="org24284b1">nproc</h3>
+<div class="outline-text-3" id="text-org24284b1">
+<p>
+指定运行容器的用户能够创建进程的最大数量。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --user <span style="color: #a45bad;">500</span> --ulimit <span style="color: #7590db;">nproc</span>=<span style="color: #a45bad;">2</span> -d ubuntu sleep <span style="color: #a45bad;">100</span>
+</pre>
+</div>
+
+<p>
+需要注意的是： <b>nproc限制的不是容器，而是运行这个容器的用户的所有进程数量</b>
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc3aa435" class="outline-2">
+<h2 id="orgc3aa435">启用Linux安全模块(LSM)</h2>
+<div class="outline-text-2" id="text-orgc3aa435">
+<p>
+最常见的Linux安全模块包括AppArmor和SELinux。
+</p>
+
+<p>
+通过 <code>docker run</code> 的 <code>--security-opt</code> 选项可以设置容器的标签，使之与LSM整合在一起
+</p>
+</div>
+</div>
+
+<div id="outline-container-org598b80e" class="outline-2">
+<h2 id="org598b80e">审核容器和镜像</h2>
+<div class="outline-text-2" id="text-org598b80e">
+<ul class="org-ul">
+<li>定期检查正在运行的容器，确保使用的镜像是最新的，而且这些镜像所使用的如那件也是最新的，没有安全隐患的。</li>
+
+<li>使用 <code>docker diff</code> 检查容器与镜像之间的差异</li>
+
+<li>运行极简的镜像，其中只包含应用程序必需的文件和程序库</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org9fc6416" class="outline-2">
+<h2 id="org9fc6416">为Docker Daemon开启TLS加密传输</h2>
+<div class="outline-text-2" id="text-org9fc6416">
+<p>
+若Docker Daemon通过TCP方式与外界通讯，则可能传输内容会被截获，为此Docker Daemon提供了4个参数来开启TLS加密传输
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker daemon --tlsverify <span style="color: #2d9574;">\</span>
+       --tlscacert=ca.pem <span style="color: #2d9574;">\</span>
+       --tlscert=server-cert.pem <span style="color: #2d9574;">\</span>
+       --tlskey=server-key.pem <span style="color: #2d9574;">\</span>
+       -H=<span style="color: #a45bad;">0.0.0.0:2376</span>
+</pre>
+</div>
+
+<dl class="org-dl">
+<dt>--tlsverify</dt><dd>安全传输验证</dd>
+<dt>--tlscacert=ca.pem</dt><dd>信任的证书</dd>
+<dt>--tlscert=server-cert.pem</dt><dd>服务证书</dd>
+<dt>--tlskey=server-key.pem</dt><dd>服务器或客户端密钥</dd>
+</dl>
+
+
+<p>
+当然，相应的在客户端连接时也需要设置这四个参数:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker --tlsverify <span style="color: #2d9574;">\</span>
+       --tlscacert=ca.pem <span style="color: #2d9574;">\</span>
+       --tlscert=cert.pem <span style="color: #2d9574;">\</span>
+       --tlskey=key.pem <span style="color: #2d9574;">\</span>
+       -H=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">DAEMON_HOST</span><span style="color: #4f97d7;">}</span>:2376
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org39f2a08" class="outline-2">
+<h2 id="org39f2a08">注意那些未隔离的内核资源</h2>
+<div class="outline-text-2" id="text-org39f2a08">
+<p>
+目前namespace在隔离上并不完善，还有许多未隔离的内核资源可能会影响到容器安全，比如 <code>procfs</code>, <code>syslog</code> 等
+</p>
+</div>
+</div>
+<div id="outline-container-orgdabc08e" class="outline-2">
+<h2 id="orgdabc08e"></h2>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-08-18</span>
+    <span title="last modification date" class="post-info">2018-08-25</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="/tags/docker">docker</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

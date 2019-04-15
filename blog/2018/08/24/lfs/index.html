@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>LFS - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">LFS</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org54a520e">前置准备工具</a></li>
+<li><a href="#org3b69796">配置构建环境</a></li>
+<li><a href="#org570305a">构建交叉编译器</a>
+<ul>
+<li><a href="#orgb4646fd">设置好编译相关的变量</a></li>
+<li><a href="#org8d74476">安装kernel headers</a></li>
+<li><a href="#orge67cc51">安装Binutils</a></li>
+<li><a href="#org0ac2502">静态编译的gcc</a></li>
+<li><a href="#orgf339162">编译Glibc</a></li>
+<li><a href="#orgd402410">最后再编译一次GCC，这次这个GCC会链接到上一步编译出来的Glibc中</a></li>
+</ul>
+</li>
+<li><a href="#orgbcb53be">构建Target Image</a>
+<ul>
+<li><a href="#org5a2dbed">构建BusyBox</a></li>
+<li><a href="#org517a5cd">构建linux kernel</a></li>
+<li><a href="#org069a909">Bootscripts</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org54a520e" class="outline-2">
+<h2 id="org54a520e">前置准备工具</h2>
+<div class="outline-text-2" id="text-org54a520e">
+<p>
+在host主机上需要安装有 GCC,make,ncurses,perl以及grub-install
+</p>
+
+<p>
+同时需要下载一些源代码包:
+</p>
+
+<ul class="org-ul">
+<li>binutils-2.30.tar.xz</li>
+<li>busybox-1.28.3.tar.bz2</li>
+<li>clfs-embedded-bootscripts-1.0-pre5.tar.bz2</li>
+<li>gcc-7.3.0.tar.xz</li>
+<li>glibc-2.27.tar.xz</li>
+<li>gmp-6.1.2.tar.bz2</li>
+<li>linux-4.16.3.tar.xz</li>
+<li>mpc-1.1.0.tar.gz</li>
+<li>mpfr-4.0.1.tar.xz</li>
+<li>zlib-1.2.11.tar.gz</li>
+</ul>
+</div>
+</div>
+
+
+<div id="outline-container-org3b69796" class="outline-2">
+<h2 id="org3b69796">配置构建环境</h2>
+<div class="outline-text-2" id="text-org3b69796">
+<ol class="org-ol">
+<li><p>
+启用bash hash功能
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">set</span> +h
+</pre>
+</div></li>
+
+<li><p>
+新建目录/文件只有属主具有写权限
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">umask</span> <span style="color: #a45bad;">022</span>
+</pre>
+</div></li>
+
+<li><p>
+设置环境变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS</span>=~/LFS
+mkdir -p $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LC_ALL</span>=POSIX
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">PATH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/bin:/bin:/usr/bin
+</pre>
+</div></li>
+
+<li><p>
+创建<a href="http://refspecs.linuxfoundation.org/fhs.shtml">Linux目录层级结构</a>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/<span style="color: #4f97d7;">{</span>bin,boot<span style="color: #bc6ec5;">{</span>,grub<span style="color: #bc6ec5;">}</span>,dev,<span style="color: #bc6ec5;">{</span>etc/,<span style="color: #bc6ec5;">}</span>opt,home,lib/<span style="color: #bc6ec5;">{</span>firmware,modules<span style="color: #bc6ec5;">}</span>,lib64,mnt<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/<span style="color: #4f97d7;">{</span>proc,media/<span style="color: #bc6ec5;">{</span>floppy,cdrom<span style="color: #bc6ec5;">}</span>,sbin,srv,sys<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/<span style="color: #4f97d7;">{</span>lock,log,mail,run,spool<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/<span style="color: #4f97d7;">{</span>opt,cache,lib/<span style="color: #bc6ec5;">{</span>misc,locate<span style="color: #bc6ec5;">}</span>,local<span style="color: #4f97d7;">}</span>
+install -dv -m <span style="color: #a45bad;">0750</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/root
+install -dv -m <span style="color: #a45bad;">1777</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}{</span>/var,<span style="color: #4f97d7;">}</span>/tmp
+install -dv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/init.d
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/<span style="color: #4f97d7;">{</span>,local/<span style="color: #4f97d7;">}{</span>bin,include,lib<span style="color: #bc6ec5;">{</span>,64<span style="color: #bc6ec5;">}</span>,sbin,src<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/<span style="color: #4f97d7;">{</span>,local/<span style="color: #4f97d7;">}</span>share/<span style="color: #4f97d7;">{</span>doc,info,locale,man<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/<span style="color: #4f97d7;">{</span>,local/<span style="color: #4f97d7;">}</span>share/<span style="color: #4f97d7;">{</span>misc,terminfo,zoneinfo<span style="color: #4f97d7;">}</span>
+mkdir -pv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/<span style="color: #4f97d7;">{</span>,local/<span style="color: #4f97d7;">}</span>share/man/man<span style="color: #4f97d7;">{</span><span style="color: #a45bad;">1,2,3,4,5,6,7,8</span><span style="color: #4f97d7;">}</span>
+<span style="color: #4f97d7; font-weight: bold;">for</span> dir<span style="color: #4f97d7; font-weight: bold;"> in</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr<span style="color: #4f97d7;">{</span>,/local<span style="color: #4f97d7;">}</span>; <span style="color: #4f97d7; font-weight: bold;">do</span>
+    ln -sv share/<span style="color: #4f97d7;">{</span>man,doc,info<span style="color: #4f97d7;">}</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">dir</span><span style="color: #4f97d7;">}</span>
+<span style="color: #4f97d7; font-weight: bold;">done</span>
+</pre>
+</div></li>
+
+<li><p>
+创建存放交叉编译工具链的目录
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">install -dv $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools<span style="color: #4f97d7;">{</span>,/bin<span style="color: #4f97d7;">}</span>
+</pre>
+</div></li>
+
+<li><p>
+创建各个配置文件
+</p>
+
+<p>
+使用 <code>/proc/mounts</code> 的值作为LFS中的 <code>/etc/mtab</code> 文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ln -svf ../proc/mounts $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/mtab
+</pre>
+</div>
+
+<p>
+创建 <code>/etc/passwd</code> 文件，这一步用来创建LFS中的root账户
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/passwd &lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;">root::0:0:root:/root:/bin/ash</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+创建 <code>/etc/group</code> 文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/group &lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;">root:x:0:</span>
+<span style="color: #ffff00; font-weight: bold;">bin:x:1:</span>
+<span style="color: #ffff00; font-weight: bold;">sys:x:2:</span>
+<span style="color: #ffff00; font-weight: bold;">kmem:x:3:</span>
+<span style="color: #ffff00; font-weight: bold;">tty:x:4:</span>
+<span style="color: #ffff00; font-weight: bold;">daemon:x:6:</span>
+<span style="color: #ffff00; font-weight: bold;">disk:x:8:</span>
+<span style="color: #ffff00; font-weight: bold;">dialout:x:10:</span>
+<span style="color: #ffff00; font-weight: bold;">video:x:12:</span>
+<span style="color: #ffff00; font-weight: bold;">utmp:x:13:</span>
+<span style="color: #ffff00; font-weight: bold;">usb:x:14:</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+创建 <code>/etc/fstab</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/fstab &lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;"># file system  mount-point  type   options          dump  fsck</span>
+<span style="color: #ffff00; font-weight: bold;">#                                                         order</span>
+
+<span style="color: #ffff00; font-weight: bold;">rootfs          /               auto    defaults        1      1</span>
+<span style="color: #ffff00; font-weight: bold;">proc            /proc           proc    defaults        0      0</span>
+<span style="color: #ffff00; font-weight: bold;">sysfs           /sys            sysfs   defaults        0      0</span>
+<span style="color: #ffff00; font-weight: bold;">devpts          /dev/pts        devpts  gid=4,mode=620  0      0</span>
+<span style="color: #ffff00; font-weight: bold;">tmpfs           /dev/shm        tmpfs   defaults        0      0</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+创建 <code>/etc/profile</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/profile &lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;">export PATH=/bin:/usr/bin</span>
+
+<span style="color: #ffff00; font-weight: bold;">if [ `id -u` -eq 0 ] ; then</span>
+<span style="color: #ffff00; font-weight: bold;">        PATH=/bin:/sbin:/usr/bin:/usr/sbin</span>
+<span style="color: #ffff00; font-weight: bold;">        unset HISTFILE</span>
+<span style="color: #ffff00; font-weight: bold;">fi</span>
+
+
+<span style="color: #ffff00; font-weight: bold;"># Set up some environment variables.</span>
+<span style="color: #ffff00; font-weight: bold;">export USER=`id -un`</span>
+<span style="color: #ffff00; font-weight: bold;">export LOGNAME=$USER</span>
+<span style="color: #ffff00; font-weight: bold;">export HOSTNAME=`/bin/hostname`</span>
+<span style="color: #ffff00; font-weight: bold;">export HISTSIZE=1000</span>
+<span style="color: #ffff00; font-weight: bold;">export HISTFILESIZE=1000</span>
+<span style="color: #ffff00; font-weight: bold;">export PAGER='/bin/more '</span>
+<span style="color: #ffff00; font-weight: bold;">export EDITOR='/bin/vi'</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+设置主机名
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"LFS"</span> &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/HOSTNAME
+</pre>
+</div>
+
+<p>
+设置登陆提示
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/issue&lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;">Linux From Scratch OS 0.1a</span>
+<span style="color: #ffff00; font-weight: bold;">Kernel \r on an \m</span>
+
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+为了简单期间，使用BusyBox的 init 进程作为初始化进程，因此需要定义 <code>/etc/inittab</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/inittab&lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;">::sysinit:/etc/rc.d/startup</span>
+
+<span style="color: #ffff00; font-weight: bold;">tty1::respawn:/sbin/getty 38400 tty1</span>
+<span style="color: #ffff00; font-weight: bold;">tty2::respawn:/sbin/getty 38400 tty2</span>
+<span style="color: #ffff00; font-weight: bold;">tty3::respawn:/sbin/getty 38400 tty3</span>
+<span style="color: #ffff00; font-weight: bold;">tty4::respawn:/sbin/getty 38400 tty4</span>
+<span style="color: #ffff00; font-weight: bold;">tty5::respawn:/sbin/getty 38400 tty5</span>
+<span style="color: #ffff00; font-weight: bold;">tty6::respawn:/sbin/getty 38400 tty6</span>
+
+<span style="color: #ffff00; font-weight: bold;">::shutdown:/etc/rc.d/shutdown</span>
+<span style="color: #ffff00; font-weight: bold;">::ctrlaltdel:/sbin/reboot</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+同样的，BusyBox 使用mdev代替udev，因此需要定义 <code>/etc/mdev</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/etc/mdev.conf&lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+<span style="color: #ffff00; font-weight: bold;"># Devices:</span>
+<span style="color: #ffff00; font-weight: bold;"># Syntax: %s %d:%d %s</span>
+<span style="color: #ffff00; font-weight: bold;"># devices user:group mode</span>
+
+<span style="color: #ffff00; font-weight: bold;"># null does already exist; therefore ownership has to</span>
+<span style="color: #ffff00; font-weight: bold;"># be changed with command</span>
+<span style="color: #ffff00; font-weight: bold;">null    root:root 0666  @chmod 666 $MDEV</span>
+<span style="color: #ffff00; font-weight: bold;">zero    root:root 0666</span>
+<span style="color: #ffff00; font-weight: bold;">grsec   root:root 0660</span>
+<span style="color: #ffff00; font-weight: bold;">full    root:root 0666</span>
+
+<span style="color: #ffff00; font-weight: bold;">random  root:root 0666</span>
+<span style="color: #ffff00; font-weight: bold;">urandom root:root 0444</span>
+<span style="color: #ffff00; font-weight: bold;">hwrandom root:root 0660</span>
+
+<span style="color: #ffff00; font-weight: bold;"># console does already exist; therefore ownership has to</span>
+<span style="color: #ffff00; font-weight: bold;"># be changed with command</span>
+<span style="color: #ffff00; font-weight: bold;">console root:tty 0600 @mkdir -pm 755 fd &amp;&amp; cd fd &amp;&amp; for x</span>
+<span style="color: #ffff00; font-weight: bold;"> &#8618;in 0 1 2 3 ; do ln -sf /proc/self/fd/$x $x; done</span>
+
+<span style="color: #ffff00; font-weight: bold;">kmem    root:root 0640</span>
+<span style="color: #ffff00; font-weight: bold;">mem     root:root 0640</span>
+<span style="color: #ffff00; font-weight: bold;">port    root:root 0640</span>
+<span style="color: #ffff00; font-weight: bold;">ptmx    root:tty 0666</span>
+
+<span style="color: #ffff00; font-weight: bold;"># ram.*</span>
+<span style="color: #ffff00; font-weight: bold;">ram([0-9]*)     root:disk 0660 &gt;rd/%1</span>
+<span style="color: #ffff00; font-weight: bold;">loop([0-9]+)    root:disk 0660 &gt;loop/%1</span>
+<span style="color: #ffff00; font-weight: bold;">sd[a-z].*       root:disk 0660 */lib/mdev/usbdisk_link</span>
+<span style="color: #ffff00; font-weight: bold;">hd[a-z][0-9]*   root:disk 0660 */lib/mdev/ide_links</span>
+
+<span style="color: #ffff00; font-weight: bold;">tty             root:tty 0666</span>
+<span style="color: #ffff00; font-weight: bold;">tty[0-9]        root:root 0600</span>
+<span style="color: #ffff00; font-weight: bold;">tty[0-9][0-9]   root:tty 0660</span>
+<span style="color: #ffff00; font-weight: bold;">ttyO[0-9]*      root:tty 0660</span>
+<span style="color: #ffff00; font-weight: bold;">pty.*           root:tty 0660</span>
+<span style="color: #ffff00; font-weight: bold;">vcs[0-9]*       root:tty 0660</span>
+<span style="color: #ffff00; font-weight: bold;">vcsa[0-9]*      root:tty 0660</span>
+
+<span style="color: #ffff00; font-weight: bold;">ttyLTM[0-9]     root:dialout 0660 @ln -sf $MDEV modem</span>
+<span style="color: #ffff00; font-weight: bold;">ttySHSF[0-9]    root:dialout 0660 @ln -sf $MDEV modem</span>
+<span style="color: #ffff00; font-weight: bold;">slamr           root:dialout 0660 @ln -sf $MDEV slamr0</span>
+<span style="color: #ffff00; font-weight: bold;">slusb           root:dialout 0660 @ln -sf $MDEV slusb0</span>
+<span style="color: #ffff00; font-weight: bold;">fuse            root:root  0666</span>
+
+<span style="color: #ffff00; font-weight: bold;"># misc stuff</span>
+<span style="color: #ffff00; font-weight: bold;">agpgart         root:root 0660  &gt;misc/</span>
+<span style="color: #ffff00; font-weight: bold;">psaux           root:root 0660  &gt;misc/</span>
+<span style="color: #ffff00; font-weight: bold;">rtc             root:root 0664  &gt;misc/</span>
+
+<span style="color: #ffff00; font-weight: bold;"># input stuff</span>
+<span style="color: #ffff00; font-weight: bold;">event[0-9]+     root:root 0640 =input/</span>
+<span style="color: #ffff00; font-weight: bold;">ts[0-9]         root:root 0600 =input/</span>
+
+<span style="color: #ffff00; font-weight: bold;"># v4l stuff</span>
+<span style="color: #ffff00; font-weight: bold;">vbi[0-9]        root:video 0660 &gt;v4l/</span>
+<span style="color: #ffff00; font-weight: bold;">video[0-9]      root:video 0660 &gt;v4l/</span>
+
+<span style="color: #ffff00; font-weight: bold;"># load drivers for usb devices</span>
+<span style="color: #ffff00; font-weight: bold;">usbdev[0-9].[0-9]       root:root 0660 */lib/mdev/usbdev</span>
+<span style="color: #ffff00; font-weight: bold;">usbdev[0-9].[0-9]_.*    root:root 0660</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+为GRUB引导器创建配置文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/boot/grub/grub.cfg&lt;&lt; <span style="color: #2d9574;">"EOF"</span>
+
+<span style="color: #ffff00; font-weight: bold;">set default=0</span>
+<span style="color: #ffff00; font-weight: bold;">set timeout=5</span>
+
+<span style="color: #ffff00; font-weight: bold;">set root=(hd0,1)</span>
+
+<span style="color: #ffff00; font-weight: bold;">menuentry "Linux From Scratch OS" {</span>
+<span style="color: #ffff00; font-weight: bold;">        linux   /boot/vmlinuz-4.16.3 root=/dev/sda1 ro quiet</span>
+<span style="color: #ffff00; font-weight: bold;">}</span>
+<span style="color: #ffff00; font-weight: bold;">EOF</span>
+</pre>
+</div>
+
+<p>
+创建日志文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">touch $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/run/utmp $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/log/<span style="color: #4f97d7;">{</span>btmp,lastlog,wtmp<span style="color: #4f97d7;">}</span>
+chmod -v <span style="color: #a45bad;">664</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/run/utmp $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/var/log/lastlog
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+
+<div id="outline-container-org570305a" class="outline-2">
+<h2 id="org570305a">构建交叉编译器</h2>
+<div class="outline-text-2" id="text-org570305a">
+</div>
+<div id="outline-container-orgb4646fd" class="outline-3">
+<h3 id="orgb4646fd">设置好编译相关的变量</h3>
+<div class="outline-text-3" id="text-orgb4646fd">
+<p>
+清空host上预设的 C/C++ 编译标志
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">unset</span> CFLAGS
+<span style="color: #4f97d7;">unset</span> CXXFLAGS
+</pre>
+</div>
+
+<p>
+定义其他交叉编译过程中使用的变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS_HOST</span>=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">echo</span> $<span style="color: #bc6ec5;">{</span><span style="color: #7590db;">MACHTYPE</span><span style="color: #bc6ec5;">}</span> | sed <span style="color: #2d9574;">"s/-[^-]*/-cross/"</span><span style="color: #4f97d7;">)</span>
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS_TARGET</span>=x86_64-unknown-linux-gnu
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS_CPU</span>=k4
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS_ARCH</span>=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">echo</span> $<span style="color: #bc6ec5;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #bc6ec5;">}</span> | sed -e <span style="color: #2d9574;">'s/-.*//'</span> -e <span style="color: #2d9574;">'s/i.86/i386/'</span><span style="color: #4f97d7;">)</span>
+<span style="color: #4f97d7;">export</span> <span style="color: #7590db;">LJOS_ENDIAN</span>=little
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8d74476" class="outline-3">
+<h3 id="org8d74476">安装kernel headers</h3>
+<div class="outline-text-3" id="text-org8d74476">
+<p>
+从<a href="https://www.kernel.org/">kernel.org</a>下载内核源码
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">wget https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.18.4.tar.xz
+</pre>
+</div>
+
+<p>
+解压源代码
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tar -xf linux-4.18.4.tar.xz 
+</pre>
+</div>
+
+<p>
+编译kernel headers
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> linux-4.18.4/
+make mrproper
+make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> headers_check &amp;&amp; <span style="color: #2d9574;">\</span>
+make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> <span style="color: #7590db;">INSTALL_HDR_PATH</span>=dest headers_install
+cp -rv dest/include/* $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/include
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge67cc51" class="outline-3">
+<h3 id="orge67cc51">安装Binutils</h3>
+<div class="outline-text-3" id="text-orge67cc51">
+<p>
+下载bintuils源代码
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">wget http://ftp.gnu.org/gnu/binutils/binutils-2.31.tar.xz
+</pre>
+</div>
+
+<p>
+解压源代码
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tar -xf binutils-2.31.tar.xz
+</pre>
+</div>
+
+<p>
+编译binutils
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">./configure --prefix=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools <span style="color: #2d9574;">\</span>
+--target=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span> --with-sysroot=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--disable-nls --enable-shared --disable-multilib
+make configure-host &amp;&amp; make
+ln -sv lib $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/lib64
+make install
+cp -v include/libiberty.h $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/include
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0ac2502" class="outline-3">
+<h3 id="org0ac2502">静态编译的gcc</h3>
+<div class="outline-text-3" id="text-org0ac2502">
+<p>
+下载 gcc，gmp，mpfr，mpc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">wget http://ftp.gnu.org/gnu/gcc/gcc-8.2.0/gcc-8.2.0.tar.xz <span style="color: #2d9574;">\</span>
+     http://ftp.gnu.org/gnu/gmp/gmp-6.1.2.tar.xz <span style="color: #2d9574;">\</span>
+     http://ftp.gnu.org/gnu/mpfr/mpfr-4.0.1.tar.xz <span style="color: #2d9574;">\</span>
+     http://ftp.gnu.org/gnu/mpc/mpc-1.1.0.tar.gz
+</pre>
+</div>
+
+<p>
+解压 gcc，gmp，mpfr，mpc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tar -xf gcc-8.2.0.tar.xz
+tar -xf gmp-6.1.2.tar.xz
+tar -xf mpfr-4.0.1.tar.xz
+tar -xf mpc-1.1.0.tar.gz
+</pre>
+</div>
+
+<p>
+将gmp,mpfr,mpc移动到gcc目录下
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mv gmp-6.1.2 gcc-8.2.0/gmp
+mv mpfr-4.0.1 gcc-8.2.0/mpfr
+mv mpc-1.1.0 gcc-8.2.0/mpc
+</pre>
+</div>
+
+<p>
+编译gcc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkdir gcc-static
+<span style="color: #4f97d7;">cd</span> gcc-static/
+<span style="color: #7590db;">AR</span>=ar <span style="color: #7590db;">LDFLAGS</span>=<span style="color: #2d9574;">"-Wl,-rpath,${LJOS}/cross-tools/lib"</span> <span style="color: #2d9574;">\</span>
+../gcc-8.2.0/configure --prefix=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools <span style="color: #2d9574;">\</span>
+--build=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_HOST</span><span style="color: #4f97d7;">}</span> --host=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_HOST</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--target=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--with-sysroot=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/target --disable-nls <span style="color: #2d9574;">\</span>
+--disable-shared <span style="color: #2d9574;">\</span>
+--with-mpfr-include=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/../gcc-8.2.0/mpfr/src <span style="color: #2d9574;">\</span>
+--with-mpfr-lib=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/mpfr/src/.libs <span style="color: #2d9574;">\</span>
+--without-headers --with-newlib --disable-decimal-float <span style="color: #2d9574;">\</span>
+--disable-libgomp --disable-libmudflap --disable-libssp <span style="color: #2d9574;">\</span>
+--disable-threads --enable-languages=c,c++ <span style="color: #2d9574;">\</span>
+--disable-multilib --with-arch=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_CPU</span><span style="color: #4f97d7;">}</span>
+make all-gcc all-target-libgcc &amp;&amp; <span style="color: #2d9574;">\</span>
+make install-gcc install-target-libgcc
+ln -vs libgcc.a $<span style="color: #4f97d7;">(</span>$<span style="color: #bc6ec5;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #bc6ec5;">}</span>-gcc -print-libgcc-file-name | sed <span style="color: #2d9574;">'s/libgcc/&amp;_eh/'</span><span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf339162" class="outline-3">
+<h3 id="orgf339162">编译Glibc</h3>
+<div class="outline-text-3" id="text-orgf339162">
+<p>
+下载glibc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> ..
+wget http://ftp.gnu.org/gnu/glibc/glibc-2.28.tar.xz
+</pre>
+</div>
+
+<p>
+解压glibc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tar -xf glibc-2.28.tar.xz
+</pre>
+</div>
+
+<p>
+编译glibc
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkdir glibc-build
+<span style="color: #4f97d7;">cd</span> glibc-build/
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"libc_cv_forced_unwind=yes"</span> &gt; config.cache
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"libc_cv_c_cleanup=yes"</span> &gt;&gt; config.cache
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"libc_cv_ssp=no"</span> &gt;&gt; config.cache
+<span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"libc_cv_ssp_strong=no"</span> &gt;&gt; config.cache
+<span style="color: #7590db;">BUILD_CC</span>=<span style="color: #2d9574;">"gcc"</span> <span style="color: #7590db;">CC</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-gcc"</span> <span style="color: #2d9574;">\</span>
+<span style="color: #7590db;">AR</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-ar"</span> <span style="color: #2d9574;">\</span>
+<span style="color: #7590db;">RANLIB</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-ranlib"</span> <span style="color: #7590db;">CFLAGS</span>=<span style="color: #2d9574;">"-O2"</span> <span style="color: #2d9574;">\</span>
+../glibc-2.28/configure --prefix=/usr <span style="color: #2d9574;">\</span>
+--host=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span> --build=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_HOST</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--disable-profile --enable-add-ons --with-tls <span style="color: #2d9574;">\</span>
+--enable-kernel=<span style="color: #a45bad;">2.6.32</span> --with-__thread <span style="color: #2d9574;">\</span>
+--with-binutils=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/bin <span style="color: #2d9574;">\</span>
+--with-headers=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/usr/include <span style="color: #2d9574;">\</span>
+--cache-file=config.cache
+make &amp;&amp; make <span style="color: #7590db;">install_root</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/ install
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd402410" class="outline-3">
+<h3 id="orgd402410">最后再编译一次GCC，这次这个GCC会链接到上一步编译出来的Glibc中</h3>
+<div class="outline-text-3" id="text-orgd402410">
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> ..
+mkdir gcc-build
+<span style="color: #4f97d7;">cd</span> gcc-build/
+<span style="color: #7590db;">AR</span>=ar <span style="color: #7590db;">LDFLAGS</span>=<span style="color: #2d9574;">"-Wl,-rpath,${LJOS}/cross-tools/lib"</span> <span style="color: #2d9574;">\</span>
+../gcc-8.2.0/configure --prefix=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools <span style="color: #2d9574;">\</span>
+--build=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_HOST</span><span style="color: #4f97d7;">}</span> --target=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--host=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_HOST</span><span style="color: #4f97d7;">}</span> --with-sysroot=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+--disable-nls --enable-shared <span style="color: #2d9574;">\</span>
+--enable-languages=c,c++ --enable-c99 <span style="color: #2d9574;">\</span>
+--enable-long-long <span style="color: #2d9574;">\</span>
+--with-mpfr-include=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/../gcc-8.2.0/mpfr/src <span style="color: #2d9574;">\</span>
+--with-mpfr-lib=$<span style="color: #4f97d7;">(</span><span style="color: #fa8072;">pwd</span><span style="color: #4f97d7;">)</span>/mpfr/src/.libs <span style="color: #2d9574;">\</span>
+--disable-multilib --with-arch=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_CPU</span><span style="color: #4f97d7;">}</span>
+make &amp;&amp; make install
+cp -v $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span>/lib64/libgcc_s.so.1 $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/lib64
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbcb53be" class="outline-2">
+<h2 id="orgbcb53be">构建Target Image</h2>
+<div class="outline-text-2" id="text-orgbcb53be">
+</div>
+<div id="outline-container-org5a2dbed" class="outline-3">
+<h3 id="org5a2dbed">构建BusyBox</h3>
+<div class="outline-text-3" id="text-org5a2dbed">
+<p>
+下载 BusyBox
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> ..
+wget http://busybox.net/downloads/busybox-1.29.2.tar.bz2
+</pre>
+</div>
+
+<p>
+解压源码包
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">tar -xf busybox-1.29.2.tar.bz2
+</pre>
+</div>
+
+<p>
+编译BusyBox
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> busybox-1.29.2/
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#29983;&#25104;&#40664;&#35748;&#30340;&#32534;&#35793;&#37197;&#32622;&#25991;&#20214;</span>
+make <span style="color: #7590db;">CROSS_COMPILE</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-"</span> defconfig
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#22914;&#26524;&#38656;&#35201;&#30340;&#35805;&#65292;&#21487;&#20197;&#36890;&#36807;menuconfig&#26469;&#23545;&#37197;&#32622;&#23601;&#20687;&#35843;&#25972;</span>
+make <span style="color: #7590db;">CROSS_COMPILE</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-"</span> menuconfig
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#32534;&#35793;</span>
+make <span style="color: #7590db;">CROSS_COMPILE</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-"</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#23433;&#35013;</span>
+make <span style="color: #7590db;">CROSS_COMPILE</span>=<span style="color: #2d9574;">"${LJOS_TARGET}-"</span> <span style="color: #2d9574;">\</span>
+<span style="color: #7590db;">CONFIG_PREFIX</span>=<span style="color: #2d9574;">"${LJOS}"</span> install
+</pre>
+</div>
+
+<p>
+拷贝depmod.pl,后面构建kernel的时候要用
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cp -v examples/depmod.pl $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/bin
+chmod <span style="color: #a45bad;">755</span> $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/bin/depmod.pl
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org517a5cd" class="outline-3">
+<h3 id="org517a5cd">构建linux kernel</h3>
+<div class="outline-text-3" id="text-org517a5cd">
+<p>
+生成默认的x86-64的配置文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">cd</span> ../linux-4.18.4/
+make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+     <span style="color: #7590db;">CROSS_COMPILE</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span>- x86_64_defconfig
+</pre>
+</div>
+
+<p>
+当然，你也可以通过 <code>make menuconfig</code> 进行微调
+</p>
+
+<p>
+比如安装Target Image到VirutalBox虚拟机中，则需要安装 Intel 的 <code>e1000</code> 网卡模块以及 LSI 的 <code>mpt2sas</code> 模块
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+     <span style="color: #7590db;">CROSS_COMPILE</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span>- menuconfig
+</pre>
+</div>
+
+<p>
+编译并安装kernel
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+     <span style="color: #7590db;">CROSS_COMPILE</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span>-
+make <span style="color: #7590db;">ARCH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_ARCH</span><span style="color: #4f97d7;">}</span> <span style="color: #2d9574;">\</span>
+     <span style="color: #7590db;">CROSS_COMPILE</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS_TARGET</span><span style="color: #4f97d7;">}</span>- <span style="color: #2d9574;">\</span>
+     <span style="color: #7590db;">INSTALL_MOD_PATH</span>=$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span> modules_install
+</pre>
+</div>
+
+<p>
+拷贝文件到 target 的 <code>/boot</code> 目录下
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cp -v arch/x86/boot/bzImage $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/boot/vmlinuz-4.18.4
+cp -v System.map $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/boot/System.map-4.18.4
+cp -v .config $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/boot/config-4.18.4
+</pre>
+</div>
+
+<p>
+运行 <code>depmod.pl</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">$<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/cross-tools/bin/depmod.pl <span style="color: #2d9574;">\</span>
+      -F $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/boot/System.map-4.18.4 <span style="color: #2d9574;">\</span>
+      -b $<span style="color: #4f97d7;">{</span><span style="color: #7590db;">LJOS</span><span style="color: #4f97d7;">}</span>/lib/modules/4.18.4
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org069a909" class="outline-3">
+<h3 id="org069a909">Bootscripts</h3>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-08-24</span>
+    <span title="last modification date" class="post-info">2018-10-15</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

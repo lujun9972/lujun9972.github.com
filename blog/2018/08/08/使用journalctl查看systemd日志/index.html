@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用journalctl查看systemd日志 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用journalctl查看systemd日志</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgf0ad4a0">systemd-journald.service</a>
+<ul>
+<li><a href="#orgd216c7c">配置systemd-journald.service</a></li>
+</ul>
+</li>
+<li><a href="#org744d3b7">journalctl常用方法</a>
+<ul>
+<li><a href="#org4f786db">查询指定时间内的日志</a></li>
+<li><a href="#org03b2bc7">约束日志输出的行数</a></li>
+<li><a href="#orge5246d5">指定日志级别</a></li>
+<li><a href="#orga527c7f">根据日志元数据进行过滤</a></li>
+<li><a href="#org402cf21">根据正则表达式搜索的日志</a></li>
+<li><a href="#orgdf1fa18">其他参数</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+当启动service失败或者出现异常时，我们同行需要查看systemd的日志。 journalctl就是最常用的查看systemd日志的工具了。
+</p>
+
+<div id="outline-container-orgf0ad4a0" class="outline-2">
+<h2 id="orgf0ad4a0">systemd-journald.service</h2>
+<div class="outline-text-2" id="text-orgf0ad4a0">
+<p>
+systemd本身使用 <code>systemd-journald.service</code> 来提供日志服务.
+它默认以二进制的格式将日志文件存在 <code>/var/log/journal/</code> 目录中.
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -R /var/log/journal/
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span style="font-style: italic;">/var/log/journal/</span>:
+c291481e2d9b4024b6315308254f29df
+remote
+
+/var/log/journal/c291481e2d9b4024b6315308254f29df:
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000000001-00054f69725bd1f4.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000000b4fb-000551d6d83e3bec.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000011330-00055283e814ebff.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000001f0f2-000554ef5835cba3.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000001f26f-000554ef5d159c4d.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000002e434-0005575684e0156a.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000002e59d-0005575694a45c89.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000041f7f-000559d3e2618783.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000420e3-000559d411759d7a.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000053108-00055c3ebcc97ddd.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000053268-00055c3ecdad6b24.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000060b5e-00055ea67129b27f.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000060cc2-00055ea750da7423.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000705c2-0005610bae10254c.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000007f115-000563724facc0ec.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000007f2a6-00056372622f1fb9.journal
+system@b06763dfb5d9474bbf08a41aafa705db-0000000000089e54-000565e109b67bae.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000008a147-000565e11109f819.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000009d3f5-00056846b7b72568.journal
+system@b06763dfb5d9474bbf08a41aafa705db-000000000009d6ef-00056846b9dfdae2.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000bee0f-00056a81e6471243.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000d7e23-00056cea54ac049d.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000d7fca-00056cea9d641931.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000f2885-00056f63127cbe97.journal
+system@b06763dfb5d9474bbf08a41aafa705db-00000000000f2af8-00056f63149c60b5.journal
+system.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000015b0-00055006ed5dfbb6.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000001132e-00055283e8135caf.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000001f26d-000554ef5d14f66e.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000002e59b-0005575694a3b831.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000420e1-000559d41174fbf8.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-0000000000053266-00055c3ecdacd823.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-0000000000060cc0-00055ea750d9d71f.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000705cb-0005610bbd3f532d.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000007f2a4-00056372622da099.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000008a145-000565e11108ed20.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-000000000009d6ed-00056846b9ddd3d4.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000bfd2c-00056a8255f67694.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000d7fc8-00056cea9d631972.journal
+user-1000@1f9ca3ee21814314a67d9069a58e7128-00000000000f2af6-00056f63149a9d60.journal
+user-1000.journal
+
+/var/log/journal/remote:
+</pre>
+</div>
+
+<p>
+systemd之所以使用二进制来存储日志是因为systemd除了记录日志本身外，还会记录大量的元数据。
+这些信息可以方便用户对信息进行过滤和分类，但同时也占用了大量的空间。
+有鉴于此，systemd使用二进制格式以节省空间。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --output=verbose --all |head -n <span style="color: #a45bad;">32</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 15:38:56 HKT. --
+Sat 2017-05-13 23:26:32.333812 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=1;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=2796ef;t=54f69725bd1f4;x=c397f8de2fb56e8e]
+    SYSLOG_FACILITY=3
+    SYSLOG_IDENTIFIER=systemd-journald
+    _TRANSPORT=driver
+    PRIORITY=6
+    MESSAGE=Time spent on flushing to /var is 943us for 0 entries.
+    _PID=180
+    _UID=0
+    _GID=0
+    _COMM=systemd-journal
+    _EXE=/usr/lib/systemd/systemd-journald
+    _CMDLINE=/usr/lib/systemd/systemd-journald
+    _CAP_EFFECTIVE=25402800cf
+    _SYSTEMD_CGROUP=/system.slice/systemd-journald.service
+    _SYSTEMD_UNIT=systemd-journald.service
+    _SYSTEMD_SLICE=system.slice
+    _SYSTEMD_INVOCATION_ID=028ad00d541f43b18015d87a4b504133
+    _BOOT_ID=3d88f970ddc247a8bc58bbcf924fb9c5
+    _MACHINE_ID=c291481e2d9b4024b6315308254f29df
+    _HOSTNAME=T520
+Sat 2017-05-13 23:26:32.333966 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=2;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=279788;t=54f69725bd28e;x=ed81c61ce14af023]
+    _BOOT_ID=3d88f970ddc247a8bc58bbcf924fb9c5
+    _MACHINE_ID=c291481e2d9b4024b6315308254f29df
+    _HOSTNAME=T520
+    _SOURCE_MONOTONIC_TIMESTAMP=0
+    _TRANSPORT=kernel
+    PRIORITY=5
+    SYSLOG_FACILITY=0
+    SYSLOG_IDENTIFIER=kernel
+    MESSAGE=Linux version 4.10.13-1-ARCH (builduser@tobias) (gcc version 6.3.1 20170306 (GCC) ) #1 SMP PREEMPT Thu Apr 27 12:15:09 CEST 2017
+Sat 2017-05-13 23:26:32.334011 HKT [s=b06763dfb5d9474bbf08a41aafa705db;i=3;b=3d88f970ddc247a8bc58bbcf924fb9c5;m=2797b6;t=54f69725bd2bb;x=e5ad63c3bd76a8fa]
+</pre>
+</div>
+
+<p>
+你会看到除了 <code>MESSAGE</code> 这一项是真正的日志消息外，还有大量的其他元数据，比如 <code>SYSLOG_FACILIT</code>, <code>_PID</code>, <code>_UID</code> 等等信息.
+此外，你还会发现不同MESSAGE中元数据的数量也是不同的。
+</p>
+</div>
+
+<div id="outline-container-orgd216c7c" class="outline-3">
+<h3 id="orgd216c7c">配置systemd-journald.service</h3>
+<div class="outline-text-3" id="text-orgd216c7c">
+<p>
+<code>systemd-journald</code> 的配置文件为 <code>/etc/systemd/journald.conf</code> 中， 通过修改其中的配置信息可以影响其行为：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat /etc/systemd/journald.conf
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-conf"><span style="color: #2aa1ae; background-color: #292e34;">#  </span><span style="color: #2aa1ae; background-color: #292e34;">This file is part of systemd.</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#  </span><span style="color: #2aa1ae; background-color: #292e34;">systemd is free software; you can redistribute it and/or modify it</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#  </span><span style="color: #2aa1ae; background-color: #292e34;">under the terms of the GNU Lesser General Public License as published by</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#  </span><span style="color: #2aa1ae; background-color: #292e34;">the Free Software Foundation; either version 2.1 of the License, or</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#  </span><span style="color: #2aa1ae; background-color: #292e34;">(at your option) any later version.</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">Entries in this file show the compile time defaults.</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">You can change settings by editing this file.</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">Defaults can be restored by simply deleting this file.</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span>
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">See journald.conf(5) for details.</span>
+
+[<span style="color: #ce537a; font-weight: bold;">Journal</span>]
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">Storage=auto</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">Compress=yes</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">Seal=yes</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SplitMode=uid</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SyncIntervalSec=5m</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RateLimitIntervalSec=30s</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RateLimitBurst=10000</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SystemMaxUse=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SystemKeepFree=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SystemMaxFileSize=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">SystemMaxFiles=100</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RuntimeMaxUse=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RuntimeKeepFree=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RuntimeMaxFileSize=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">RuntimeMaxFiles=100</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxRetentionSec=</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxFileSec=1month</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">ForwardToSyslog=no</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">ForwardToKMsg=no</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">ForwardToConsole=no</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">ForwardToWall=yes</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">TTYPath=/dev/console</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxLevelStore=debug</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxLevelSyslog=debug</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxLevelKMsg=notice</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxLevelConsole=info</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">MaxLevelWall=emerg</span>
+<span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">LineMax=48K</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org744d3b7" class="outline-2">
+<h2 id="org744d3b7">journalctl常用方法</h2>
+<div class="outline-text-2" id="text-org744d3b7">
+</div>
+<div id="outline-container-org4f786db" class="outline-3">
+<h3 id="org4f786db">查询指定时间内的日志</h3>
+<div class="outline-text-3" id="text-org4f786db">
+<p>
+当你直接运行 <code>journalctl</code> 时，会显示从第一次启动系统开始到现在的所有日志。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl |head
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 16:27:01 HKT. --
+5&#26376; 13 23:26:32 T520 systemd-journald[180]: Time spent on flushing to /var is 943us for 0 entries.
+5&#26376; 13 23:26:32 T520 kernel: Linux version 4.10.13-1-ARCH (builduser@tobias) (gcc version 6.3.1 20170306 (GCC) ) #1 SMP PREEMPT Thu Apr 27 12:15:09 CEST 2017
+5&#26376; 13 23:26:32 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+5&#26376; 13 23:26:32 T520 kernel: Disabled fast string operations
+5&#26376; 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+5&#26376; 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x002: 'SSE registers'
+5&#26376; 13 23:26:32 T520 kernel: x86/fpu: Supporting XSAVE feature 0x004: 'AVX registers'
+5&#26376; 13 23:26:32 T520 kernel: x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:  256
+5&#26376; 13 23:26:32 T520 kernel: x86/fpu: Enabled xstate features 0x7, context size is 832 bytes, using 'standard' format.
+</pre>
+</div>
+
+<p>
+但这是没有必要的，我们可以使用 <code>--since</code> 和 <code>--until</code> 来指定显示某个时间段内的日志。
+</p>
+
+<p>
+比如下面命令显示从 2018年8月1日开始的所有日志
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --since <span style="color: #2d9574;">"2018-08-01 00:00:00"</span> |head
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+8&#26376; 01 10:05:31 T520 kernel: microcode: microcode updated early to revision 0x2d, date = 2018-02-07
+8&#26376; 01 10:05:31 T520 kernel: Linux version 4.17.9-1-ARCH (builduser@heftig-26261) (gcc version 8.1.1 20180531 (GCC)) #1 SMP PREEMPT Sun Jul 22 20:23:36 UTC 2018
+8&#26376; 01 10:05:31 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+8&#26376; 01 10:05:31 T520 kernel: KERNEL supported cpus:
+8&#26376; 01 10:05:31 T520 kernel:   Intel GenuineIntel
+8&#26376; 01 10:05:31 T520 kernel:   AMD AuthenticAMD
+8&#26376; 01 10:05:31 T520 kernel:   Centaur CentaurHauls
+8&#26376; 01 10:05:31 T520 kernel: Disabled fast string operations
+8&#26376; 01 10:05:31 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+</pre>
+</div>
+
+<p>
+下面命令显示从 2018年7月30日9:30开始到2018年8月1日凌晨结束的所有日志
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --since <span style="color: #2d9574;">"2018-07-30 09:30:00"</span> --until <span style="color: #2d9574;">"2018-08-01 00:00:00"</span> |head
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+7&#26376; 30 11:43:53 T520 kernel: microcode: microcode updated early to revision 0x2d, date = 2018-02-07
+7&#26376; 30 11:43:53 T520 kernel: Linux version 4.17.9-1-ARCH (builduser@heftig-26261) (gcc version 8.1.1 20180531 (GCC)) #1 SMP PREEMPT Sun Jul 22 20:23:36 UTC 2018
+7&#26376; 30 11:43:53 T520 kernel: Command line: BOOT_IMAGE=/boot/vmlinuz-linux root=UUID=a3e3ff49-bb3d-4610-a898-c623d9ff4b2b rw quiet
+7&#26376; 30 11:43:53 T520 kernel: KERNEL supported cpus:
+7&#26376; 30 11:43:53 T520 kernel:   Intel GenuineIntel
+7&#26376; 30 11:43:53 T520 kernel:   AMD AuthenticAMD
+7&#26376; 30 11:43:53 T520 kernel:   Centaur CentaurHauls
+7&#26376; 30 11:43:53 T520 kernel: Disabled fast string operations
+7&#26376; 30 11:43:53 T520 kernel: x86/fpu: Supporting XSAVE feature 0x001: 'x87 floating point registers'
+</pre>
+</div>
+
+<p>
+还有一种常见的情况是，若想查看本次启动后发生的日志，可以使用 <code>--boot</code> 参数
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --boot |tail
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">8&#26376; 08 20:22:06 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8&#26376; 08 20:22:06 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8&#26376; 08 20:22:08 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8&#26376; 08 20:22:08 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8&#26376; 08 20:22:08 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8&#26376; 08 20:22:10 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8&#26376; 08 20:22:10 T520 sshd[6092]: Connection closed by invalid user admin 5.188.10.156 port 37215 [preauth]
+8&#26376; 08 20:22:10 T520 sshd[6092]: PAM 2 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=5.188.10.156
+8&#26376; 08 20:41:31 T520 sshd[7195]: Received disconnect from 50.115.166.112 port 42538:11: Bye Bye [preauth]
+8&#26376; 08 20:41:31 T520 sshd[7195]: Disconnected from 50.115.166.112 port 42538 [preauth]
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org03b2bc7" class="outline-3">
+<h3 id="org03b2bc7">约束日志输出的行数</h3>
+<div class="outline-text-3" id="text-org03b2bc7">
+<p>
+若我们只是想查看日志中的最后几行，没有必要使用tail命令，通过 <code>--lines</code> 命令即可,比如上面那个命令可以写成
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --boot --lines=<span style="color: #a45bad;">10</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Wed 2018-08-08 20:41:31 HKT. --
+8&#26376; 08 20:22:06 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8&#26376; 08 20:22:06 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8&#26376; 08 20:22:08 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8&#26376; 08 20:22:08 T520 sshd[6092]: pam_tally(sshd:auth): pam_get_uid; no such user
+8&#26376; 08 20:22:08 T520 sshd[6092]: pam_unix(sshd:auth): check pass; user unknown
+8&#26376; 08 20:22:10 T520 sshd[6092]: Failed password for invalid user admin from 5.188.10.156 port 37215 ssh2
+8&#26376; 08 20:22:10 T520 sshd[6092]: Connection closed by invalid user admin 5.188.10.156 port 37215 [preauth]
+8&#26376; 08 20:22:10 T520 sshd[6092]: PAM 2 more authentication failures; logname= uid=0 euid=0 tty=ssh ruser= rhost=5.188.10.156
+8&#26376; 08 20:41:31 T520 sshd[7195]: Received disconnect from 50.115.166.112 port 42538:11: Bye Bye [preauth]
+8&#26376; 08 20:41:31 T520 sshd[7195]: Disconnected from 50.115.166.112 port 42538 [preauth]
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-orge5246d5" class="outline-3">
+<h3 id="orge5246d5">指定日志级别</h3>
+<div class="outline-text-3" id="text-orge5246d5">
+<p>
+Linux的日志级别通常分成8个级别，从高到底分别为:
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">Code</th>
+<th scope="col" class="org-left">Priority</th>
+<th scope="col" class="org-left">Serverity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">Emerge</td>
+<td class="org-left">系统不可用</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">Alert</td>
+<td class="org-left">必须立即采取行动</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">Crit</td>
+<td class="org-left">紧急情况</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-left">Err</td>
+<td class="org-left">非紧急的错误</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">Warnning</td>
+<td class="org-left">警告</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-left">Notice</td>
+<td class="org-left">普通但值得注意的事件</td>
+</tr>
+
+<tr>
+<td class="org-right">6</td>
+<td class="org-left">Info</td>
+<td class="org-left">信息</td>
+</tr>
+
+<tr>
+<td class="org-right">7</td>
+<td class="org-left">Debug</td>
+<td class="org-left">调试</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+我们可以通过 <code>-p</code> 选项来指定想要查看的日志级别，比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl -p err --lines=<span style="color: #a45bad;">10</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Mon 2018-10-08 16:05:46 HKT. --
+9&#26376; 30 18:14:34 T520 sshd[8516]: pam_tally(sshd:auth): pam_get_uid; no such user
+9&#26376; 30 18:14:37 T520 sshd[8516]: pam_tally(sshd:auth): pam_get_uid; no such user
+9&#26376; 30 18:14:42 T520 sshd[8516]: pam_tally(sshd:auth): pam_get_uid; no such user
+9&#26376; 30 18:14:46 T520 sshd[8516]: pam_tally(sshd:auth): pam_get_uid; no such user
+9&#26376; 30 18:14:50 T520 sshd[8516]: error: maximum authentication attempts exceeded for invalid user admin from 193.201.224.232 port 42866 ssh2 [preauth]
+9&#26376; 30 18:16:02 T520 login[956]: pam_systemd(login:session): Failed to release session: Connection reset by peer
+-- Reboot --
+10&#26376; 08 10:29:31 T520 sshd[6432]: pam_tally(sshd:auth): pam_get_uid; no such user
+10&#26376; 08 10:29:40 T520 sshd[6440]: pam_tally(sshd:auth): pam_get_uid; no such user
+10&#26376; 08 10:29:51 T520 sshd[6448]: pam_tally(sshd:auth): pam_get_uid; no such user
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga527c7f" class="outline-3">
+<h3 id="orga527c7f">根据日志元数据进行过滤</h3>
+<div class="outline-text-3" id="text-orga527c7f">
+<p>
+前面提到了，systemd-journald写入的日志中包含了大量的元数据，我们可以通过这些元数据对日志信息进行过滤。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl <span style="color: #4f97d7;">[</span>options<span style="color: #4f97d7;">]</span> <span style="color: #4f97d7;">[</span>MATCHES...<span style="color: #4f97d7;">]</span>
+</pre>
+</div>
+<p>
+其中 <code>MATCHES</code> 的格式为 <code>FIELD=VALUE</code> 表示只有日志元数据域的值为指定值的日志才显示出来。
+</p>
+
+<p>
+比如，我们想查看本次启动后 <code>systemd-journald</code> 本身产生的日志，可以这么看
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --boot <span style="color: #2d9574;">"_EXE=/usr/lib/systemd/systemd-journald"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 18:46:13 HKT. --
+8&#26376; 09 14:36:32 T520 systemd-journald[225]: Journal started
+8&#26376; 09 14:36:32 T520 systemd-journald[225]: Runtime journal (/run/log/journal/c291481e2d9b4024b6315308254f29df) is 8.0M, max 186.2M, 178.2M free.
+8&#26376; 09 14:36:32 T520 systemd-journald[225]: Time spent on flushing to /var is 809.869ms for 725 entries.
+8&#26376; 09 14:36:32 T520 systemd-journald[225]: System journal (/var/log/journal/c291481e2d9b4024b6315308254f29df) is 1.1G, max 3.9G, 2.7G free.
+</pre>
+</div>
+
+<p>
+既然是复数的 <code>MATCHES</code> 那么自然表示可以接多个 <code>FIELD=VALUE</code> 对了，这些 <code>FIELD=VALUE</code> 的组合规则为:
+</p>
+
+<ol class="org-ol">
+<li>如果有多个 <b>不同</b> 的字段被 [MATCHES...]  参数匹配，那么这些字段之间使用"AND"逻辑连接,即所有域都满足的日志才会被输出</li>
+<li>如果 <b>同一个</b> 字段被多个 [MATCHES...] 参数匹配， 那么这些匹配条件之间使用"OR"逻辑连接，也就是对于同一个字段，日志项只需满足任意一个匹配条件即可输出。</li>
+<li>"+" 字符可用作 [MATCHES...]组之间的分隔符，并被视为使用"OR"逻辑连接。 也就是，MATCHE1 MATCHE2 + MATCHE3 MATCHE4 MATCHE5 + MATCHE6 MATCHE7 相当于 ( MATCHE1 MATCHE2 ) OR ( MATCHE3 MATCHE4 MATCHE5 ) OR ( MATCHE6 MATCHE7 )</li>
+</ol>
+
+<p>
+除了直接通过 <code>FIELD=VALUE</code> 来过滤日志外， journalctl 也为一些常用的过滤域准备了专门的参数，比如:
+</p>
+
+<dl class="org-dl">
+<dt>-u / ==unit=\({UNIT}|\){PATTERN}</dt><dd>显示名为UNIT或匹配PATTERN模式的单元日志，相当于 <code>_SYSTEMD_UNIT=${UNIT}</code></dd>
+<dt>--user-unit=${USER}</dt><dd>显示特定用户会话单元的日志，相当于 <code>_SYSTEMD_USER_UNIT=${USER}</code> 和 <code>_UID=${USER}</code></dd>
+<dt>-p / --prioprity=${LEVEL}</dt><dd>根据日志级别过滤输出结果，相当于 <code>PRIORITY=${LEVEL}</code></dd>
+</dl>
+</div>
+</div>
+
+
+<div id="outline-container-org402cf21" class="outline-3">
+<h3 id="org402cf21">根据正则表达式搜索的日志</h3>
+<div class="outline-text-3" id="text-org402cf21">
+<p>
+通过 <code>--grep="REGEXP"</code> 可以过滤匹配正则表达式的日志内容,比如我想查看日志中所有与wifi相关的内容，那么可以
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --boot --grep=<span style="color: #2d9574;">"wifi"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 19:09:54 HKT. --
+8&#26376; 09 14:36:32 T520 systemd[1]: /etc/systemd/system/netctl@wlp3s0\x2daWiFi.service:1: .include directives are deprecated, and support for them will be removed in a future version of systemd. Please use drop-in files instead.
+8&#26376; 09 14:36:33 T520 kernel: Intel(R) Wireless WiFi driver for Linux
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: can't disable ASPM; OS doesn't have ASPM control
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: loaded firmware version 18.168.6.1 op_mode iwldvm
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEBUG enabled
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEBUGFS enabled
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: CONFIG_IWLWIFI_DEVICE_TRACING enabled
+8&#26376; 09 14:36:33 T520 kernel: iwlwifi 0000:03:00.0: Detected Intel(R) Centrino(R) Advanced-N 6205 AGN, REV=0xB0
+8&#26376; 09 14:36:34 T520 systemd[1]: Starting Automatically generated profile by wifi-menu...
+8&#26376; 09 14:36:34 T520 netctl-auto[424]: Included profile 'wlp3s0-bWiFi'
+8&#26376; 09 14:36:34 T520 netctl-auto[424]: Included profile 'wlp3s0-aWiFi'
+8&#26376; 09 14:36:34 T520 network[421]: Starting network profile 'wlp3s0-aWiFi'...
+8&#26376; 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0 wlp3s0: renamed from wlan0
+8&#26376; 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 14:36:35 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 14:36:51 T520 network[421]: Failed to bring the network up for profile 'wlp3s0-aWiFi'
+8&#26376; 09 14:36:51 T520 systemd[1]: netctl@wlp3s0\x2daWiFi.service: Main process exited, code=exited, status=1/FAILURE
+8&#26376; 09 14:36:51 T520 systemd[1]: netctl@wlp3s0\x2daWiFi.service: Failed with result 'exit-code'.
+8&#26376; 09 14:36:51 T520 systemd[1]: Failed to start Automatically generated profile by wifi-menu.
+8&#26376; 09 15:09:58 T520 sudo[2730]: lujun9972 : TTY=pts/0 ; PWD=/home/lujun9972 ; USER=root ; COMMAND=/usr/bin/wifi-menu
+8&#26376; 09 15:09:58 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 15:09:58 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 15:10:07 T520 systemd[1]: Starting Automatically generated profile by wifi-menu...
+8&#26376; 09 15:10:07 T520 network[2810]: Starting network profile 'wlp3s0-aWiFi'...
+8&#26376; 09 15:10:07 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 15:10:07 T520 kernel: iwlwifi 0000:03:00.0: Radio type=0x1-0x2-0x0
+8&#26376; 09 15:10:11 T520 systemd[1]: Started Automatically generated profile by wifi-menu.
+8&#26376; 09 15:10:16 T520 network[2810]: Started network profile 'wlp3s0-aWiFi'
+</pre>
+</div>
+
+<p>
+从输出中你会发现当用全小写的 <code>wifi</code> 来搜索时， <code>WiFi</code> 也会被匹配上，也就是不区分大小写，
+而若是搜索的内容中有一个大些字母,则搜索会变成大小写敏感的，这一点跟Emacs中的搜索很类似
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl --boot --grep=<span style="color: #2d9574;">"Wifi"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-- Logs begin at Sat 2017-05-13 23:26:32 HKT, end at Thu 2018-08-09 19:09:54 HKT. --
+-- No entries --
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdf1fa18" class="outline-3">
+<h3 id="orgdf1fa18">其他参数</h3>
+<div class="outline-text-3" id="text-orgdf1fa18">
+<p>
+除了上面提到的这些选项外，还有一些比较常用的选项，列举在此:
+</p>
+
+<dl class="org-dl">
+<dt>-f / --follow</dt><dd>只显示最新的日志项，并且不断显示新生成的日志项</dd>
+<dt>-x / --catalog</dt><dd>在日志的输出中增加一些解释性的短文本， 以帮助进一步说明日志的含义、 问题的解决方案、支持论坛、开发文档等内容</dd>
+<dt>--pager-end</dt><dd>在分页工具内立即跳转到日志的尾部，而不是从首部开始看</dd>
+</dl>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-08-08</span>
+    <span title="last modification date" class="post-info">2018-10-09</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

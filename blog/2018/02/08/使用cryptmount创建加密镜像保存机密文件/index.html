@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用cryptmount创建加密镜像保存机密文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用cryptmount创建加密镜像保存机密文件</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgd1c020a">安装cryptmount</a></li>
+<li><a href="#org86d82ec">配置cryptmount</a></li>
+<li><a href="#orgc0e4d13">创建镜像文件</a></li>
+<li><a href="#org35165fa">创建密钥文件</a></li>
+<li><a href="#org4047394">格式化镜像文件</a></li>
+<li><a href="#orga1a6d15">挂载和卸载加密镜像</a></li>
+</ul>
+</div>
+</div>
+<p>
+cryptmount是一个创建、挂载和卸载加密镜像的工具，你可以用它来创建一个加密镜像并挂载到文件系统中，然后将机密文件存入其中，再卸载这个镜像，这样就能做到神不知、鬼不觉地保存机密文件了。
+</p>
+
+<div id="outline-container-orgd1c020a" class="outline-2">
+<h2 id="orgd1c020a">安装cryptmount</h2>
+<div class="outline-text-2" id="text-orgd1c020a">
+<p>
+cryptmount是archlinux中的aur仓库中，因此可以通过下面命令来安装
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">yaourt -S cryptmount
+</pre>
+</div>
+
+<p>
+但是在我在安装过程中会提示无法下载cryptmount的源码包，需要修改PKGBUILD中的 <code>source</code> 的地址。
+</p>
+
+<p>
+我将之改成了 <code>https://netix.dl.sourceforge.net/project/cryptmount/cryptmount/cryptmount-5.2/cryptmount-5.2.3.tar.gz</code>
+</p>
+
+<p>
+安装好后会在 <code>/usr/bin</code> 下多出一个 <code>cryptmount</code> 文件
+</p>
+</div>
+</div>
+
+<div id="outline-container-org86d82ec" class="outline-2">
+<h2 id="org86d82ec">配置cryptmount</h2>
+<div class="outline-text-2" id="text-org86d82ec">
+<p>
+使用root修改 <code>/etc/cryptmount/cmtab</code>,加入下面内容
+</p>
+<pre class="example">
+SecureImage {                               #配置项名称
+    dev=/home/lujun9972/SecureImage.img     #加密镜像的目录,必要
+    dir=/mnt/crypt                          #镜像挂载的路径
+    fstype=ext4                             #文件系统类型,必要
+    mountoptions=defaults                   #挂载选项
+    cipher=aes                              #加密算法
+    keyfile=/etc/cryptmount/SecureImage.key #密钥文件,必要
+    keyformat=builtin                       #密钥的管理策略
+}
+
+</pre>
+
+<p>
+具体关于 <code>cmtab</code> 的格式说明，可以运行 <code>man 5 cmtab</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc0e4d13" class="outline-2">
+<h2 id="orgc0e4d13">创建镜像文件</h2>
+<div class="outline-text-2" id="text-orgc0e4d13">
+<p>
+使用 <code>dd</code> 创建一个镜像文件:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">dd <span style="color: #7590db;">if</span>=/dev/zero <span style="color: #7590db;">of</span>=/home/lujun9972/SecureImage.img <span style="color: #7590db;">bs</span>=<span style="color: #a45bad;">1M</span> <span style="color: #7590db;">count</span>=<span style="color: #a45bad;">128</span>
+</pre>
+</div>
+
+<p>
+这里我创建了一个128M的镜像文件，路径为 <code>/home/lujun9972/SecureImage.img</code>
+</p>
+
+<p>
+注意,镜像文件的路径跟 <code>cmtab</code> 中 <code>dev</code> 的值一致
+</p>
+</div>
+</div>
+
+<div id="outline-container-org35165fa" class="outline-2">
+<h2 id="org35165fa">创建密钥文件</h2>
+<div class="outline-text-2" id="text-org35165fa">
+<div class="org-src-container">
+<pre class="src src-shell">sudo cryptmount --generate-key <span style="color: #a45bad;">32</span> SecureImage
+</pre>
+</div>
+
+<p>
+然后输入密码.
+</p>
+
+<p>
+注意这里的SecureImage是 <code>cmtab</code> 中的配置项名称
+</p>
+
+<p>
+cryptmount就根据 <code>cmtab</code> 中cmtab的 <code>keyfile</code> 生成对应的密钥文件了
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4047394" class="outline-2">
+<h2 id="org4047394">格式化镜像文件</h2>
+<div class="outline-text-2" id="text-org4047394">
+<p>
+首先根据镜像文件来创建设备文件，运行:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo cryptmount --prepare SecureImage
+</pre>
+</div>
+
+<p>
+会创建一个设备文件: <code>/dev/maper/SecureImage</code>
+</p>
+
+<p>
+然后使用 <code>mke2fs</code> 来创建文件系统
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mke2fs /dev/mapper/SecureImage
+</pre>
+</div>
+
+<p>
+格式化完成后就可以释放该设备了
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo cryptmount --release SecureImage
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga1a6d15" class="outline-2">
+<h2 id="orga1a6d15">挂载和卸载加密镜像</h2>
+<div class="outline-text-2" id="text-orga1a6d15">
+<p>
+首先当然是创建挂载点了:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mkdir -p /mnt/crypt
+</pre>
+</div>
+
+<p>
+然后挂载加密镜像
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptmount -m SecureImage
+</pre>
+</div>
+
+<p>
+然后输入密码就挂载成功了，注意这一步是无需root权限的哦~~
+</p>
+
+<p>
+不过这个时候你会发现挂载点 <code>/mnt/crypt</code> 的所有者是root了，你需要改一下所有者
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo chown lujun9972:lujun9972 /mnt/crypt/
+</pre>
+</div>
+
+<p>
+这样下一次重新挂载则无需再修改所有者了.
+</p>
+
+<p>
+卸载加密镜像则执行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptmount -u SecureImage
+</pre>
+</div>
+
+<p>
+同样的，卸载加密镜像也是无需root权限的。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-02-08</span>
+    <span title="last modification date" class="post-info">2018-02-08</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>进程控制 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="DarkSun" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">进程控制</h1>
+<div id="table-of-contents">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgb6de9e0">1. fork与vfork函数</a>
+<ul>
+<li><a href="#org7488428">1.1. fork出来的子进程有几点要注意:</a></li>
+<li><a href="#orgd8e8764">1.2. fork与vfork的区别在于</a></li>
+</ul>
+</li>
+<li><a href="#orgc35b4b4">2. wait和waitpid函数</a>
+<ul>
+<li><a href="#orge48d59b">2.1. 参数status说明</a></li>
+<li><a href="#org942a3dd">2.2. 参数pid的说明</a></li>
+<li><a href="#orgd15e33b">2.3. 参数optioins说明</a></li>
+</ul>
+</li>
+<li><a href="#orgb5b4f6b">3. waitid函数</a></li>
+<li><a href="#org9c24247">4. exec系列函数</a>
+<ul>
+<li><a href="#orgc5317b7">4.1. exec系列函数的区分</a></li>
+<li><a href="#orgc91e8d0">4.2. exec后的新进程与原进程的关系</a></li>
+<li><a href="#orgb544a0b">4.3. 当exec调用一个带`#! 解析器程序 可选参数项'的脚本文件时:</a></li>
+</ul>
+</li>
+<li><a href="#orgc040a94">5. 进程会计</a></li>
+<li><a href="#orgd697e2c">6. 进程时间</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb6de9e0" class="outline-2">
+<h2 id="orgb6de9e0"><span class="section-number-2">1</span> fork与vfork函数</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+UNIX提供了两个函数用于创建新进程
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">unistd.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #bc6ec5; font-weight: bold;">fork</span><span style="color: #4f97d7;">()</span>;                   <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#23376;&#36827;&#31243;&#20013;&#36820;&#22238;0,&#29238;&#36827;&#31243;&#20013;&#36820;&#22238;&#23376;&#36827;&#31243;ID,&#20986;&#38169;&#36820;&#22238;-1 </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+
+<span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #bc6ec5; font-weight: bold;">vfork</span><span style="color: #4f97d7;">()</span>;                  <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#23376;&#36827;&#31243;&#20013;&#36820;&#22238;0,&#29238;&#36827;&#31243;&#20013;&#36820;&#22238;&#23376;&#36827;&#31243;ID,&#20986;&#38169;&#36820;&#22238;-1 </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+</pre>
+</div>
+</div>
+<div id="outline-container-org7488428" class="outline-3">
+<h3 id="org7488428"><span class="section-number-3">1.1</span> fork出来的子进程有几点要注意:</h3>
+<div class="outline-text-3" id="text-1-1">
+<ul class="org-ul">
+<li>子进程与父进程分别持有相同的文件描述符,这些文件描述符共用核心中的同一个文件项</li>
+<li>父进程设置的文件锁不会被子进程继承</li>
+<li>子进程的未处理的闹钟(alarm)被清除</li>
+<li>子进程的未处理信号集设置为空集</li>
+<li>当子进程终止时,内核会向父进程发送SIGCHLD信号,但对该信号,系统的默认动作是忽略它.</li>
+<li>子进程会继承父进程的信号处理方式. 因为子进程在开始时复制了父进程的存储映像,随意信号捕捉函数的地址在子进程中是有意义的</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgd8e8764" class="outline-3">
+<h3 id="orgd8e8764"><span class="section-number-3">1.2</span> fork与vfork的区别在于</h3>
+<div class="outline-text-3" id="text-1-2">
+<ul class="org-ul">
+<li>在子进程调用exec或exit之前,vfork并不会将父进程的地址空间复制到子进程中,即 <b>子进程在父进程的空间中运行,因此子进程运行的结果会影响到父进程!</b></li>
+<li>vfork保证子进程先运行,在它调用exec或exit之后,父进程才可能被调度运行.</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-orgc35b4b4" class="outline-2">
+<h2 id="orgc35b4b4"><span class="section-number-2">2</span> wait和waitpid函数</h2>
+<div class="outline-text-2" id="text-2">
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">sys/wait.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#33509;&#25104;&#21151;&#21017;&#36820;&#22238;&#36827;&#31243;ID,0,&#33509;&#20986;&#38169;&#21017;&#36820;&#22238;-1 </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+<span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #bc6ec5; font-weight: bold;">wait</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">int</span>* <span style="color: #7590db;">status</span><span style="color: #4f97d7;">)</span>;
+<span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #bc6ec5; font-weight: bold;">waitpid</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">pid_t</span> <span style="color: #7590db;">pid</span>,<span style="color: #ce537a; font-weight: bold;">int</span>* <span style="color: #7590db;">status</span>,<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #7590db;">options</span><span style="color: #4f97d7;">)</span>;
+</pre>
+</div>
+<ul class="org-ul">
+<li>如果所有子进程还在运行,则阻塞</li>
+<li>如果一个子进程已终止,则父进程获取其终止状态并返回子进程pid</li>
+<li>如果父进程没有任何子进程,则 <b>报错返回</b></li>
+<li>waitpid可以通过设置选项,使得调用者不阻塞</li>
+</ul>
+</div>
+<div id="outline-container-orge48d59b" class="outline-3">
+<h3 id="orge48d59b"><span class="section-number-3">2.1</span> 参数status说明</h3>
+<div class="outline-text-3" id="text-2-1">
+<ul class="org-ul">
+<li>参数status可以为空指针,表示不关心终止状态</li>
+<li>在&lt;sys/wait.h&gt;中有定义四个宏来获取进程终止的原因
+<ul class="org-ul">
+<li><p>
+WIFXITED(status)
+</p>
+
+<p>
+子进程是否正常终止. 
+</p>
+
+<p>
+若为真,则可以通过宏WEXITSTATUS(status)来获取退出的状态码
+</p></li>
+
+<li><p>
+WIFSIGNALED(status)
+</p>
+
+<p>
+子进程是否因收到一个不可捕获的信号而异常退出.
+</p>
+
+<p>
+若为真,可以通过WTERMSIG(status)获取信号编号
+</p>
+
+<p>
+某些系统可以通过WCOREDUMP(status)判断是否产生core文件
+</p></li>
+
+<li><p>
+WIFSTOPPED(status)
+</p>
+
+<p>
+子进程是否处于stop状态
+</p>
+
+<p>
+若为真,则可以通过WSTOPSIG(status)来获取使子进程暂停的信号编号
+</p></li>
+
+<li><p>
+WIFCONTINUED(status)
+</p>
+
+<p>
+子进程是否处于continue状态
+</p></li>
+</ul></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org942a3dd" class="outline-3">
+<h3 id="org942a3dd"><span class="section-number-3">2.2</span> 参数pid的说明</h3>
+<div class="outline-text-3" id="text-2-2">
+<ul class="org-ul">
+<li>pid == -1,等待任一子进程,此时waitpid与wait等效</li>
+<li>pid &gt; 0,等待进程id与pid相等的子进程</li>
+<li>pid == 0,等待组ID等于调用进程组ID的任一子进程</li>
+<li>pid &lt; -1,等待其组ID等于pid绝对值的任一子进程</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgd15e33b" class="outline-3">
+<h3 id="orgd15e33b"><span class="section-number-3">2.3</span> 参数optioins说明</h3>
+<div class="outline-text-3" id="text-2-3">
+<p>
+通过设置options参数,waitpid不一定等到子进程退出来能获取子进程的状态. 也能在子进程处于stop或continue状态时返回子进程的状态.
+</p>
+<ul class="org-ul">
+<li><p>
+WNOHANG
+</p>
+
+<p>
+waitpid不阻塞
+</p></li>
+
+<li><p>
+WUNTRACED
+</p>
+
+<p>
+若子进程处于stop状态,且该stop状态尚未报告时,返回其状态
+</p></li>
+
+<li><p>
+WCONTINUED
+</p>
+
+<p>
+若子进程处于continue状态,且该continue状态尚未报告时,返回其状态.
+</p></li>
+</ul>
+</div>
+</div>
+</div>
+<div id="outline-container-orgb5b4f6b" class="outline-2">
+<h2 id="orgb5b4f6b"><span class="section-number-2">3</span> waitid函数</h2>
+<div class="outline-text-2" id="text-3">
+<p>
+waitid可以指定要监控的子进程的哪些状态变化
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">sys/wait.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #bc6ec5; font-weight: bold;">waitid</span><span style="color: #4f97d7;">(</span><span style="color: #ce537a; font-weight: bold;">idtype_t</span> <span style="color: #7590db;">idtype</span>,<span style="color: #ce537a; font-weight: bold;">id_t</span> <span style="color: #7590db;">id</span>,<span style="color: #ce537a; font-weight: bold;">siginfo_t</span>* <span style="color: #7590db;">infop</span>,<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #7590db;">options</span><span style="color: #4f97d7;">)</span>;
+</pre>
+</div>
+
+<ul class="org-ul">
+<li>参数idtype_t指定了要等待的子进程的类型
+
+<dl class="org-dl">
+<dt>P_PID</dt><dd>等待一个特定的进程</dd>
+
+<dt>P_PGID</dt><dd>等待一个特定进程组中的任一子进程</dd>
+
+<dt>P_ALL</dt><dd>等待任一子进程,此时忽略参数id的值</dd>
+</dl></li>
+
+<li>参数id的作用则跟idtype的值相关</li>
+
+<li>参数options指定关注子进程的哪些状态变化
+
+<dl class="org-dl">
+<dt>WNOHANG</dt><dd>非阻塞等待</dd>
+
+<dt>WNOWAIT</dt><dd>不破坏子进程的退出状态,该状态可由后续wait,waitid或waitpid调用获取</dd>
+
+<dt>WSTOPPED</dt><dd>等待一个尚未报告的STOP状态的子进程</dd>
+
+<dt>WCONTINUED</dt><dd>等待一个尚未报告的CONTINUE状态的子进程</dd>
+
+<dt>WEXITED</dt><dd>等待已退出的子进程</dd>
+</dl></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org9c24247" class="outline-2">
+<h2 id="org9c24247"><span class="section-number-2">4</span> exec系列函数</h2>
+<div class="outline-text-2" id="text-4">
+<ul class="org-ul">
+<li>由于exec一个新程序后,信号处理函数的地址已经失效了,因此exec函数将原先设置为要捕获的信号都更改为它们的默认动作</li>
+</ul>
+</div>
+<div id="outline-container-orgc5317b7" class="outline-3">
+<h3 id="orgc5317b7"><span class="section-number-3">4.1</span> exec系列函数的区分</h3>
+<div class="outline-text-3" id="text-4-1">
+<ul class="org-ul">
+<li>字母p表示该函数可以为不带目录的文件名,则会从PATH环境变量中搜索可执行文件</li>
+<li>字母l表示该函数的参数要一个一个的在函数签名中列出来,最后以一个(char*)0结尾表示参数终结</li>
+<li>字母v表示该函数取一个argv[]数组作为传递給新进程的参数</li>
+<li>字母e表示该函数接收一个envp[]数组,可以分配不同于当前环境的新环境</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgc91e8d0" class="outline-3">
+<h3 id="orgc91e8d0"><span class="section-number-3">4.2</span> exec后的新进程与原进程的关系</h3>
+<div class="outline-text-3" id="text-4-2">
+<ul class="org-ul">
+<li>新进程保持
+<ul class="org-ul">
+<li>原pid和ppid</li>
+<li>原实际用户id和实际组id</li>
+<li>附加组ID</li>
+<li>进程组ID</li>
+<li>会话ID</li>
+<li>控制终端</li>
+<li>alarm尚存留的事件</li>
+<li>当前工作目录</li>
+<li>根目录</li>
+<li>文件模式创建屏蔽字</li>
+<li>文件锁</li>
+<li>进程信号屏蔽</li>
+<li>未处理信号</li>
+<li>资源限制</li>
+<li>tms_utime,tms_stime,tms_cutime及tms_cstime</li>
+</ul></li>
+<li>是否关闭原进程打开的文件与该文件描述符的close-on-exec标志有关.
+<ul class="org-ul">
+<li>若设置了该标志,则指向exec时会关闭该描述符</li>
+<li>若没设置该标准,则保持描述符打开</li>
+<li>除非特地用fcntl设置了该标志,否则系统的默认为关闭该标志</li>
+</ul></li>
+<li>exec时 <b>明确会关闭打开的目录流(opendir)</b></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgb544a0b" class="outline-3">
+<h3 id="orgb544a0b"><span class="section-number-3">4.3</span> 当exec调用一个带`#! 解析器程序 可选参数项'的脚本文件时:</h3>
+<div class="outline-text-3" id="text-4-3">
+<ol class="org-ol">
+<li>exec实际执行的并不是该脚本文件,而是脚本文件第一行`#! 解析器程序 可选参数项'中的 <b>解析器程序</b></li>
+<li><p>
+exec传递给该解析器程序的参数顺序为,解析器地址,可选参数,脚本文件地址,除argv0外的由exec函数传入的其他参数.
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #2aa1ae; background-color: #292e34;">/*</span>
+<span style="color: #2aa1ae; background-color: #292e34;">  /tmp/testinterp&#30340;&#20869;&#23481;&#20026;:</span>
+<span style="color: #2aa1ae; background-color: #292e34;">  #! /usr/bin/echo.exe args:</span>
+<span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+
+<span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">unistd.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #ce537a; font-weight: bold;">int</span> <span style="color: #bc6ec5; font-weight: bold;">main</span><span style="color: #4f97d7;">()</span>
+<span style="color: #4f97d7;">{</span>
+  execl<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">"/tmp/testinterp"</span>,<span style="color: #2d9574;">"testinterp"</span>,<span style="color: #2d9574;">"myarg1"</span>,<span style="color: #2d9574;">"MY ARG2"</span>,<span style="color: #2d9574;">(</span><span style="color: #ce537a; font-weight: bold;">char</span>*<span style="color: #2d9574;">)</span> <span style="color: #a45bad;">0</span><span style="color: #bc6ec5;">)</span>;
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+
+<pre class="example">
+args: /tmp/testinterp myarg1 MY ARG2
+
+</pre></li>
+</ol>
+</div>
+</div>
+</div>
+<div id="outline-container-orgc040a94" class="outline-2">
+<h2 id="orgc040a94"><span class="section-number-2">5</span> 进程会计</h2>
+<div class="outline-text-2" id="text-5">
+<p>
+大多数UNIX系统都提供了一个选项以进行进程会计(process accounting)处理. 启用该选项后,每当进程结束时,内核就写一个会计记录.
+</p>
+
+<p>
+<b>会计记录是在fork时产生而不是exec时产生</b> 但exec会改变响应记录中的命令名,而且AFORK标志也会被清除.
+</p>
+
+<p>
+会计记录一般为二进制格式的,且结构各个系统实现的都不一样. 一般可以在&lt;sys/acct.h&gt;中查到struct acct
+</p>
+
+<p>
+root用户可以使用`accton 命令行'来对`命令行'开启进程会计选项.
+</p>
+</div>
+</div>
+<div id="outline-container-orgd697e2c" class="outline-2">
+<h2 id="orgd697e2c"><span class="section-number-2">6</span> 进程时间</h2>
+<div class="outline-text-2" id="text-6">
+<p>
+任何进程都可以通过调用times函数获得自己的运行时间,用户态CPU时间和内核态CPU时间.
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#include</span> <span style="color: #4f97d7;">&lt;</span><span style="color: #2d9574;">sys/times.h</span><span style="color: #4f97d7;">&gt;</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#33509;&#25104;&#21151;&#36820;&#22238;&#36827;&#31243;&#30456;&#23545;&#19978;&#19968;&#27425;&#36816;&#34892;times&#20989;&#25968;&#30340;&#36816;&#34892;&#26102;&#38388;,&#21333;&#20301;&#20026;&#26102;&#38047;&#28404;&#31572;&#25968;,&#33509;&#20986;&#38169;&#36820;&#22238;-1 </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+<span style="color: #ce537a; font-weight: bold;">clock_t</span> <span style="color: #bc6ec5; font-weight: bold;">times</span><span style="color: #4f97d7;">(</span><span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">tms</span>* <span style="color: #7590db;">buf</span><span style="color: #4f97d7;">)</span>; 
+
+<span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">tms</span><span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">clock_t</span> <span style="color: #7590db;">tms_utime</span>;            <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">user CPU time </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">clock_t</span> <span style="color: #7590db;">tms_stime</span>;            <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">system CPU time </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">clock_t</span> <span style="color: #7590db;">tms_cutime</span>;           <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">user CPU tim, terminated children </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+  <span style="color: #ce537a; font-weight: bold;">clock_t</span> <span style="color: #7590db;">tms_cstime</span>;           <span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">system CPU time, terminated children </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+<span style="color: #4f97d7;">}</span>
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2015-05-18</span>
+    <span title="last modification date" class="post-info">2016-10-24</span>
+    <span title="tags" class="post-info">N/A</span>
+    <span title="author" class="post-info">DarkSun</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">DarkSun</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

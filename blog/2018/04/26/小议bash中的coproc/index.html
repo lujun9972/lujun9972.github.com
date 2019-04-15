@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>小议bash中的COPROC - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅,bash" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">小议bash中的COPROC</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgd08375c">COPROC语法</a>
+<ul>
+<li><a href="#orgd801935">COPROC基本语法</a></li>
+<li><a href="#org52fc9fe">COPROC的扩展语法</a></li>
+<li><a href="#org5c12aa5">关闭不需要的管道</a></li>
+</ul>
+</li>
+<li><a href="#org58cb80c">注意事项</a></li>
+</ul>
+</div>
+</div>
+<p>
+在bash中，两个进程之间要传输数据的最常见方法就是用匿名管道了，像这样
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">commandA|commandB|commandC
+</pre>
+</div>
+
+<p>
+但是使用匿名管道最大的一个问题是，数据的传输是单向的，即commandB只能从commandA的输出中读取数据，然后commandB的输出只能被commandC读取。
+</p>
+
+<p>
+那么若想要两个进程之间相互读取数据怎么办呢？也就是说我希望上面的commandA和commandC其实是同一个进程怎么办？
+一个常见的解决方法就是使用命名管道:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">mkfifo<span style="color: #4f97d7; font-weight: bold;"> in</span> out
+<span style="color: #4f97d7; font-weight: bold;">trap</span> <span style="color: #2d9574;">'rm in out'</span> EXIT
+cmd &lt;in &gt;out &amp;
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #a45bad;">3</span>&gt;<span style="color: #4f97d7; font-weight: bold;"> in</span> <span style="color: #a45bad;">4</span>&lt; out
+<span style="color: #4f97d7;">echo</span> $<span style="color: #7590db;">data</span> &gt;&amp;<span style="color: #a45bad;">3</span>
+<span style="color: #4f97d7;">read</span> $<span style="color: #7590db;">data</span> &lt;&amp;<span style="color: #a45bad;">4</span>
+</pre>
+</div>
+
+<p>
+不过使用命名管道也有一个麻烦事，就是需要记得清理生成的管道文件。
+</p>
+
+<p>
+不过，自bash4.0开始，bash引入了一个关键字 <code>coproc</code>, 用来在后台创建一个协作进程(co-process), 同时将它的输入和输出通过管道与文件句柄相连。
+</p>
+
+<p>
+有点类似于C中的 <code>FILE * popen ( const char * command , const char * type );</code> 函数,只不过它同时产生输入和输出两个句柄。
+</p>
+
+<div id="outline-container-orgd08375c" class="outline-2">
+<h2 id="orgd08375c">COPROC语法</h2>
+<div class="outline-text-2" id="text-orgd08375c">
+<p>
+根据bash manual的说法，coprocess的语法为
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">coproc</span> <span style="color: #4f97d7;">[</span>NAME<span style="color: #4f97d7;">]</span> command <span style="color: #4f97d7;">[</span>redirections<span style="color: #4f97d7;">]</span>
+</pre>
+</div>
+<p>
+其中当command为<a href="https://www.gnu.org/software/bash/manual/html_node/Simple-Commands.html#Simple-Commands">简单命令</a>时，不能有 <code>NAME</code>. 
+</p>
+
+<p>
+这个说法很容易让人感到困惑，什么叫简单命令？这个概念不直观。
+</p>
+
+<p>
+直观点说，可以认为 <code>coproc</code> 有两类用法，一类是基本语法，一类是扩展的语法。
+</p>
+</div>
+
+<div id="outline-container-orgd801935" class="outline-3">
+<h3 id="orgd801935">COPROC基本语法</h3>
+<div class="outline-text-3" id="text-orgd801935">
+<p>
+COPROC的基本语法适用于当只需要有一个coprocess的情况，它的语法为
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">coproc</span> cmd <span style="color: #4f97d7;">[</span>redirections<span style="color: #4f97d7;">]</span>
+</pre>
+</div>
+
+<p>
+这时与coprocess的输入/输出管道相连的句柄保存在 <code>$COPROC</code> 数组中，分别为 <code>${COPROC[1]}</code> 和 <code>${COPROC[0]}</code>
+</p>
+
+<p>
+因此，你可以使用 <code>echo $data &gt;&amp;"${COPROC[1]}"</code> 来往coprocess中输入数据,
+通过使用 <code>echo $data &lt;&amp;"${COPROC[0]}"</code> 来读取coprocess的输出数据。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org52fc9fe" class="outline-3">
+<h3 id="org52fc9fe">COPROC的扩展语法</h3>
+<div class="outline-text-3" id="text-org52fc9fe">
+<p>
+当需要创建多个coprocess时，你就需要使用coproc的扩展语法了，因为它允许你为coprocess命名。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">coproc</span> NAME <span style="color: #4f97d7;">{</span>cmds<span style="color: #4f97d7;">}</span> <span style="color: #4f97d7;">[</span>redirections<span style="color: #4f97d7;">]</span>
+</pre>
+</div>
+
+<p>
+有没有觉得它跟bash中定义函数的语法 <code>function NAME {cmds}</code> 很类似？
+</p>
+
+<p>
+这时与coprocess的输入/输出管道相连的句柄保存在 <code>$NAME</code> 数组中，分别为 <code>${NAME[1]}</code> 和 <code>${NAME[0]}</code>
+</p>
+
+<p>
+对应的，你可以使用 <code>echo $data &gt;&amp;"${NAME[1]}"</code> 来往coprocess中输入数据,
+通过使用 <code>echo $data &lt;&amp;"${NAME[0]}"</code> 来读取coprocess的输出数据。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5c12aa5" class="outline-3">
+<h3 id="org5c12aa5">关闭不需要的管道</h3>
+<div class="outline-text-3" id="text-org5c12aa5">
+<p>
+若coprocess只需要输入句柄或输出句柄，则可以使用 <code>exec</code> 来关闭不需要的文件句柄
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #4f97d7;">{</span>NAME<span style="color: #bc6ec5;">[</span><span style="color: #a45bad;">0</span><span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">}</span>&gt;&amp;-
+<span style="color: #4f97d7; font-weight: bold;">exec</span> <span style="color: #4f97d7;">{</span>NAME<span style="color: #bc6ec5;">[</span><span style="color: #a45bad;">1</span><span style="color: #bc6ec5;">]</span><span style="color: #4f97d7;">}</span>&gt;&amp;-
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org58cb80c" class="outline-2">
+<h2 id="org58cb80c">注意事项</h2>
+<div class="outline-text-2" id="text-org58cb80c">
+<p>
+使用coprocess虽然方便,但要当心coprocess由于输出缓存而导致的卡死。
+</p>
+
+<p>
+比如下面这个例子
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #4f97d7;">coproc</span> tr a b
+<span style="color: #4f97d7;">echo</span> a &gt;&amp;<span style="color: #2d9574;">"${COPROC[1]}"</span>
+<span style="color: #4f97d7;">read</span> var&lt;&amp;<span style="color: #2d9574;">"${COPROC[0]}"</span>
+</pre>
+</div>
+
+<p>
+你的期望是第三句能够读出字符 <code>b</code> 作为 <code>var</code> 的值， 然而实际上执行到第三句话时会卡死。
+这是因为 <code>tr</code> 命令缓存了输出的内容,而并未将其写到终端上来。
+</p>
+
+<p>
+因此创建coprocess时一定小心，只能使用那些不会缓存输出的命令。
+也正因为此，coprocess的使用范围其实也很受限，真要用来跟其他进程做交互的话，还是推荐使用 <code>expert</code> 比较好。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-26</span>
+    <span title="last modification date" class="post-info">2018-04-27</span>
+    <span title="tags" class="post-info"><a href="/tags/编程之旅">编程之旅</a> : <a href="/tags/bash">bash</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

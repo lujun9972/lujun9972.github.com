@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>在OrangePi上使用Docker-Compose搭建蚂蚁笔记服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴 OrangePi docker" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">在OrangePi上使用Docker-Compose搭建蚂蚁笔记服务器</h1>
+<p>
+<a href="http://leanote.com">蚂蚁笔记</a> 是一款很不错的云笔记应用，基本上可以用来代替Evernote. 最棒的是它可以很方便的自建服务器!
+</p>
+
+<p>
+蚂蚁笔记服务端基于Mongo数据库，我们可以直接基于Mongo镜像来搭建自己的服务镜像，但是基于一个容器只跑一个进程的原则，推荐将Mongo数据库和蚂蚁笔记服务分开来。
+</p>
+
+<ol class="org-ol">
+<li><p>
+创建docker-compose.yml,填入下面内容
+</p>
+<div class="org-src-container">
+<pre class="src src-yaml"><span style="color: #7590db;">version</span>: <span style="color: #2d9574;">"0.1"</span>
+
+<span style="color: #7590db;">services</span>:
+  <span style="color: #7590db;">mongo</span>:
+    <span style="color: #7590db;">image</span>: mongo
+    <span style="color: #7590db;">volumes</span>:
+      - .data:/data
+
+  <span style="color: #7590db;">leanote</span>:
+    <span style="color: #7590db;">build</span>: leanote
+    <span style="color: #7590db;">ports</span>:
+      - 9000:9000
+    <span style="color: #7590db;">links</span>:
+      - mongo
+</pre>
+</div>
+
+<p>
+这里，我们直接使用docker官方提供的 <code>mongo</code> 镜像来提供mongo数据库服务。
+</p>
+
+<p>
+leanote目录则存放构建蚂蚁笔记服务端的构建内容
+</p></li>
+
+<li><p>
+在leanote目录下创建Dockerfile，填入下面内容
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">FROM mongo
+WORKDIR /root/
+ADD run.sh /root/
+ADD https://static.axboy.cn/leanote/leanote-linux-arm-v2.6.1.bin.tar.gz  /root/leanote.tar.gz
+RUN tar -xzf /root/leanote.tar.gz -C /root/ &amp;&amp; <span style="color: #2d9574;">\</span>
+      rm -f /root/leanote.tar.gz &amp;&amp; <span style="color: #2d9574;">\</span>
+      chmod a+x /root/run.sh &amp;&amp; <span style="color: #2d9574;">\</span>
+      chmod a+x /root/leanote/bin/run.sh
+RUN sed -i <span style="color: #2d9574;">'/db.host/ s/127.0.0.1/mongo/'</span> /root/leanote/conf/app.conf
+EXPOSE <span style="color: #a45bad;">9000</span>
+ENTRYPOINT
+CMD /root/run.sh
+</pre>
+</div>
+
+<p>
+这里要说明的是:
+</p>
+
+<ol class="org-ol">
+<li><b>虽然我们将mongo数据库和蚂蚁笔记服务端分开，但由于导入蚂蚁笔记初始脚本时需要用到mongorestore命令，因此这里依然基于mongo构建我们的镜像，只不过在后面通过 ENTRYPOINT 来禁止mongo服务的启动</b></li>
+
+<li>蚂蚁笔记默认的配置的mongo主机是 <code>127.0.0.1</code>,这里需要修改为 <code>mongo</code>,也就是 <code>docker-compose.yml</code> 中定义的mongo数据库的服务名</li>
+
+<li>蚂蚁笔记默认通过 <code>9000</code> 端口对外提供服务，因此这里通过 <code>EXPOSE 9000</code> 将 <code>9000</code> 端口暴露出去</li>
+</ol></li>
+
+<li><p>
+在leanote目录下创建run.sh,填入下面内容
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span style="color: #2aa1ae; background-color: #292e34;">#</span><span style="color: #2aa1ae; background-color: #292e34;">!/usr/bin/</span><span style="color: #4f97d7; font-weight: bold;">env</span><span style="color: #2aa1ae; background-color: #292e34;"> bash</span>
+
+<span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">&#20498;&#20837;&#21021;&#22987;&#25968;&#25454;</span>
+<span style="color: #4f97d7; font-weight: bold;">if ! </span><span style="color: #4f97d7;">echo</span> <span style="color: #2d9574;">"show dbs"</span> |mongo --host mongo|grep leanote
+<span style="color: #4f97d7; font-weight: bold;">then</span>
+  mongorestore -h mongo -d leanote --dir /root/leanote/mongodb_backup/leanote_install_data/
+<span style="color: #4f97d7; font-weight: bold;">fi</span>
+bash /root/leanote/bin/run.sh
+</pre>
+</div>
+
+<p>
+这个 <code>run.sh</code> 很简单，就是先查看 <code>mongo</code> 主机上是否已经有了 <code>leanote</code> 数据库。
+若没有这个数据库，则从 <code>/root/leanote/mongodb_backup/leanote_install_data/</code> 中导入初始化数据。
+然后启动蚂蚁笔记的服务。
+</p>
+
+<p>
+这里需要注意的是:
+</p>
+
+<ol class="org-ol">
+<li><code>mongo</code> 和 <code>mongorestore</code> 命令后指定的主机名 <code>mongo</code> 就是 <code>docker-compose.yml</code> 中定义的mongo数据库的服务名</li>
+</ol></li>
+
+<li>运行 <code>docker-compose up -d</code> 启动服务</li>
+
+<li>访问 <code>http://orangepi:9000</code> 就能看到蚂蚁笔记服务的web界面了
+<img src="/assets/blog/2018/12/22/在orangepi上使用docker-compose搭建蚂蚁笔记服务器/leanote_web.png" alt="leanote_web.png" /></li>
+</ol>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-12-22</span>
+    <span title="last modification date" class="post-info">2018-12-22</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴-orangepi-docker">linux和它的小伙伴 OrangePi docker</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

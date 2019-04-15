@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何通过指向成员的指针获取包含它的结构体的地址 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅,c" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何通过指向成员的指针获取包含它的结构体的地址</h1>
+<p>
+假设我们有一个结构体
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #4f97d7; font-weight: bold;">typedef</span> <span style="color: #4f97d7; font-weight: bold;">struct</span> <span style="color: #ce537a; font-weight: bold;">Food</span><span style="color: #4f97d7;">{</span>
+  <span style="color: #ce537a; font-weight: bold;">char</span> <span style="color: #7590db;">name</span><span style="color: #bc6ec5;">[</span><span style="color: #a45bad;">20</span><span style="color: #bc6ec5;">]</span>;
+  <span style="color: #ce537a; font-weight: bold;">double</span> <span style="color: #7590db;">price</span>;
+<span style="color: #4f97d7;">}</span> <span style="color: #ce537a; font-weight: bold;">Food</span>;
+
+<span style="color: #ce537a; font-weight: bold;">Food</span> <span style="color: #7590db;">apple</span>=<span style="color: #4f97d7;">{</span>
+  .name = <span style="color: #2d9574;">"apple"</span>,
+  .price = <span style="color: #a45bad;">7.8</span>
+<span style="color: #4f97d7;">}</span>;
+</pre>
+</div>
+
+<p>
+我们已知有一个指针指向了这个结构体的成员，那么能否从而推测出指向包含该成员的结构体本身的指针呢？
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #ce537a; font-weight: bold;">double</span>* <span style="color: #7590db;">p</span> = &amp;apple.price;
+<span style="color: #2aa1ae; background-color: #292e34;">/* </span><span style="color: #2aa1ae; background-color: #292e34;">&#22914;&#20309;&#36890;&#36807;p&#33719;&#21462;&amp;apple&#65311;&#65311; </span><span style="color: #2aa1ae; background-color: #292e34;">*/</span>
+</pre>
+</div>
+
+<p>
+在linux内核源码中就定义了这么一个神奇的宏。
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #bc6ec5;">#define</span> <span style="color: #bc6ec5; font-weight: bold;">container_of</span><span style="color: #4f97d7;">(</span><span style="color: #7590db;">ptr</span>, <span style="color: #7590db;">type</span>, <span style="color: #7590db;">member</span><span style="color: #4f97d7;">)</span> <span style="color: #4f97d7;">(</span><span style="color: #bc6ec5;">{</span> \
+  <span style="color: #4f97d7; font-weight: bold;">const</span> <span style="color: #4f97d7; font-weight: bold;">typeof</span><span style="color: #2d9574;">(</span> <span style="color: #67b11d;">(</span><span style="color: #b1951d;">(</span><span style="color: #ce537a; font-weight: bold;">type</span> *<span style="color: #b1951d;">)</span><span style="color: #a45bad;">0</span><span style="color: #67b11d;">)</span>-&gt;member <span style="color: #2d9574;">)</span> *<span style="color: #7590db;">__mptr</span> = <span style="color: #2d9574;">(</span>ptr<span style="color: #2d9574;">)</span>; \
+  <span style="color: #2d9574;">(</span><span style="color: #ce537a; font-weight: bold;">type</span> *<span style="color: #2d9574;">)(</span> <span style="color: #67b11d;">(</span><span style="color: #ce537a; font-weight: bold;">char</span> *<span style="color: #67b11d;">)</span>__mptr - offsetof<span style="color: #67b11d;">(</span>type,member<span style="color: #67b11d;">)</span> <span style="color: #2d9574;">)</span>;<span style="color: #bc6ec5;">}</span><span style="color: #4f97d7;">)</span>
+
+
+<span style="color: #bc6ec5;">#define</span> <span style="color: #bc6ec5; font-weight: bold;">offsetof</span><span style="color: #4f97d7;">(</span><span style="color: #7590db;">TYPE</span>, <span style="color: #7590db;">MEMBER</span><span style="color: #4f97d7;">)</span> <span style="color: #4f97d7;">(</span><span style="color: #bc6ec5;">(</span><span style="color: #ce537a; font-weight: bold;">size_t</span><span style="color: #bc6ec5;">)</span> &amp;<span style="color: #bc6ec5;">(</span><span style="color: #2d9574;">(</span><span style="color: #ce537a; font-weight: bold;">TYPE</span> *<span style="color: #2d9574;">)</span><span style="color: #a45bad;">0</span><span style="color: #bc6ec5;">)</span>-&gt;MEMBER<span style="color: #4f97d7;">)</span>
+</pre>
+</div>
+
+<p>
+这个宏的使用方法是 <code>container_of(指向成员的指针, 包含成员的结构体类型,成员的内容)</code>.
+</p>
+
+<p>
+比如，上面例子中要得到 <code>apple</code> 的地址，可以这么做
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span style="color: #ce537a; font-weight: bold;">Food</span>* <span style="color: #7590db;">fp</span> = container_of<span style="color: #4f97d7;">(</span>p,Food,price<span style="color: #4f97d7;">)</span>;
+printf<span style="color: #4f97d7;">(</span><span style="color: #2d9574;">"%x,%x\n"</span>,fp,&amp;apple<span style="color: #4f97d7;">)</span>;
+</pre>
+</div>
+
+<p>
+宏的实现原理其实很简单：
+<code>container_of</code> 宏的第一句话中的 <code>typeof</code> 是GNU C对标准C的扩展,它的作用是根据变量获取变量的类型. 
+因此这句话的意思是定义一个与 <code>ptr</code> 同类型且值相等的常量指针 <code>__mptr</code>,
+然后第二句里面的 <code>offsetof</code> 宏用于计算从结构体 <code>type</code> 的头到成员 <code>member</code> 所需要的偏移量，
+最后用 <code>__mptr</code> 表示的地址(转换成char指针后,因为char在C中定义永远为1个字节)减去这个偏移量就是结构体的地址了。
+</p>
+
+<p>
+而 <code>offsetof</code> 的实现原理则是直接将地址0强制类型转换为 <code>TYPE</code> 指针，因此该结构体中成员所在的指针值刚好为成员与结构体头部的偏移量了。
+</p>
+
+<p>
+整个实现中，其实比较难理解的是，为什么引入一个中间变量 <code>__mptr</code> 呢？
+</p>
+
+<p>
+在搜索了网上的资料后，才找到答案:
+引入__mptr是为了作编译期间的类型检查，确保传入的ptr是指向struct member的指针(因为赋值时如果类型不匹配会报告警)。
+而在运行期间，这个赋值gcc可以优化掉，不会影响效率。
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-18</span>
+    <span title="last modification date" class="post-info">2018-04-18</span>
+    <span title="tags" class="post-info"><a href="/tags/编程之旅">编程之旅</a> : <a href="/tags/c">c</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

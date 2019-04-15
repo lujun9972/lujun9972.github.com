@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用cryptsetup创建加密磁盘 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z" fill="#ffff00"/>
+          <path d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z" fill="#ffff00"/>
+          <path d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z" fill="#ffff00"/>
+        </svg>
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用cryptsetup创建加密磁盘</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgc49873f">dm-crypt的特点</a></li>
+<li><a href="#org8adc10f">使用cryptsetup创建加密磁盘</a>
+<ul>
+<li><a href="#orgb9acd3b">创建虚拟磁盘分区</a></li>
+<li><a href="#org2e08643">创建加密磁盘分区</a></li>
+<li><a href="#org1655788">打开密码盘</a></li>
+<li><a href="#orgdb7cd47">像普通磁盘分区一样操作 <code>/dev/mapper/USB</code></a></li>
+<li><a href="#org87e8133">查看加密盘状态</a></li>
+<li><a href="#org6a868a8">关闭加密盘</a></li>
+</ul>
+</li>
+<li><a href="#org36f3705">让加密盘使用keyfile认证</a>
+<ul>
+<li><a href="#orgee8f189">创建随机文件作为keyfile</a></li>
+<li><a href="#org9d38fd2">查看key slot</a></li>
+<li><a href="#org46ef4a0">添加keyfile认证</a></li>
+<li><a href="#org4af565c">使用keyfile打开加密盘</a></li>
+<li><a href="#org6acfd52">删除keyslot</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+cryptsetup是linux下的一个分区加密工具，它通过调用内核中的"dm-crypt"来实现磁盘加密的功能。
+</p>
+
+<div id="outline-container-orgc49873f" class="outline-2">
+<h2 id="orgc49873f">dm-crypt的特点</h2>
+<div class="outline-text-2" id="text-orgc49873f">
+<p>
+dm-crypt具有如下几个特点:
+</p>
+
+<ol class="org-ol">
+<li><p>
+支持多种加密格式
+</p>
+
+<ul class="org-ul">
+<li>LUKS（Linux Unified Key Setup）</li>
+
+<li>Plain</li>
+
+<li>loop-AES</li>
+
+<li>TCRYPT</li>
+</ul>
+
+<p>
+一般我们比较常用的是LUKS格式
+</p></li>
+
+<li><p>
+安装简单
+</p>
+
+<p>
+dm-crypt是整合到linux内核中的，而它的命令行前端cryptsetup,在大多数主流的linux发行版中都会自带
+</p></li>
+
+<li>可以与LVM无缝结合</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org8adc10f" class="outline-2">
+<h2 id="org8adc10f">使用cryptsetup创建加密磁盘</h2>
+<div class="outline-text-2" id="text-org8adc10f">
+</div>
+<div id="outline-container-orgb9acd3b" class="outline-3">
+<h3 id="orgb9acd3b">创建虚拟磁盘分区</h3>
+<div class="outline-text-3" id="text-orgb9acd3b">
+<p>
+为了方便，我这里用 <code>dd</code> 命令创建一个文件来代替真实的磁盘分区(因为操作过程会清空整个磁盘分区的内容:()。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">dd <span style="color: #7590db;">if</span>=/dev/zero <span style="color: #7590db;">of</span>=/tmp/USB.img <span style="color: #7590db;">bs</span>=<span style="color: #a45bad;">1M</span> <span style="color: #7590db;">count</span>=<span style="color: #a45bad;">100</span>
+
+ls -l /tmp/USB.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-rw-r--r-- 1 lujun9972 lujun9972 104857600 4&#26376;  12 18:13 /tmp/USB.img
+</pre>
+</div>
+
+<p>
+这就创建了一个100M的文件作为虚拟磁盘分区来用。
+</p>
+
+<p>
+在实际使用中，你可以用cryptsetup来对实际的磁盘分区来进行操作。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2e08643" class="outline-3">
+<h3 id="org2e08643">创建加密磁盘分区</h3>
+<div class="outline-text-3" id="text-org2e08643">
+<p>
+虽然说dm-crypt支持多种加密格式，但最常用的还是LUKS。
+</p>
+
+<p>
+创建LUKS加密盘的命令为:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup <span style="color: #4f97d7;">[</span>&#20854;&#20182;&#21442;&#25968;<span style="color: #4f97d7;">]</span> luksFormat &#35774;&#22791;&#21517;
+</pre>
+</div>
+
+<p>
+这里常用的参数有下面几个:
+</p>
+
+<dl class="org-dl">
+<dt>--cipher</dt><dd>加密方式</dd>
+<dt>--key-size</dt><dd>密钥长度</dd>
+<dt>--hash</dt><dd>散列算法</dd>
+<dt>--iter-time</dt><dd>迭代时间，单位为毫秒。值越大，暴力破解越难，但打开加密盘的时间也越久</dd>
+</dl>
+
+<p>
+这里我们直接使用默认值
+</p>
+<pre class="example">
+[lujun9972@X61 ~]$ cryptsetup luksFormat /tmp/USB.img 
+
+WARNING!
+========
+这将覆盖 /tmp/USB.img 上的数据，该动作不可取消。
+
+Are you sure? (Type uppercase yes): YES
+输入 /tmp/USB.img 的密码：
+确认密码：
+[lujun9972@X61 ~]$ 
+</pre>
+
+<p>
+执行的过程中，命令会警告你将会清除磁盘上的所有数据，并要求你输入两次密码
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-org1655788" class="outline-3">
+<h3 id="org1655788">打开密码盘</h3>
+<div class="outline-text-3" id="text-org1655788">
+<p>
+cryptsetup可以打开前面提到的各种加密盘。
+</p>
+
+<p>
+打开加密盘的命令为
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup open --type &#21152;&#23494;&#31867;&#22411; &#21152;&#23494;&#30913;&#30424; &#26144;&#23556;&#21517;&#31216;
+</pre>
+</div>
+
+<p>
+或者也可以写成
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup &#21152;&#23494;&#31867;&#22411;Open &#21152;&#23494;&#30913;&#30424; &#26144;&#23556;&#21517;&#31216;
+</pre>
+</div>
+
+<p>
+比如，我们这个案例中可以执行:
+</p>
+<pre class="example">
+[lujun9972@X61 ~]$ sudo cryptsetup luksOpen /tmp/USB.img USB
+[sudo] lujun9972 的密码：
+输入 /tmp/USB.img 的密码：
+[lujun9972@X61 ~]$ 
+</pre>
+
+<p>
+注意这里需要用到root权限。
+</p>
+
+<p>
+执行该命令后就会将 <code>/tmp/USB.img</code> 解密，并映射成 <code>/dev/mapper/USB</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdb7cd47" class="outline-3">
+<h3 id="orgdb7cd47">像普通磁盘分区一样操作 <code>/dev/mapper/USB</code></h3>
+<div class="outline-text-3" id="text-orgdb7cd47">
+<p>
+你可以像普通磁盘一样来操作 <code>/dev/mapper/USB</code>.
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo mkfs.ext4 /dev/mapper/USB
+sudo mount /dev/mapper/USB /mnt
+sudo touch /mnt/secret
+ls -l /mnt/secret
+</pre>
+</div>
+
+<p>
+结果为
+</p>
+<div class="org-src-container">
+<pre class="src src-org">Creating filesystem with 100352 1k blocks and 25168 inodes
+Filesystem UUID: b1557874-a538-4ffa-9ce0-c17e8feb4b1c
+Superblock backups stored on blocks: 
+  8193, 24577, 40961, 57345, 73729
+
+Allocating group tables:  0/13&#8;&#8;&#8;&#8;&#8;     &#8;&#8;&#8;&#8;&#8;done                            
+Writing inode tables:  0/13&#8;&#8;&#8;&#8;&#8;     &#8;&#8;&#8;&#8;&#8;done                            
+Creating journal (4096 blocks): done
+Writing superblocks and filesystem accounting information:  0/13&#8;&#8;&#8;&#8;&#8;     &#8;&#8;&#8;&#8;&#8;done
+
+-rw------- 1 root root 0 Apr 12 18:39 /mnt/secret
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org87e8133" class="outline-3">
+<h3 id="org87e8133">查看加密盘状态</h3>
+<div class="outline-text-3" id="text-org87e8133">
+<p>
+在打开加密盘后，可以查看该加密盘的状态，语法为
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup status &#26144;&#23556;&#21517;
+</pre>
+</div>
+
+<p>
+同样的，由于需要初始化device mapper,因此需要root权限：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo cryptsetup status USB
+</pre>
+</div>
+
+<p>
+结果为
+</p>
+<div class="org-src-container">
+<pre class="src src-org">/dev/mapper/USB is active and is in use.
+  type:    LUKS1
+  cipher:  aes-xts-plain64
+  keysize: 256 bits
+  key location: dm-crypt
+  device:  /dev/loop0
+  loop:    /tmp/USB.img
+  sector size:  512
+  offset:  4096 sectors
+  size:    200704 sectors
+  mode:    read/write
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6a868a8" class="outline-3">
+<h3 id="org6a868a8">关闭加密盘</h3>
+<div class="outline-text-3" id="text-org6a868a8">
+<p>
+操作完磁盘后，使用下面命令关闭加密盘
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup close &#26144;&#23556;&#21517;
+</pre>
+</div>
+
+<p>
+像这样：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo umount /mnt
+sudo cryptsetup close USB
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org36f3705" class="outline-2">
+<h2 id="org36f3705">让加密盘使用keyfile认证</h2>
+<div class="outline-text-2" id="text-org36f3705">
+</div>
+<div id="outline-container-orgee8f189" class="outline-3">
+<h3 id="orgee8f189">创建随机文件作为keyfile</h3>
+<div class="outline-text-3" id="text-orgee8f189">
+<div class="org-src-container">
+<pre class="src src-shell">dd <span style="color: #7590db;">if</span>=/dev/urandom <span style="color: #7590db;">of</span>=/tmp/keyfile <span style="color: #7590db;">bs</span>=<span style="color: #a45bad;">1K</span> <span style="color: #7590db;">count</span>=<span style="color: #a45bad;">64</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org9d38fd2" class="outline-3">
+<h3 id="org9d38fd2">查看key slot</h3>
+<div class="outline-text-3" id="text-org9d38fd2">
+<p>
+LUKS格式的加密盘默认能够提供8个"key slot",每个"key slot"就是一个解密的钥匙，使用任何一把钥匙都能打开这个LUKS加密盘。
+</p>
+
+<p>
+相当于是能有多种解密方式。
+</p>
+
+<p>
+要查看LUKS密码盘的"Key Slot",可以用下面命令：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksDump &#21152;&#23494;&#30424;
+</pre>
+</div>
+
+<p>
+比如
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksDump /tmp/USB.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">LUKS header information for /tmp/USB.img
+
+Version:        1
+Cipher name:    aes
+Cipher mode:    xts-plain64
+Hash spec:      sha256
+Payload offset: 4096
+MK bits:        256
+MK digest:      0b 6b f3 5d fb 94 1a 8f aa c6 7e 86 d8 64 b0 0b c7 bf 7b 7d 
+MK salt:        02 9b dc c3 0e 34 79 0b ab a9 44 e6 e4 ad 67 30 
+                35 f1 dd cf e0 33 0c 36 bf bc 55 f1 d5 ce fb ad 
+MK iterations:  70167
+UUID:           e4e7cfc4-f9ae-4ed1-b65b-1b0e7b84ca7f
+
+Key Slot 0: ENABLED
+  Iterations:           1122672
+  Salt:                 d2 04 39 66 d7 cb 64 6d e3 ef d9 88 c7 1c 07 b2 
+                          25 00 8f bf e3 6d f1 9e 3f 31 91 c6 f0 ff 6d 75 
+  Key material offset:  8
+  AF stripes:             4000
+Key Slot 1: DISABLED
+Key Slot 2: DISABLED
+Key Slot 3: DISABLED
+Key Slot 4: DISABLED
+Key Slot 5: DISABLED
+Key Slot 6: DISABLED
+Key Slot 7: DISABLED
+</pre>
+</div>
+
+<p>
+你会发现，这个LUKS加密盘目前只使用了一个Key Slot，也就是创建盘时设置的密码
+</p>
+</div>
+</div>
+<div id="outline-container-org46ef4a0" class="outline-3">
+<h3 id="org46ef4a0">添加keyfile认证</h3>
+<div class="outline-text-3" id="text-org46ef4a0">
+<p>
+使用下面命令为LUKS加密盘添加keyfile认证
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksAddKey &#21152;&#23494;&#30424; keyfile
+</pre>
+</div>
+
+<p>
+比如
+</p>
+<pre class="example">
+[lujun9972@X61 ~]$ cryptsetup luksAddKey /tmp/USB.img /tmp/keyfile
+输入任意已存在的密码：
+[lujun9972@X61 ~]$ 
+</pre>
+
+<p>
+再查一下Key Slot:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksDump /tmp/USB.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">LUKS header information for /tmp/USB.img
+
+Version:        1
+Cipher name:    aes
+Cipher mode:    xts-plain64
+Hash spec:      sha256
+Payload offset: 4096
+MK bits:        256
+MK digest:      0b 6b f3 5d fb 94 1a 8f aa c6 7e 86 d8 64 b0 0b c7 bf 7b 7d 
+MK salt:        02 9b dc c3 0e 34 79 0b ab a9 44 e6 e4 ad 67 30 
+                35 f1 dd cf e0 33 0c 36 bf bc 55 f1 d5 ce fb ad 
+MK iterations:  70167
+UUID:           e4e7cfc4-f9ae-4ed1-b65b-1b0e7b84ca7f
+
+Key Slot 0: ENABLED
+  Iterations:           1122672
+  Salt:                 d2 04 39 66 d7 cb 64 6d e3 ef d9 88 c7 1c 07 b2 
+                          25 00 8f bf e3 6d f1 9e 3f 31 91 c6 f0 ff 6d 75 
+  Key material offset:  8
+  AF stripes:             4000
+Key Slot 1: ENABLED
+  Iterations:           1109604
+  Salt:                 38 3a 6a 76 c3 10 7c a3 1f fd e8 7c 1a 7f 4b 4f 
+                          2a bf 99 6c 1c 06 11 00 59 5e ce e4 99 79 79 f7 
+  Key material offset:  264
+  AF stripes:             4000
+Key Slot 2: DISABLED
+Key Slot 3: DISABLED
+Key Slot 4: DISABLED
+Key Slot 5: DISABLED
+Key Slot 6: DISABLED
+Key Slot 7: DISABLED
+</pre>
+</div>
+
+<p>
+会发现启用了新的key slot
+</p>
+</div>
+</div>
+<div id="outline-container-org4af565c" class="outline-3">
+<h3 id="org4af565c">使用keyfile打开加密盘</h3>
+<div class="outline-text-3" id="text-org4af565c">
+<p>
+使用keyfile打开加密盘的方式跟普通打开加密盘的方式类似，只是要多用一个 <code>--keyfile</code> 来指定keyfile的路径
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo cryptsetup --key-file /tmp/keyfile open --type luks /tmp/USB.img USB
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org6acfd52" class="outline-3">
+<h3 id="org6acfd52">删除keyslot</h3>
+<div class="outline-text-3" id="text-org6acfd52">
+<p>
+使用下面命令可以删除加密盘的其中一个key slot
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksKillSlot /tmp/USB.img <span style="color: #a45bad;">0</span>
+</pre>
+</div>
+
+<p>
+再查一下Key Slot:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cryptsetup luksDump /tmp/USB.img
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">LUKS header information for /tmp/USB.img
+
+Version:        1
+Cipher name:    aes
+Cipher mode:    xts-plain64
+Hash spec:      sha256
+Payload offset: 4096
+MK bits:        256
+MK digest:      0b 6b f3 5d fb 94 1a 8f aa c6 7e 86 d8 64 b0 0b c7 bf 7b 7d 
+MK salt:        02 9b dc c3 0e 34 79 0b ab a9 44 e6 e4 ad 67 30 
+                35 f1 dd cf e0 33 0c 36 bf bc 55 f1 d5 ce fb ad 
+MK iterations:  70167
+UUID:           e4e7cfc4-f9ae-4ed1-b65b-1b0e7b84ca7f
+
+Key Slot 0: DISABLED
+Key Slot 1: ENABLED
+  Iterations:           1109604
+  Salt:                 38 3a 6a 76 c3 10 7c a3 1f fd e8 7c 1a 7f 4b 4f 
+                          2a bf 99 6c 1c 06 11 00 59 5e ce e4 99 79 79 f7 
+  Key material offset:  264
+  AF stripes:             4000
+Key Slot 2: DISABLED
+Key Slot 3: DISABLED
+Key Slot 4: DISABLED
+Key Slot 5: DISABLED
+Key Slot 6: DISABLED
+Key Slot 7: DISABLED
+</pre>
+</div>
+
+<p>
+会发现key slot0已经被禁用了
+</p>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2018-04-12</span>
+    <span title="last modification date" class="post-info">2018-04-12</span>
+    <span title="tags" class="post-info"><a href="/tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T520">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
