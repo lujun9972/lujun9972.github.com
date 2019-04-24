@@ -36,4 +36,4 @@ There are two things you can do about this warning:
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)
 (setq debug-on-error t)
-(ego-do-publication "blog" t t nil)
+(ego-do-publication "blog" nil t nil)
