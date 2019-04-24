@@ -53,11 +53,11 @@
 <h2>&#30446;&#24405;</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org92d0710">使用parallel加速单线程程序的原理</a></li>
-<li><a href="#orgee546d6">使用parallel加速单线程程序可能遇到的问题</a>
+<li><a href="#orgfc4b37a">使用parallel加速单线程程序的原理</a></li>
+<li><a href="#org1bf91fe">使用parallel加速单线程程序可能遇到的问题</a>
 <ul>
-<li><a href="#org3adb645">乱序问题</a></li>
-<li><a href="#org906a3ea">不是所有的任务都能够进行分拆</a></li>
+<li><a href="#orgd67fe48">乱序问题</a></li>
+<li><a href="#orge42ab6a">不是所有的任务都能够进行分拆</a></li>
 </ul>
 </li>
 </ul>
@@ -67,25 +67,25 @@
 从 <a href="http://xensoft.com/use-multiple-cpu-cores-parallelize-with-single-threaded-linux-commands/">Use Multiple CPU Cores(Parallelize) with Single Threaded Linux Commands</a> 看到的，记录一下。
 </p>
 
-<div id="outline-container-org92d0710" class="outline-2">
-<h2 id="org92d0710">使用parallel加速单线程程序的原理</h2>
-<div class="outline-text-2" id="text-org92d0710">
+<div id="outline-container-orgfc4b37a" class="outline-2">
+<h2 id="orgfc4b37a">使用parallel加速单线程程序的原理</h2>
+<div class="outline-text-2" id="text-orgfc4b37a">
 <p>
 使用parallel加速单线程程序的原理在于使用 <code>--pipe/--spreadstdin</code> 将标准输入的内容切成多段，然后每段调用一个进程来处理，最后将处理结果整合在一起。比如:
 </p>
 <div class="org-src-container">
 <pre class="src src-shell">ls -lh big.txt  
--rw-r--r--  <span style="color: #a45bad;">1</span> westlund  staff   <span style="color: #a45bad;">102M</span> Nov  <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">21:23</span> big.txt
+-rw-r--r--  1 westlund  staff   102M Nov  1 21:23 big.txt
 
-<span style="color: #4f97d7; font-weight: bold;">time</span> grep regex bigfile.txt  
-real    <span style="color: #a45bad;">0m2.376s</span>  
-user    <span style="color: #a45bad;">0m2.354s</span>  
-sys     <span style="color: #a45bad;">0m0.021s</span>
+<span style="font-weight: bold;">time</span> grep regex bigfile.txt  
+real    0m2.376s  
+user    0m2.354s  
+sys     0m0.021s
 
-<span style="color: #4f97d7; font-weight: bold;">time</span> cat big.txt | parallel --pipe grep regex  
-real    <span style="color: #a45bad;">0m2.592s</span>  
-user    <span style="color: #a45bad;">0m5.908s</span>  
-sys     <span style="color: #a45bad;">0m2.498s</span>  
+<span style="font-weight: bold;">time</span> cat big.txt | parallel --pipe grep regex  
+real    0m2.592s  
+user    0m5.908s  
+sys     0m2.498s  
 </pre>
 </div>
 
@@ -98,10 +98,10 @@ sys     <span style="color: #a45bad;">0m2.498s</span>
 为此我们可以使用 <code>--block</code> 参数来指定每块的大小，比如
 </p>
 <div class="org-src-container">
-<pre class="src src-shell"><span style="color: #4f97d7; font-weight: bold;">time</span> cat big.txt | parallel --block <span style="color: #a45bad;">25M</span> --pipe grep regex
-real    <span style="color: #a45bad;">0m1.626s</span>
-user    <span style="color: #a45bad;">0m4.634s</span>
-sys     <span style="color: #a45bad;">0m0.620s</span>
+<pre class="src src-shell"><span style="font-weight: bold;">time</span> cat big.txt | parallel --block 25M --pipe grep regex
+real    0m1.626s
+user    0m4.634s
+sys     0m0.620s
 </pre>
 </div>
 <p>
@@ -110,22 +110,22 @@ sys     <span style="color: #a45bad;">0m0.620s</span>
 </div>
 </div>
 
-<div id="outline-container-orgee546d6" class="outline-2">
-<h2 id="orgee546d6">使用parallel加速单线程程序可能遇到的问题</h2>
-<div class="outline-text-2" id="text-orgee546d6">
+<div id="outline-container-org1bf91fe" class="outline-2">
+<h2 id="org1bf91fe">使用parallel加速单线程程序可能遇到的问题</h2>
+<div class="outline-text-2" id="text-org1bf91fe">
 <p>
 将STDIN拆分成多块后再并发处理在提高效率的同时也会带来一些问题:
 </p>
 </div>
 
-<div id="outline-container-org3adb645" class="outline-3">
-<h3 id="org3adb645">乱序问题</h3>
-<div class="outline-text-3" id="text-org3adb645">
+<div id="outline-container-orgd67fe48" class="outline-3">
+<h3 id="orgd67fe48">乱序问题</h3>
+<div class="outline-text-3" id="text-orgd67fe48">
 <p>
 并发运行多个进程时，就无法保证输出结果的一致性了， 比如下面这个例子:
 </p>
 <div class="org-src-container">
-<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> -n <span style="color: #a45bad;">2</span> <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">4</span> <span style="color: #a45bad;">3</span> | parallel -d <span style="color: #2d9574;">" "</span> -j4 <span style="color: #2d9574;">"sleep {}; echo {}"</span> <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
+<pre class="src src-shell"><span style="font-weight: bold;">echo</span> -n 2 1 4 3 | parallel -d <span style="font-style: italic;">" "</span> -j4 <span style="font-style: italic;">"sleep {}; echo {}"</span> <span style="font-weight: bold; font-style: italic;"># </span><span style="font-weight: bold; font-style: italic;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
 </pre>
 </div>
 
@@ -141,7 +141,7 @@ sys     <span style="color: #a45bad;">0m0.620s</span>
 你会发现输出的顺序发生了改变。但这个问题可以通过 <code>-k/--keep-order</code> 来解决，比如:
 </p>
 <div class="org-src-container">
-<pre class="src src-shell"><span style="color: #4f97d7;">echo</span> -n <span style="color: #a45bad;">2</span> <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">4</span> <span style="color: #a45bad;">3</span> | parallel -d <span style="color: #2d9574;">" "</span> -k -j4 <span style="color: #2d9574;">"sleep {}; echo {}"</span> <span style="color: #2aa1ae; background-color: #292e34;"># </span><span style="color: #2aa1ae; background-color: #292e34;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
+<pre class="src src-shell"><span style="font-weight: bold;">echo</span> -n 2 1 4 3 | parallel -d <span style="font-style: italic;">" "</span> -k -j4 <span style="font-style: italic;">"sleep {}; echo {}"</span> <span style="font-weight: bold; font-style: italic;"># </span><span style="font-weight: bold; font-style: italic;">-d&#30340;&#24847;&#24605;&#26159;&#35774;&#23450;&#20998;&#38548;&#31526;&#65292;-j&#30340;&#24847;&#24605;&#26159;&#25351;&#23450;&#24182;&#21457;&#25968;</span>
 </pre>
 </div>
 
@@ -159,43 +159,43 @@ sys     <span style="color: #a45bad;">0m0.620s</span>
 </div>
 </div>
 
-<div id="outline-container-org906a3ea" class="outline-3">
-<h3 id="org906a3ea">不是所有的任务都能够进行分拆</h3>
-<div class="outline-text-3" id="text-org906a3ea">
+<div id="outline-container-orge42ab6a" class="outline-3">
+<h3 id="orge42ab6a">不是所有的任务都能够进行分拆</h3>
+<div class="outline-text-3" id="text-orge42ab6a">
 <p>
 比如，我要计算一系列数字的总和，很明显这种任务不能单纯的用拆分来解决，拆分后还需要有一个合并的过程。比如
 </p>
 <div class="org-src-container">
 <pre class="src src-shell">ls -lh random_numbers.txt
--rw-r--r--  <span style="color: #a45bad;">1</span> westlund  staff    <span style="color: #a45bad;">22M</span> Nov  <span style="color: #a45bad;">1</span> <span style="color: #a45bad;">21:56</span> random_numbers.txt
+-rw-r--r--  1 westlund  staff    22M Nov  1 21:56 random_numbers.txt
 
-<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | awk <span style="color: #2d9574;">'{sum+=$1} END {print sum}'</span>
-<span style="color: #a45bad;">65538384640</span>
-real    <span style="color: #a45bad;">0m2.408s</span>
-user    <span style="color: #a45bad;">0m2.402s</span>
-sys     <span style="color: #a45bad;">0m0.021s</span>
+<span style="font-weight: bold;">time</span> cat random_numbers.txt | awk <span style="font-style: italic;">'{sum+=$1} END {print sum}'</span>
+65538384640
+real    0m2.408s
+user    0m2.402s
+sys     0m0.021s
 
-<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | parallel --block <span style="color: #a45bad;">2M</span> --pipe awk <span style="color: #2d9574;">\'</span><span style="color: #4f97d7;">{</span><span style="color: #7590db;">sum</span>+=<span style="color: #2d9574;">\$</span><span style="color: #a45bad;">1</span><span style="color: #4f97d7;">}</span> END <span style="color: #4f97d7;">{</span>print sum<span style="color: #4f97d7;">}</span><span style="color: #2d9574;">\'</span>
-<span style="color: #a45bad;">6067097462</span>
-<span style="color: #a45bad;">6064980068</span>
-<span style="color: #a45bad;">6074889658</span>
-<span style="color: #a45bad;">6068292593</span>
-<span style="color: #a45bad;">6073256962</span>
-<span style="color: #a45bad;">6065663642</span>
-<span style="color: #a45bad;">6068441658</span>
-<span style="color: #a45bad;">6071296753</span>
-<span style="color: #a45bad;">4846052534</span>
-<span style="color: #a45bad;">6072985491</span>
-<span style="color: #a45bad;">6065427819</span>
-real    <span style="color: #a45bad;">0m1.436s</span>
-user    <span style="color: #a45bad;">0m4.390s</span>
-sys     <span style="color: #a45bad;">0m0.358s</span>
+<span style="font-weight: bold;">time</span> cat random_numbers.txt | parallel --block 2M --pipe awk <span style="font-style: italic;">\'</span>{<span style="font-weight: bold; font-style: italic;">sum</span>+=<span style="font-style: italic;">\$</span><span style="font-weight: bold; font-style: italic;">1</span>} END {print sum}<span style="font-style: italic;">\'</span>
+6067097462
+6064980068
+6074889658
+6068292593
+6073256962
+6065663642
+6068441658
+6071296753
+4846052534
+6072985491
+6065427819
+real    0m1.436s
+user    0m4.390s
+sys     0m0.358s
 
-<span style="color: #4f97d7; font-weight: bold;">time</span> cat random_numbers.txt | parallel --block <span style="color: #a45bad;">2M</span> --pipe awk <span style="color: #2d9574;">\'</span><span style="color: #4f97d7;">{</span><span style="color: #7590db;">sum</span>+=<span style="color: #2d9574;">\$</span><span style="color: #a45bad;">1</span><span style="color: #4f97d7;">}</span> END <span style="color: #4f97d7;">{</span>print sum<span style="color: #4f97d7;">}</span><span style="color: #2d9574;">\'</span> | awk <span style="color: #2d9574;">'{sum+=$1} END {print sum}'</span>
-<span style="color: #a45bad;">65538384640</span>
-real    <span style="color: #a45bad;">0m1.408s</span>
-user    <span style="color: #a45bad;">0m4.341s</span>
-sys     <span style="color: #a45bad;">0m0.356s</span>
+<span style="font-weight: bold;">time</span> cat random_numbers.txt | parallel --block 2M --pipe awk <span style="font-style: italic;">\'</span>{<span style="font-weight: bold; font-style: italic;">sum</span>+=<span style="font-style: italic;">\$</span><span style="font-weight: bold; font-style: italic;">1</span>} END {print sum}<span style="font-style: italic;">\'</span> | awk <span style="font-style: italic;">'{sum+=$1} END {print sum}'</span>
+65538384640
+real    0m1.408s
+user    0m4.341s
+sys     0m0.356s
 </pre>
 </div>
 </div>
@@ -239,9 +239,9 @@ sys     <span style="color: #a45bad;">0m0.356s</span>
        })();
       </script>
   <div class="footer">
-    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 26.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:lujun9972 &lt;at&gt; T430S">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-28cf1161-6021-4541-a002-8eb87d451368">lujun9972</a>
       &nbsp;&nbsp;-&nbsp;&nbsp;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
       Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
