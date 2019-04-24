@@ -1,0 +1,492 @@
+#+TITLE: LFS
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2018-08-24 五 10:19]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 前置准备工具
+在host主机上需要安装有 GCC,make,ncurses,perl以及grub-install
+
+同时需要下载一些源代码包:
+
++ binutils-2.30.tar.xz
++ busybox-1.28.3.tar.bz2
++ clfs-embedded-bootscripts-1.0-pre5.tar.bz2
++ gcc-7.3.0.tar.xz
++ glibc-2.27.tar.xz
++ gmp-6.1.2.tar.bz2
++ linux-4.16.3.tar.xz
++ mpc-1.1.0.tar.gz
++ mpfr-4.0.1.tar.xz
++ zlib-1.2.11.tar.gz
+  
+
+* 配置构建环境
+
+1. 启用bash hash功能
+   #+BEGIN_SRC shell
+     set +h
+   #+END_SRC
+
+2. 新建目录/文件只有属主具有写权限
+   #+BEGIN_SRC shell
+     umask 022
+   #+END_SRC
+
+3. 设置环境变量
+   #+BEGIN_SRC shell
+     export LJOS=~/LFS
+     mkdir -p ${LJOS}
+     export LC_ALL=POSIX
+     export PATH=${LJOS}/cross-tools/bin:/bin:/usr/bin
+   #+END_SRC
+
+4. 创建[[http://refspecs.linuxfoundation.org/fhs.shtml][Linux目录层级结构]]
+   #+BEGIN_SRC shell :var LJOS="~/LFS" :results org
+     mkdir -pv ${LJOS}/{bin,boot{,grub},dev,{etc/,}opt,home,lib/{firmware,modules},lib64,mnt}
+     mkdir -pv ${LJOS}/{proc,media/{floppy,cdrom},sbin,srv,sys}
+     mkdir -pv ${LJOS}/var/{lock,log,mail,run,spool}
+     mkdir -pv ${LJOS}/var/{opt,cache,lib/{misc,locate},local}
+     install -dv -m 0750 ${LJOS}/root
+     install -dv -m 1777 ${LJOS}{/var,}/tmp
+     install -dv ${LJOS}/etc/init.d
+     mkdir -pv ${LJOS}/usr/{,local/}{bin,include,lib{,64},sbin,src}
+     mkdir -pv ${LJOS}/usr/{,local/}share/{doc,info,locale,man}
+     mkdir -pv ${LJOS}/usr/{,local/}share/{misc,terminfo,zoneinfo}
+     mkdir -pv ${LJOS}/usr/{,local/}share/man/man{1,2,3,4,5,6,7,8}
+     for dir in ${LJOS}/usr{,/local}; do
+         ln -sv share/{man,doc,info} ${dir}
+     done
+   #+END_SRC
+
+5. 创建存放交叉编译工具链的目录
+   #+BEGIN_SRC shell
+     install -dv ${LJOS}/cross-tools{,/bin}
+   #+END_SRC
+
+6. 创建各个配置文件
+
+   使用 =/proc/mounts= 的值作为LFS中的 =/etc/mtab= 文件
+   #+BEGIN_SRC shell
+     ln -svf ../proc/mounts ${LJOS}/etc/mtab
+   #+END_SRC
+
+   创建 =/etc/passwd= 文件，这一步用来创建LFS中的root账户
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/passwd << "EOF"
+     root::0:0:root:/root:/bin/ash
+     EOF
+   #+END_SRC
+
+   创建 =/etc/group= 文件
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/group << "EOF"
+     root:x:0:
+     bin:x:1:
+     sys:x:2:
+     kmem:x:3:
+     tty:x:4:
+     daemon:x:6:
+     disk:x:8:
+     dialout:x:10:
+     video:x:12:
+     utmp:x:13:
+     usb:x:14:
+     EOF
+   #+END_SRC
+
+   创建 =/etc/fstab=
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/fstab << "EOF"
+     # file system  mount-point  type   options          dump  fsck
+     #                                                         order
+
+     rootfs          /               auto    defaults        1      1
+     proc            /proc           proc    defaults        0      0
+     sysfs           /sys            sysfs   defaults        0      0
+     devpts          /dev/pts        devpts  gid=4,mode=620  0      0
+     tmpfs           /dev/shm        tmpfs   defaults        0      0
+     EOF
+   #+END_SRC
+
+   创建 =/etc/profile=
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/profile << "EOF"
+     export PATH=/bin:/usr/bin
+
+     if [ `id -u` -eq 0 ] ; then
+             PATH=/bin:/sbin:/usr/bin:/usr/sbin
+             unset HISTFILE
+     fi
+
+
+     # Set up some environment variables.
+     export USER=`id -un`
+     export LOGNAME=$USER
+     export HOSTNAME=`/bin/hostname`
+     export HISTSIZE=1000
+     export HISTFILESIZE=1000
+     export PAGER='/bin/more '
+     export EDITOR='/bin/vi'
+     EOF
+   #+END_SRC
+
+   设置主机名
+   #+BEGIN_SRC shell
+     echo "LFS" > ${LJOS}/etc/HOSTNAME
+   #+END_SRC
+
+   设置登陆提示
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/issue<< "EOF"
+     Linux From Scratch OS 0.1a
+     Kernel \r on an \m
+
+     EOF
+   #+END_SRC
+
+   为了简单期间，使用BusyBox的 init 进程作为初始化进程，因此需要定义 =/etc/inittab=
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/inittab<< "EOF"
+     ::sysinit:/etc/rc.d/startup
+
+     tty1::respawn:/sbin/getty 38400 tty1
+     tty2::respawn:/sbin/getty 38400 tty2
+     tty3::respawn:/sbin/getty 38400 tty3
+     tty4::respawn:/sbin/getty 38400 tty4
+     tty5::respawn:/sbin/getty 38400 tty5
+     tty6::respawn:/sbin/getty 38400 tty6
+
+     ::shutdown:/etc/rc.d/shutdown
+     ::ctrlaltdel:/sbin/reboot
+     EOF
+   #+END_SRC
+
+   同样的，BusyBox 使用mdev代替udev，因此需要定义 =/etc/mdev=
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/etc/mdev.conf<< "EOF"
+     # Devices:
+     # Syntax: %s %d:%d %s
+     # devices user:group mode
+
+     # null does already exist; therefore ownership has to
+     # be changed with command
+     null    root:root 0666  @chmod 666 $MDEV
+     zero    root:root 0666
+     grsec   root:root 0660
+     full    root:root 0666
+
+     random  root:root 0666
+     urandom root:root 0444
+     hwrandom root:root 0660
+
+     # console does already exist; therefore ownership has to
+     # be changed with command
+     console root:tty 0600 @mkdir -pm 755 fd && cd fd && for x
+      ↪in 0 1 2 3 ; do ln -sf /proc/self/fd/$x $x; done
+
+     kmem    root:root 0640
+     mem     root:root 0640
+     port    root:root 0640
+     ptmx    root:tty 0666
+
+     # ram.*
+     ram([0-9]*)     root:disk 0660 >rd/%1
+     loop([0-9]+)    root:disk 0660 >loop/%1
+     sd[a-z].*       root:disk 0660 */lib/mdev/usbdisk_link
+     hd[a-z][0-9]*   root:disk 0660 */lib/mdev/ide_links
+
+     tty             root:tty 0666
+     tty[0-9]        root:root 0600
+     tty[0-9][0-9]   root:tty 0660
+     ttyO[0-9]*      root:tty 0660
+     pty.*           root:tty 0660
+     vcs[0-9]*       root:tty 0660
+     vcsa[0-9]*      root:tty 0660
+
+     ttyLTM[0-9]     root:dialout 0660 @ln -sf $MDEV modem
+     ttySHSF[0-9]    root:dialout 0660 @ln -sf $MDEV modem
+     slamr           root:dialout 0660 @ln -sf $MDEV slamr0
+     slusb           root:dialout 0660 @ln -sf $MDEV slusb0
+     fuse            root:root  0666
+
+     # misc stuff
+     agpgart         root:root 0660  >misc/
+     psaux           root:root 0660  >misc/
+     rtc             root:root 0664  >misc/
+
+     # input stuff
+     event[0-9]+     root:root 0640 =input/
+     ts[0-9]         root:root 0600 =input/
+
+     # v4l stuff
+     vbi[0-9]        root:video 0660 >v4l/
+     video[0-9]      root:video 0660 >v4l/
+
+     # load drivers for usb devices
+     usbdev[0-9].[0-9]       root:root 0660 */lib/mdev/usbdev
+     usbdev[0-9].[0-9]_.*    root:root 0660
+     EOF
+   #+END_SRC
+
+   为GRUB引导器创建配置文件
+   #+BEGIN_SRC shell
+     cat > ${LJOS}/boot/grub/grub.cfg<< "EOF"
+
+     set default=0
+     set timeout=5
+
+     set root=(hd0,1)
+
+     menuentry "Linux From Scratch OS" {
+             linux   /boot/vmlinuz-4.16.3 root=/dev/sda1 ro quiet
+     }
+     EOF
+   #+END_SRC
+
+   创建日志文件
+   #+BEGIN_SRC shell
+     touch ${LJOS}/var/run/utmp ${LJOS}/var/log/{btmp,lastlog,wtmp}
+     chmod -v 664 ${LJOS}/var/run/utmp ${LJOS}/var/log/lastlog
+   #+END_SRC
+
+   
+* 构建交叉编译器
+
+** 设置好编译相关的变量
+
+清空host上预设的 C/C++ 编译标志
+#+BEGIN_SRC shell
+  unset CFLAGS
+  unset CXXFLAGS
+#+END_SRC
+
+定义其他交叉编译过程中使用的变量
+#+BEGIN_SRC shell
+  export LJOS_HOST=$(echo ${MACHTYPE} | sed "s/-[^-]*/-cross/")
+  export LJOS_TARGET=x86_64-unknown-linux-gnu
+  export LJOS_CPU=k4
+  export LJOS_ARCH=$(echo ${LJOS_TARGET} | sed -e 's/-.*//' -e 's/i.86/i386/')
+  export LJOS_ENDIAN=little
+#+END_SRC
+
+** 安装kernel headers
+
+从[[https://www.kernel.org/][kernel.org]]下载内核源码
+#+BEGIN_SRC shell
+  wget https://cdn.kernel.org/pub/linux/kernel/v4.x/linux-4.18.4.tar.xz
+#+END_SRC
+
+解压源代码
+#+BEGIN_SRC shell
+  tar -xf linux-4.18.4.tar.xz 
+#+END_SRC
+
+编译kernel headers
+#+BEGIN_SRC shell
+  cd linux-4.18.4/
+  make mrproper
+  make ARCH=${LJOS_ARCH} headers_check && \
+  make ARCH=${LJOS_ARCH} INSTALL_HDR_PATH=dest headers_install
+  cp -rv dest/include/* ${LJOS}/usr/include
+#+END_SRC
+
+** 安装Binutils
+
+下载bintuils源代码
+#+BEGIN_SRC shell
+  wget http://ftp.gnu.org/gnu/binutils/binutils-2.31.tar.xz
+#+END_SRC
+
+解压源代码
+#+BEGIN_SRC shell
+  tar -xf binutils-2.31.tar.xz
+#+END_SRC
+
+编译binutils
+#+BEGIN_SRC shell
+  ./configure --prefix=${LJOS}/cross-tools \
+  --target=${LJOS_TARGET} --with-sysroot=${LJOS} \
+  --disable-nls --enable-shared --disable-multilib
+  make configure-host && make
+  ln -sv lib ${LJOS}/cross-tools/lib64
+  make install
+  cp -v include/libiberty.h ${LJOS}/usr/include
+#+END_SRC
+
+** 静态编译的gcc
+
+下载 gcc，gmp，mpfr，mpc
+#+BEGIN_SRC shell
+  wget http://ftp.gnu.org/gnu/gcc/gcc-8.2.0/gcc-8.2.0.tar.xz \
+       http://ftp.gnu.org/gnu/gmp/gmp-6.1.2.tar.xz \
+       http://ftp.gnu.org/gnu/mpfr/mpfr-4.0.1.tar.xz \
+       http://ftp.gnu.org/gnu/mpc/mpc-1.1.0.tar.gz
+#+END_SRC
+
+解压 gcc，gmp，mpfr，mpc
+#+BEGIN_SRC shell
+  tar -xf gcc-8.2.0.tar.xz
+  tar -xf gmp-6.1.2.tar.xz
+  tar -xf mpfr-4.0.1.tar.xz
+  tar -xf mpc-1.1.0.tar.gz
+#+END_SRC
+
+将gmp,mpfr,mpc移动到gcc目录下
+#+BEGIN_SRC shell
+  mv gmp-6.1.2 gcc-8.2.0/gmp
+  mv mpfr-4.0.1 gcc-8.2.0/mpfr
+  mv mpc-1.1.0 gcc-8.2.0/mpc
+#+END_SRC
+
+编译gcc
+#+BEGIN_SRC shell
+  mkdir gcc-static
+  cd gcc-static/
+  AR=ar LDFLAGS="-Wl,-rpath,${LJOS}/cross-tools/lib" \
+  ../gcc-8.2.0/configure --prefix=${LJOS}/cross-tools \
+  --build=${LJOS_HOST} --host=${LJOS_HOST} \
+  --target=${LJOS_TARGET} \
+  --with-sysroot=${LJOS}/target --disable-nls \
+  --disable-shared \
+  --with-mpfr-include=$(pwd)/../gcc-8.2.0/mpfr/src \
+  --with-mpfr-lib=$(pwd)/mpfr/src/.libs \
+  --without-headers --with-newlib --disable-decimal-float \
+  --disable-libgomp --disable-libmudflap --disable-libssp \
+  --disable-threads --enable-languages=c,c++ \
+  --disable-multilib --with-arch=${LJOS_CPU}
+  make all-gcc all-target-libgcc && \
+  make install-gcc install-target-libgcc
+  ln -vs libgcc.a $(${LJOS_TARGET}-gcc -print-libgcc-file-name | sed 's/libgcc/&_eh/')
+#+END_SRC
+
+** 编译Glibc
+
+下载glibc
+#+BEGIN_SRC shell
+  cd ..
+  wget http://ftp.gnu.org/gnu/glibc/glibc-2.28.tar.xz
+#+END_SRC
+
+解压glibc
+#+BEGIN_SRC shell
+  tar -xf glibc-2.28.tar.xz
+#+END_SRC
+
+编译glibc
+#+BEGIN_SRC shell
+  mkdir glibc-build
+  cd glibc-build/
+  echo "libc_cv_forced_unwind=yes" > config.cache
+  echo "libc_cv_c_cleanup=yes" >> config.cache
+  echo "libc_cv_ssp=no" >> config.cache
+  echo "libc_cv_ssp_strong=no" >> config.cache
+  BUILD_CC="gcc" CC="${LJOS_TARGET}-gcc" \
+  AR="${LJOS_TARGET}-ar" \
+  RANLIB="${LJOS_TARGET}-ranlib" CFLAGS="-O2" \
+  ../glibc-2.28/configure --prefix=/usr \
+  --host=${LJOS_TARGET} --build=${LJOS_HOST} \
+  --disable-profile --enable-add-ons --with-tls \
+  --enable-kernel=2.6.32 --with-__thread \
+  --with-binutils=${LJOS}/cross-tools/bin \
+  --with-headers=${LJOS}/usr/include \
+  --cache-file=config.cache
+  make && make install_root=${LJOS}/ install
+#+END_SRC
+
+** 最后再编译一次GCC，这次这个GCC会链接到上一步编译出来的Glibc中
+#+BEGIN_SRC shell
+  cd ..
+  mkdir gcc-build
+  cd gcc-build/
+  AR=ar LDFLAGS="-Wl,-rpath,${LJOS}/cross-tools/lib" \
+  ../gcc-8.2.0/configure --prefix=${LJOS}/cross-tools \
+  --build=${LJOS_HOST} --target=${LJOS_TARGET} \
+  --host=${LJOS_HOST} --with-sysroot=${LJOS} \
+  --disable-nls --enable-shared \
+  --enable-languages=c,c++ --enable-c99 \
+  --enable-long-long \
+  --with-mpfr-include=$(pwd)/../gcc-8.2.0/mpfr/src \
+  --with-mpfr-lib=$(pwd)/mpfr/src/.libs \
+  --disable-multilib --with-arch=${LJOS_CPU}
+  make && make install
+  cp -v ${LJOS}/cross-tools/${LJOS_TARGET}/lib64/libgcc_s.so.1 ${LJOS}/lib64
+#+END_SRC
+
+* 构建Target Image
+
+** 构建BusyBox
+
+下载 BusyBox
+#+BEGIN_SRC shell
+  cd ..
+  wget http://busybox.net/downloads/busybox-1.29.2.tar.bz2
+#+END_SRC
+
+解压源码包
+#+BEGIN_SRC shell
+  tar -xf busybox-1.29.2.tar.bz2
+#+END_SRC
+
+编译BusyBox
+#+BEGIN_SRC shell
+  cd busybox-1.29.2/
+  # 生成默认的编译配置文件
+  make CROSS_COMPILE="${LJOS_TARGET}-" defconfig
+  # 如果需要的话，可以通过menuconfig来对配置就像调整
+  make CROSS_COMPILE="${LJOS_TARGET}-" menuconfig
+  # 编译
+  make CROSS_COMPILE="${LJOS_TARGET}-"
+  # 安装
+  make CROSS_COMPILE="${LJOS_TARGET}-" \
+  CONFIG_PREFIX="${LJOS}" install
+#+END_SRC
+
+拷贝depmod.pl,后面构建kernel的时候要用
+#+BEGIN_SRC shell
+  cp -v examples/depmod.pl ${LJOS}/cross-tools/bin
+  chmod 755 ${LJOS}/cross-tools/bin/depmod.pl
+#+END_SRC
+
+** 构建linux kernel
+
+生成默认的x86-64的配置文件
+#+BEGIN_SRC shell
+  cd ../linux-4.18.4/
+  make ARCH=${LJOS_ARCH} \
+       CROSS_COMPILE=${LJOS_TARGET}- x86_64_defconfig
+#+END_SRC
+
+当然，你也可以通过 =make menuconfig= 进行微调
+
+比如安装Target Image到VirutalBox虚拟机中，则需要安装 Intel 的 =e1000= 网卡模块以及 LSI 的 =mpt2sas= 模块
+#+BEGIN_SRC shell
+  make ARCH=${LJOS_ARCH} \
+       CROSS_COMPILE=${LJOS_TARGET}- menuconfig
+#+END_SRC
+
+编译并安装kernel
+#+BEGIN_SRC shell
+  make ARCH=${LJOS_ARCH} \
+       CROSS_COMPILE=${LJOS_TARGET}-
+  make ARCH=${LJOS_ARCH} \
+       CROSS_COMPILE=${LJOS_TARGET}- \
+       INSTALL_MOD_PATH=${LJOS} modules_install
+#+END_SRC
+
+拷贝文件到 target 的 =/boot= 目录下
+#+BEGIN_SRC shell
+  cp -v arch/x86/boot/bzImage ${LJOS}/boot/vmlinuz-4.18.4
+  cp -v System.map ${LJOS}/boot/System.map-4.18.4
+  cp -v .config ${LJOS}/boot/config-4.18.4
+#+END_SRC
+
+运行 =depmod.pl=
+#+BEGIN_SRC shell
+  ${LJOS}/cross-tools/bin/depmod.pl \
+        -F ${LJOS}/boot/System.map-4.18.4 \
+        -b ${LJOS}/lib/modules/4.18.4
+#+END_SRC
+
+** Bootscripts
