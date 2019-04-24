@@ -17,9 +17,11 @@ There are two things you can do about this warning:
 (package-initialize)
 (package-refresh-contents)
 (package-install 'mustache)
+(package-install 'htmlize)
 
 (setq load-path (cons  "~/EGO/" load-path))
 (require 'log-edit)
+(require 'htmlize)
 (require 'ego)
 (setq ego-project-config-alist
  `(("blog" :repository-directory ,default-directory :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
