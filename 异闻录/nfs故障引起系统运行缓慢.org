@@ -1,0 +1,26 @@
+#+TITLE: nfs故障引起系统运行缓慢
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2019-04-24 三 09:51]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+
+监控系统突然提示某系统交易时间过长，但业务量并不繁忙。
+
+* 排查过程
+
+1. 登陆系统应用服务器，用 =nmon= 查看CPU，发现大量CPU Wait的情况，说明CPU在等待IO
+2. 通过kill -3 pid获取javacore文件，从javacore中也能看到多数线程卡在写日志的环节
+3. 检查系统IO发现吞吐量并不大
+4. 由于系统日志存在某个nfs挂载的目录中，用 =nfsstat= 发现大量重传包
+5. 在nfs目录中用 =dd= 测试性能发现写入速率只有几兆
+6. 通过 =scp= 往nfsserver主机拷贝文件测试写入数据，速度可以达到一百多M，说明网络通畅
+7. 检查 nfsserver 日志，发现有错误提示，重启nfsserver后系统回复正常
+
+* 建议
+
+1. 建议日志写入操作由专门的线程来负责，其他线程不要由于写日志这种不重要的事情而影响工作。
+2. nfsserver的服务日志有必要纳入监控系统。
