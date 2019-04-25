@@ -24,14 +24,14 @@ There are two things you can do about this warning:
 (require 'htmlize)
 (require 'ego)
 (setq ego-project-config-alist
- '(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
+ `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
     (emacs_love)
     :summary
     (("years" :year :updates 10)
      ("authors" :authors)
      ("tags" :tags))
     :source-browse-url
-    ("Github" "https://github.com/lujun9972/lujun9972.github.com")
+    ("Github" ,(getenv "REPO"))
     :personal-disqus-shortname "lujun9972" :personal-google-analytics-id "7bac4fd0247f69c27887e0d4e3aee41e" :ignore-file-name-regexp "README.org" :store-dir "~/web")))
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)
