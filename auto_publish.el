@@ -24,7 +24,7 @@ There are two things you can do about this warning:
 (require 'htmlize)
 (require 'ego)
 (setq ego-project-config-alist
- `(("blog" :repository-directory ,default-directory :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
+ '(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
     (emacs_love)
     :summary
     (("years" :year :updates 10)
