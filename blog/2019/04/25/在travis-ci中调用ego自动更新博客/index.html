@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>在Travis-CI中调用EGO自动更新博客 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="/media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="/media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="/media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="/">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="/years/">Years</a></li>
+              <li><a href="/authors/">Authors</a></li>
+              <li><a href="/tags/">Tags</a></li>
+              <li><a href="/about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="/rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">在Travis-CI中调用EGO自动更新博客</h1>
+<p>
+经过一番努力，总于把 <a href="https://github.com/lujun9972/EGO">EGO</a> 改到可以无需人工介入自动更新博客了，现在只需要在 <code>source</code> branch中加上两个文件:
+</p>
+
+<p>
+.travis.yml
+</p>
+<div class="org-src-container">
+<pre class="src src-yaml">dist: xenial
+language: generic
+
+branches:
+  only:
+    - source
+
+git:
+  depth: false
+  quiet: true
+
+before_install:
+ - git config --global user.email "lujun9972@gmail.com"
+ - git config --global user.name "darksun"
+ - git clone https://github.com/lujun9972/EGO ~/EGO
+ - sudo add-apt-repository ppa:ubuntu-elisp/ppa -y
+ - sudo apt-get update
+ - sudo apt-get install emacs-snapshot -y
+ - emacs-snapshot --version
+
+script:
+- git config --global core.quotepath false
+- export REPO=$(git remote -v |grep fetch |head -n 1|awk '{print $2}')
+- git clone -b source ${REPO} ~/source
+- git clone -b master ${REPO} ~/web
+- emacs-snapshot --batch -l ./auto_publish.el 
+
+deploy:
+  provider: pages
+  skip_cleanup: true
+  keep_history: true
+  github_token: $GITHUB_TOKEN
+  local_dir: /home/travis/web
+  target_branch: master
+  on:
+    branch:
+      - source
+</pre>
+</div>
+
+<p>
+auto_publish.el
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span style="font-weight: bold;">require</span> '<span style="font-weight: bold; text-decoration: underline;">package</span>)
+(<span style="font-weight: bold;">let*</span> ((no-ssl (<span style="font-weight: bold;">and</span> (memq system-type '(windows-nt ms-dos))
+                    (not (gnutls-available-p))))
+       (proto (<span style="font-weight: bold;">if</span> no-ssl <span style="font-style: italic;">"http"</span> <span style="font-style: italic;">"https"</span>)))
+  (<span style="font-weight: bold;">when</span> no-ssl (<span style="font-weight: bold;">warn</span> <span style="font-style: italic;">"\</span>
+<span style="font-style: italic;">Your version of Emacs does not support SSL connections,</span>
+<span style="font-style: italic;">which is unsafe because it allows man-in-the-middle attacks.</span>
+<span style="font-style: italic;">There are two things you can do about this warning:</span>
+<span style="font-style: italic;">1. Install an Emacs version that does support SSL and be safe.</span>
+<span style="font-style: italic;">2. Remove this warning from your init file so you won't see it again."</span>))
+  <span style="font-weight: bold; font-style: italic;">;; </span><span style="font-weight: bold; font-style: italic;">Comment/uncomment these two lines to enable/disable MELPA and MELPA Stable as desired</span>
+  (add-to-list 'package-archives (cons <span style="font-style: italic;">"melpa"</span> (concat proto <span style="font-style: italic;">"://melpa.org/packages/"</span>)) t)
+  <span style="font-weight: bold; font-style: italic;">;;</span><span style="font-weight: bold; font-style: italic;">(add-to-list 'package-archives (cons "melpa-stable" (concat proto "://stable.melpa.org/packages/")) t)</span>
+  (<span style="font-weight: bold;">when</span> (&lt; emacs-major-version 24)
+    <span style="font-weight: bold; font-style: italic;">;; </span><span style="font-weight: bold; font-style: italic;">For important compatibility libraries like cl-lib</span>
+    (add-to-list 'package-archives (cons <span style="font-style: italic;">"gnu"</span> (concat proto <span style="font-style: italic;">"://elpa.gnu.org/packages/"</span>)))))
+(package-initialize)
+(package-refresh-contents)
+(package-install 'mustache)
+(package-install 'htmlize)
+
+(<span style="font-weight: bold;">setq</span> load-path (cons  <span style="font-style: italic;">"~/EGO/"</span> load-path))
+(<span style="font-weight: bold;">require</span> '<span style="font-weight: bold; text-decoration: underline;">log-edit</span>)
+(<span style="font-weight: bold;">require</span> '<span style="font-weight: bold; text-decoration: underline;">htmlize</span>)
+(<span style="font-weight: bold;">require</span> '<span style="font-weight: bold; text-decoration: underline;">ego</span>)
+(<span style="font-weight: bold;">setq</span> ego-project-config-alist
+ `((<span style="font-style: italic;">"blog"</span> <span style="font-weight: bold;">:repository-directory</span> <span style="font-style: italic;">"~/source"</span> <span style="font-weight: bold;">:site-domain</span> <span style="font-style: italic;">"https://lujun9972.github.io/"</span> <span style="font-weight: bold;">:site-main-title</span> <span style="font-style: italic;">"&#26263;&#26080;&#22825;&#26085;"</span> <span style="font-weight: bold;">:site-sub-title</span> <span style="font-style: italic;">"=============&gt;&#38543;&#20415;,&#35874;&#35874;"</span> <span style="font-weight: bold;">:theme</span>
+    (emacs_love)
+    <span style="font-weight: bold;">:summary</span>
+    ((<span style="font-style: italic;">"years"</span> <span style="font-weight: bold;">:year</span> <span style="font-weight: bold;">:updates</span> 10)
+     (<span style="font-style: italic;">"authors"</span> <span style="font-weight: bold;">:authors</span>)
+     (<span style="font-style: italic;">"tags"</span> <span style="font-weight: bold;">:tags</span>))
+    <span style="font-weight: bold;">:source-browse-url</span>
+    (<span style="font-style: italic;">"Github"</span> ,(getenv <span style="font-style: italic;">"REPO"</span>))
+    <span style="font-weight: bold;">:personal-disqus-shortname</span> <span style="font-style: italic;">"lujun9972"</span> <span style="font-weight: bold;">:personal-google-analytics-id</span> <span style="font-style: italic;">"7bac4fd0247f69c27887e0d4e3aee41e"</span> <span style="font-weight: bold;">:ignore-file-name-regexp</span> <span style="font-style: italic;">"README.org"</span> <span style="font-weight: bold;">:store-dir</span> <span style="font-style: italic;">"~/web"</span>)))
+(message <span style="font-style: italic;">"BEGIN TO AUTO PUBLIC"</span>)
+(<span style="font-weight: bold;">setq</span> org-export-use-babel nil)
+(<span style="font-weight: bold;">setq</span> debug-on-error t)
+(ego-do-publication <span style="font-style: italic;">"blog"</span> nil nil nil)
+</pre>
+</div>
+
+<p>
+根据自己的需求更改 <code>.travis.yml</code> 中的 git <code>user.email</code> 和 <code>user.name</code> 的值，和 <code>auto_publish.el</code> 中 <code>ego-project-config-alist</code> 的配置就可以了。
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-04-25</span>
+    <span title="last modification date" class="post-info">2019-04-25</span>
+    <span title="tags" class="post-info"><a href="/tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="/media/js/jquery-2.1.3.min.js"></script>
+  <script src="/media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="/media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-988cb0e0-adbb-4cc3-ade5-2bb22da24d29">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
