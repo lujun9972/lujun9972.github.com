@@ -36,4 +36,5 @@ There are two things you can do about this warning:
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)
 (setq debug-on-error t)
+(setq org-src-fontify-natively t)
 (ego-do-publication "blog" nil nil nil)
