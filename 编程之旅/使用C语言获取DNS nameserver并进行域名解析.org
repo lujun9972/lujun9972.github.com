@@ -1,0 +1,147 @@
+#+TITLE: 使用C语言获取DNS nameserver并进行域名解析
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2019-05-05 日 14:41]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+#+BEGIN_SRC C
+  #include <netinet/in.h>
+  #include <arpa/nameser.h>
+  #include <resolv.h>
+
+  int main()
+  {
+    res_init();
+    int i = 0;
+    for (i = 0;i< _res.nscount;i++) /* _res.nscount为找到的域名服务器的数量 */
+      {
+        struct sockaddr_in addr = _res.nsaddr_list[i]; /* 域名服务器的地址  */
+      }
+    int class = ns_c_in;
+    int type = QUERY;
+    char answer[256]="";
+    res_query("www.baidu.com", class, type, answer, sizeof(answer));
+    res_close();
+    printf("answer=%s\n", answer); /* answer中为域名解析的结果 */
+  }
+#+END_SRC
+
+这种方法由于使用到了静态全局变量 =_res=,因此并不是线程安全的。为此glib提供了线程安全的对应函数 =res_ninit=, =res_nquery=, =res_nclose=:
+
+#+BEGIN_SRC C
+  #include <netinet/in.h>
+  #include <arpa/nameser.h>
+  #include <resolv.h>
+
+  int main()
+  {
+    res_state res;
+    res_ninit(res);
+    int i = 0;
+    for (i = 0;i< res->nscount;i++) /* res->nscount存储了域名服务器的个数 */
+      {
+        struct sockaddr_in addr = res->nsaddr_list[i]; /* 域名服务器的地址 */
+      }
+    int class = ns_c_in;
+    int type = QUERY;
+    char answer[256]="";
+    res_nquery(res, "www.baidu.com", class, type, answer, sizeof(answer));
+    res_nclose(res);
+    printf("answer=%s", answer);  /* answer中为域名解析的结果 */
+  }
+#+END_SRC
+
+其中:
+
++ =res_state= 的定义在 [[https://github.com/lattera/glibc/blob/master/resolv/bits/types/res_state.h][resolv/bits/types/res_state.h]] 中
+  #+BEGIN_SRC C
+    /* res_state: the global state used by the resolver stub.  */
+    #define MAXNS			3	/* max # name servers we'll track */
+    #define MAXDFLSRCH		3	/* # default domain levels to try */
+    #define MAXDNSRCH		6	/* max # domains in search path */
+    #define MAXRESOLVSORT		10	/* number of net to sort on */
+
+    struct __res_state {
+      int	retrans;		/* retransmition time interval */
+      int	retry;			/* number of times to retransmit */
+      unsigned long options;		/* option flags - see below. */
+      int	nscount;		/* number of name servers */
+      struct sockaddr_in
+        nsaddr_list[MAXNS];	/* address of name server */
+      unsigned short id;		/* current message id */
+      /* 2 byte hole here.  */
+      char	*dnsrch[MAXDNSRCH+1];	/* components of domain to search */
+      char	defdname[256];		/* default domain (deprecated) */
+      unsigned long pfcode;		/* RES_PRF_ flags - see below. */
+      unsigned ndots:4;		/* threshold for initial abs. query */
+      unsigned nsort:4;		/* number of elements in sort_list[] */
+      unsigned ipv6_unavail:1;	/* connecting to IPv6 server failed */
+      unsigned unused:23;
+      struct {
+        struct in_addr	addr;
+        uint32_t	mask;
+      } sort_list[MAXRESOLVSORT];
+      /* 4 byte hole here on 64-bit architectures.  */
+      void * __glibc_unused_qhook;
+      void * __glibc_unused_rhook;
+      int	res_h_errno;		/* last one set for this context */
+      int	_vcsock;		/* PRIVATE: for res_send VC i/o */
+      unsigned int _flags;		/* PRIVATE: see below */
+      /* 4 byte hole here on 64-bit architectures.  */
+      union {
+        char	pad[52];	/* On an i386 this means 512b total. */
+        struct {
+          uint16_t		nscount;
+          uint16_t		nsmap[MAXNS];
+          int			nssocks[MAXNS];
+          uint16_t		nscount6;
+          uint16_t		nsinit;
+          struct sockaddr_in6	*nsaddrs[MAXNS];
+    #ifdef _LIBC
+          unsigned long long int __glibc_extension_index
+            __attribute__((packed));
+    #else
+          unsigned int		__glibc_reserved[2];
+    #endif
+        } _ext;
+      } _u;
+    };
+
+    typedef struct __res_state *res_state;
+  #+END_SRC
+
++ =class= 和 =type= 的定义在 [[https://github.com/lattera/glibc/blob/master/resolv/arpa/nameser.h][resolv/arpa/nameser.h]] 中
+  #+BEGIN_SRC C
+    /*%
+     ,* Currently defined opcodes.
+     ,*/
+    typedef enum __ns_opcode {
+                              ns_o_query = 0,		/*%< Standard query. */
+                              ns_o_iquery = 1,	/*%< Inverse query (deprecated/unsupported). */
+                              ns_o_status = 2,	/*%< Name server status query (unsupported). */
+                              /* Opcode 3 is undefined/reserved. */
+                              ns_o_notify = 4,	/*%< Zone change notification. */
+                              ns_o_update = 5,	/*%< Zone update message. */
+                              ns_o_max = 6
+    } ns_opcode;
+
+    /*%
+     ,* Values for class field
+     ,*/
+    typedef enum __ns_class {
+                             ns_c_invalid = 0,	/*%< Cookie. */
+                             ns_c_in = 1,		/*%< Internet. */
+                             ns_c_2 = 2,		/*%< unallocated/unsupported. */
+                             ns_c_chaos = 3,		/*%< MIT Chaos-net. */
+                             ns_c_hs = 4,		/*%< MIT Hesiod. */
+                             /* Query class values which do not appear in resource records */
+                             ns_c_none = 254,	/*%< for prereq. sections in update requests */
+                             ns_c_any = 255,		/*%< Wildcard match. */
+                             ns_c_max = 65536
+    } ns_class;
+  #+END_SRC
+
+  
+其他函数说明可以参见 =man resolver=.
