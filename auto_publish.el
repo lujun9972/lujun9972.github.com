@@ -37,4 +37,5 @@ There are two things you can do about this warning:
 (setq org-export-use-babel nil)
 (setq debug-on-error t)
 (setq org-src-fontify-natively t)
+(setq org-html-htmlize-output-type 'css)
 (ego-do-publication "blog" nil nil nil)
