@@ -63,49 +63,85 @@
     {
       <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">addr</span> = _res.nsaddr_list[i]; <span class="org-comment-delimiter">/* </span><span class="org-comment">&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#22320;&#22336;</span><span class="org-comment-delimiter">  */</span>
     }
-  <span class="org-type">int</span> <span class="org-variable-name">class</span> = ns_c_in;
-  <span class="org-type">int</span> <span class="org-variable-name">type</span> = QUERY;
-  <span class="org-type">char</span> <span class="org-variable-name">answer</span>[256]=<span class="org-string">""</span>;
-  res_query(<span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer));
+  <span class="org-type">int</span> <span class="org-variable-name">class</span> = C_IN;
+  <span class="org-type">int</span> <span class="org-variable-name">type</span> = T_A;
+  <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">answer</span>[512]=<span class="org-string">""</span>;
+  <span class="org-type">int</span> <span class="org-variable-name">n</span> =res_query(<span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer)); <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
   res_close();
-  printf(<span class="org-string">"answer=%s\n"</span>, answer); <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=0; i&lt;n; i++){
+    printf(<span class="org-string">"%02x"</span>, answer[i]);
+  }
 }
 </pre>
 </div>
+
+<pre class="example">
+4d20818000010003000000000377777705626169647503636f6d0000010001c00c0005000100000258000f0377777701610673686966656ec016c02b000100010000025800040ed7b126c02b000100010000025800040ed7b127
+
+</pre>
 
 <p>
 这种方法由于使用到了静态全局变量 <code>_res</code>,因此并不是线程安全的。为此glib提供了线程安全的对应函数 <code>res_ninit</code>, <code>res_nquery</code>, <code>res_nclose</code>:
 </p>
 
 <div class="org-src-container">
-<pre class="src src-C"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
+<pre class="src src-C" id="orgafe9e36"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
 <span class="org-preprocessor">#include</span> <span class="org-string">&lt;arpa/nameser.h&gt;</span>
 <span class="org-preprocessor">#include</span> <span class="org-string">&lt;resolv.h&gt;</span>
 
 <span class="org-type">int</span> <span class="org-function-name">main</span>()
 {
-  <span class="org-type">res_state</span> <span class="org-variable-name">res</span>;
+  <span class="org-type">res_state</span> <span class="org-variable-name">res</span> = malloc(<span class="org-keyword">sizeof</span>(*res));
   res_ninit(res);
   <span class="org-type">int</span> <span class="org-variable-name">i</span> = 0;
   <span class="org-keyword">for</span> (i = 0;i&lt; res-&gt;nscount;i++) <span class="org-comment-delimiter">/* </span><span class="org-comment">res-&gt;nscount&#23384;&#20648;&#20102;&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#20010;&#25968;</span><span class="org-comment-delimiter"> */</span>
     {
       <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">addr</span> = res-&gt;nsaddr_list[i]; <span class="org-comment-delimiter">/* </span><span class="org-comment">&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#22320;&#22336;</span><span class="org-comment-delimiter"> */</span>
     }
-  <span class="org-type">int</span> <span class="org-variable-name">class</span> = ns_c_in;
-  <span class="org-type">int</span> <span class="org-variable-name">type</span> = QUERY;
-  <span class="org-type">char</span> <span class="org-variable-name">answer</span>[256]=<span class="org-string">""</span>;
-  res_nquery(res, <span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer));
+  <span class="org-type">int</span> <span class="org-variable-name">class</span> = C_IN;
+  <span class="org-type">int</span> <span class="org-variable-name">type</span> = T_A;
+  <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">answer</span>[256]=<span class="org-string">""</span>;
+  <span class="org-type">int</span> <span class="org-variable-name">n</span> =res_nquery(res, <span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer));  <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
   res_nclose(res);
-  printf(<span class="org-string">"answer=%s"</span>, answer);  <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-keyword">for</span>(<span class="org-type">int</span> <span class="org-variable-name">i</span>=0; i&lt;n; i++){
+    printf(<span class="org-string">"%02x"</span>, answer[i]);
+  }
 }
 </pre>
 </div>
 
+<pre class="example">
+9965818000010003000000000377777705626169647503636f6d0000010001c00c0005000100000258000f0377777701610673686966656ec016c02b000100010000025800040ed7b127c02b000100010000025800040ed7b126
+
+</pre>
+
 <p>
 其中:
 </p>
-
 <ul class="org-ul">
+<li><p>
+<code>answer</code> 中的结果是二进制格式的，不能直接解读。我们可以用python的 dnslib 库来帮忙解读
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> dnslib
+<span class="org-keyword">import</span> binascii
+<span class="org-variable-name">data</span>=binascii.a2b_hex(answer)
+<span class="org-keyword">return</span> dnslib.DNSRecord.parse(data)
+</pre>
+</div>
+
+<pre class="example">
+;; -&gt;&gt;HEADER&lt;&lt;- opcode: QUERY, status: NOERROR, id: 26777
+;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 0
+;; QUESTION SECTION:
+;www.baidu.com.                 IN      A
+;; ANSWER SECTION:
+www.baidu.com.          653     IN      CNAME   www.a.shifen.com.
+www.a.shifen.com.       600     IN      A       14.215.177.38
+www.a.shifen.com.       600     IN      A       14.215.177.39
+
+</pre></li>
+
 <li><p>
 <code>res_state</code> 的定义在 <a href="https://github.com/lattera/glibc/blob/master/resolv/bits/types/res_state.h">resolv/bits/types/res_state.h</a> 中
 </p>
@@ -171,19 +207,6 @@
 </p>
 <div class="org-src-container">
 <pre class="src src-C"><span class="org-comment-delimiter">/*</span><span class="org-comment">%</span>
-<span class="org-comment"> * Currently defined opcodes.</span>
-<span class="org-comment-delimiter"> */</span>
-<span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> <span class="org-type">__ns_opcode</span> {
-                          <span class="org-variable-name">ns_o_query</span> = 0,               <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Standard query.</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-variable-name">ns_o_iquery</span> = 1,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Inverse query (deprecated/unsupported).</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-variable-name">ns_o_status</span> = 2,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Name server status query (unsupported).</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-comment-delimiter">/* </span><span class="org-comment">Opcode 3 is undefined/reserved.</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-variable-name">ns_o_notify</span> = 4,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Zone change notification.</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-variable-name">ns_o_update</span> = 5,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Zone update message.</span><span class="org-comment-delimiter"> */</span>
-                          <span class="org-variable-name">ns_o_max</span> = 6
-} <span class="org-type">ns_opcode</span>;
-
-<span class="org-comment-delimiter">/*</span><span class="org-comment">%</span>
 <span class="org-comment"> * Values for class field</span>
 <span class="org-comment-delimiter"> */</span>
 <span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> <span class="org-type">__ns_class</span> {
@@ -197,6 +220,98 @@
                          <span class="org-variable-name">ns_c_any</span> = 255,                <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Wildcard match.</span><span class="org-comment-delimiter"> */</span>
                          <span class="org-variable-name">ns_c_max</span> = 65536
 } <span class="org-type">ns_class</span>;
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> <span class="org-type">__ns_type</span>
+  {
+   <span class="org-variable-name">ns_t_invalid</span> = 0,
+
+   <span class="org-variable-name">ns_t_a</span> = 1,
+   <span class="org-variable-name">ns_t_ns</span> = 2,
+   <span class="org-variable-name">ns_t_md</span> = 3,
+   <span class="org-variable-name">ns_t_mf</span> = 4,
+   <span class="org-variable-name">ns_t_cname</span> = 5,
+   <span class="org-variable-name">ns_t_soa</span> = 6,
+   <span class="org-variable-name">ns_t_mb</span> = 7,
+   <span class="org-variable-name">ns_t_mg</span> = 8,
+   <span class="org-variable-name">ns_t_mr</span> = 9,
+   <span class="org-variable-name">ns_t_null</span> = 10,
+   <span class="org-variable-name">ns_t_wks</span> = 11,
+   <span class="org-variable-name">ns_t_ptr</span> = 12,
+   <span class="org-variable-name">ns_t_hinfo</span> = 13,
+   <span class="org-variable-name">ns_t_minfo</span> = 14,
+   <span class="org-variable-name">ns_t_mx</span> = 15,
+   <span class="org-variable-name">ns_t_txt</span> = 16,
+   <span class="org-variable-name">ns_t_rp</span> = 17,
+   <span class="org-variable-name">ns_t_afsdb</span> = 18,
+   <span class="org-variable-name">ns_t_x25</span> = 19,
+   <span class="org-variable-name">ns_t_isdn</span> = 20,
+   <span class="org-variable-name">ns_t_rt</span> = 21,
+   <span class="org-variable-name">ns_t_nsap</span> = 22,
+   <span class="org-variable-name">ns_t_nsap_ptr</span> = 23,
+   <span class="org-variable-name">ns_t_sig</span> = 24,
+   <span class="org-variable-name">ns_t_key</span> = 25,
+   <span class="org-variable-name">ns_t_px</span> = 26,
+   <span class="org-variable-name">ns_t_gpos</span> = 27,
+   <span class="org-variable-name">ns_t_aaaa</span> = 28,
+   <span class="org-variable-name">ns_t_loc</span> = 29,
+   <span class="org-variable-name">ns_t_nxt</span> = 30,
+   <span class="org-variable-name">ns_t_eid</span> = 31,
+   <span class="org-variable-name">ns_t_nimloc</span> = 32,
+   <span class="org-variable-name">ns_t_srv</span> = 33,
+   <span class="org-variable-name">ns_t_atma</span> = 34,
+   <span class="org-variable-name">ns_t_naptr</span> = 35,
+   <span class="org-variable-name">ns_t_kx</span> = 36,
+   <span class="org-variable-name">ns_t_cert</span> = 37,
+   <span class="org-variable-name">ns_t_a6</span> = 38,
+   <span class="org-variable-name">ns_t_dname</span> = 39,
+   <span class="org-variable-name">ns_t_sink</span> = 40,
+   <span class="org-variable-name">ns_t_opt</span> = 41,
+   <span class="org-variable-name">ns_t_apl</span> = 42,
+   <span class="org-variable-name">ns_t_ds</span> = 43,
+   <span class="org-variable-name">ns_t_sshfp</span> = 44,
+   <span class="org-variable-name">ns_t_ipseckey</span> = 45,
+   <span class="org-variable-name">ns_t_rrsig</span> = 46,
+   <span class="org-variable-name">ns_t_nsec</span> = 47,
+   <span class="org-variable-name">ns_t_dnskey</span> = 48,
+   <span class="org-variable-name">ns_t_dhcid</span> = 49,
+   <span class="org-variable-name">ns_t_nsec3</span> = 50,
+   <span class="org-variable-name">ns_t_nsec3param</span> = 51,
+   <span class="org-variable-name">ns_t_tlsa</span> = 52,
+   <span class="org-variable-name">ns_t_smimea</span> = 53,
+   <span class="org-variable-name">ns_t_hip</span> = 55,
+   <span class="org-variable-name">ns_t_ninfo</span> = 56,
+   <span class="org-variable-name">ns_t_rkey</span> = 57,
+   <span class="org-variable-name">ns_t_talink</span> = 58,
+   <span class="org-variable-name">ns_t_cds</span> = 59,
+   <span class="org-variable-name">ns_t_cdnskey</span> = 60,
+   <span class="org-variable-name">ns_t_openpgpkey</span> = 61,
+   <span class="org-variable-name">ns_t_csync</span> = 62,
+   <span class="org-variable-name">ns_t_spf</span> = 99,
+   <span class="org-variable-name">ns_t_uinfo</span> = 100,
+   <span class="org-variable-name">ns_t_uid</span> = 101,
+   <span class="org-variable-name">ns_t_gid</span> = 102,
+   <span class="org-variable-name">ns_t_unspec</span> = 103,
+   <span class="org-variable-name">ns_t_nid</span> = 104,
+   <span class="org-variable-name">ns_t_l32</span> = 105,
+   <span class="org-variable-name">ns_t_l64</span> = 106,
+   <span class="org-variable-name">ns_t_lp</span> = 107,
+   <span class="org-variable-name">ns_t_eui48</span> = 108,
+   <span class="org-variable-name">ns_t_eui64</span> = 109,
+   <span class="org-variable-name">ns_t_tkey</span> = 249,
+   <span class="org-variable-name">ns_t_tsig</span> = 250,
+   <span class="org-variable-name">ns_t_ixfr</span> = 251,
+   <span class="org-variable-name">ns_t_axfr</span> = 252,
+   <span class="org-variable-name">ns_t_mailb</span> = 253,
+   <span class="org-variable-name">ns_t_maila</span> = 254,
+   <span class="org-variable-name">ns_t_any</span> = 255,
+   <span class="org-variable-name">ns_t_uri</span> = 256,
+   <span class="org-variable-name">ns_t_caa</span> = 257,
+   <span class="org-variable-name">ns_t_avc</span> = 258,
+   <span class="org-variable-name">ns_t_ta</span> = 32768,
+   <span class="org-variable-name">ns_t_dlv</span> = 32769,
+
+   <span class="org-variable-name">ns_t_max</span> = 65536
+  } <span class="org-type">ns_type</span>;
 </pre>
 </div></li>
 </ul>
@@ -245,7 +360,7 @@
   <div class="footer">
     <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-81797b73-7757-40b9-bc32-1d3878d2fdf0">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-4eaf1587-ff52-4d54-b8bd-c688a92b55dd">lujun9972</a>
       &nbsp;&nbsp;-&nbsp;&nbsp;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
       Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
