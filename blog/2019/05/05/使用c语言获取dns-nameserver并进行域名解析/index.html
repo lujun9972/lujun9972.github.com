@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用C语言获取DNS nameserver并进行域名解析 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../authors/">Authors</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用C语言获取DNS nameserver并进行域名解析</h1>
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;arpa/nameser.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;resolv.h&gt;</span>
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>()
+{
+  res_init();
+  <span class="org-type">int</span> <span class="org-variable-name">i</span> = 0;
+  <span class="org-keyword">for</span> (i = 0;i&lt; _res.nscount;i++) <span class="org-comment-delimiter">/* </span><span class="org-comment">_res.nscount&#20026;&#25214;&#21040;&#30340;&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#25968;&#37327;</span><span class="org-comment-delimiter"> */</span>
+    {
+      <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">addr</span> = _res.nsaddr_list[i]; <span class="org-comment-delimiter">/* </span><span class="org-comment">&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#22320;&#22336;</span><span class="org-comment-delimiter">  */</span>
+    }
+  <span class="org-type">int</span> <span class="org-variable-name">class</span> = ns_c_in;
+  <span class="org-type">int</span> <span class="org-variable-name">type</span> = QUERY;
+  <span class="org-type">char</span> <span class="org-variable-name">answer</span>[256]=<span class="org-string">""</span>;
+  res_query(<span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer));
+  res_close();
+  printf(<span class="org-string">"answer=%s\n"</span>, answer); <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
+}
+</pre>
+</div>
+
+<p>
+这种方法由于使用到了静态全局变量 <code>_res</code>,因此并不是线程安全的。为此glib提供了线程安全的对应函数 <code>res_ninit</code>, <code>res_nquery</code>, <code>res_nclose</code>:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;arpa/nameser.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;resolv.h&gt;</span>
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>()
+{
+  <span class="org-type">res_state</span> <span class="org-variable-name">res</span>;
+  res_ninit(res);
+  <span class="org-type">int</span> <span class="org-variable-name">i</span> = 0;
+  <span class="org-keyword">for</span> (i = 0;i&lt; res-&gt;nscount;i++) <span class="org-comment-delimiter">/* </span><span class="org-comment">res-&gt;nscount&#23384;&#20648;&#20102;&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#20010;&#25968;</span><span class="org-comment-delimiter"> */</span>
+    {
+      <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">addr</span> = res-&gt;nsaddr_list[i]; <span class="org-comment-delimiter">/* </span><span class="org-comment">&#22495;&#21517;&#26381;&#21153;&#22120;&#30340;&#22320;&#22336;</span><span class="org-comment-delimiter"> */</span>
+    }
+  <span class="org-type">int</span> <span class="org-variable-name">class</span> = ns_c_in;
+  <span class="org-type">int</span> <span class="org-variable-name">type</span> = QUERY;
+  <span class="org-type">char</span> <span class="org-variable-name">answer</span>[256]=<span class="org-string">""</span>;
+  res_nquery(res, <span class="org-string">"www.baidu.com"</span>, class, type, answer, <span class="org-keyword">sizeof</span>(answer));
+  res_nclose(res);
+  printf(<span class="org-string">"answer=%s"</span>, answer);  <span class="org-comment-delimiter">/* </span><span class="org-comment">answer&#20013;&#20026;&#22495;&#21517;&#35299;&#26512;&#30340;&#32467;&#26524;</span><span class="org-comment-delimiter"> */</span>
+}
+</pre>
+</div>
+
+<p>
+其中:
+</p>
+
+<ul class="org-ul">
+<li><p>
+<code>res_state</code> 的定义在 <a href="https://github.com/lattera/glibc/blob/master/resolv/bits/types/res_state.h">resolv/bits/types/res_state.h</a> 中
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-comment-delimiter">/* </span><span class="org-comment">res_state: the global state used by the resolver stub.</span><span class="org-comment-delimiter">  */</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">MAXNS</span>                   3       <span class="org-comment-delimiter">/* </span><span class="org-comment">max # name servers we'll track</span><span class="org-comment-delimiter"> */</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">MAXDFLSRCH</span>              3       <span class="org-comment-delimiter">/* </span><span class="org-comment"># default domain levels to try</span><span class="org-comment-delimiter"> */</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">MAXDNSRCH</span>               6       <span class="org-comment-delimiter">/* </span><span class="org-comment">max # domains in search path</span><span class="org-comment-delimiter"> */</span>
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">MAXRESOLVSORT</span>           10      <span class="org-comment-delimiter">/* </span><span class="org-comment">number of net to sort on</span><span class="org-comment-delimiter"> */</span>
+
+<span class="org-keyword">struct</span> <span class="org-type">__res_state</span> {
+  <span class="org-type">int</span>   <span class="org-variable-name">retrans</span>;                <span class="org-comment-delimiter">/* </span><span class="org-comment">retransmition time interval</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">int</span>   <span class="org-variable-name">retry</span>;                  <span class="org-comment-delimiter">/* </span><span class="org-comment">number of times to retransmit</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">options</span>;                <span class="org-comment-delimiter">/* </span><span class="org-comment">option flags - see below.</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">int</span>   <span class="org-variable-name">nscount</span>;                <span class="org-comment-delimiter">/* </span><span class="org-comment">number of name servers</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span>
+    <span class="org-variable-name">nsaddr_list</span>[MAXNS]; <span class="org-comment-delimiter">/* </span><span class="org-comment">address of name server</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-type">short</span> <span class="org-variable-name">id</span>;            <span class="org-comment-delimiter">/* </span><span class="org-comment">current message id</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-comment-delimiter">/* </span><span class="org-comment">2 byte hole here.</span><span class="org-comment-delimiter">  */</span>
+  <span class="org-type">char</span>  *<span class="org-variable-name">dnsrch</span>[MAXDNSRCH+1];   <span class="org-comment-delimiter">/* </span><span class="org-comment">components of domain to search</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">char</span>  <span class="org-variable-name">defdname</span>[256];          <span class="org-comment-delimiter">/* </span><span class="org-comment">default domain (deprecated)</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-variable-name">pfcode</span>;         <span class="org-comment-delimiter">/* </span><span class="org-comment">RES_PRF_ flags - see below.</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-variable-name">ndots</span>:4;             <span class="org-comment-delimiter">/* </span><span class="org-comment">threshold for initial abs. query</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-variable-name">nsort</span>:4;             <span class="org-comment-delimiter">/* </span><span class="org-comment">number of elements in sort_list[]</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-variable-name">ipv6_unavail</span>:1;      <span class="org-comment-delimiter">/* </span><span class="org-comment">connecting to IPv6 server failed</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-variable-name">unused</span>:23;
+  <span class="org-keyword">struct</span> {
+    <span class="org-keyword">struct</span> <span class="org-type">in_addr</span>      <span class="org-variable-name">addr</span>;
+    <span class="org-type">uint32_t</span>    <span class="org-variable-name">mask</span>;
+  } <span class="org-variable-name">sort_list</span>[MAXRESOLVSORT];
+  <span class="org-comment-delimiter">/* </span><span class="org-comment">4 byte hole here on 64-bit architectures.</span><span class="org-comment-delimiter">  */</span>
+  <span class="org-type">void</span> * <span class="org-variable-name">__glibc_unused_qhook</span>;
+  <span class="org-type">void</span> * <span class="org-variable-name">__glibc_unused_rhook</span>;
+  <span class="org-type">int</span>   <span class="org-variable-name">res_h_errno</span>;            <span class="org-comment-delimiter">/* </span><span class="org-comment">last one set for this context</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">int</span>   <span class="org-variable-name">_vcsock</span>;                <span class="org-comment-delimiter">/* </span><span class="org-comment">PRIVATE: for res_send VC i/o</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-type">unsigned</span> <span class="org-type">int</span> <span class="org-variable-name">_flags</span>;          <span class="org-comment-delimiter">/* </span><span class="org-comment">PRIVATE: see below</span><span class="org-comment-delimiter"> */</span>
+  <span class="org-comment-delimiter">/* </span><span class="org-comment">4 byte hole here on 64-bit architectures.</span><span class="org-comment-delimiter">  */</span>
+  <span class="org-keyword">union</span> {
+    <span class="org-type">char</span>        <span class="org-variable-name">pad</span>[52];        <span class="org-comment-delimiter">/* </span><span class="org-comment">On an i386 this means 512b total.</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">struct</span> {
+      <span class="org-type">uint16_t</span>          <span class="org-variable-name">nscount</span>;
+      <span class="org-type">uint16_t</span>          <span class="org-variable-name">nsmap</span>[MAXNS];
+      <span class="org-type">int</span>                       <span class="org-variable-name">nssocks</span>[MAXNS];
+      <span class="org-type">uint16_t</span>          <span class="org-variable-name">nscount6</span>;
+      <span class="org-type">uint16_t</span>          <span class="org-variable-name">nsinit</span>;
+      <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in6</span>       *<span class="org-variable-name">nsaddrs</span>[MAXNS];
+<span class="org-preprocessor">#ifdef</span> _LIBC
+      <span class="org-type">unsigned</span> <span class="org-type">long</span> <span class="org-type">long</span> <span class="org-type">int</span> <span class="org-variable-name">__glibc_extension_index</span>
+        <span class="org-keyword">__attribute__</span>((packed));
+<span class="org-preprocessor">#else</span>
+      <span class="org-type">unsigned</span> <span class="org-type">int</span>              <span class="org-variable-name">__glibc_reserved</span>[2];
+<span class="org-preprocessor">#endif</span>
+    } <span class="org-variable-name">_ext</span>;
+  } <span class="org-variable-name">_u</span>;
+};
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> <span class="org-type">__res_state</span> *<span class="org-type">res_state</span>;
+</pre>
+</div></li>
+
+<li><p>
+<code>class</code> 和 <code>type</code> 的定义在 <a href="https://github.com/lattera/glibc/blob/master/resolv/arpa/nameser.h">resolv/arpa/nameser.h</a> 中
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-comment-delimiter">/*</span><span class="org-comment">%</span>
+<span class="org-comment"> * Currently defined opcodes.</span>
+<span class="org-comment-delimiter"> */</span>
+<span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> <span class="org-type">__ns_opcode</span> {
+                          <span class="org-variable-name">ns_o_query</span> = 0,               <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Standard query.</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-variable-name">ns_o_iquery</span> = 1,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Inverse query (deprecated/unsupported).</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-variable-name">ns_o_status</span> = 2,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Name server status query (unsupported).</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-comment-delimiter">/* </span><span class="org-comment">Opcode 3 is undefined/reserved.</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-variable-name">ns_o_notify</span> = 4,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Zone change notification.</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-variable-name">ns_o_update</span> = 5,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Zone update message.</span><span class="org-comment-delimiter"> */</span>
+                          <span class="org-variable-name">ns_o_max</span> = 6
+} <span class="org-type">ns_opcode</span>;
+
+<span class="org-comment-delimiter">/*</span><span class="org-comment">%</span>
+<span class="org-comment"> * Values for class field</span>
+<span class="org-comment-delimiter"> */</span>
+<span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> <span class="org-type">__ns_class</span> {
+                         <span class="org-variable-name">ns_c_invalid</span> = 0,      <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Cookie.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_in</span> = 1,           <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Internet.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_2</span> = 2,            <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; unallocated/unsupported.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_chaos</span> = 3,                <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; MIT Chaos-net.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_hs</span> = 4,           <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; MIT Hesiod.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-comment-delimiter">/* </span><span class="org-comment">Query class values which do not appear in resource records</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_none</span> = 254,       <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; for prereq. sections in update requests</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_any</span> = 255,                <span class="org-comment-delimiter">/*</span><span class="org-comment">%&lt; Wildcard match.</span><span class="org-comment-delimiter"> */</span>
+                         <span class="org-variable-name">ns_c_max</span> = 65536
+} <span class="org-type">ns_class</span>;
+</pre>
+</div></li>
+</ul>
+
+
+<p>
+其他函数说明可以参见 <code>man resolver</code>.
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-05-05</span>
+    <span title="last modification date" class="post-info">2019-05-05</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/编程之旅">编程之旅</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-81797b73-7757-40b9-bc32-1d3878d2fdf0">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="http://i.creativecommons.org/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
