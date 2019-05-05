@@ -6,7 +6,7 @@
 #+STARTUP:  inlineimages
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
 
-#+BEGIN_SRC C
+#+BEGIN_SRC C :main no :flags -lm -lpthread -lresolv
   #include <netinet/in.h>
   #include <arpa/nameser.h>
   #include <resolv.h>
@@ -19,41 +19,69 @@
       {
         struct sockaddr_in addr = _res.nsaddr_list[i]; /* 域名服务器的地址  */
       }
-    int class = ns_c_in;
-    int type = QUERY;
-    char answer[256]="";
-    res_query("www.baidu.com", class, type, answer, sizeof(answer));
+    int class = C_IN;
+    int type = T_A;
+    unsigned char answer[512]="";
+    int n =res_query("www.baidu.com", class, type, answer, sizeof(answer)); /* answer中为域名解析的结果 */
     res_close();
-    printf("answer=%s\n", answer); /* answer中为域名解析的结果 */
+    for(int i=0; i<n; i++){
+      printf("%02x", answer[i]);
+    }
   }
 #+END_SRC
 
+#+RESULTS:
+: 4d20818000010003000000000377777705626169647503636f6d0000010001c00c0005000100000258000f0377777701610673686966656ec016c02b000100010000025800040ed7b126c02b000100010000025800040ed7b127
+
 这种方法由于使用到了静态全局变量 =_res=,因此并不是线程安全的。为此glib提供了线程安全的对应函数 =res_ninit=, =res_nquery=, =res_nclose=:
 
-#+BEGIN_SRC C
+#+NAME: answer
+#+BEGIN_SRC C  :main no :flags -lm -lpthread -lresolv
   #include <netinet/in.h>
   #include <arpa/nameser.h>
   #include <resolv.h>
 
   int main()
   {
-    res_state res;
+    res_state res = malloc(sizeof(*res));
     res_ninit(res);
     int i = 0;
     for (i = 0;i< res->nscount;i++) /* res->nscount存储了域名服务器的个数 */
       {
         struct sockaddr_in addr = res->nsaddr_list[i]; /* 域名服务器的地址 */
       }
-    int class = ns_c_in;
-    int type = QUERY;
-    char answer[256]="";
-    res_nquery(res, "www.baidu.com", class, type, answer, sizeof(answer));
+    int class = C_IN;
+    int type = T_A;
+    unsigned char answer[256]="";
+    int n =res_nquery(res, "www.baidu.com", class, type, answer, sizeof(answer));  /* answer中为域名解析的结果 */
     res_nclose(res);
-    printf("answer=%s", answer);  /* answer中为域名解析的结果 */
+    for(int i=0; i<n; i++){
+      printf("%02x", answer[i]);
+    }
   }
 #+END_SRC
 
+#+RESULTS:
+: 9965818000010003000000000377777705626169647503636f6d0000010001c00c0005000100000258000f0377777701610673686966656ec016c02b000100010000025800040ed7b127c02b000100010000025800040ed7b126
+
 其中:
++ =answer= 中的结果是二进制格式的，不能直接解读。我们可以用python的 dnslib 库来帮忙解读
+  #+BEGIN_SRC python :var answer=answer
+    import dnslib
+    import binascii
+    data=binascii.a2b_hex(answer)
+    return dnslib.DNSRecord.parse(data)
+  #+END_SRC
+
+  #+RESULTS:
+  : ;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 26777
+  : ;; flags: qr rd ra; QUERY: 1, ANSWER: 3, AUTHORITY: 0, ADDITIONAL: 0
+  : ;; QUESTION SECTION:
+  : ;www.baidu.com.                 IN      A
+  : ;; ANSWER SECTION:
+  : www.baidu.com.          653     IN      CNAME   www.a.shifen.com.
+  : www.a.shifen.com.       600     IN      A       14.215.177.38
+  : www.a.shifen.com.       600     IN      A       14.215.177.39
 
 + =res_state= 的定义在 [[https://github.com/lattera/glibc/blob/master/resolv/bits/types/res_state.h][resolv/bits/types/res_state.h]] 中
   #+BEGIN_SRC C
@@ -115,19 +143,6 @@
 + =class= 和 =type= 的定义在 [[https://github.com/lattera/glibc/blob/master/resolv/arpa/nameser.h][resolv/arpa/nameser.h]] 中
   #+BEGIN_SRC C
     /*%
-     ,* Currently defined opcodes.
-     ,*/
-    typedef enum __ns_opcode {
-                              ns_o_query = 0,		/*%< Standard query. */
-                              ns_o_iquery = 1,	/*%< Inverse query (deprecated/unsupported). */
-                              ns_o_status = 2,	/*%< Name server status query (unsupported). */
-                              /* Opcode 3 is undefined/reserved. */
-                              ns_o_notify = 4,	/*%< Zone change notification. */
-                              ns_o_update = 5,	/*%< Zone update message. */
-                              ns_o_max = 6
-    } ns_opcode;
-
-    /*%
      ,* Values for class field
      ,*/
     typedef enum __ns_class {
@@ -141,6 +156,98 @@
                              ns_c_any = 255,		/*%< Wildcard match. */
                              ns_c_max = 65536
     } ns_class;
+    
+    typedef enum __ns_type
+      {
+       ns_t_invalid = 0,
+
+       ns_t_a = 1,
+       ns_t_ns = 2,
+       ns_t_md = 3,
+       ns_t_mf = 4,
+       ns_t_cname = 5,
+       ns_t_soa = 6,
+       ns_t_mb = 7,
+       ns_t_mg = 8,
+       ns_t_mr = 9,
+       ns_t_null = 10,
+       ns_t_wks = 11,
+       ns_t_ptr = 12,
+       ns_t_hinfo = 13,
+       ns_t_minfo = 14,
+       ns_t_mx = 15,
+       ns_t_txt = 16,
+       ns_t_rp = 17,
+       ns_t_afsdb = 18,
+       ns_t_x25 = 19,
+       ns_t_isdn = 20,
+       ns_t_rt = 21,
+       ns_t_nsap = 22,
+       ns_t_nsap_ptr = 23,
+       ns_t_sig = 24,
+       ns_t_key = 25,
+       ns_t_px = 26,
+       ns_t_gpos = 27,
+       ns_t_aaaa = 28,
+       ns_t_loc = 29,
+       ns_t_nxt = 30,
+       ns_t_eid = 31,
+       ns_t_nimloc = 32,
+       ns_t_srv = 33,
+       ns_t_atma = 34,
+       ns_t_naptr = 35,
+       ns_t_kx = 36,
+       ns_t_cert = 37,
+       ns_t_a6 = 38,
+       ns_t_dname = 39,
+       ns_t_sink = 40,
+       ns_t_opt = 41,
+       ns_t_apl = 42,
+       ns_t_ds = 43,
+       ns_t_sshfp = 44,
+       ns_t_ipseckey = 45,
+       ns_t_rrsig = 46,
+       ns_t_nsec = 47,
+       ns_t_dnskey = 48,
+       ns_t_dhcid = 49,
+       ns_t_nsec3 = 50,
+       ns_t_nsec3param = 51,
+       ns_t_tlsa = 52,
+       ns_t_smimea = 53,
+       ns_t_hip = 55,
+       ns_t_ninfo = 56,
+       ns_t_rkey = 57,
+       ns_t_talink = 58,
+       ns_t_cds = 59,
+       ns_t_cdnskey = 60,
+       ns_t_openpgpkey = 61,
+       ns_t_csync = 62,
+       ns_t_spf = 99,
+       ns_t_uinfo = 100,
+       ns_t_uid = 101,
+       ns_t_gid = 102,
+       ns_t_unspec = 103,
+       ns_t_nid = 104,
+       ns_t_l32 = 105,
+       ns_t_l64 = 106,
+       ns_t_lp = 107,
+       ns_t_eui48 = 108,
+       ns_t_eui64 = 109,
+       ns_t_tkey = 249,
+       ns_t_tsig = 250,
+       ns_t_ixfr = 251,
+       ns_t_axfr = 252,
+       ns_t_mailb = 253,
+       ns_t_maila = 254,
+       ns_t_any = 255,
+       ns_t_uri = 256,
+       ns_t_caa = 257,
+       ns_t_avc = 258,
+       ns_t_ta = 32768,
+       ns_t_dlv = 32769,
+
+       ns_t_max = 65536
+      } ns_type;
   #+END_SRC
 
   
