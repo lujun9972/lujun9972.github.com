@@ -27,8 +27,7 @@ There are two things you can do about this warning:
  `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
     (emacs_love)
     :summary
-    (("years" :year :updates 10)
-     ("authors" :authors)
+    (("years" :year :updates 15)
      ("tags" :tags))
     :source-browse-url
     ("Github" ,(getenv "REPO"))
