@@ -1,0 +1,47 @@
+#+TITLE: Linux挂载BitLocker加密的Windows分区
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-05-06 一 18:39]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.linuxuprising.com/2019/04/how-to-mount-bitlocker-encrypted.html 看到的，记录一下
+
+Linux下可以利用 [[https://github.com/Aorimn/dislocker][Dislocker]] 来解密并挂载BitLocker加密过的卷。
+
+* 安装
+dislocker在 Archlinux AUR 中
+#+BEGIN_SRC shell
+  aurman -S dislocker
+#+END_SRC
+
+* 手工挂载
+1. 创建两个目录用来解密和挂载加密分区的
+   #+BEGIN_SRC shell
+     sudo mkdir -p /media/bitlocker
+     sudo mkdir -p /media/bitlockermount
+   #+END_SRC
+2. 解密BitLocker的加密文件系统
+   #+BEGIN_SRC shell
+     sudo dislocker ${encrypted_partition} -u ${user_password} -- /media/bitlocker
+     # 或
+     sudo dislocker ${encrypted_partition} -p ${recovery_password} -- /media/bitlocker
+     # 或
+     sudo dislocker ${encrypted_partition} -f ${bekfile} -- /media/bitlocker
+   #+END_SRC
+3. 挂载加密分区
+   #+BEGIN_SRC shell
+     sudo mount -o loop /media/bitlocker/dislocker-file /media/bitlockermount
+   #+END_SRC
+
+   
+* 自动挂载
+在 =/etc/fstab= 中添加下面两行:
+#+BEGIN_EXAMPLE
+  <partition> /media/bitlocker fuse.dislocker user-password=<password>,nofail 0 0
+
+  /media/bitlocker/dislocker-file /media/bitlockermount auto nofail 0 0
+#+END_EXAMPLE
+
+上例中是使用 =user-password= 来解密的，对应的你也可以使用 =recovery-password= 和 =bekfile= 来代替。
