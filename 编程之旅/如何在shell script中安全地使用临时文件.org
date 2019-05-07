@@ -1,0 +1,83 @@
+#+TITLE: 如何在shell script中安全地使用临时文件
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅,shell,script
+#+DATE: [2019-05-07 二 12:45]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.putorius.net/working-with-temporary-files.html 看到的，觉得很不错，记录一下。
+
+* 使用临时文件可能遇到的安全问题
++ 信息泄露
++ 虚假数据注入
++ 竞态条件
++ 文件破坏(file clobbering)
+
+* 安全使用临时文件要做到
+** 合适的权限
+linux默认的umask是 =0022=, 这表示默认情况下所有人都能读取新创建的文件的内容。
+
+同时若你对临时文件赋予了不适当的写权限，那么你从临时文件内读取到的内容可能被人恶意修改或者损坏。
+
+** 不可预测的临时文件名称
+若临时文件名称是可以被预测的，那么别人可以创建一个与临时文件同名的软连接,但实际指向却是其他文件(symlink attacks).
+
+通过这种方式可能导致信息泄露和虚假数据注入. 甚至若该软连接指向的是某个操作系统或服务所需要的重要文件时，该重要文件内容可能会被破坏。
+
+** 清理遗留数据
+一定要保证在任何异常情况下都能将产生的临时文件清理干净(一般借助trap来实现)
+
+* 使用临时文件的最佳实践
++ 在创建临时文件之前先检查文件是否已经存在并且是否是一个软连接指向其他文件
+
+  使用 =mktemp= 创建临时文件并不会帮你检查临时文件是否存在或者是否是一个软连接，但是由于它能保证生成的文件名一定是唯一的，因此可以跳过这个问题。
+
++ 检查临时文件确实创建成功
+  
+  =mktemp= 只有在创建临时文件成功的情况下才会返回 =0=,因此可以直接通过 =mktemp= 命令的返回值判断临时文件是否创建成功。
+  #+BEGIN_SRC shell :results org
+    TMPFILE=$(mktemp)|| exit 1
+    echo "Our temp file is $TMPFILE"
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  Our temp file is /tmp/tmp.Fnojbeusub
+  #+END_SRC
+
++ 为临时文件设置严格的权限
+  
+  使用 =mktemp= 创建的临时文件默认只有owner的读写权限，这样就可以免掉在脚本中使用 =umask= 和 =chmod= 的麻烦事了。
+
++ 临时文件名不可知预测或保证唯一性
+  
+  =mktemp= 产生的临时文件名一般以 =tmp= 为前缀，随机产生后缀，同时文件会放在 =$TMPDIR= 目录下。
+
+  但是我们可以通过 =-t 前缀.XXXXXX= 来设置临时文件名的模板，通过 =-p 目录= 指定在哪个目录中产生临时文件:
+  #+BEGIN_SRC shell :results org
+    TMPFILE=$(mktemp -p $HOME -t TEST.XXXXXXX)
+    ls -l ${TMPFILE}
+    rm "${TMPFILE}"
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  -rw------- 1 lujun9972 lujun9972 0  5月  7 14:32 /home/lujun9972/TEST.6yDfeyg
+  #+END_SRC
+  
++ 脚本退出时删除临时文件(trap)
+  
+  使用 =exit trap= 能保证脚本不管在什么情况下退出都会调用注册的清理函数。
+
+  #+BEGIN_SRC shell :results org
+    #!/bin/bash
+    trap 'rm -f "$TMPFILE"' EXIT
+    TMPFILE=$(mktemp)|| exit 1
+    echo "Our temp file is $TMPFILE"
+  #+END_SRC
+
+  #+RESULTS:
+  #+BEGIN_SRC org
+  Our temp file is /tmp/tmp.AWLcFtFVFY
+  #+END_SRC
