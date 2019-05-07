@@ -1,0 +1,60 @@
+#+TITLE: 如何在shell script中获取一段操作的耗时
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2019-05-07 二 18:01]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+通常我们可以使用 =time= 命令来获取某个命令的执行时间
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ time sleep 1
+
+  real	0m1.003s
+  user	0m0.001s
+  sys	0m0.003s
+#+END_EXAMPLE
+
+但是使用 =time= 统计耗时有几个缺陷:
+
+一来，解析 =time= 命令的输出比较麻烦，因为它直接往 =/dev/tty= 中写信息的，而不是通过stdout或stderr来输出的，因此你无法简单的通过 =$()= 来捕获输出。
+
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ t=$(time sleep 1)
+
+  real	0m1.011s
+  user	0m0.000s
+  sys	0m0.005s
+  lujun9972:~/ $ echo $a
+
+  lujun9972:~/ $ t=$(time sleep 1 2>&1)
+
+  real	0m1.004s
+  user	0m0.001s
+  sys	0m0.003s
+  lujun9972:~/ $ echo $a
+#+END_EXAMPLE
+
+二来, =time= 只会统计某个命令的耗时情况，如果要统计多个命令的总耗时则会比较麻烦. 你可能要把这些操作封在一个子shell中
+#+BEGIN_EXAMPLE
+  lujun9972:~/ $ time (sleep 1;sleep 1)
+
+  real	0m2.010s
+  user	0m0.004s
+  sys	0m0.003s
+#+END_EXAMPLE
+
+然而，事实上Bash中提供了一个 =SECONDS= 变量，该变量记录了shell从启动开始到现在经过的秒钟数。
+通过这个变量我们可以很方便地统计多个操作的总耗时了:
+#+BEGIN_SRC shell
+  OLD=$SECONDS
+  sleep 1
+  sleep 1
+  echo "总耗时:" $(($SECONDS - $OLD))
+#+END_SRC
+
+#+RESULTS:
+: 总耗时: 2
+
+唯一美中不足的是，它的精度只能达到秒级，不过对于大多数情况应该也足够了。
