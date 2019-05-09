@@ -40,6 +40,11 @@ function generate_links()
     IFS=$old_ifs
 }
 
+echo <<EOF
+#+ATTR_HTML :alt Netlify Status
+[[https://app.netlify.com/sites/thirsty-pike-764a9b/deploys][https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status.png]]
+
+EOF
 
 for catalog in $catalogs
 do
