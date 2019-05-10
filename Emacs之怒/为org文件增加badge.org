@@ -1,0 +1,102 @@
+#+TITLE: 为org文件增加badge
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-05-10 五 22:16]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+github项目中经常都会包含很多badge,这些badge能够很直观地展示出项目的状态来。
+
+然而大多数badge生成的站点提供的badge代码都是markdown格式的，而缺少org格式的。
+比如下面是 =netlify= 提供的badge代码:
+#+begin_src markdown
+  [![Netlify Status](https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status)](https://app.netlify.com/sites/thirsty-pike-764a9b/deploys)
+#+end_src
+
+要在org文件中增加badge就必须手工将之转成org link的格式。
+
+* 哪些org link会被转换成image
+org并没有像markdown一样专门定义了一套语法来指明链接是图片而不是引用。
+
+在 =ox.el= 的源代码中有这么一段注释:
+#+begin_src emacs-lisp
+  ;; `org-export-inline-image-p' returns a non-nil value when the link
+  ;; provided should be considered as an inline image.
+#+end_src
+
+也就是说一个link是应该看成引用链接还是图片是由 =org-export-inline-image-p= 这个函数来决定的
+
+然而具体到org-html转换来说，根据 =ox-html= 中的代码，一个org link转换成image必须满足两个方面的条件:
+1. =org-html-inline-images= 的值需要设置为非nil
+2. 链接要被 =org-export-inline-image-p= 函数识别成图片，识别的规则由 =org-html-inline-image-rules= 决定
+
+相关代码如下:
+#+begin_src emacs-lisp
+  ((and (plist-get info :html-inline-images)
+        (org-export-inline-image-p
+         link (plist-get info :html-inline-image-rules)))
+   (org-html--format-image path attributes-plist info))
+
+  (:html-inline-images nil nil org-html-inline-images)
+
+  (:html-inline-image-rules nil nil org-html-inline-image-rules)
+#+end_src
+
+而 =org-html-inline-image-rules= 的默认值为:
+#+begin_src emacs-lisp
+  (defcustom org-html-inline-image-rules
+    '(("file" . "\\.\\(jpeg\\|jpg\\|png\\|gif\\|svg\\)\\'")
+      ("http" . "\\.\\(jpeg\\|jpg\\|png\\|gif\\|svg\\)\\'")
+      ("https" . "\\.\\(jpeg\\|jpg\\|png\\|gif\\|svg\\)\\'"))
+    "Rules characterizing image files that can be inlined into HTML.
+  A rule consists in an association whose key is the type of link
+  to consider, and value is a regexp that will be matched against
+  link's path."
+    :group 'org-export-html
+    :version "24.4"
+    :package-version '(Org . "8.0")
+    :type '(alist :key-type (string :tag "Type")
+                  :value-type (regexp :tag "Path")))
+#+end_src
+
+也就说以 =.jpeg=, =.jpg=, =.png=, =.gif= 或 =.svg= 结尾的链接才会被认为是图片。
+
+* 在org文件中添加badge
+通过分析，我们可以知道，若badge给出的链接本身就是以 =.jpeg=, =.jpg=, =.png=, =.gif= 或 =.svg= 结尾的,那么很简单，我们只需要将
+#+begin_src markdown
+  [![$alt]($image_linke)](link)
+#+end_src
+转换成
+#+begin_src org
+  ,#+ATTR_HTML :alt $alt
+  [[$link][$image_link]]
+#+end_src
+就可以了(其中通过 =#+ATTR_HTML= 来为image添加alt属性).
+
+但是对于那些不是以 =.jpeg=, =.jpg=, =.png=, =.gif= 和 =.svg= 结尾的链接则似乎只能通过定义buffer local的 =org-html-inline-image-rules= 来实现了.
+
+比如下面这段org代码
+#+begin_src org
+  # -*- org-html-inline-image-rules: (("https" . "deploy-status\\'")); -*-
+
+  [[https://app.netlify.com/sites/thirsty-pike-764a9b/deploys][https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status]]
+#+end_src
+
+导出为HTML后会变成
+#+begin_src html
+  <div class="figure">
+  <p><a href="https://app.netlify.com/sites/thirsty-pike-764a9b/deploys"><img src="https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status" alt="deploy-status" /></a>
+  </p>
+  </div>
+#+end_src
+
+* github直接渲染
+由于github不支持buffer local 变量,其对org的渲染也不是很完善，因此对于非 =.jpeg=, =.jpg=, =.png=, =.gif= 和 =.svg= 结尾的链接似乎是没有办法显示为图片的。
+
+但是值得指出的是，有些badge服务提供的链接是允许在最后面添加后缀的，比如 =netlify= 提供的badge,我可以在其图片链接后面增加 =.png= 也不会影响badge的生成。
+因此上面那段markdonw代码我可以改写成
+#+begin_src org
+  [[https://app.netlify.com/sites/thirsty-pike-764a9b/deploys][https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status.png]]
+#+end_src
+
