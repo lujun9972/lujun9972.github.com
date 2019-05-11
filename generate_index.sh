@@ -42,6 +42,8 @@ function generate_links()
 
 cat <<EOF
 [[https://app.netlify.com/sites/thirsty-pike-764a9b/deploys][https://api.netlify.com/api/v1/badges/3b4ebb33-1ce2-4238-9a69-e4ecdafd2f1a/deploy-status.png]]
+[[https://github.com/lujun9972/lujun9972.github.com][http://githubbadges.com/star.svg?user=lujun9972&repo=lujun9972.github.com&style=default.png]]
+[[https://github.com/lujun9972/lujun9972.github.com/fork][http://githubbadges.com/fork.svg?user=lujun9972&repo=lujun9972.github.com&style=default.png]]
 
 EOF
 
