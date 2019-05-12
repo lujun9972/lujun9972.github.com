@@ -18,6 +18,10 @@ There are two things you can do about this warning:
 (package-refresh-contents)
 (package-install 'mustache)
 (package-install 'htmlize)
+(package-install 'yaml-mode)
+(package-install 'lua-mode)
+(package-install 'dockerfile-mode)
+(package-install 'docker-compose-mode)
 
 (setq load-path (cons  "~/EGO/" load-path))
 (require 'log-edit)
@@ -37,4 +41,4 @@ There are two things you can do about this warning:
 (setq debug-on-error t)
 (setq org-src-fontify-natively t)
 (setq org-html-htmlize-output-type 'css)
-(ego-do-publication "blog" nil nil nil)
+(ego-do-publication "blog" t nil nil)
