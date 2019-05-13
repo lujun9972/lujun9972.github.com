@@ -1,0 +1,31 @@
+#+TITLE: 为什么说创建docker用户组不是个好选择
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,docker
+#+DATE: [2019-05-13 一 22:14]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在网上经常看到的一个操作就是为了让执行docker命令不需要敲sudo，而创建 =docker= 用户组并将用户添加如 =docker= 用户组内。
+
+但是这样做其实风险挺大的，相当于给了该用户root的权利，比如该用户完全可以通过下面操作获取到实际上的root权限
+#+begin_src shell
+  docker run -it --rm --privileged -v /:/r archlinux/base chroot /r
+#+end_src
+而且最关键的是，这样获取root权限，linux内不会留下什么日志信息。
+
+比较好的一个做法应该是通过修改 =sudoers文件配置= 和创建别名的方式来达到省略输入 =sudo= 的目的。
+
+1. 运行 =sudo visudo= 然后加入下面内容
+   #+begin_example
+     %wheel ALL=(ALL) NOPASSWD: /usr/bin/docker, /usr/bin/docker-compose
+   #+end_example
+
+   这样我们可以无需输入密码，使用 =sudo docker= 运行容器了
+
+2. 创建别名
+   #+begin_src shell
+     alias docker='sudo docker'
+   #+end_src
+   
+   这样我们就可以直接使用 =docker= 来运行容器了,而它与docker用户组不同的地方在于，由于使用 =sudo= 命令提权，该操作会被记录在 =sudo= 日志中,可供审计。
