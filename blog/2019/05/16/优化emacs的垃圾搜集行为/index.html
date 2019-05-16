@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>优化Emacs的垃圾搜集行为 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">优化Emacs的垃圾搜集行为</h1>
+<p>
+从 <a href="http://akrl.sdf.org/">http://akrl.sdf.org/</a> 中看到的，记录一下
+</p>
+
+<p>
+Emacs触发垃圾收集的阀值由 <code>gc-cons-threshold</code> 决定,当Emacs自上一次垃圾收集后分配的内存超过该阀值时就会触发新一轮的垃圾收集行为。
+然而该阀值默认居然不到800K,导致Emacs频繁地进行垃圾收集。
+</p>
+
+<p>
+由于垃圾收集速度很快，我们平时可能对Emacs的垃圾收集操作不会有感知，将 <code>garbage-collection-messages</code> 设置为 <code>t</code> 可以在 <code>echoline</code> 中显示GC过程.
+另外，通过查看 <code>gc-elapsed</code> 变量的值我们可以看到Emacs花费在GC过程所花的时间。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">gc-elapsed
+</pre>
+</div>
+
+<pre class="example">
+35.051446504999994
+
+</pre>
+
+<p>
+为了提高Emacs性能，一个很自然的想法就是提高 <code>gc-cons-threshold</code> 的阀值，让Emacs不要那么频繁地进行垃圾收集。
+然而，这里就存在两个问题:
+</p>
+
+<ol class="org-ol">
+<li>什么时候触发垃圾收集比较合适？是否一定要等到超过了阀值才收集？</li>
+<li>这个阀值设置为多大比较合适？太小了垃圾收集太过频繁，太大了则一旦触发垃圾收集可能导致长时间的卡顿</li>
+</ol>
+
+<p>
+第一个问题的答案是否，我们完全可以通过 <code>run-with-idle-timer</code> 来让Emacs在空闲下来的时候就自动进行垃圾收集:
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">k-gc-timer</span>
+  (run-with-idle-timer 15 t
+                       'garbage-collect))
+</pre>
+</div>
+
+<p>
+第二个问题，我们可以通过记录每次垃圾收集的时间来进行判断和调整：
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defmacro</span> <span class="org-function-name">k-time</span> (<span class="org-type">&amp;rest</span> body)
+  <span class="org-doc">"Measure and return the time it takes evaluating BODY."</span>
+  `(<span class="org-keyword">let</span> ((time (current-time)))
+     ,@body
+     (float-time (time-since time))))
+
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">k-gc-timer</span>
+  (run-with-idle-timer 15 t
+                       (<span class="org-keyword">lambda</span> ()
+                         (message <span class="org-string">"Garbage Collector has run for %.06fsec"</span>
+                                  (k-time (garbage-collect))))))
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-05-16</span>
+    <span title="last modification date" class="post-info">2019-05-16</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-464c17fb-7555-4d39-b590-4575278dcb5c">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
