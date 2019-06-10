@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>高并发导致获取MQCONN连接失败 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">高并发导致获取MQCONN连接失败</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org439ec91">症状</a></li>
+<li><a href="#org97afa93">原因</a></li>
+<li><a href="#org3b7ed00">解决方案</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org439ec91" class="outline-2">
+<h2 id="org439ec91">症状</h2>
+<div class="outline-text-2" id="text-org439ec91">
+<p>
+收到某系统的短信通知有异常情况出现，查看应用日志发现提示 <b>Get MQCONN failed,Can no connect to MQ Server(2537)</b>
+</p>
+
+<p>
+通过检查MQ错误日志，发现MQ提示 <b>MQ9513 Maximum number of channels reached</b>
+</p>
+</div>
+</div>
+<div id="outline-container-org97afa93" class="outline-2">
+<h2 id="org97afa93">原因</h2>
+<div class="outline-text-2" id="text-org97afa93">
+<p>
+每一个客户端MQCONN连接.会创建一个连接实例，产生一个连接通道. 而缺省MQ允许运行的最大通道个数为100.
+当超过这个通道个数时就会提示该错误.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3b7ed00" class="outline-2">
+<h2 id="org3b7ed00">解决方案</h2>
+<div class="outline-text-2" id="text-org3b7ed00">
+<p>
+需要增大MQ最大连接通道个数和最大活跃连接通道个数
+</p>
+
+<ol class="org-ol">
+<li><p>
+停止MQ队列管理器
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">endmqm -i mqgr
+</pre>
+</div></li>
+</ol>
+
+
+<ol class="org-ol">
+<li><p>
+修改MQ队列管理器配置
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">vi /var/mqm/qmgrs/mqgr/qm.ini
+</pre>
+</div>
+
+<p>
+新增以下内容后保存
+</p>
+<pre class="example">
+CHANNELS:
+   MaxChannels=600
+   MaxActiveChannels=600  
+</pre></li>
+
+<li><p>
+启动MQ队列管理器(使修改生效)
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">strmqm mqgr
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-06-10</span>
+    <span title="last modification date" class="post-info">2019-06-10</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/异闻录">异闻录</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-c587ee25-8062-47f0-8fe9-bf21fecf8ae6">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
