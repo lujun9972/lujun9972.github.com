@@ -1,0 +1,42 @@
+#+TITLE: 高并发导致获取MQCONN连接失败
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2019-06-10 一 16:17]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+收到某系统的短信通知有异常情况出现，查看应用日志发现提示 *Get MQCONN failed,Can no connect to MQ Server(2537)*
+
+通过检查MQ错误日志，发现MQ提示 *MQ9513 Maximum number of channels reached*
+* 原因
+每一个客户端MQCONN连接.会创建一个连接实例，产生一个连接通道. 而缺省MQ允许运行的最大通道个数为100.
+当超过这个通道个数时就会提示该错误.
+
+* 解决方案
+需要增大MQ最大连接通道个数和最大活跃连接通道个数
+
+1. 停止MQ队列管理器
+   #+BEGIN_SRC shell
+     endmqm -i mqgr
+   #+END_SRC
+
+
+2. 修改MQ队列管理器配置
+   #+BEGIN_SRC shell
+     vi /var/mqm/qmgrs/mqgr/qm.ini
+   #+END_SRC
+
+   新增以下内容后保存
+   #+BEGIN_EXAMPLE
+     CHANNELS:
+        MaxChannels=600
+        MaxActiveChannels=600  
+   #+END_EXAMPLE
+
+3. 启动MQ队列管理器(使修改生效)
+   #+BEGIN_SRC shell
+     strmqm mqgr
+   #+END_SRC
+
