@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>crontab执行结果未通过mail通知用户 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">crontab执行结果未通过mail通知用户</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgd78d1af">症状</a></li>
+<li><a href="#org0fa98fd">排查过程</a></li>
+<li><a href="#orgb3a464e">解决方法</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd78d1af" class="outline-2">
+<h2 id="orgd78d1af">症状</h2>
+<div class="outline-text-2" id="text-orgd78d1af">
+<p>
+在某台 centos7 主机上设置了某个 crontab 任务，但是到时间后运行 <code>mail</code> 后提示 <code>No mail</code>,即cron没有将任务的执行结果发送邮件通知到用户
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0fa98fd" class="outline-2">
+<h2 id="org0fa98fd">排查过程</h2>
+<div class="outline-text-2" id="text-org0fa98fd">
+<ol class="org-ol">
+<li><p>
+检查 <code>crontab</code> 日志
+</p>
+
+<p>
+centos的日志由 <code>systemd</code> 进行管理的，因此可以通过 <code>systemctl</code> 来查看相关日志。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">journalctl <span class="org-variable-name">_COMM</span>=crond --since=today
+</pre>
+</div>
+
+<p>
+或者用root查看日志 <code>/var/log/cron</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo cat /var/log/cron |grep -v <span class="org-string">'/usr/local/qcloud/stargate/admin/start.sh'</span>
+</pre>
+</div>
+
+<p>
+最终我们在日志中会看到一行提示 <code>Jun 22 00:50:19 localhost CROND[21181]: (lujun9972) MAIL (mailed 102 bytes of output but got status 0x004b#012)</code>
+</p>
+
+<p>
+也就是邮件发送时失败了。
+</p></li>
+
+<li><p>
+检查 <code>mail</code> 日志
+</p>
+
+<p>
+查看 <code>/var/log/maillog</code> 日志会发现日志中提示 <code>Jun 22 00:50:19 localhost postfix/sendmail[21403]: fatal: parameter inet_interfaces: no local interface found for ::1</code>
+</p>
+
+<p>
+也就是说 <code>mail</code> 提示无法为主机上 IPV6 的地址 <code>::1</code> 发现对应的网卡
+</p></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgb3a464e" class="outline-2">
+<h2 id="orgb3a464e">解决方法</h2>
+<div class="outline-text-2" id="text-orgb3a464e">
+<p>
+注释掉 <code>/etc/hosts</code> 中 <code>::1</code> 对应的地址后发现mail的错误信息变成了 <code>postfix/postdrop[5487]: warning: unable to look up public/pickup: No such file or directory</code>
+</p>
+
+<p>
+经过搜索，只需要自己创建缺失文件再重启 <code>postfix</code> 服务即可。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo mkfifo /var/spool/postfix/public/pickup
+sudo chown postfix:postdrop pickup
+systemctl restart postfix.service
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-06-22</span>
+    <span title="last modification date" class="post-info">2019-06-22</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/异闻录">异闻录</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-72b3814d-ec34-4940-82b3-437972177963">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
