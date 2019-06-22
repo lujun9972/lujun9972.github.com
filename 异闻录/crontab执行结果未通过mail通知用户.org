@@ -1,0 +1,45 @@
+#+TITLE: crontab执行结果未通过mail通知用户
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2019-06-22 六 13:33]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+在某台 centos7 主机上设置了某个 crontab 任务，但是到时间后运行 =mail= 后提示 =No mail=,即cron没有将任务的执行结果发送邮件通知到用户
+
+* 排查过程
+1. 检查 =crontab= 日志
+   
+   centos的日志由 =systemd= 进行管理的，因此可以通过 =systemctl= 来查看相关日志。
+   #+begin_src shell :dir /ssh:lujun9972@tencent_cloud#8022: :results raw
+     journalctl _COMM=crond --since=today
+   #+end_src
+
+   或者用root查看日志 =/var/log/cron=
+   #+begin_src shell :dir /ssh:lujun9972@tencent_cloud#8022|sudo:: :results raw
+     sudo cat /var/log/cron |grep -v '/usr/local/qcloud/stargate/admin/start.sh'
+   #+end_src
+
+   最终我们在日志中会看到一行提示 =Jun 22 00:50:19 localhost CROND[21181]: (lujun9972) MAIL (mailed 102 bytes of output but got status 0x004b#012)=
+
+   也就是邮件发送时失败了。
+   
+2. 检查 =mail= 日志
+   
+   查看 =/var/log/maillog= 日志会发现日志中提示 =Jun 22 00:50:19 localhost postfix/sendmail[21403]: fatal: parameter inet_interfaces: no local interface found for ::1=
+   
+   也就是说 =mail= 提示无法为主机上 IPV6 的地址 =::1= 发现对应的网卡
+
+* 解决方法
+注释掉 =/etc/hosts= 中 =::1= 对应的地址后发现mail的错误信息变成了 =postfix/postdrop[5487]: warning: unable to look up public/pickup: No such file or directory=
+
+经过搜索，只需要自己创建缺失文件再重启 =postfix= 服务即可。
+#+begin_src shell
+  sudo mkfifo /var/spool/postfix/public/pickup
+  sudo chown postfix:postdrop pickup
+  systemctl restart postfix.service
+#+end_src
+
+
