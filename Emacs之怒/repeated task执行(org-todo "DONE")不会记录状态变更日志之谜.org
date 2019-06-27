@@ -1,0 +1,121 @@
+#+TITLE: repeated task执行(org-todo "DONE")不会记录状态变更日志之谜
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-06-27 四 20:26]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天遇到一个很奇怪的情况，我们都知道当repeated task的state变成DONE时，是会自动将state变回原state， 同时会记录一条状态变更的日志。
+
+比如，下面这个 =t.org=,
+[[file:./images/screenshot-24.png]]
+当执行了 =(org-todo "DONE")= 之后变成了
+[[file:./images/screenshot-25.png]]
+其中的
+#+begin_src org
+   - State "DONE"       from ""           [2019-06-27 四 20:49]
+#+end_src
+就是org自动生成的状态日志变更记录。
+
+但是，若你以 [[https://www.lujun9972.win/blog/2016/11/28/%25E5%25A6%2582%25E4%25BD%2595%25E7%25BC%2596%25E5%2586%2599emacsscript/][EmacsScript]] 的形式执行 =(org-todo "DONE")= 时却发现状态变更日志不见了。
+
+比如,我们创建一个测试文件 =t.el=,内容为
+#+begin_src emacs-lisp
+  (find-file "t.org")
+  (org-todo "DONE")
+  (save-some-buffers t)
+  (save-buffers-kill-terminal)
+#+end_src
+
+然后执行
+#+begin_src shell :dir /tmp :results org
+  cat t.org
+  emacs --batch -l t.el
+  echo =======================================
+  sleep 60
+  cat t.org
+  emacs -q -l t.el
+  echo =======================================
+  cat t.org
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+,* test
+  SCHEDULED: <2019-06-27 四 +1d>
+=======================================
+,* test
+  SCHEDULED: <2019-06-28 五 +1d>
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:07]
+  :END:
+=======================================
+,* test
+  SCHEDULED: <2019-06-29 六 +1d>
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:08]
+  :END:
+#+end_src
+
+你会发现 =SCHEDULED= 和 =LAST_REPEAT= 都改变了，但是 =- State "DONE"       from ""           [2019-06-27 四 20:49]= 这样的状态变更日志不见了 
+
+经过查看 =org.el= 中的源代码，终于找到原因了。 org 插入状态变更记录的流程为:
+
+1. =org-todo= 调用 =org-auto-repeat-maybe= 函数
+
+2. =org-auto-repeat-maybe= 函数中通过 =org-add-log-setup= 在 =post-command-hook= 中设置 =org-add-log-note= 函数
+
+3. =org-add-log-note= 根据 =org-log-note-how= 的值(若为'time或'state)来调用 =org-store-log-note=
+
+4. =org-store-log-note= 中根据 =org-log-note-headings= 变量中定义的模板组装状态变更的日志(note变量)并插入repeated task中
+
+这里主要的问题在于 =org-add-log-note= 是通过 =post-command-hook= 来触发的。而 =post-command-hook= 只有在 =Command Loop= 中才会被执行，
+而在上面的例子中，我们在执行完elisp后直接通过 =(save-buffers-kill-terminal)= 退出了Emacs，根本没有时机触发 =post-command-hook= 
+
+解决方法是，手工通过 =run-hooks= 来运行 =post-command-hook=,比如将 =t.el= 改成
+#+begin_src emacs-lisp
+  (find-file "t.org")
+  (org-todo "DONE")
+  (run-hooks 'post-command-hook)
+  (save-some-buffers t)
+  (save-buffers-kill-terminal)
+#+end_src
+
+再执行
+#+begin_src shell :dir /tmp :results org
+  cat t.org
+  emacs --batch -l t.el
+  echo =======================================
+  sleep 60
+  cat t.org
+  emacs -q -l t.el
+  echo =======================================
+  cat t.org
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+,* test
+  SCHEDULED: <2019-06-29 六 +1d>
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:08]
+  :END:
+=======================================
+,* test
+  SCHEDULED: <2019-06-30 日 +1d>
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:36]
+  :END:
+  - State "DONE"       from ""           [2019-06-27 四 21:36]
+=======================================
+,* test
+  SCHEDULED: <2019-07-01 一 +1d>
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:37]
+  :END:
+  - State "DONE"       from ""           [2019-06-27 四 21:37]
+  - State "DONE"       from ""           [2019-06-27 四 21:36]
+#+end_src
+
+你会发现，状态变更记录现在正常出现了
