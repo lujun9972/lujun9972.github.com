@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>Bash版的join,map和filter - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">Bash版的join,map和filter</h1>
+<p>
+今天看到有人用Bash实现了join,map和filer函数(可惜没有reduce函数)，觉得很有趣，所以记录下来
+</p>
+
+<p>
+join 函数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">join</span>() { { <span class="org-builtin">local</span> indelimiter; <span class="org-variable-name">indelimiter</span>=<span class="org-string">"${1- }"</span> ; <span class="org-builtin">local</span> outdelimiter;
+           <span class="org-variable-name">outdelimiter</span>=<span class="org-string">"${2-.}"</span> ; }
+         <span class="org-builtin">local</span> car
+         <span class="org-builtin">local</span> cdr
+         <span class="org-builtin">local</span> IFS
+         <span class="org-variable-name">IFS</span>=<span class="org-string">"${indelimiter}"</span>
+         <span class="org-builtin">read</span> -t 1 car cdr || <span class="org-keyword">return</span>
+         <span class="org-builtin">test</span> <span class="org-string">"${cdr}"</span> || { <span class="org-builtin">echo</span> <span class="org-string">"${car}"</span> ; <span class="org-keyword">return</span> ; }
+         <span class="org-builtin">echo</span> <span class="org-string">"${car}${outdelimiter}${cdr}"</span> | ${<span class="org-variable-name">FUNCNAME</span>} <span class="org-string">"${indelimiter}"</span>
+         <span class="org-string">"${outdelimiter}"</span>
+       }
+</pre>
+</div>
+
+<p>
+map 函数
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">map</span>() { { <span class="org-builtin">local</span> function_name ; <span class="org-variable-name">function_name</span>=<span class="org-string">"${1}"</span> ; }
+        <span class="org-builtin">local</span> car
+        <span class="org-builtin">local</span> cdr
+        <span class="org-builtin">local</span> IFS
+        <span class="org-variable-name">IFS</span>=<span class="org-string">"${indelimiter- }"</span>
+        <span class="org-builtin">read</span> -t 1 car cdr || <span class="org-keyword">return</span>
+        <span class="org-builtin">test</span> <span class="org-string">"$( declare -f ${function_name} )"</span> || <span class="org-keyword">return</span>
+        <span class="org-builtin">test</span> <span class="org-string">"${car}"</span> || { true ; <span class="org-keyword">return</span> ; }
+        ${<span class="org-variable-name">function_name</span>} ${<span class="org-variable-name">car</span>}
+        <span class="org-builtin">echo</span> <span class="org-string">"${cdr}"</span> | ${<span class="org-variable-name">FUNCNAME</span>} <span class="org-string">"${function_name}"</span>
+      }
+</pre>
+</div>
+
+<p>
+filter 函数
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">filter</span>() { { <span class="org-builtin">local</span> function_name ; <span class="org-variable-name">function_name</span>=<span class="org-string">"${1}"</span> ; }
+           <span class="org-builtin">local</span> car
+           <span class="org-builtin">local</span> cdr
+           <span class="org-builtin">local</span> IFS
+           <span class="org-variable-name">IFS</span>=<span class="org-string">"${indelimiter- }"</span>
+           <span class="org-builtin">read</span> -t 1 car cdr || <span class="org-keyword">return</span>
+           <span class="org-builtin">test</span> <span class="org-string">"$( declare -f ${function_name} )"</span> || <span class="org-keyword">return</span>
+           <span class="org-builtin">test</span> <span class="org-string">"${car}"</span> || { true ; <span class="org-keyword">return</span> ; }
+           ${<span class="org-variable-name">function_name</span>} <span class="org-string">"${car}"</span> || <span class="org-builtin">echo</span> -n <span class="org-string">"${car} "</span>
+           <span class="org-builtin">echo</span> <span class="org-string">"${cdr}"</span> | ${<span class="org-variable-name">FUNCNAME</span>} <span class="org-string">"${function_name}"</span>
+}
+</pre>
+</div>
+
+<p>
+上面定义的三个函数都遵循一个模式:
+</p>
+
+<ol class="org-ol">
+<li>数据通过 <code>read</code> 读入,这样的好处是数据可以是任意长度</li>
+<li>所有的数据都被 <code>read</code> 分成 car 和 cdr 两部分(一看就是玩lisp的;&gt;)</li>
+<li>在函数内使用 <code>FUNCNAME</code> 引用自身的函数名来实现递归</li>
+<li>为了避免递归陷入死循环，需要对 <code>car</code> 或 <code>cdr</code> 进行检查，提前退出。</li>
+</ol>
+
+<p>
+参照这个模板的，我们也可以很容易定义出reduce函数
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">reduce</span>() { { <span class="org-builtin">local</span> function_name ; <span class="org-variable-name">function_name</span>=<span class="org-string">"${1}"</span> ; }
+        <span class="org-builtin">local</span> first
+        <span class="org-builtin">local</span> second
+        <span class="org-builtin">local</span> cdr
+        <span class="org-builtin">local</span> IFS
+        <span class="org-variable-name">IFS</span>=<span class="org-string">"${indelimiter- }"</span>
+        <span class="org-builtin">read</span> -t 1 first second cdr || <span class="org-keyword">return</span>
+        <span class="org-builtin">test</span> <span class="org-string">"$( declare -f ${function_name} )"</span> || <span class="org-keyword">return</span>
+        <span class="org-builtin">test</span> -n <span class="org-string">"${second}"</span> || { <span class="org-builtin">echo</span> ${<span class="org-variable-name">first</span>} ; <span class="org-keyword">return</span> ; }
+        <span class="org-variable-name">first</span>=$(${<span class="org-variable-name">function_name</span>} ${<span class="org-variable-name">first</span>} ${<span class="org-variable-name">second</span>})
+        <span class="org-builtin">echo</span> <span class="org-string">"${first}${IFS}${cdr}"</span> | ${<span class="org-variable-name">FUNCNAME</span>} <span class="org-string">"${function_name}"</span>
+      }
+</pre>
+</div>
+
+<p>
+我们来测试一把
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">source</span> ~/bin/autoload/reduce.sh
+<span class="org-function-name">sum</span>()
+{
+    expr $<span class="org-variable-name">1</span> <span class="org-string">\+</span> $<span class="org-variable-name">2</span>
+}
+<span class="org-builtin">echo</span> {1..4} |reduce sum
+</pre>
+</div>
+
+<pre class="example">
+10
+
+</pre>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-06-28</span>
+    <span title="last modification date" class="post-info">2019-06-28</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/编程之旅">编程之旅</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-4eb43718-ad44-41c1-9da0-eb6b3d8ff3de">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
