@@ -1,0 +1,42 @@
+#+TITLE: 使用rga在pdf中搜索关键字
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-06-29 六 22:15]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们一般会用 grep/ag/rg 在文本文件中搜索关键字.
+但是某一天我想在一堆 pdf 文件中搜索关键字了怎么办才好呢?在网上搜了一下还真找到一个工具:rga(ripgrep-all)
+
+ripgrep-all 对 [[https://github.com/BurntSushi/ripgrep][ripgrep]] 进行了封装，借助了其他一些程序(比如pandoc)实现了对PDF，DOCX，ODT，EPUB，SQLite数据库，MKV/MP4内嵌字幕，zip/gz压缩包等文件的正则表达式搜索
+
+更夸张的是，ripgrep-all 可以借助 tesseract 使用OCR技术识别图片和PDF内图片中的文字，不过由于OCR本身很慢因此默认是没有使用该能力的。可以通过 =--rga-adapters=+pdfpages,tesseract= 来启用该能力。
+
+比如，我要在一堆pdf书籍中搜索包含 =Philosophy= 的内容，
+#+begin_src shell :dir ~/ebooks :results raw
+  rga -i Philosophy ~/ebooks/*.pdf |head
+#+end_src
+
+#+RESULTS:
+/home/lujun9972/ebooks/Automate it.pdf:Page 20: philosophy, and provides you with the knowledge required to develope your own APIs. It
+/home/lujun9972/ebooks/Automate it.pdf:Page 52:            asynchronous philosophy. The following code represents an asynchronous server
+/home/lujun9972/ebooks/Automate it.pdf:Page 53: But what is asynchronous about this? In fact, tornado works on the philosophy of a single-
+/home/lujun9972/ebooks/Automate it.pdf:Page 147:            works on the philosophy of TwiML, also known as the Twilio markup language.
+/home/lujun9972/ebooks/Automate it.pdf:Page 155: and-forward philosophy. Today, e-mail messages are stored asynchronously on the servers
+/home/lujun9972/ebooks/Automate it.pdf:Page 264: The python-telegram-bot module works on standard event-driven philosophy. A bot
+/home/lujun9972/ebooks/Beginning RPG Maker MV, 2nd Edition.pdf:Page 78: book, as my design philosophy here is to learn the engine). Creating a game with the engine just happens
+/home/lujun9972/ebooks/Beginning RPG Maker MV, 2nd Edition.pdf:Page 78: entries ourselves, of course! It’s a great opportunity for me to delve into basic RPG game design philosophy,
+/home/lujun9972/ebooks/Blogging For Dummies, 6th Edition.pdf:Page 19:                that forgives mistakes unless you try to hide them. In keeping with the philosophy
+/home/lujun9972/ebooks/Build Your Own PaaS with Docker.pdf:Page 107: ease of use. Their philosophy gives a hint why:
+
+而且 ripgrep-all 会对搜索过得内容进行缓存，因此你会发现第一次搜索时会比较慢，但是第二次搜索时会明显快很多。但你可以通过 =--rga-no-cache= 选项来禁止缓存
+
+ripgrep-all借助的外部工具和支持的文件类型包括:
++ ffmpeg :: 从mkv,mp4,avi视频文件中抽取元数据和字幕
++ pandoc :: 将 epbu,odt,docx,fb2,ipynb 转换成markdown文本文件进行搜索
++ pdftotext :: 从pdf中抽取纯文本进行搜索
++ 各种解压缩程序 :: 读取zip,tgz,tbz2,gz,bz2,xz,zst,tar压缩包中的内容进行搜索
++ sqlite :: 将sqlite数据库(db,db3,sqlite,sqlite3)转换成纯文本格式进行搜索
++ tesseract :: 通过OCR技术将jpg，png图片中的内容抽取出来
++ pdfpages :: 将pdf转换成png文件，需要跟 =tesseract= 连用将图片中的内容抽取出来。
