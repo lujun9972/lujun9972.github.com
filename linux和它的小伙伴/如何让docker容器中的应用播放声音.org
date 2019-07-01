@@ -1,0 +1,31 @@
+#+TITLE: 如何让docker容器中的应用播放声音
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-07-01 一 19:30]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 [[https://stackoverflow.com/questions/28985714/run-apps-using-audio-in-a-docker-container][run apps using audio in a docker container]]  上看到的
+
+* ALSA
+只需要挂载 =/dev/snd= 同时开放硬件访问权限即可
+#+BEGIN_SRC shell
+  docker run -ti --rm \
+      --device /dev/snd \
+      cmus
+#+END_SRC
+
+* PULSEAUDIO
+需要挂载 =/dev/shm=, =/etc/machine-id=, =/run/user/$UID/pulse= 和 =/var/lib/dbus= (因为有些应用通过访问 /var/lib/dbus/machine-id 来获取machine id)
+
+同时环境变量 =XDG_RUNTIME_DIR= 的值也需要跟主机系统一致
+#+BEGIN_SRC shell
+  docker run -ti --rm \
+      --device /dev/shm \
+      -v /etc/machine-id:/etc/machine-id \
+      -v /run/user/$uid/pulse:/run/user/$uid/pulse \
+      -v /var/lib/dbus:/var/lib/dbus \
+      -e XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR} \
+      myContainer
+#+END_SRC
