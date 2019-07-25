@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用declare保存函数定义 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用declare保存函数定义</h1>
+<p>
+今天才知道原来 <code>declare -f</code> 可以导出函数的定义。以下是bash manual中的部分片段
+</p>
+<pre class="example">
+  函数名和定义可以使用内建命令  declare  或  typeset  加上  -f 参数来列出。
+  如果在 declare 或 typeset 命令中使用 -F  选项将只列出函数名。
+  函数可以使用内建命令 export 加上 -f 参数导出，使得子 shell 中它们被自动定义。
+</pre>
+
+<p>
+也就是说，我们可以使用 <code>declare -f 函数名</code> 来输出指定函数的定义。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function </span><span class="org-builtin">test</span>()
+{
+    <span class="org-builtin">local</span> <span class="org-variable-name">now</span>=$(<span class="org-sh-quoted-exec">date</span>)
+    <span class="org-builtin">echo</span> Now is ${<span class="org-variable-name">now</span>}
+}
+<span class="org-builtin">declare</span> -f test
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">test () 
+{ 
+    local now=$(date);
+    echo Now is ${now}
+}
+</pre>
+</div>
+
+<p>
+若执行 <code>declare -f</code> 时不带任何函数名，则会列出所有函数的定义:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">test1</span>()
+{
+    <span class="org-builtin">echo</span> test1
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">test2</span>()
+{
+    <span class="org-builtin">echo</span> test2
+}
+<span class="org-builtin">declare</span> -f
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">test1 () 
+{ 
+    echo test1
+}
+test2 () 
+{ 
+    echo test2
+}
+</pre>
+</div>
+
+
+<p>
+我们因此可以定义一个用来保存函数定义的函数
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">save_function</span>()
+{
+    <span class="org-keyword">while</span> [[ $<span class="org-variable-name">#</span> &gt; 0 ]];
+    <span class="org-keyword">do</span>
+        date +<span class="org-string">"* %F.%T $1"</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"#+BEGIN_SRC shell"</span>
+        <span class="org-builtin">declare</span> -f <span class="org-string">"$1"</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"$+END_SRC"</span>
+        <span class="org-builtin">shift</span>
+    <span class="org-keyword">done</span>
+}
+save_function save_function
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* 2019-07-25.18:42:09 save_function</span>
+#+BEGIN_SRC shell
+save_function () 
+{ 
+    while <span class="org-org-link"><a href=" $# &gt; 0 "> $# &gt; 0 </a></span>; do
+        date +"* %F.%T $1";
+        echo "#+BEGIN_SRC shell";
+        declare -f "$1";
+        echo "$+END_SRC";
+        shift;
+    done
+}
+$+END_SRC
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-07-25</span>
+    <span title="last modification date" class="post-info">2019-07-25</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-2c7c9c56-d50a-4ee3-85a2-192fbc65ad2e">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
