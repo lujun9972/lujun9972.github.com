@@ -1,0 +1,93 @@
+#+TITLE: 使用declare保存函数定义
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-07-25 四 18:27]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天才知道原来 =declare -f= 可以导出函数的定义。以下是bash manual中的部分片段
+#+BEGIN_EXAMPLE
+  函数名和定义可以使用内建命令  declare  或  typeset  加上  -f 参数来列出。
+  如果在 declare 或 typeset 命令中使用 -F  选项将只列出函数名。
+  函数可以使用内建命令 export 加上 -f 参数导出，使得子 shell 中它们被自动定义。
+#+END_EXAMPLE
+
+也就是说，我们可以使用 =declare -f 函数名= 来输出指定函数的定义。
+#+BEGIN_SRC shell :results org
+  function test()
+  {
+      local now=$(date)
+      echo Now is ${now}
+  }
+  declare -f test
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+test () 
+{ 
+    local now=$(date);
+    echo Now is ${now}
+}
+#+END_SRC
+
+若执行 =declare -f= 时不带任何函数名，则会列出所有函数的定义:
+#+BEGIN_SRC shell :results org
+  function test1()
+  {
+      echo test1
+  }
+
+  function test2()
+  {
+      echo test2
+  }
+  declare -f
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+test1 () 
+{ 
+    echo test1
+}
+test2 () 
+{ 
+    echo test2
+}
+#+END_SRC
+
+
+我们因此可以定义一个用来保存函数定义的函数
+#+BEGIN_SRC shell :results org
+   save_function()
+   {
+       while [[ $# > 0 ]];
+       do
+           date +"* %F.%T $1"
+           echo "#+BEGIN_SRC shell"
+           declare -f "$1"
+           echo "$+END_SRC"
+           shift
+       done
+   }
+   save_function save_function
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_SRC org
+,* 2019-07-25.18:42:09 save_function
+,#+BEGIN_SRC shell
+save_function () 
+{ 
+    while [[ $# > 0 ]]; do
+        date +"* %F.%T $1";
+        echo "#+BEGIN_SRC shell";
+        declare -f "$1";
+        echo "$+END_SRC";
+        shift;
+    done
+}
+$+END_SRC
+#+END_SRC
