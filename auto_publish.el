@@ -35,6 +35,7 @@ There are two things you can do about this warning:
      ("tags" :tags))
     :source-browse-url
     ("Github" ,(getenv "REPO"))
+    ;; :personal-avatar "https://avatar.csdnimg.cn/6/2/4/1_lujun9972.jpg"
     :personal-disqus-shortname "lujun9972" :personal-google-analytics-id "7bac4fd0247f69c27887e0d4e3aee41e" :ignore-file-name-regexp "README.org" :store-dir "~/web")))
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)

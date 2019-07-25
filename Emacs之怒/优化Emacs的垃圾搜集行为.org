@@ -1,0 +1,50 @@
+#+TITLE: 优化Emacs的垃圾搜集行为
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-05-16 四 14:41]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 http://akrl.sdf.org/ 中看到的，记录一下
+
+Emacs触发垃圾收集的阀值由 =gc-cons-threshold= 决定,当Emacs自上一次垃圾收集后分配的内存超过该阀值时就会触发新一轮的垃圾收集行为。
+然而该阀值默认居然不到800K,导致Emacs频繁地进行垃圾收集。
+
+由于垃圾收集速度很快，我们平时可能对Emacs的垃圾收集操作不会有感知，将 =garbage-collection-messages= 设置为 =t= 可以在 =echoline= 中显示GC过程.
+另外，通过查看 =gc-elapsed= 变量的值我们可以看到Emacs花费在GC过程所花的时间。
+
+#+BEGIN_SRC emacs-lisp
+  gc-elapsed
+#+END_SRC
+
+#+RESULTS:
+: 35.051446504999994
+
+为了提高Emacs性能，一个很自然的想法就是提高 =gc-cons-threshold= 的阀值，让Emacs不要那么频繁地进行垃圾收集。
+然而，这里就存在两个问题:
+
+1. 什么时候触发垃圾收集比较合适？是否一定要等到超过了阀值才收集？
+2. 这个阀值设置为多大比较合适？太小了垃圾收集太过频繁，太大了则一旦触发垃圾收集可能导致长时间的卡顿
+
+第一个问题的答案是否，我们完全可以通过 =run-with-idle-timer= 来让Emacs在空闲下来的时候就自动进行垃圾收集:
+#+BEGIN_SRC emacs-lisp
+  (defvar k-gc-timer
+    (run-with-idle-timer 15 t
+                         'garbage-collect))
+#+END_SRC
+
+第二个问题，我们可以通过记录每次垃圾收集的时间来进行判断和调整：
+#+BEGIN_SRC emacs-lisp
+  (defmacro k-time (&rest body)
+    "Measure and return the time it takes evaluating BODY."
+    `(let ((time (current-time)))
+       ,@body
+       (float-time (time-since time))))
+
+  (defvar k-gc-timer
+    (run-with-idle-timer 15 t
+                         (lambda ()
+                           (message "Garbage Collector has run for %.06fsec"
+                                    (k-time (garbage-collect))))))
+#+END_SRC

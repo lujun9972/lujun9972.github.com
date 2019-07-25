@@ -1,0 +1,92 @@
+#+TITLE: Bash版的join,map和filter
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2019-06-28 五 13:00]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天看到有人用Bash实现了join,map和filer函数(可惜没有reduce函数)，觉得很有趣，所以记录下来
+
+join 函数
+
+#+BEGIN_SRC shell :tangle ~/bin/autoload/join.sh
+  join() { { local indelimiter; indelimiter="${1- }" ; local outdelimiter;
+             outdelimiter="${2-.}" ; }
+           local car
+           local cdr
+           local IFS
+           IFS="${indelimiter}"
+           read -t 1 car cdr || return
+           test "${cdr}" || { echo "${car}" ; return ; }
+           echo "${car}${outdelimiter}${cdr}" | ${FUNCNAME} "${indelimiter}"
+           "${outdelimiter}"
+         }
+#+END_SRC
+
+map 函数
+#+BEGIN_SRC shell :tangle ~/bin/autoload/map.sh
+  map() { { local function_name ; function_name="${1}" ; }
+          local car
+          local cdr
+          local IFS
+          IFS="${indelimiter- }"
+          read -t 1 car cdr || return
+          test "$( declare -f ${function_name} )" || return
+          test "${car}" || { true ; return ; }
+          ${function_name} ${car}
+          echo "${cdr}" | ${FUNCNAME} "${function_name}"
+        }
+#+END_SRC
+
+filter 函数
+#+BEGIN_SRC shell :tangle ~/bin/autoload/filter.sh
+  filter() { { local function_name ; function_name="${1}" ; }
+             local car
+             local cdr
+             local IFS
+             IFS="${indelimiter- }"
+             read -t 1 car cdr || return
+             test "$( declare -f ${function_name} )" || return
+             test "${car}" || { true ; return ; }
+             ${function_name} "${car}" || echo -n "${car} "
+             echo "${cdr}" | ${FUNCNAME} "${function_name}"
+  }
+#+END_SRC
+
+上面定义的三个函数都遵循一个模式:
+
+1. 数据通过 =read= 读入,这样的好处是数据可以是任意长度
+2. 所有的数据都被 =read= 分成 car 和 cdr 两部分(一看就是玩lisp的;>)
+3. 在函数内使用 =FUNCNAME= 引用自身的函数名来实现递归
+4. 为了避免递归陷入死循环，需要对 =car= 或 =cdr= 进行检查，提前退出。
+   
+参照这个模板的，我们也可以很容易定义出reduce函数
+
+#+BEGIN_SRC shell :tangle ~/bin/autoload/reduce.sh
+  reduce() { { local function_name ; function_name="${1}" ; }
+          local first
+          local second
+          local cdr
+          local IFS
+          IFS="${indelimiter- }"
+          read -t 1 first second cdr || return
+          test "$( declare -f ${function_name} )" || return
+          test -n "${second}" || { echo ${first} ; return ; }
+          first=$(${function_name} ${first} ${second})
+          echo "${first}${IFS}${cdr}" | ${FUNCNAME} "${function_name}"
+        }
+#+END_SRC
+
+我们来测试一把
+#+BEGIN_SRC shell
+  source ~/bin/autoload/reduce.sh
+  sum()
+  {
+      expr $1 \+ $2
+  }
+  echo {1..4} |reduce sum
+#+END_SRC
+
+#+RESULTS:
+: 10
