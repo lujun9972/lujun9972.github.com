@@ -1,0 +1,40 @@
+#+TITLE: 更换Linux UID的脚本
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-08-08 四 15:18]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Linux 上更改 UID 的操作步骤有点麻烦，有时会忘了重新设置用户文件的属主，所以写个脚本来简化负担。
+
+1. 更改文件属主需要 root 权限
+   #+begin_src shell :tangle ~/bin/reset_uid.sh
+     if [[ "$(id -u)" -ne "0" ]];then
+         echo "This script should be execute by root" >&2
+         exit 1
+     fi
+   #+end_src
+
+2. 脚本接受两个参数，一个是用户名，一个是新的UID
+   #+begin_src shell :tangle ~/bin/reset_uid.sh
+     user="$1"
+     newUid="$2"
+   #+end_src
+
+3. 记录下用户对应的旧UDI
+   #+begin_src  shell :tangle ~/bin/reset_uid.sh
+     oldUid="$(id -u "${user}")"
+   #+end_src
+
+4. 更改用户UID
+   #+begin_src  shell :tangle ~/bin/reset_uid.sh
+     usermod -u "${newUid}" "${user}"
+   #+end_src
+
+5. 重新设置用户文件的属主
+   #+begin_src  shell :tangle ~/bin/reset_uid.sh
+     find / -user "${oldUid}" -exec chown -h "${user}" {} \;
+   #+end_src
+   
+   这里一定要记得使用 =chown= 的 =-h= 选项把符号链接的属主改掉，否则改的是符号链接所指向的文件属主。
