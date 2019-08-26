@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何kill整一个进程组或会话 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;随便,谢谢</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何kill整一个进程组或会话</h1>
+<p>
+从 <a href="http://morningcoffee.io/killing-a-process-and-all-of-its-descendants.html">http://morningcoffee.io/killing-a-process-and-all-of-its-descendants.html</a> 看到的，记录一下
+</p>
+
+<p>
+今天才知道，kill 命令可以后接一个负数来表示发送信号给一个进程组中的所有进程。
+</p>
+<pre class="example">
+Negative PID  values  may  be used  to  choose  whole  process groups; see the PGID column in ps command output.  
+A PID of -1 is special; it indicates all processes except the kill process itself and init.
+</pre>
+
+<p>
+所以我们可以用 <code>kill -SIGTERM -- -$PGID</code> 来强制关闭指定进程组中的所有进程。
+</p>
+
+<p>
+kill 命令的这个特性是由 <code>kill(2)</code> 系统调用而来的。
+</p>
+<pre class="example">
+DESCRIPTION
+       The kill() system call can be used to send any signal to any process group or process.
+
+       If pid is positive, then signal sig is sent to the process with the ID specified by pid.
+
+       If pid equals 0, then sig is sent to every process in the process group of the calling process.
+
+       If  pid  equals  -1,  then  sig is sent to every process for which the calling process has permission to send signals, except for
+       process 1 (init), but see below.
+
+       If pid is less than -1, then sig is sent to every process in the process group whose ID is -pid.
+</pre>
+
+<p>
+而 <code>kill(2)</code> 系统调用并不支持直接根据Session ID来发送信号（甚至对于某些UNIX实现来说都没有Session ID这个概念），因此要发送信号给某个 Session 中的进程需要遍历 <code>/proc/</code> 中的进程树（ /proc/pid/stat ），搜集符合 SID 的进程，然后发送信号给这些进程。
+</p>
+
+<p>
+pkill 命令已经帮我们实现了这一功能，只需要执行 <code>pkill -s $SID</code> 就可以了。
+</p>
+
+
+<p>
+最后，要察看进程组ID 和 SessionID,可以通过 ps 的 <code>j</code> 参数看到
+</p>
+<pre class="example">
+j BSD job control format
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-shell">ps j -A
+</pre>
+</div>
+
+<p>
+ PPID   PID  PGID   SID TTY      TPGID STAT   UID   TIME COMMAND
+    0     1     1     1 ?            0 Ssl      0   0:00 /init ro
+    1     6     6     6 tty1         0 Ss       0   0:00 /init ro
+    6     7     7     6 tty1         0 S     1000   0:03 -bash
+    7   269   269     6 tty1         0 T     1000   0:00 -bash
+    1  1367  1367  1367 tty2         0 Ss       0   0:00 /init ro
+ 1367  1368  1368  1367 tty2         0 S     1000   0:05 -bash
+    1  7714  7714  7714 ?            0 Ssl   1000   7:29 emacs --daemon
+ 7714  7760  7760  7760 ?            0 Ss    1000   0:00 <i>usr/bin/aspell -a -m -d en --encoding=utf-8
+ 7714 10222 10222 10222 pts/0        0 Ssl   1000   0:03 /usr/bin/python -c  from <span class="underline"><span class="underline">future</span></span> import print_function  # CLI arguments.  import sys  assert len(sys.argv) &gt; 3, 'CLI arguments: %s' % sys.argv  server_directory = sys.argv[-3] server_address = sys.argv[-2] virtual_environment = sys.argv[-1]  # Ensure directory.  import os  server_directory = os.path.expanduser(server_directory)  if not os.path.exists(server_directory):     os.makedirs(server_directory)  # Installation check.  jedi_dep = ('jedi', '0.13.0') service_factory_dep = ('service_factory', '0.1.5')  missing_dependencies = []  def instrument_installation():     for package in (jedi_dep, service_factory_dep):         package_is_installed = False         for path in os.listdir(server_directory):             path = os.path.join(server_directory, path)             if path.endswith('.egg') and os.path.isdir(path):                 if path not in sys.path:                     sys.path.insert(0, path)                 if package[0] in path:                     package_is_installed = True         if not package_is_installed:             missing_dependencies.append('&gt;='.join(package))  instrument_installation()  # Installation.  def install_deps():     import site     import setuptools.command.easy_install     site.addsitedir(server_directory)     cmd = ['--install-dir', server_directory,            '--site-dirs', server_directory,            '--always-copy','--always-unzip']     cmd.extend(missing_dependencies)     setuptools.command.easy_install.main(cmd)     instrument_installation()  if missing_dependencies:     install_deps()  del missing_dependencies[:]  try:     import jedi except ImportError:     missing_dependencies.append('&gt;='.join(jedi_dep))  try:     import service_factory except ImportError:     missing_dependencies.append('&gt;='.join(service_factory_dep))  # Try one more time in case if anaconda installation gets broken somehow if missing_dependencies:     install_deps()     import jedi     import service_factory  # Setup server.  assert jedi.__version__ &gt;= jedi_dep[1], 'Jedi version should be &gt;= %s, current version: %s' % (jedi_dep[1], jedi.__version__,)  if virtual_environment:     virtual_environment = jedi.create_environment(virtual_environment, safe=False) else:     virtual_environment = None  # Define JSON-RPC application.  import functools import threading  def script_method(f):     @functools.wraps(f)     def wrapper(source, line, column, path):         timer = threading.Timer(30.0, sys.exit)         timer.start()         result = f(jedi.Script(source, line, column, path, environment=virtual_environment))         timer.cancel()         return result     return wrapper  def process_definitions(f):     @functools.wraps(f)     def wrapper(script):         definitions = f(script)         if len(definitions) <code>= 1 and not definitions[0].module_path:             return '%s is defined in %s compiled module' % (                 definitions[0].name, definitions[0].module_name)         return [[definition.module_path,                  definition.line,                  definition.column,                  definition.get_line_code().strip()]                 for definition in definitions                 if definition.module_path] or None     return wrapper  @script_method def complete(script):     return [[definition.name, definition.type]             for definition in script.completions()]  @script_method def company_complete(script):     return [[definition.name,              definition.type,              definition.docstring(),              definition.module_path,              definition.line]             for definition in script.completions()]  @script_method def show_doc(script):     return [[definition.module_name, definition.docstring()]             for definition in script.goto_definitions()]  @script_method @process_definitions def goto_definitions(script):     return script.goto_definitions()  @script_method @process_definitions def goto_assignments(script):     return script.goto_assignments()  @script_method @process_definitions def usages(script):     return script.usages()  @script_method def eldoc(script):     signatures = script.call_signatures()     if len(signatures) =</code> 1:         signature = signatures[0]         return [signature.name,                 signature.index,                 [param.description[6:] for param in signature.params]]  # Run.  app = [complete, company_complete, show_doc, goto_definitions, goto_assignments, usages, eldoc]  service_factory.service_factory(app, server_address, 0, 'anaconda_mode port {port}')  ~</i>.emacs.d/.cache/anaconda-mode/0.1.13 127.0.0.1
+10222 10227 10222 10222 pts/0        0 S     1000   0:00 <i>usr/bin/python /home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py <i>home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+10222 10344 10222 10222 pts/0        0 S     1000   0:00 <i>usr/bin/python /home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py <i>home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+10222 10428 10222 10222 pts/0        0 S     1000   0:00 <i>usr/bin/python /home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py <i>home/lujun9972</i>.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+ 1368 10556 10556  1367 tty2         0 S     1000   0:00 man ps
+10556 10568 10556  1367 tty2         0 S     1000   0:00 pager
+ 7714 10577 10577 10577 ?            0 Ss    1000   0:00 /bin/bash
+10577 10578 10577 10577 ?            0 R     1000   0:00 ps j -A
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-08-26</span>
+    <span title="last modification date" class="post-info">2019-08-26</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-0a8105d5-a618-42d0-af5a-6f2d25891864">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
