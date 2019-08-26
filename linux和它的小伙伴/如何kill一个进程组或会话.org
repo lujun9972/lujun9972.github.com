@@ -1,0 +1,65 @@
+#+TITLE: 如何kill整一个进程组或会话
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-08-26 一 15:57]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 http://morningcoffee.io/killing-a-process-and-all-of-its-descendants.html 看到的，记录一下
+
+今天才知道，kill 命令可以后接一个负数来表示发送信号给一个进程组中的所有进程。
+#+begin_example
+  Negative PID  values  may  be used  to  choose  whole  process groups; see the PGID column in ps command output.  
+  A PID of -1 is special; it indicates all processes except the kill process itself and init.
+#+end_example
+
+所以我们可以用 =kill -SIGTERM -- -$PGID= 来强制关闭指定进程组中的所有进程。
+
+kill 命令的这个特性是由 =kill(2)= 系统调用而来的。
+#+begin_example
+  DESCRIPTION
+         The kill() system call can be used to send any signal to any process group or process.
+
+         If pid is positive, then signal sig is sent to the process with the ID specified by pid.
+
+         If pid equals 0, then sig is sent to every process in the process group of the calling process.
+
+         If  pid  equals  -1,  then  sig is sent to every process for which the calling process has permission to send signals, except for
+         process 1 (init), but see below.
+
+         If pid is less than -1, then sig is sent to every process in the process group whose ID is -pid.
+#+end_example
+
+而 =kill(2)= 系统调用并不支持直接根据Session ID来发送信号（甚至对于某些UNIX实现来说都没有Session ID这个概念），因此要发送信号给某个 Session 中的进程需要遍历 =/proc/= 中的进程树（ /proc/pid/stat ），搜集符合 SID 的进程，然后发送信号给这些进程。
+
+pkill 命令已经帮我们实现了这一功能，只需要执行 =pkill -s $SID= 就可以了。
+
+
+最后，要察看进程组ID 和 SessionID,可以通过 ps 的 =j= 参数看到
+#+begin_example
+  j BSD job control format
+#+end_example
+
+#+begin_src shell :results raw
+  ps j -A
+#+end_src
+
+#+RESULTS:
+ PPID   PID  PGID   SID TTY      TPGID STAT   UID   TIME COMMAND
+    0     1     1     1 ?            0 Ssl      0   0:00 /init ro
+    1     6     6     6 tty1         0 Ss       0   0:00 /init ro
+    6     7     7     6 tty1         0 S     1000   0:03 -bash
+    7   269   269     6 tty1         0 T     1000   0:00 -bash
+    1  1367  1367  1367 tty2         0 Ss       0   0:00 /init ro
+ 1367  1368  1368  1367 tty2         0 S     1000   0:05 -bash
+    1  7714  7714  7714 ?            0 Ssl   1000   7:29 emacs --daemon
+ 7714  7760  7760  7760 ?            0 Ss    1000   0:00 /usr/bin/aspell -a -m -d en --encoding=utf-8
+ 7714 10222 10222 10222 pts/0        0 Ssl   1000   0:03 /usr/bin/python -c  from __future__ import print_function  # CLI arguments.  import sys  assert len(sys.argv) > 3, 'CLI arguments: %s' % sys.argv  server_directory = sys.argv[-3] server_address = sys.argv[-2] virtual_environment = sys.argv[-1]  # Ensure directory.  import os  server_directory = os.path.expanduser(server_directory)  if not os.path.exists(server_directory):     os.makedirs(server_directory)  # Installation check.  jedi_dep = ('jedi', '0.13.0') service_factory_dep = ('service_factory', '0.1.5')  missing_dependencies = []  def instrument_installation():     for package in (jedi_dep, service_factory_dep):         package_is_installed = False         for path in os.listdir(server_directory):             path = os.path.join(server_directory, path)             if path.endswith('.egg') and os.path.isdir(path):                 if path not in sys.path:                     sys.path.insert(0, path)                 if package[0] in path:                     package_is_installed = True         if not package_is_installed:             missing_dependencies.append('>='.join(package))  instrument_installation()  # Installation.  def install_deps():     import site     import setuptools.command.easy_install     site.addsitedir(server_directory)     cmd = ['--install-dir', server_directory,            '--site-dirs', server_directory,            '--always-copy','--always-unzip']     cmd.extend(missing_dependencies)     setuptools.command.easy_install.main(cmd)     instrument_installation()  if missing_dependencies:     install_deps()  del missing_dependencies[:]  try:     import jedi except ImportError:     missing_dependencies.append('>='.join(jedi_dep))  try:     import service_factory except ImportError:     missing_dependencies.append('>='.join(service_factory_dep))  # Try one more time in case if anaconda installation gets broken somehow if missing_dependencies:     install_deps()     import jedi     import service_factory  # Setup server.  assert jedi.__version__ >= jedi_dep[1], 'Jedi version should be >= %s, current version: %s' % (jedi_dep[1], jedi.__version__,)  if virtual_environment:     virtual_environment = jedi.create_environment(virtual_environment, safe=False) else:     virtual_environment = None  # Define JSON-RPC application.  import functools import threading  def script_method(f):     @functools.wraps(f)     def wrapper(source, line, column, path):         timer = threading.Timer(30.0, sys.exit)         timer.start()         result = f(jedi.Script(source, line, column, path, environment=virtual_environment))         timer.cancel()         return result     return wrapper  def process_definitions(f):     @functools.wraps(f)     def wrapper(script):         definitions = f(script)         if len(definitions) == 1 and not definitions[0].module_path:             return '%s is defined in %s compiled module' % (                 definitions[0].name, definitions[0].module_name)         return [[definition.module_path,                  definition.line,                  definition.column,                  definition.get_line_code().strip()]                 for definition in definitions                 if definition.module_path] or None     return wrapper  @script_method def complete(script):     return [[definition.name, definition.type]             for definition in script.completions()]  @script_method def company_complete(script):     return [[definition.name,              definition.type,              definition.docstring(),              definition.module_path,              definition.line]             for definition in script.completions()]  @script_method def show_doc(script):     return [[definition.module_name, definition.docstring()]             for definition in script.goto_definitions()]  @script_method @process_definitions def goto_definitions(script):     return script.goto_definitions()  @script_method @process_definitions def goto_assignments(script):     return script.goto_assignments()  @script_method @process_definitions def usages(script):     return script.usages()  @script_method def eldoc(script):     signatures = script.call_signatures()     if len(signatures) == 1:         signature = signatures[0]         return [signature.name,                 signature.index,                 [param.description[6:] for param in signature.params]]  # Run.  app = [complete, company_complete, show_doc, goto_definitions, goto_assignments, usages, eldoc]  service_factory.service_factory(app, server_address, 0, 'anaconda_mode port {port}')  ~/.emacs.d/.cache/anaconda-mode/0.1.13 127.0.0.1
+10222 10227 10222 10222 pts/0        0 S     1000   0:00 /usr/bin/python /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+10222 10344 10222 10222 pts/0        0 S     1000   0:00 /usr/bin/python /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+10222 10428 10222 10222 pts/0        0 S     1000   0:00 /usr/bin/python /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/jedi-0.14.1-py3.6.egg/jedi/evaluate/compiled/subprocess/__main__.py /home/lujun9972/.emacs.d/.cache/anaconda-mode/0.1.13/parso-0.5.1-py3.6.egg 2.7.15
+ 1368 10556 10556  1367 tty2         0 S     1000   0:00 man ps
+10556 10568 10556  1367 tty2         0 S     1000   0:00 pager
+ 7714 10577 10577 10577 ?            0 Ss    1000   0:00 /bin/bash
+10577 10578 10577 10577 ?            0 R     1000   0:00 ps j -A
