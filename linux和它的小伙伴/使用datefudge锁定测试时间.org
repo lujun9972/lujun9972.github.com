@@ -1,0 +1,47 @@
+#+TITLE: 使用datefudge锁定测试时间
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-08-31 六 17:36]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有些测试跟时间有关，比如当我想测试Emacs Org Agenda方面配置的内容时就跟当前时间有很大关系。
+
+这类测试很麻烦，因为你的测试结果会随着时间的流逝而改变，这导致几乎无法进行自动测试。
+
+今天突然发现 =datefudge= 这个工具，可以帮助解决这个问题
+#+begin_example
+  datefudge  is  a  small  utility  that  pretends that the system time is different by preloading a small library which modifies the time(2), gettimeofday(2)  and  clock_gettime(2) system calls.
+#+end_example
+
+它的用法很假单
+#+begin_src shell
+  datefudge [-s|--static] 模拟的时间 运行的命令
+#+end_src
+
+这样在命令运行时获取到的时间就会是指定的时间了，比如
+#+begin_src shell :dir /ssh:192.168.1.9:
+  datefudge 20180810 date
+#+end_src
+
+#+RESULTS:
+: Fri Aug 10 00:00:00 HKT 2018
+
+
+其中 =-s= 或者 =--static= 则表示运行的命令每次获取的时间都不变，比如的例子很容易看出区别
+
+#+begin_src shell :dir /ssh:192.168.1.9: :results org
+  datefudge 20180810 bash -c "date;sleep 2;date"
+  echo ---------------------------
+  datefudge -s 20180810 bash -c "date;sleep 1;date"
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Fri Aug 10 00:00:00 HKT 2018
+Fri Aug 10 00:00:02 HKT 2018
+---------------------------
+Fri Aug 10 00:00:00 HKT 2018
+Fri Aug 10 00:00:00 HKT 2018
+#+end_src
