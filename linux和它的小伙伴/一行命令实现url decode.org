@@ -1,0 +1,91 @@
+#+TITLE: 一行命令实现url decode
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-02 一 15:21]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天看到一个很有趣的 shell 函数，只用一行命令就实现了 url decode 的功能。
+#+begin_src shell
+  urldecode() { : "${*//+/ }"; echo -e "${_//%/\\x}"; }
+  urldecode https%3A%2F%2Fgoogle.com%2Fsearch%3Fq%3Durldecode%2Bbash
+#+end_src
+
+#+RESULTS:
+: https://google.com/search?q=urldecode+bash
+
+
+现在我们来分析一下这个函数：
+
+很明显，这个函数其实又两条语句组成：
+#+begin_src shell
+  : "${*//+/ }"
+#+end_src
+以及
+#+begin_src shell
+echo -e "${_//%/\\x}"
+#+end_src
+
+首先我们看第一条语句， =: "${*//+/ }"=
+
+其中 =:= 是一条内置命令，它仅仅对其参数进行扩展，然后什么都不做。
+#+begin_example
+  : [arguments]
+         No effect; the command does nothing beyond expanding arguments and performing any specified redirections.  The return status is zero.
+#+end_example
+
+而 ="${*//+/ }"= 使用了参数扩展中的模式替换功能来将所有的 =+= 替换成空格（模式以 =/= 开头表示全局替换而不仅仅是替换第一个）.
+#+begin_example
+  ${parameter/pattern/string}
+         Pattern substitution.  The pattern is expanded to produce a pattern just as in pathname expansion.  Parameter is  expanded
+         and the longest match of pattern against its value is replaced with string.  If pattern begins with /, all matches of pat‐
+         tern are replaced with string.  Normally only the first match is replaced.  If pattern begins with #, it must match at the
+         beginning of the expanded value of parameter.  If pattern begins with %, it must match at the end of the expanded value of
+         parameter.  If string is null, matches of pattern are deleted and the / following pattern may be omitted.  If the  nocase‐
+         match  shell  option is enabled, the match is performed without regard to the case of alphabetic characters.  If parameter
+         is @ or *, the substitution operation is applied to each positional parameter in turn, and the expansion is the  resultant
+         list.   If parameter is an array variable subscripted with @ or *, the substitution operation is applied to each member of
+         the array in turn, and the expansion is the resultant list.
+#+end_example
+
+
+那么再让我们分析一下第二条语句 =echo -e "${_//%/\\x}"=
+
+很明显，这是一条 =echo= 语句，其中 =-e= 选项表示对以反斜杠(=\=) 开头的字符序列进行转义。
+#+begin_example
+  echo [-neE] [arg ...]
+         Output the args, separated by spaces, followed by a newline.  The return status is 0 unless a write error occurs.   If  -n
+         is  specified,  the trailing newline is suppressed.  If the -e option is given, interpretation of the following backslash-
+         escaped characters is enabled.  The -E option disables the interpretation of these  escape  characters,  even  on  systems
+         where they are interpreted by default.  The xpg_echo shell option may be used to dynamically determine whether or not echo
+         expands these escape characters by default.  echo does not interpret -- to mean the end of options.  echo  interprets  the
+         following escape sequences:
+         \a     alert (bell)
+         \b     backspace
+         \c     suppress further output
+         \e
+         \E     an escape character
+         \f     form feed
+         \n     new line
+         \r     carriage return
+         \t     horizontal tab
+         \v     vertical tab
+         \\     backslash
+         \0nnn  the eight-bit character whose value is the octal value nnn (zero to three octal digits)
+         \xHH   the eight-bit character whose value is the hexadecimal value HH (one or two hex digits)
+         \uHHHH the Unicode (ISO/IEC 10646) character whose value is the hexadecimal value HHHH (one to four hex digits)
+         \UHHHHHHHH
+                the Unicode (ISO/IEC 10646) character whose value is the hexadecimal value HHHHHHHH (one to eight hex digits)
+#+end_example
+
+这条 echo 命令可以说是本函数的核心命令了，说白了就是将编码过的 URL 中的 =%HH= 替换成 =\xHH= 然后借助 echo 命令进行decode
+
+这条 echo 命令中唯一的新内容大概就是 =$_=, 它会替换成前一条命令的最后参数，也就是所有 =+= 被替换成空格后的URL
+
+#+begin_example
+   _      At shell startup, set to the absolute pathname used to invoke the shell or shell script being executed as  passed  in  the
+                environment  or argument list.  Subsequently, expands to the last argument to the previous command, after expansion.  Also
+                set to the full pathname used to invoke each command executed and placed in the  environment  exported  to  that  command.
+                When checking mail, this parameter holds the name of the mail file currently being checked.
+#+end_example
