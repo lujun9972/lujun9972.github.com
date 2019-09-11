@@ -42,4 +42,5 @@ There are two things you can do about this warning:
 (setq debug-on-error t)
 (setq org-src-fontify-natively t)
 (setq org-html-htmlize-output-type 'css)
+(setq safe-local-variable-values '((org-export-use-babel . t)))
 (ego-do-publication "blog" nil nil nil)
