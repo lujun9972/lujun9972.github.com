@@ -28,7 +28,7 @@ There are two things you can do about this warning:
 (require 'htmlize)
 (require 'ego)
 (setq ego-project-config-alist
- `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>随便,谢谢" :theme
+ `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>DarkSun的个人博客" :theme
     (emacs_love)
     :summary
     (("years" :year :updates 15)
@@ -44,4 +44,4 @@ There are two things you can do about this warning:
 (setq org-html-htmlize-output-type 'css)
 (setq safe-local-variable-values '((org-export-use-babel . t)))
 (require 'ob-shell)
-(ego-do-publication "blog" nil nil nil)
+(ego-do-publication "blog" t nil nil)
