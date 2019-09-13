@@ -1,0 +1,44 @@
+#+TITLE: 直接编辑zip和tar包中的文件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-13 五 20:47]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天才知道我们可以在Emacs中直接编辑zip（archive-mode）或tar(tar-mode)包中的文件，当打开zip或tar文件时Emacs会显示出一个类似Dired的界面，把包中的文件列出来。
+
+我们可以直接打开包内的文件并且可以直接把修改后的文件保存到包中。zip和tar不同之处在于当保存zip包内的文件后会自动对zip包进行更新，而修改tar包内的文件后不仅需要保存文件本身，还需要在tar-mode buffer上再保存一次才会将内容更新到tar包中。
+
+[[file:./images/screenshot-70.png]]
+
+
+另外, 根据 =arc-mode.el= 中 =archive-find-type= 函数的定义，Emacs不仅支持直接编辑zip文件还能支持lzh，zoo，arc，rar，7z等常见的压缩格式，不过我没有测试过而已。
+#+begin_src emacs-lisp
+  (defun archive-find-type ()
+    (widen)
+    (goto-char (point-min))
+    ;; The funny [] here make it unlikely that the .elc file will be treated
+    ;; as an archive by other software.
+    (let (case-fold-search)
+      (cond ((looking-at "\\(PK00\\)?[P]K\003\004") 'zip)
+      ((looking-at "..-l[hz][0-9ds]-") 'lzh)
+      ((looking-at "....................[\334]\247\304\375") 'zoo)
+      ((and (looking-at "\C-z")	; signature too simple, IMHO
+      (string-match "\\.[aA][rR][cC]\\'"
+              (or buffer-file-name (buffer-name))))
+       'arc)
+            ;; This pattern modeled on the BSD/GNU+Linux `file' command.
+            ;; Have seen capital "LHA's", and file has lower case "LHa's" too.
+            ;; Note this regexp is also in archive-exe-p.
+            ((looking-at "MZ\\(.\\|\n\\)\\{34\\}LH[aA]'s SFX ") 'lzh-exe)
+            ((looking-at "Rar!") 'rar)
+            ((looking-at "!<arch>\n") 'ar)
+            ((and (looking-at "MZ")
+                  (re-search-forward "Rar!" (+ (point) 100000) t))
+             'rar-exe)
+      ((looking-at "7z\274\257\047\034") '7z)
+      (t (error "Buffer format not recognized")))))
+#+end_src
+
+不过总体来说，我觉得还是avfs更好用点. ;>
