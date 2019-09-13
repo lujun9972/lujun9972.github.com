@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>直接编辑zip和tar包中的文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">直接编辑zip和tar包中的文件</h1>
+<p>
+今天才知道我们可以在Emacs中直接编辑zip（archive-mode）或tar(tar-mode)包中的文件，当打开zip或tar文件时Emacs会显示出一个类似Dired的界面，把包中的文件列出来。
+</p>
+
+<p>
+我们可以直接打开包内的文件并且可以直接把修改后的文件保存到包中。zip和tar不同之处在于当保存zip包内的文件后会自动对zip包进行更新，而修改tar包内的文件后不仅需要保存文件本身，还需要在tar-mode buffer上再保存一次才会将内容更新到tar包中。
+</p>
+
+
+<div class="figure">
+<p><img src="./images/screenshot-70.png" alt="screenshot-70.png" />
+</p>
+</div>
+
+
+<p>
+另外, 根据 <code>arc-mode.el</code> 中 <code>archive-find-type</code> 函数的定义，Emacs不仅支持直接编辑zip文件还能支持lzh，zoo，arc，rar，7z等常见的压缩格式，不过我没有测试过而已。
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">archive-find-type</span> ()
+  (widen)
+  (goto-char (point-min))
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">The funny [] here make it unlikely that the .elc file will be treated</span>
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">as an archive by other software.</span>
+  (<span class="org-keyword">let</span> (case-fold-search)
+    (<span class="org-keyword">cond</span> ((looking-at <span class="org-string">"</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">PK00</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string">?[P]K\003\004"</span>) 'zip)
+    ((looking-at <span class="org-string">"..-l[hz][0-9ds]-"</span>) 'lzh)
+    ((looking-at <span class="org-string">"....................[\334]\247\304\375"</span>) 'zoo)
+    ((<span class="org-keyword">and</span> (looking-at <span class="org-string">"\C-z"</span>)   <span class="org-comment-delimiter">; </span><span class="org-comment">signature too simple, IMHO</span>
+    (string-match <span class="org-string">"\\.[aA][rR][cC]\\'"</span>
+            (<span class="org-keyword">or</span> buffer-file-name (buffer-name))))
+     'arc)
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">This pattern modeled on the BSD/GNU+Linux `</span><span class="org-comment"><span class="org-constant">file</span></span><span class="org-comment">' command.</span>
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">Have seen capital "LHA's", and file has lower case "LHa's" too.</span>
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">Note this regexp is also in archive-exe-p.</span>
+          ((looking-at <span class="org-string">"MZ</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">.</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">|</span></span><span class="org-string">\n</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string">\\{34\\}LH[aA]'s SFX "</span>) 'lzh-exe)
+          ((looking-at <span class="org-string">"Rar!"</span>) 'rar)
+          ((looking-at <span class="org-string">"!&lt;arch&gt;\n"</span>) 'ar)
+          ((<span class="org-keyword">and</span> (looking-at <span class="org-string">"MZ"</span>)
+                (re-search-forward <span class="org-string">"Rar!"</span> (+ (point) 100000) t))
+           'rar-exe)
+    ((looking-at <span class="org-string">"7z\274\257\047\034"</span>) '7z)
+    (t (<span class="org-warning">error</span> <span class="org-string">"Buffer format not recognized"</span>)))))
+</pre>
+</div>
+
+<p>
+不过总体来说，我觉得还是avfs更好用点. ;&gt;
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-09-13</span>
+    <span title="last modification date" class="post-info">2019-09-13</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-797d3af3-8020-4501-9309-f59eb0081836">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
