@@ -1,0 +1,72 @@
+#+TITLE: //foo是个什么目录?
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-16 一 21:49]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://jvns.ca/blog/2017/02/08/weird-unix-things-cd/ 上看到的，觉得很神奇，记录一下
+
+在bash下执行下面命令看看结果是什么
+#+begin_src shell :results org
+  cd /tmp
+  pwd
+  cd //tmp
+  pwd
+  cd ///tmp
+  pwd
+  cd ////tmp
+  pwd
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+/tmp
+//tmp
+/tmp
+/tmp
+#+end_src
+
+貌似中间混入了一个奇怪的东西 =//tmp=, 这是什么玩意？？ 我们来看看它的inode
+#+begin_src shell :results org
+  stat //tmp
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  文件：//tmp
+  大小：740       	块：0          IO 块：4096   目录
+设备：2dh/45d	Inode：12972       硬链接：17
+权限：(1777/drwxrwxrwt)  Uid：(    0/    root)   Gid：(    0/    root)
+最近访问：2019-09-16 21:52:50.368212128 +0800
+最近更改：2019-09-16 22:29:22.768083948 +0800
+最近改动：2019-09-16 22:29:22.768083948 +0800
+创建时间：-
+#+end_src
+
+可以看到inode为12972，那么这个inode其实应该属于哪个文件呢？
+#+begin_src shell :results org
+  find / -inum 12972;:
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+/tmp
+#+end_src
+
+你会发现 =//tmp= 其实就是 =/tmp=
+
+怎么会这样呢？
+
+根据 =cd= 的[[https://pubs.opengroup.org/onlinepubs/9699919799/utilities/cd.html][规范]]
+#+begin_example
+  An implementation may further simplify curpath by removing any trailing <slash> characters that are not also leading <slash> characters, replacing multiple non-leading consecutive <slash> characters with a single <slash>, and replacing three or more leading <slash> characters with a single <slash>. If, as a result of this canonicalization, the curpath variable is null, no further steps shall be taken.
+#+end_example
+
+总结起来就是几点:
+
++ 路径最后的"/"可以被省略，即 =/foo//= 可以简化成 =/foo=
++ 非首部的多个连续"/"可以被简化成一个"/",即 =/foo//bar= 可以简化成 =/foo/bar=
++ 首部的三个或以上连续的"/"可以被简化成一个"/",即 =///foo= 可以简化成 =/foo=
++ 首部是两个连续的"/"的情况没有定义，也就是可以有不同的实现方式
