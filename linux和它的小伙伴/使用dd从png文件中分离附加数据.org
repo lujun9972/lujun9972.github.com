@@ -1,0 +1,55 @@
+#+TITLE: 使用dd从png文件中分离附加数据
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-17 二 08:59]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们常常会在 png 图片后面附加其他文件的方式来实现隐写。比如下面这张图片
+
+[[file:images/dd_extract_from_png.png]]
+
+我们用 =pngcheck= 检查一下会发现在 =IEND= 区后存在其他数据
+
+#+begin_src shell :results org
+  pngcheck images/dd_extract_from_png.png
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+images/dd_extract_from_png.png  additional data after IEND chunk
+ERROR: images/dd_extract_from_png.png
+#+end_src
+
+下面我们来看看 =IEND= 区在哪里结尾
+#+begin_src shell :results org
+  xxd images/dd_extract_from_png.png |grep IEND
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+000085a0: 97b9 ecde 1e16 0a00 0000 0049 454e 44ae  ...........IEND.
+#+end_src
+
+根据 png 文件的格式，在 IEND 后还有 4 个字节的 CRC, 因此 png 文件的结尾应该在 =000085b3=
+
+将这个值换算成10进值就是
+#+begin_src shell
+  ((n=16#85b3))
+  echo $n
+#+end_src
+
+#+RESULTS:
+: 34227
+
+使用 dd 跳过前面的图片内容保存后面的数据
+#+begin_src shell :results org
+  dd if=images/dd_extract_from_png.png ibs=34227 skip=1 of=/tmp/noname
+  file /tmp/noname
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+/tmp/noname: DOS executable (block device driver,32-bit sector-support)
+#+end_src
