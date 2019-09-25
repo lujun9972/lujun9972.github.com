@@ -1,0 +1,335 @@
+#+TITLE: git练习
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-12 四 21:09]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://jvns.ca/blog/2019/08/30/git-exercises--navigate-a-repository/ 看到的关于git的练习。
+
+* 准备工作
+#+begin_src shell
+  git clone https://github.com/ruby/ruby ~/github/ruby
+#+end_src
+
+本次练习用到的子命令包括
++ git checkout
++ git log (--oneline, --author, and -S will be useful)
++ git diff (--stat will be useful)
++ git show
++ git status
+
+* 练习
+:LOGBOOK:
+CLOCK: [2019-09-25 三 22:04]
+:END:
+*对git不太熟悉,不能保证一定是正确的,而且还用到了除了git之外的工具. 如果有发现错误或者更好的实现方法,请不吝赐教,谢谢.*
+
++ Check out matz’s commit of Ruby from 1998. The commit ID is 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4. Find out how many lines of code Ruby was at that time.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git checkout 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4
+    git branch
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  ,* (头指针分离于 3db12e8b23)
+    master
+  #+end_src
+
++ Check out the current master branch
+  #+begin_src shell :results org :dir ~/github/ruby
+    git checkout master
+    git branch
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  您的分支与上游分支 'origin/master' 一致。
+  * master
+  #+end_src
+
++ Look at the history for the file hash.c. What was the last commit ID that changed that file?
+  #+begin_src shell :results org :dir ~/github/ruby
+    git log --oneline -n 1 hash.c
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  21994b7fd6 Avoid rehashing keys in transform_values
+  #+end_src
+
++ Get a diff of how hash.c has changed in the last 20ish years: compare that file on the master branch to the file at commit 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git diff master 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4 hash.c  |head -n 20
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+    diff --git a/hash.c b/hash.c
+    index e9d994bf70..fe9dfbaa26 100644
+    --- a/hash.c
+    +++ b/hash.c
+    @@ -1,6290 +1,1005 @@
+    -/**********************************************************************
+    +/************************************************
+
+       hash.c -
+
+       $Author$
+    +  $Date$
+       created at: Mon Nov 22 18:51:18 JST 1993
+
+    -  Copyright (C) 1993-2007 Yukihiro Matsumoto
+    -  Copyright (C) 2000  Network Applied Communication Laboratory, Inc.
+    -  Copyright (C) 2000  Information-technology Promotion Agency, Japan
+    -
+    -**********************************************************************/
+    -
+  #+end_src
+
++ Find a recent commit that changed hash.c and look at the diff for that commit
+  #+begin_src shell :results org :dir ~/github/ruby
+    lastchange=$(git log --oneline -n 2 hash.c |tail -n 1 |cut -f1 -d " ")
+    git diff master ${lastchange} hash.c |head
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  diff --git a/hash.c b/hash.c
+  index e9d994bf70..b61784af3a 100644
+  --- a/hash.c
+  +++ b/hash.c
+  @@ -3129,16 +3129,10 @@ rb_hash_transform_keys_bang(VALUE hash)
+   }
+
+   static int
+  -transform_values_foreach_func(st_data_t key, st_data_t value, st_data_t argp, int error)
+  +transform_values_i(VALUE key, VALUE value, VALUE result)
+  #+end_src
+
++ This repository has a bunch of tags for every Ruby release. Get a list of all the tags.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git tag |head
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  REXML_2_7_0
+  SHELL_v0_6
+  forwardable_v1_1
+  gtk_012
+  irb_0_7_1
+  irb_0_7_3
+  irb_0_9
+  net_1_1_1
+  net_1_1_3
+  oniguruma_2_2_4
+  #+end_src
+
++ Find out how many files changed between tag v1_8_6_187 and tag v1_8_6_188
+  #+begin_src shell :results org :dir ~/github/ruby
+    git diff v1_8_6_187 v1_8_6_188 --stat
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+   ChangeLog                          | 10 ++++++++++
+   ext/Win32API/lib/win32/registry.rb |  2 +-
+   ext/Win32API/lib/win32/resolv.rb   |  2 +-
+   lib/resolv.rb                      |  2 +-
+   version.h                          |  2 +-
+   5 files changed, 14 insertions(+), 4 deletions(-)
+  #+end_src
+
++ Find a commit (any commit) from 2015 and check it out, look at the files very briefly, then go back to the master branch.
+  #+begin_src shell :results org :dir ~/github/ruby
+    commit=$(git log --oneline -n 1 --until 2015-01-01 |cut -f1 -d " ")
+    git checkout "${commit}"
+    git branch
+    ls |head
+    git checkout master
+    git branch
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  ,* (头指针分离于 d03c86391b)
+    master
+  addr2line.c
+  addr2line.h
+  array.c
+  benchmark
+  bignum.c
+  bin
+  bootstraptest
+  BSDL
+  ccan
+  ChangeLog
+  您的分支与上游分支 'origin/master' 一致。
+  * master
+  #+end_src
+
++ Find out what commit the tag v1_8_6_187 corresponds to.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git rev-list -n 1 v1_8_6_187
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  928e6916b25aee5b2b379999a3fa8816d40db714
+  #+end_src
+
++ List the directory .git/refs/tags. Run cat .git/refs/tags/v1_8_6_187 to see the contents of one of those files.
+  #+begin_src shell :results org :dir ~/github/ruby
+    ls .git/refs/tags
+    echo -------------------------------------------
+    cat .git/refs/tags/v1_8_6_187
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  -------------------------------------------
+  #+end_src
+  
+  *这个题目好奇怪,.git/refs/tags里居然是空的,感觉有什么地方不对*
+
++ Find out what commit ID HEAD corresponds to right now.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git rev-list -n 1 HEAD
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  38069a3a55325757d2bba84191b006361a284cb0
+  #+end_src
+
++ Find out how many commits have been made to the test/ directory
+  #+begin_src shell :results org :dir ~/github/ruby
+    git log --oneline -- test |wc -l
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  12370
+  #+end_src
+
++ Find out what commit ID HEAD corresponds to right now.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git rev-list -n 1 HEAD
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  38069a3a55325757d2bba84191b006361a284cb0
+  #+end_src
+
++ Get a diff of lib/telnet.rb between the commits 65a5162550f58047974793cdc8067a970b2435c0 and 9e3d9a2a009d2a0281802a84e1c5cc1c887edc71. How many lines of that file were changed?
+  #+begin_src shell :results org :dir ~/github/ruby
+    git diff --stat 65a5162550f58047974793cdc8067a970b2435c0  9e3d9a2a009d2a0281802a84e1c5cc1c887edc71 -- lib/telnet.rb
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+   lib/telnet.rb | 58 ++++++++++++++++++++++++++++++++++++++++++++--------------
+   1 file changed, 44 insertions(+), 14 deletions(-)
+  #+end_src
+
++ How many commits were made between Ruby 2.5.1 and 2.5.2 (tags v2_5_1 and v2_5_3) (this one is a tiny bit tricky, there’s more than one step)
+  #+begin_src shell :results org :dir ~/github/ruby
+    git log --oneline v2_5_1..v2_5_2 |wc -l
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  49
+  #+end_src
+
++ How many commits were authored by matz (Ruby’s creator)?
+  #+begin_src shell :results org :dir ~/github/ruby
+    git log --oneline --author=matz |wc -l
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  2562
+  #+end_src
+
++ What’s the most recent commit that included the word tkutil?
+  #+begin_src shell :results org :dir ~/github/ruby
+    git log -n 1 --grep tkutil
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  commit c285a4e3578c30b074f665e5f63283800fe3e157
+  Author: nobu <nobu@b2dd03c8-39d4-4d8f-98ff-823fe69b080e>
+  Date:   Mon May 23 04:31:55 2016 +0000
+
+      remove unnecessary volatiles
+
+      ,* ext/dbm/dbm.c (fdbm_initialize): used for rb_sys_fail_str.
+
+      ,* ext/sdbm/init.c (fsdbm_initialize): ditto.
+
+      ,* ext/tk/tcltklib.c (lib_do_one_event_core): no effect.
+
+      ,* ext/tk/tkutil/tkutil.c (tk_eval_cmd, tk_get_eval_string): no
+        effect if tail call optimized.
+
+      ,* ext/tk/tkutil/tkutil.c (cbsubst_table_setup): set to const.
+
+      git-svn-id: svn+ssh://ci.ruby-lang.org/ruby/trunk@55127 b2dd03c8-39d4-4d8f-98ff-823fe69b080e
+  #+end_src
+
++ Check out the commit e51dca2596db9567bd4d698b18b4d300575d3881 and create a new branch that points at that commit.
+  #+begin_src shell :results org :dir ~/github/ruby
+    git branch new e51dca2596db9567bd4d698b18b4d300575d3881 
+    git branch
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  * master
+    new
+  #+end_src
+
++ Run git reflog to see all the navigating of the repository you’ve done so far
+  #+begin_src shell :results org :dir ~/github/ruby
+    git reflog
+  #+end_src
+
+  #+RESULTS:
+  #+begin_src org
+  5b1fd79ad9 HEAD@{0}: pull: Fast-forward
+  0e84eecc17 HEAD@{1}: pull: Fast-forward
+  142efba93e HEAD@{2}: pull: Fast-forward
+  2272efa463 HEAD@{3}: pull: Fast-forward
+  c020fd6aa8 HEAD@{4}: pull: Fast-forward
+  70fd022a2a HEAD@{5}: pull: Fast-forward
+  38069a3a55 HEAD@{6}: checkout: moving from d03c86391b52e8470fb5b31c58ebc2422ec1653b to master
+  d03c86391b HEAD@{7}: checkout: moving from master to d03c86391b
+  38069a3a55 HEAD@{8}: checkout: moving from master to master
+  38069a3a55 HEAD@{9}: checkout: moving from d03c86391b52e8470fb5b31c58ebc2422ec1653b to master
+  d03c86391b HEAD@{10}: checkout: moving from master to d03c86391b
+  38069a3a55 HEAD@{11}: checkout: moving from d03c86391b52e8470fb5b31c58ebc2422ec1653b to master
+  d03c86391b HEAD@{12}: checkout: moving from master to d03c86391b
+  38069a3a55 HEAD@{13}: checkout: moving from d03c86391b52e8470fb5b31c58ebc2422ec1653b to master
+  d03c86391b HEAD@{14}: checkout: moving from master to d03c86391b
+  38069a3a55 HEAD@{15}: checkout: moving from d03c86391b52e8470fb5b31c58ebc2422ec1653b to master
+  d03c86391b HEAD@{16}: checkout: moving from master to d03c86391b
+  38069a3a55 HEAD@{17}: pull: Fast-forward
+  0785469a40 HEAD@{18}: pull: Fast-forward
+  3bb1162cac HEAD@{19}: pull: Fast-forward
+  4a403e3f98 HEAD@{20}: pull: Fast-forward
+  6cad064424 HEAD@{21}: pull: Fast-forward
+  1edcfd6107 HEAD@{22}: pull: Fast-forward
+  8263459627 HEAD@{23}: pull: Fast-forward
+  f41cd4ba43 HEAD@{24}: pull: Fast-forward
+  b2c29bbab6 HEAD@{25}: pull: Fast-forward
+  7e0f56fb3d HEAD@{26}: pull: Fast-forward
+  ac3e8834e0 HEAD@{27}: checkout: moving from 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4 to master
+  3db12e8b23 HEAD@{28}: checkout: moving from master to 3db12e8b236ac8f88db8eb4690d10e4a3b8dbcd4
+  ac3e8834e0 HEAD@{29}: clone: from https://github.com/ruby/ruby
+  #+end_src
