@@ -1,0 +1,167 @@
+#+TITLE: 使用strace查找Emacs启动阻塞的原因(exec-path-from-shell)
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-09-26 四 20:20]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+之前就觉得我的Emacs启动好慢，查看启动日志会发现启动到一般的时候会有一个比较长时间的卡顿。
+之前一直没有理会它，今天花了点时间探索了一下，发现罪魁祸首居然是exec-path-from-shell这个package。
+
+现将探索的过程记录如下：
+由于使用了spacemacs的配置，配置上比较复杂，不太想通过实验缩减配置的方式来摸索出问题的地方.
+刚好最近在学习使用strace工具，因此决定使用strace来看看Emacs到底卡在哪里。
+
+#+BEGIN_SRC shell
+  strace emacs --fg-daemon
+#+END_SRC
+
+输出的内容特别多，这里只截取卡顿前的部分内容
+#+BEGIN_EXAMPLE
+  readlinkat(AT_FDCWD, "/home", 0x7ffd1d3abb50, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972", 0x7ffd1d3abf00, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d", 0x7ffd1d3ac2b0, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa", 0x7ffd1d3ac660, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa/exec-path-from-shell-20180323.1904", 0x7ffd1d3aca10, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa/exec-path-from-shell-20180323.1904/exec-path-from-shell.elc", 0x7ffd1d3acdc0, 1024) = -1 EINVAL (无效的参数)
+  lseek(7, -2655, SEEK_CUR)               = 1441
+  read(7, "\n(defvar exec-path-from-shell-de"..., 4096) = 4096
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  brk(0x7507000)                          = 0x7507000
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  lseek(7, 5537, SEEK_SET)                = 5537
+  read(7, "230\\205\26\0\t\22\\307\\310\t!\vC\\\"\\211\24\\2"..., 4096) = 2430
+  lseek(7, 7967, SEEK_SET)                = 7967
+  lseek(7, 7967, SEEK_SET)                = 7967
+  lseek(7, 7967, SEEK_SET)                = 7967
+  lseek(7, 7967, SEEK_SET)                = 7967
+  read(7, "", 4096)                       = 0
+  close(7)                                = 0
+  getpid()                                = 10818
+  faccessat(AT_FDCWD, "/home/lujun9972/bin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/local/sbin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/local/bin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/bin/printf", X_OK) = 0
+  stat("/usr/bin/printf", {st_mode=S_IFREG|0755, st_size=51176, ...}) = 0
+  openat(AT_FDCWD, "/dev/null", O_RDONLY|O_CLOEXEC) = 7
+  faccessat(AT_FDCWD, "/proc/5070/fd/.", F_OK) = 0
+  faccessat(AT_FDCWD, "/proc/5070/fd/.", F_OK) = 0
+  faccessat(AT_FDCWD, "/bin/bash", X_OK)  = 0
+  stat("/bin/bash", {st_mode=S_IFREG|0755, st_size=903440, ...}) = 0
+  pipe2([8, 9], O_CLOEXEC)                = 0
+  rt_sigprocmask(SIG_BLOCK, [INT CHLD], [], 8) = 0
+  vfork()                                 = 10949
+  rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+  close(9)                                = 0
+  close(7)                                = 0
+  read(8, "bash: \346\227\240\346\263\225\350\256\276\345\256\232\347\273\210\347\253\257\350\277\233\347\250\213\347\273"..., 16384) = 74
+  read(8, "bash: \346\255\244 shell \344\270\255\346\227\240\344\273\273\345\212\241\346\216\247\345"..., 16310) = 35
+  read(8, "setterm: \347\273\210\347\253\257 xterm-256color \344"..., 16275) = 51
+  read(8, "Couldn't get a file descriptor r"..., 16224) = 56
+  read(8, "bash: [: \357\274\232\351\234\200\350\246\201\346\225\264\346\225\260\350\241\250\350\276\276\345\274"..., 16168) = 34
+  read(8, "Your display number is 0\n", 16134) = 25
+  read(8, "Test whether fcitx is running co"..., 16109) = 53
+  read(8, "Fcitx is running correctly.\n\n==="..., 16056) = 87
+  read(8, "Launch fbterm...\n", 15969)    = 17
+  read(8, "stdin isn't a tty!\n", 15952)  = 19
+  read(8, "__RESULT\0/home/lujun9972/bin:/ho"..., 15933) = 298
+  read(8, 0x7ffd1d39ce9d, 15635)          = ? ERESTARTSYS (To be restarted if SA_RESTART is set)
+  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=10949, si_uid=1000, si_status=0, si_utime=10, si_stime=7} ---
+  rt_sigreturn({mask=[]})                 = -1 EINTR (被中断的系统调用)
+  read(8, "", 15635)                      = 0
+  wait4(10949, [{WIFEXITED(s) && WEXITSTATUS(s) == 0}], 0, NULL) = 10949
+  close(8)                                = 0
+  getpid()                                = 10818
+  faccessat(AT_FDCWD, "/home/lujun9972/bin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/local/sbin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/local/bin/printf", X_OK) = -1 ENOENT (没有那个文件或目录)
+  faccessat(AT_FDCWD, "/usr/bin/printf", X_OK) = 0
+  stat("/usr/bin/printf", {st_mode=S_IFREG|0755, st_size=51176, ...}) = 0
+  openat(AT_FDCWD, "/dev/null", O_RDONLY|O_CLOEXEC) = 7
+  faccessat(AT_FDCWD, "/proc/5070/fd/.", F_OK) = 0
+  faccessat(AT_FDCWD, "/proc/5070/fd/.", F_OK) = 0
+  faccessat(AT_FDCWD, "/bin/bash", X_OK)  = 0
+  stat("/bin/bash", {st_mode=S_IFREG|0755, st_size=903440, ...}) = 0
+  pipe2([8, 9], O_CLOEXEC)                = 0
+  rt_sigprocmask(SIG_BLOCK, [INT CHLD], [], 8) = 0
+  vfork()                                 = 11679
+  rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+  close(9)                                = 0
+  close(7)                                = 0
+  read(8, "setterm: \347\273\210\347\253\257 xterm-256color \344"..., 16384) = 51
+  read(8, "Couldn't get a file descriptor r"..., 16333) = 56
+  read(8, "/home/lujun9972/.bash_profile: \347"..., 16277) = 72
+  read(8, "Your display number is 0\nTest wh"..., 16205) = 78
+  read(8, "Fcitx is running correctly.\n\n==="..., 16127) = 104
+  read(8, "stdin isn't a tty!\n", 16023)  = 19
+  read(8, "__RESULT\0b269cd09e7ec4e8a115188c"..., 16004) = 298
+  read(8, 0x7ffd1d39cba6, 15706)          = ? ERESTARTSYS (To be restarted if SA_RESTART is set)
+  --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=11679, si_uid=1000, si_status=0, si_utime=1, si_stime=1} ---
+  rt_sigreturn({mask=[]})                 = -1 EINTR (被中断的系统调用)
+  read(8, 
+#+END_EXAMPLE
+
+很容易就可以看出，当Emacs卡顿时，它在尝试从8号fd中读取内容.
+
+那么8号fd在哪里定义的呢？往前看可以看到
+#+BEGIN_EXAMPLE
+  pipe2([8, 9], O_CLOEXEC)                = 0
+  rt_sigprocmask(SIG_BLOCK, [INT CHLD], [], 8) = 0
+  vfork()                                 = 11679
+  rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+  close(9)                                = 0
+#+END_EXAMPLE
+可以推测出，Emacs主进程fork出一个子进程(进程号为11679)，并通过管道读取子进程的内容。
+
+然而,从
+#+BEGIN_EXAMPLE
+    --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_EXITED, si_pid=11679, si_uid=1000, si_status=0, si_utime=1, si_stime=1} ---
+    rt_sigreturn({mask=[]})                 = -1 EINTR (被中断的系统调用)
+    read(8, 
+#+END_EXAMPLE
+可以看出，实际上子进程已经退出了(父进程收到SIGCHLD信号)，父进程确依然在尝试从管道中读取内容，导致的阻塞。
+
+而且从
+#+BEGIN_EXAMPLE
+  read(8, "setterm: \347\273\210\347\253\257 xterm-256color \344"..., 16384) = 51
+  read(8, "Couldn't get a file descriptor r"..., 16333) = 56
+  read(8, "/home/lujun9972/.bash_profile: \347"..., 16277) = 72
+  read(8, "Your display number is 0\nTest wh"..., 16205) = 78
+  read(8, "Fcitx is running correctly.\n\n==="..., 16127) = 104
+  read(8, "stdin isn't a tty!\n", 16023)  = 19
+  read(8, "__RESULT\0b269cd09e7ec4e8a115188c"..., 16004) = 298
+  read(8, 0x7ffd1d39cba6, 15706)          = ? ERESTARTSYS (To be restarted if SA_RESTART is set)
+#+END_EXAMPLE
+看到，子进程的输出似乎是我的交互式登录bash启动时的输出(加载了.bash_profile)
+
+在往前翻发现这么一段信息
+#+BEGIN_EXAMPLE
+  readlinkat(AT_FDCWD, "/home", 0x7ffd1d3abb50, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972", 0x7ffd1d3abf00, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d", 0x7ffd1d3ac2b0, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa", 0x7ffd1d3ac660, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa/exec-path-from-shell-20180323.1904", 0x7ffd1d3aca10, 1024) = -1 EINVAL (无效的参数)
+  readlinkat(AT_FDCWD, "/home/lujun9972/.emacs.d/elpa/exec-path-from-shell-20180323.1904/exec-path-from-shell.elc", 0x7ffd1d3acdc0, 1024) = -1 EINVAL (无效的参数)
+  lseek(7, -2655, SEEK_CUR)               = 1441
+  read(7, "\n(defvar exec-path-from-shell-de"..., 4096) = 4096
+#+END_EXAMPLE
+
+这很明显是跟 =exec-path-from-shell= 有关啊。
+
+通过查看 =exec-path-from-shell= 的实现，发现 =exec-path-from-shell= 的实现原理是通过实际调启一个shell，然后输出 =PATH= 和 =MANPATH= 的值的。
+而且对于 =bash= 来说，默认的启动参数为 =-i -l(可以通过exec-path-from-shell-arguments来设置)=.
+也就是说 =bash= 会作为交互式的登录shell来启动的，因此会加载 =.bash_profile= 和 =.bashrc=. 
+
+既然发现跟 =exec-path-from-shell= 这个package有关，而且据说这个package对linux其实意义不大，那不如直接禁用掉好了。
+#+BEGIN_SRC emacs-lisp
+  dotspacemacs-excluded-packages '(exec-path-from-shell)
+#+END_SRC
+
+再次重启Emacs，发现这次启动速度明显快了许多了。
