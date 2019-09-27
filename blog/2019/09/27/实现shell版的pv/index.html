@@ -58,28 +58,70 @@ pv 能够显示数据处理的进度，非常神奇。而借助 <code>/proc/$pid
 </p>
 
 <p>
-我们都知道在 <code>/proc/$pid/fd/</code> 中可以察看各个进程打开的文件描述符实际指向的文件，而今天我才知道，原来在 <code>/proc/$pid/fdinfo/</code> 目录下我们还能查看各个文件描述符的状态信息
+我们都知道在 <code>/proc/$pid/fd/</code> 中可以察看各个进程打开的文件描述符实际指向的文件，
+而今天我才知道，原来在 <code>/proc/$pid/fdinfo/</code> 目录下我们还能查看各个文件描述符的状态信息
 </p>
 <div class="org-src-container">
-<pre class="src src-shell">cat /proc/$(<span class="org-sh-quoted-exec">pgrep</span> emacs)/fdinfo/*
+<pre class="src src-shell"><span class="org-keyword">for</span> fdinfo<span class="org-keyword"> in</span> /proc/$(<span class="org-sh-quoted-exec">pgrep</span> emacs)/fdinfo/*
+<span class="org-keyword">do</span>
+    <span class="org-builtin">echo</span> ---------------${<span class="org-variable-name">fdinfo</span>}----------------
+    cat ${<span class="org-variable-name">fdinfo</span>}
+<span class="org-keyword">done</span> |head -n 20
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">---------------/proc/1301/fdinfo/0----------------
+pos:    0
+flags:  0100000
+mnt_id: 23
+---------------/proc/1301/fdinfo/1----------------
+pos:    0
+flags:  02
+mnt_id: 9
+---------------/proc/1301/fdinfo/10----------------
+pos:    184
+flags:  0100001
+mnt_id: 26
+---------------/proc/1301/fdinfo/11----------------
+pos:    0
+flags:  0100002
+mnt_id: 26
+lock:   1: POSIX  ADVISORY  WRITE 1301 00:17:2899622 0 EOF
+---------------/proc/1301/fdinfo/12----------------
+pos:    0
+flags:  0100001
 </pre>
 </div>
 
 <p>
-这些信息的意义可以通过 <code>man 5 proc</code> 来获得，其中 <code>pos</code> 表示的是文件的偏移位置。因此我们可以实现一个简陋的pv
+这些信息的意义可以通过 <code>man 5 proc</code> 来获得，其中 <code>pos</code> 表示的是文件的偏移位置。
+因此我们可以实现一个简陋的pv
 </p>
 <div class="org-src-container">
-<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span>
-<span class="org-variable-name">fd</span>=/proc/$<span class="org-variable-name">1</span>/fd/$<span class="org-variable-name">2</span>
-<span class="org-variable-name">fdinfo</span>=/proc/$<span class="org-variable-name">1</span>/fdinfo/$<span class="org-variable-name">2</span>
-<span class="org-variable-name">name</span>=$(<span class="org-sh-quoted-exec">readlink</span> $<span class="org-variable-name">fd</span>)
-<span class="org-variable-name">size</span>=$(<span class="org-sh-quoted-exec">wc</span> -c $<span class="org-variable-name">fd</span> | awk <span class="org-string">'{print $1}'</span>)
-<span class="org-keyword">while</span> [ -e $<span class="org-variable-name">fd</span> ]; <span class="org-keyword">do</span>
-    <span class="org-variable-name">progress</span>=$(<span class="org-sh-quoted-exec">cat</span> $<span class="org-variable-name">fdinfo</span> | grep ^pos | awk <span class="org-string">'{print $2}'</span>)
-    <span class="org-builtin">echo</span> $((100*$<span class="org-variable-name">progress</span> / $<span class="org-variable-name">size</span>))
-    sleep 1
-<span class="org-keyword">done</span> | dialog --gauge <span class="org-string">"Progress reading $name"</span> 7 100
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/</span><span class="org-keyword">env</span><span class="org-comment"> bash</span>
+<span class="org-variable-name">file</span>=<span class="org-string">"$1"</span>
+cat &lt;<span class="org-string">"${file}"</span> &amp;                <span class="org-comment-delimiter"># </span><span class="org-comment">&#25991;&#20214;&#20869;&#23481;&#36755;&#20986;&#21040;stdout,&#36825;&#26679;&#26041;&#20415;&#36890;&#36807;&#31649;&#36947;&#20256;&#36882;&#20986;&#21435;.</span>
+<span class="org-variable-name">pid</span>=$<span class="org-variable-name">!</span>
+<span class="org-variable-name">fd</span>=/proc/${<span class="org-variable-name">pid</span>}/fd/0
+<span class="org-variable-name">fdinfo</span>=/proc/${<span class="org-variable-name">pid</span>}/fdinfo/0
+<span class="org-variable-name">size</span>=$(<span class="org-sh-quoted-exec">stat</span> --format=%s <span class="org-string">"${file}"</span>) <span class="org-comment-delimiter"># </span><span class="org-comment">&#33719;&#21462;&#25991;&#20214;&#30340;&#24635;&#22823;&#23567;</span>
+<span class="org-keyword">while</span> [ -e ${<span class="org-variable-name">fd</span>} ]; <span class="org-keyword">do</span>
+    <span class="org-variable-name">progress</span>=$(<span class="org-sh-quoted-exec">cat</span> ${<span class="org-variable-name">fdinfo</span>} | grep ^pos | awk <span class="org-string">'{print $2}'</span>) <span class="org-comment-delimiter"># </span><span class="org-comment">&#33719;&#21462;&#20559;&#31227;&#37327;</span>
+    <span class="org-builtin">echo</span> $((100*${<span class="org-variable-name">progress</span>} / ${<span class="org-variable-name">size</span>}))                      <span class="org-comment-delimiter"># </span><span class="org-comment">&#35745;&#31639;&#30334;&#20998;&#27604;</span>
+    sleep 0.1
+<span class="org-keyword">done</span> | dialog --gauge <span class="org-string">"Progress reading ${file}"</span> 7 100 &gt;&amp;2 <span class="org-comment-delimiter"># </span><span class="org-comment">&#36827;&#24230;&#26465;&#36755;&#20986;&#21040;stdout</span>
 </pre>
+</div>
+
+<p>
+效果如下图所示:
+</p>
+
+
+<div class="figure">
+<p><img src="../../../../../assets/blog/2019/09/27/实现shell版的pv/shell_pv.gif" alt="shell_pv.gif" />
+</p>
 </div>
 
 </div>
@@ -121,7 +163,7 @@ pv 能够显示数据处理的进度，非常神奇。而借助 <code>/proc/$pid
   <div class="footer">
     <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-0a9214ff-6a1d-4654-85cc-8edcab391305">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-b76bc2f1-75be-4f42-b9a6-576eccc57527">lujun9972</a>
       &nbsp;&nbsp;-&nbsp;&nbsp;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
       Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
