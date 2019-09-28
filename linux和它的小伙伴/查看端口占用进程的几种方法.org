@@ -1,0 +1,93 @@
+#+TITLE: 查看端口占用进程的几种方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-09-28 六 13:31]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有时候启动应用时会提示端口被占，这时候需要找出占用端口的进程把它kill掉才能正常启动应用。
+
+* netstat
+#+begin_src shell :dir /ssh:tencent_cloud#8022|sudo:tencent_cloud: :results org
+  sudo netstat -pnltu
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Active Internet connections (only servers)
+Proto Recv-Q Send-Q Local Address           Foreign Address         State       PID/Program name    
+tcp        0      0 0.0.0.0:111             0.0.0.0:*               LISTEN      1/systemd           
+tcp        0      0 0.0.0.0:8022            0.0.0.0:*               LISTEN      2695/sshd           
+tcp        0      0 127.0.0.1:25            0.0.0.0:*               LISTEN      3570/master         
+tcp        0      0 0.0.0.0:9090            0.0.0.0:*               LISTEN      1/systemd           
+tcp        0      0 127.0.0.1:2628          0.0.0.0:*               LISTEN      2707/dictd 1.12.1:  
+tcp6       0      0 :::2377                 :::*                    LISTEN      14901/dockerd       
+tcp6       0      0 :::7946                 :::*                    LISTEN      14901/dockerd       
+tcp6       0      0 :::3306                 :::*                    LISTEN      15127/docker-proxy  
+tcp6       0      0 :::111                  :::*                    LISTEN      10557/rpcbind       
+tcp6       0      0 :::8022                 :::*                    LISTEN      2695/sshd           
+udp        0      0 0.0.0.0:980             0.0.0.0:*                           10557/rpcbind       
+udp        0      0 0.0.0.0:68              0.0.0.0:*                           2627/dhclient       
+udp        0      0 0.0.0.0:111             0.0.0.0:*                           1/systemd           
+udp        0      0 0.0.0.0:4789            0.0.0.0:*                           -                   
+udp6       0      0 :::980                  :::*                                10557/rpcbind       
+udp6       0      0 :::111                  :::*                                10557/rpcbind       
+udp6       0      0 :::7946                 :::*                                14901/dockerd       
+#+end_src
+
+其中:
+
++ p :: 显示监听服务的进程号或程序名
++ n :: 用数字的形式表示主机,端口和用户名
++ l :: 只显示监听的socket
++ t :: 显示TCP连接
++ u :: 显示UDP连接
+       
+* ss
+#+begin_src shell :dir /ssh:tencent_cloud#8022|sudo:tencent_cloud: :results org
+  sudo ss -l -p -t -u -n
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Netid  State      Recv-Q Send-Q Local Address:Port               Peer Address:Port              
+udp    UNCONN     0      0         *:980                   *:*                   users:(("rpcbind",pid=10557,fd=8))
+udp    UNCONN     0      0         *:68                    *:*                   users:(("dhclient",pid=2627,fd=6))
+udp    UNCONN     0      0         *:111                   *:*                   users:(("rpcbind",pid=10557,fd=5),("systemd",pid=1,fd=57))
+udp    UNCONN     0      0         *:4789                  *:*                  
+udp    UNCONN     0      0        :::980                  :::*                   users:(("rpcbind",pid=10557,fd=10))
+udp    UNCONN     0      0        :::111                  :::*                   users:(("rpcbind",pid=10557,fd=9))
+udp    UNCONN     0      0        :::7946                 :::*                   users:(("dockerd",pid=14901,fd=48))
+tcp    LISTEN     0      128       *:111                   *:*                   users:(("rpcbind",pid=10557,fd=4),("systemd",pid=1,fd=56))
+tcp    LISTEN     0      128       *:8022                  *:*                   users:(("sshd",pid=2695,fd=3))
+tcp    LISTEN     0      100    127.0.0.1:25                    *:*                   users:(("master",pid=3570,fd=13))
+tcp    LISTEN     0      128       *:9090                  *:*                   users:(("systemd",pid=1,fd=26))
+tcp    LISTEN     0      10     127.0.0.1:2628                  *:*                   users:(("dictd",pid=2707,fd=3))
+tcp    LISTEN     0      128      :::2377                 :::*                   users:(("dockerd",pid=14901,fd=37))
+tcp    LISTEN     0      128      :::7946                 :::*                   users:(("dockerd",pid=14901,fd=47))
+tcp    LISTEN     0      128      :::3306                 :::*                   users:(("docker-proxy",pid=15127,fd=4))
+tcp    LISTEN     0      128      :::111                  :::*                   users:(("rpcbind",pid=10557,fd=11))
+tcp    LISTEN     0      128      :::8022                 :::*                   users:(("sshd",pid=2695,fd=4))
+#+end_src
+
+* lsof
+
+#+begin_src shell :dir /ssh:tencent_cloud#8022|sudo:tencent_cloud: :results org
+  sudo lsof -i |grep LISTEN
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+systemd       1      root   26u  IPv4    21777      0t0  TCP *:websm (LISTEN)
+systemd       1      root   56u  IPv4    21883      0t0  TCP *:sunrpc (LISTEN)
+sshd       2695      root    3u  IPv4    27062      0t0  TCP *:oa-system (LISTEN)
+sshd       2695      root    4u  IPv6    27064      0t0  TCP *:oa-system (LISTEN)
+dictd      2707    nobody    3u  IPv4    27084      0t0  TCP localhost:dict (LISTEN)
+master     3570      root   13u  IPv4    28301      0t0  TCP localhost:smtp (LISTEN)
+rpcbind   10557       rpc    4u  IPv4    21883      0t0  TCP *:sunrpc (LISTEN)
+rpcbind   10557       rpc   11u  IPv6   100717      0t0  TCP *:sunrpc (LISTEN)
+dockerd   14901      root   37u  IPv6    56238      0t0  TCP *:2377 (LISTEN)
+dockerd   14901      root   47u  IPv6    57440      0t0  TCP *:7946 (LISTEN)
+docker-pr 15127      root    4u  IPv6    54641      0t0  TCP *:mysql (LISTEN)
+#+end_src
