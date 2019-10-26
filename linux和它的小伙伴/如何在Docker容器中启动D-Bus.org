@@ -1,0 +1,44 @@
+#+TITLE: 如何在Docker容器中启动D-Bus
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-10-26 六 18:48]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+翻译自 https://georgik.rocks/how-to-start-d-bus-in-docker-container/
+
+很多Linux应用需要用到 D-Bus, 但它在Docker容器中默认并不存在
+
+当你尝试启动这类应用时，你会收到一个错误信息:
+	
+#+begin_example
+  D-Bus library appears to be incorrectly set up; failed to read machine uuid: Failed to open "/var/lib/dbus/machine-id": No such file or directory
+  See the manual page for dbus-uuidgen to correct this issue.
+    D-Bus not built with -rdynamic so unable to print a backtrace
+  Aborted
+#+end_example
+
+首先你需要通过下面命令生成缺失的 machine-id(译者注:我一般是直接在容器启动时挂载host上的machine-id):
+	
+#+begin_example
+  dbus-uuidgen > /var/lib/dbus/machine-id
+#+end_example
+
+这样以来，即使DBus守护进程没有启动，应用也能启动
+
+要在容器中启动D-Bus守护进程，你需要运行下面命令
+#+begin_src shell
+  mkdir -p /var/run/dbus
+  dbus-daemon --config-file=/usr/share/dbus-1/system.conf --print-address
+#+end_src
+
+在 Centos 上则改为:
+#+begin_src shell
+  dbus-daemon --config-file=/etc/dbus-1/system.conf --print-address
+#+end_src
+
+现在守护进程运行起来了，你的应用也能用了. 输出的结果类似于下面这样:
+#+begin_example
+  unix:path=/var/run/dbus/system_bus_socket,guid=9cfabcc6f66027251e092e955d09e707
+#+end_example
