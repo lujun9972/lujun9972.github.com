@@ -1,0 +1,85 @@
+#+TITLE: 如何在容器中访问host中的DBus
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-10-27 日 12:26]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+首先我们要知道，host上的DBus daemon有两个，一个是system daemon,一个是user session daemon。
+在大多数情况下，容器中访问的都是user session daemon，而不是system daemon.
+这两类daemon的访问方式也不太一样。
+
+* 访问DBus user session daemon
+
+DBus user session daemon又分两种情况，一种是通过real unix socket文件来访问的，还有一类是通过 [[https://unix.stackexchange.com/questions/206386/what-does-the-symbol-denote-in-the-beginning-of-a-unix-domain-socket-path-in-l][abstract unix socket]] 来访问的。
+
+其中 real unix socket 是真实存在于文件系统中的，可以直接通过 =-v= 挂载到容器中以供访问;而 abstract unix socket 是存在于一个所谓抽象命名空间内的，我们只能通过 =--net=host= 来允许容器访问到它。
+
+** 判断DBus user session daemon的类型
+我们可以通过查看 =${DBUS_SESSION_BUS_ADDRESS}= 的值来区分是使用real unix socket还是abstract unix socket.
+
+其中以 =unix:path= 开头则表示使用的是real unix socket，而已 =unix:abstract= 开头则表示使用abstract unix socket
+
+比如我本机上的结果为:
+#+begin_src shell
+  echo ${DBUS_SESSION_BUS_ADDRESS}
+#+end_src
+
+#+RESULTS:
+: unix:path=/run/user/1000/bus
+
+说明本机使用real unix socket,且文件路径为 =/run/user/1000/bus=
+
+** 挂载DBus user session daemon
+
+*** real unix socket
+1. 设置 =DBUS_SESSION_BUS_ADDRESS= 环境变量
+   #+begin_src shell
+     --env DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
+   #+end_src
+
+2. 挂载socket文件
+   #+begin_src shell
+     --volume /run/user/1000/bus:/run/user/1000/bus
+   #+end_src
+
+3. 使用与host相同的用户运行镜像
+   #+begin_src shell
+     --user $(id -u):$(id -g)
+   #+end_src
+   
+*** abstract unix socket
+1. 设置 =DBUS_SESSION_BUS_ADDRESS= 环境变量
+   #+begin_src shell
+     --env DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS"
+   #+end_src
+
+2. 允许容器访问host网络域
+   #+begin_src shell
+     --network=host
+   #+end_src
+   
+** 测试挂载DBus user session daemon的效果
+1. 先准备一个测试镜像(假设名为test)，需要包含notify-send命令
+   #+begin_src dockerfile
+     FROM ubuntu:18.04
+     # 使用aliyun的源
+     RUN sed -i 's#http://archive.ubuntu.com/ubuntu#http://mirrors.aliyun.com/ubuntu#' /etc/apt/sources.list
+     # 安装notify-send命令在libnotify-bin包中
+     ENV DEBIAN_FRONTEND=noninteractive
+     RUN apt update && apt install -y libnotify-bin && rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apk/* && apt-get autoremove
+   #+end_src
+
+2. 启动容器
+   #+begin_src shell
+     docker run --rm --env DBUS_SESSION_BUS_ADDRESS="$DBUS_SESSION_BUS_ADDRESS" --volume /run/user/$UID/bus:/run/user/$UID/bus --user $UID:$(id -g) test bash -c 'notify-send -t 10000 "hello I am $(hostname)"'
+   #+end_src
+
+   显示如下：
+   [[file:./images/screenshot-71.png]]
+
+   说明容器内确实可以访问host上的DBus user session daemon
+
+* 访问DBus system daemon
+只需要通过 =--volume /run/dbus/system_bus_socket:/run/dbus/system_bus_socket= 分享DBus system daemon即可。
