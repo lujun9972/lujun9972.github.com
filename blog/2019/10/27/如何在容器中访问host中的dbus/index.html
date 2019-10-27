@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何在容器中访问host中的DBus - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何在容器中访问host中的DBus</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org5d195be">访问DBus user session daemon</a>
+<ul>
+<li><a href="#org15b738a">判断DBus user session daemon的类型</a></li>
+<li><a href="#org64447a5">挂载DBus user session daemon</a>
+<ul>
+<li><a href="#orgdc36256">real unix socket</a></li>
+<li><a href="#org24981f7">abstract unix socket</a></li>
+</ul>
+</li>
+<li><a href="#org64855f2">测试挂载DBus user session daemon的效果</a></li>
+</ul>
+</li>
+<li><a href="#orgb0b66cc">访问DBus system daemon</a></li>
+</ul>
+</div>
+</div>
+<p>
+首先我们要知道，host上的DBus daemon有两个，一个是system daemon,一个是user session daemon。
+在大多数情况下，容器中访问的都是user session daemon，而不是system daemon.
+这两类daemon的访问方式也不太一样。
+</p>
+
+<div id="outline-container-org5d195be" class="outline-2">
+<h2 id="org5d195be">访问DBus user session daemon</h2>
+<div class="outline-text-2" id="text-org5d195be">
+<p>
+DBus user session daemon又分两种情况，一种是通过real unix socket文件来访问的，还有一类是通过 <a href="https://unix.stackexchange.com/questions/206386/what-does-the-symbol-denote-in-the-beginning-of-a-unix-domain-socket-path-in-l">abstract unix socket</a> 来访问的。
+</p>
+
+<p>
+其中 real unix socket 是真实存在于文件系统中的，可以直接通过 <code>-v</code> 挂载到容器中以供访问;而 abstract unix socket 是存在于一个所谓抽象命名空间内的，我们只能通过 <code>--net=host</code> 来允许容器访问到它。
+</p>
+</div>
+
+<div id="outline-container-org15b738a" class="outline-3">
+<h3 id="org15b738a">判断DBus user session daemon的类型</h3>
+<div class="outline-text-3" id="text-org15b738a">
+<p>
+我们可以通过查看 <code>${DBUS_SESSION_BUS_ADDRESS}</code> 的值来区分是使用real unix socket还是abstract unix socket.
+</p>
+
+<p>
+其中以 <code>unix:path</code> 开头则表示使用的是real unix socket，而已 <code>unix:abstract</code> 开头则表示使用abstract unix socket
+</p>
+
+<p>
+比如我本机上的结果为:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> ${<span class="org-variable-name">DBUS_SESSION_BUS_ADDRESS</span>}
+</pre>
+</div>
+
+<pre class="example">
+unix:path=/run/user/1000/bus
+
+</pre>
+
+<p>
+说明本机使用real unix socket,且文件路径为 <code>/run/user/1000/bus</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org64447a5" class="outline-3">
+<h3 id="org64447a5">挂载DBus user session daemon</h3>
+<div class="outline-text-3" id="text-org64447a5">
+</div>
+<div id="outline-container-orgdc36256" class="outline-4">
+<h4 id="orgdc36256">real unix socket</h4>
+<div class="outline-text-4" id="text-orgdc36256">
+<ol class="org-ol">
+<li><p>
+设置 <code>DBUS_SESSION_BUS_ADDRESS</code> 环境变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">--env <span class="org-variable-name">DBUS_SESSION_BUS_ADDRESS</span>=<span class="org-string">"$DBUS_SESSION_BUS_ADDRESS"</span>
+</pre>
+</div></li>
+
+<li><p>
+挂载socket文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">--volume /run/user/1000/bus:/run/user/1000/bus
+</pre>
+</div></li>
+
+<li><p>
+使用与host相同的用户运行镜像
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">--user $(<span class="org-sh-quoted-exec">id</span> -u):$(<span class="org-sh-quoted-exec">id</span> -g)
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org24981f7" class="outline-4">
+<h4 id="org24981f7">abstract unix socket</h4>
+<div class="outline-text-4" id="text-org24981f7">
+<ol class="org-ol">
+<li><p>
+设置 <code>DBUS_SESSION_BUS_ADDRESS</code> 环境变量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">--env <span class="org-variable-name">DBUS_SESSION_BUS_ADDRESS</span>=<span class="org-string">"$DBUS_SESSION_BUS_ADDRESS"</span>
+</pre>
+</div></li>
+
+<li><p>
+允许容器访问host网络域
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">--network=host
+</pre>
+</div></li>
+</ol>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org64855f2" class="outline-3">
+<h3 id="org64855f2">测试挂载DBus user session daemon的效果</h3>
+<div class="outline-text-3" id="text-org64855f2">
+<ol class="org-ol">
+<li><p>
+先准备一个测试镜像(假设名为test)，需要包含notify-send命令
+</p>
+<div class="org-src-container">
+<pre class="src src-dockerfile"><span class="org-keyword">FROM</span> <span class="org-dockerfile-image-name">ubuntu:18.04</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;aliyun&#30340;&#28304;</span>
+<span class="org-keyword">RUN</span> sed -i <span class="org-string">'s#http://archive.ubuntu.com/ubuntu#http://mirrors.aliyun.com/ubuntu#'</span> /etc/apt/sources.list
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23433;&#35013;notify-send&#21629;&#20196;&#22312;libnotify-bin&#21253;&#20013;</span>
+<span class="org-keyword">ENV</span> <span class="org-variable-name">DEBIAN_FRONTEND</span>=noninteractive
+<span class="org-keyword">RUN</span> apt update &amp;&amp; apt install -y libnotify-bin &amp;&amp; rm -rf /var/lib/apt/lists/* &amp;&amp; rm -rf /var/cache/apk/* &amp;&amp; apt-get autoremove
+</pre>
+</div></li>
+
+<li><p>
+启动容器
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">docker run --rm --env <span class="org-variable-name">DBUS_SESSION_BUS_ADDRESS</span>=<span class="org-string">"$DBUS_SESSION_BUS_ADDRESS"</span> --volume /run/user/$<span class="org-variable-name">UID</span>/bus:/run/user/$<span class="org-variable-name">UID</span>/bus --user $<span class="org-variable-name">UID</span>:$(<span class="org-sh-quoted-exec">id</span> -g) <span class="org-builtin">test</span> bash -c <span class="org-string">'notify-send -t 10000 "hello I am $(</span><span class="org-sh-quoted-exec">hostname</span><span class="org-string">)"'</span>
+</pre>
+</div>
+
+<p>
+显示如下：
+<img src="./images/screenshot-71.png" alt="screenshot-71.png" />
+</p>
+
+<p>
+说明容器内确实可以访问host上的DBus user session daemon
+</p></li>
+</ol>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb0b66cc" class="outline-2">
+<h2 id="orgb0b66cc">访问DBus system daemon</h2>
+<div class="outline-text-2" id="text-orgb0b66cc">
+<p>
+只需要通过 <code>--volume /run/dbus/system_bus_socket:/run/dbus/system_bus_socket</code> 分享DBus system daemon即可。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-10-27</span>
+    <span title="last modification date" class="post-info">2019-10-27</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-50b641d3-e05e-40e5-8004-3b5f8c420557">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
