@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何通过shell找到SDCard的设备路径 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何通过shell找到SDCard的设备路径</h1>
+<p>
+玩OrangePi经常要写镜像到SD Card中，每次都手工寻找SD Card在 <code>/dev/</code> 下的设备路径太麻烦，就想着用shell脚本来自动寻找。
+</p>
+
+<p>
+在网上找了一下，在 <a href="https://www.enricozini.org/blog/2019/himblick/locating-a-sd-card/">https://www.enricozini.org/blog/2019/himblick/locating-a-sd-card/</a> 上发现了一个Python脚本可以自动定位 SD Card的路径:
+</p>
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">locate</span>(<span class="org-keyword">self</span>) -&gt; Dict[<span class="org-builtin">str</span>, Any]:
+    <span class="org-doc">"""</span>
+<span class="org-doc">    Locate the SD card to work on</span>
+
+<span class="org-doc">    :returns: the lsblk data structure for the SD device</span>
+<span class="org-doc">    """</span>
+    <span class="org-variable-name">res</span> = subprocess.run([<span class="org-string">"lsblk"</span>, <span class="org-string">"-JOb"</span>], text=<span class="org-constant">True</span>, capture_output=<span class="org-constant">True</span>, check=<span class="org-constant">True</span>)
+    <span class="org-variable-name">res</span> = json.loads(res.stdout)
+    <span class="org-variable-name">devs</span> = []
+    <span class="org-keyword">for</span> dev <span class="org-keyword">in</span> res[<span class="org-string">"blockdevices"</span>]:
+        <span class="org-keyword">if</span> dev[<span class="org-string">"rm"</span>] <span class="org-keyword">and</span> <span class="org-keyword">not</span> dev[<span class="org-string">"ro"</span>] <span class="org-keyword">and</span> dev[<span class="org-string">"type"</span>] == <span class="org-string">"disk"</span> <span class="org-keyword">and</span> dev[<span class="org-string">"tran"</span>] == <span class="org-string">"usb"</span>:
+            devs.append(dev)
+            log.info(<span class="org-string">"Found %s: %s %s %s %s"</span>,
+                     dev[<span class="org-string">"path"</span>], dev[<span class="org-string">"vendor"</span>], dev[<span class="org-string">"model"</span>], dev[<span class="org-string">"serial"</span>],
+                     format_gb(<span class="org-builtin">int</span>(dev[<span class="org-string">"size"</span>])))
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> devs:
+        <span class="org-keyword">raise</span> Fail(<span class="org-string">"No candidate SD cards found"</span>)
+    <span class="org-keyword">if</span> <span class="org-builtin">len</span>(devs) &gt; 1:
+        <span class="org-keyword">raise</span> Fail(f<span class="org-string">"{len(devs)} SD cards found"</span>)
+    <span class="org-keyword">return</span> devs[0]
+</pre>
+</div>
+
+<p>
+大概看了一下，逻辑很简单，就是在 <code>lsblk</code> 的结构中找出 可移动的(rm)、非只读的(ro)、类型为磁盘而不是分区(type)、设备传输类型为usb(tran)的完整设备路径(path).
+(关于lsblk每一列的作用，可以用lsblk --help来查看)
+感觉完全可以用纯shell来实现，于是花了点时间把它改写成shell脚本
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">fail</span>()
+{
+    <span class="org-builtin">echo</span> <span class="org-string">"$@"</span> &gt;&amp;2
+    <span class="org-keyword">exit</span> 1
+}
+<span class="org-keyword">function</span> <span class="org-function-name">locating_sd_card</span>()
+{
+    <span class="org-variable-name">sd_cards</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">lsblk</span><span class="org-string"> -JOb |jq '.blockdevices[]|select((.rm) and (.ro|not) and (.type == "disk") and (.tran == "usb"))|.path')"</span>
+    <span class="org-variable-name">sd_cards_count</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">echo</span><span class="org-string"> "${sd_cards}"|wc -l)"</span>
+    <span class="org-keyword">if</span> [[ ${<span class="org-variable-name">sd_cards_count</span>} -ne 1 ]];<span class="org-keyword">then</span>
+        fail <span class="org-string">"${sd_cards_count} SD CARDS Found!"</span>
+    <span class="org-keyword">else</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"${sd_cards}"</span>
+    <span class="org-keyword">fi</span>
+}
+</pre>
+</div>
+
+<p>
+再加上卸载分区和写镜像到SD卡的函数，就可以一键重置OrangePi了
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">umount_sd_card</span>()
+{
+    lsblk -JOb |jq <span class="org-string">'.blockdevices[]|select((.rm) and (.ro|not) and (.type == "disk") and (.tran == "usb"))|.children[].mountpoint'</span>|grep -v <span class="org-string">'[SWAP]'</span>|xargs umount
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">write_image</span>()
+{
+    <span class="org-variable-name">image_file</span>=<span class="org-string">"$1"</span>
+    <span class="org-variable-name">sd_card</span>=$(<span class="org-sh-quoted-exec">locating_sd_card</span>)
+    umount_sd_card
+    dd <span class="org-variable-name">if</span>=<span class="org-string">"${image_file}"</span> <span class="org-variable-name">of</span>=<span class="org-string">"${sd_card}"</span> <span class="org-variable-name">bs</span>=1M
+}
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-12-01</span>
+    <span title="last modification date" class="post-info">2019-12-01</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-202c991e-3362-47fc-aad7-0c177da59f77">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
