@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用Toolbox构建容器中的开发环境(无需root权限) - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用Toolbox构建容器中的开发环境(无需root权限)</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgbde9f28">安装Toolbox</a></li>
+<li><a href="#org9c0e18d">为当前用户创建用户命名空间的映射</a></li>
+<li><a href="#org6513dae">安装 Flatpak</a></li>
+<li><a href="#orgde6bb00">创建容器</a></li>
+<li><a href="#orgdc6206f">进入容器进行环境配置</a></li>
+<li><a href="#org43266c9">退出容器</a></li>
+<li><a href="#orgaa300e6">其他操作</a></li>
+</ul>
+</div>
+</div>
+<p>
+Toolbox允许你基于容器创建相互独立的开发环境，它与Docker不同之处在于，它的底层通过podman来实现(因此无需root权限),而且它会尝试将容器与现有的主机环境无缝整合起来。
+</p>
+
+<div id="outline-container-orgbde9f28" class="outline-2">
+<h2 id="orgbde9f28">安装Toolbox</h2>
+<div class="outline-text-2" id="text-orgbde9f28">
+<p>
+ArchLinux上可以通过AUR来安装Toolbox
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">yaourt -S toolbox
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9c0e18d" class="outline-2">
+<h2 id="org9c0e18d">为当前用户创建用户命名空间的映射</h2>
+<div class="outline-text-2" id="text-org9c0e18d">
+<p>
+podman 底层使用了Linux的用户命名空间来创建非root容器，因此我们还需要为当前用户创建用户命名空间的映射.
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo touch /etc/subuid
+sudo usermod --add-subuids 10000-65535 $(<span class="org-sh-quoted-exec">whoami</span>)
+sudo touch /etc/subgid
+sudo usermod --add-subgids 10000-65535 $(<span class="org-sh-quoted-exec">whoami</span>)
+</pre>
+</div>
+
+<p>
+这个时候你若执行 <code>toolbox create</code> 尝试创建容器时会得到错误提示: <code>toolbox: failed to call org.freedesktop.Flatpak.SessionHelper.RequestSession</code>
+</p>
+
+<p>
+该错误信息告诉我们 <code>toolbox</code> 还依赖于 <code>Flatpak</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6513dae" class="outline-2">
+<h2 id="org6513dae">安装 Flatpak</h2>
+<div class="outline-text-2" id="text-org6513dae">
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S flatpak
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgde6bb00" class="outline-2">
+<h2 id="orgde6bb00">创建容器</h2>
+<div class="outline-text-2" id="text-orgde6bb00">
+<p>
+执行 <code>toolbox create --container 容器名</code> 会下载一个 OCI 镜像(默认为Fedora)，并据此创建一个容器
+</p>
+<pre class="example">
+lujun9972:~/ $ toolbox create --container dev1
+No toolbox containers found. Create now? [y/N] y
+Image required to create toolbox container.
+Download registry.fedoraproject.org/f30/fedora-toolbox:30 (500MB)? [y/N]: y
+Created container: dev1  
+Enter with: toolbox enter --container dev1
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgdc6206f" class="outline-2">
+<h2 id="orgdc6206f">进入容器进行环境配置</h2>
+<div class="outline-text-2" id="text-orgdc6206f">
+<p>
+执行 <code>toolbox enter --container 容器名</code> 进入容器中，这时你会发现之前安装的许多软件都不见了，但是$HOME目录没有变化。
+</p>
+<pre class="example">
+lujun9972:~/ $ emacs
+bash: emacs: command not found
+lujun9972:~/ $ ls |head
+ 1.txt
+ 2.mp4
+'BOINC Manager-lujun9972'
+ Child
+ CodeLibrary
+ Desktop
+ Documents
+ Downloads
+ EAGET
+</pre>
+
+<p>
+你可以使用 dnf 来进行软件安装
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">lujun9972:~/ $ sudo dnf install gvim
+
+We trust you have received the usual lecture from the local System
+Administrator. It usually boils down to these three things:
+
+    <span class="org-comment-delimiter">#</span><span class="org-comment">1) Respect the privacy of others.</span>
+    <span class="org-comment-delimiter">#</span><span class="org-comment">2) Think before you type.</span>
+    <span class="org-comment-delimiter">#</span><span class="org-comment">3) With great power comes great responsibility.</span>
+
+No read/execute access<span class="org-keyword"> in</span> current directory, moving to /
+Fedora Modular 30 - x86_64                    527 kB/s | 2.7 MB     00:05    
+Fedora Modular 30 - x86_64 - Updates           27 kB/s | 3.3 MB     02:04    
+Fedora 30 - x86_64 - Updates                  1.5 MB/s |  22 MB     00:14    
+Fedora 30 - x86_64                            1.7 MB/s |  70 MB     00:40    
+Dependencies resolved.
+</pre>
+</div>
+
+<p>
+讲真，在Archlinux中使用 dnf，感觉真是怪怪的....
+</p>
+</div>
+</div>
+
+<div id="outline-container-org43266c9" class="outline-2">
+<h2 id="org43266c9">退出容器</h2>
+<div class="outline-text-2" id="text-org43266c9">
+<p>
+退出容器就很简单了，直接执行 <code>exit</code> 就行了
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgaa300e6" class="outline-2">
+<h2 id="orgaa300e6">其他操作</h2>
+<div class="outline-text-2" id="text-orgaa300e6">
+<dl class="org-dl">
+<dt>toolbox list</dt><dd>列出本机的容器和镜像</dd>
+<dt>toolbox rm 容器名</dt><dd>删除指定容器</dd>
+<dt>toolbox rmi 镜像名</dt><dd>删除指定镜像</dd>
+<dt>toolbox help</dt><dd>帮助信息</dd>
+</dl>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-12-01</span>
+    <span title="last modification date" class="post-info">2019-12-01</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-d97facd3-4a3c-41b2-ad0b-d4e113a3d12f">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
