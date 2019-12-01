@@ -1,0 +1,95 @@
+#+TITLE: 使用Toolbox构建容器中的开发环境(无需root权限)
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-12-01 日 13:53]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Toolbox允许你基于容器创建相互独立的开发环境，它与Docker不同之处在于，它的底层通过podman来实现(因此无需root权限),而且它会尝试将容器与现有的主机环境无缝整合起来。
+
+* 安装Toolbox
+
+ArchLinux上可以通过AUR来安装Toolbox
+#+begin_src shell
+  yaourt -S toolbox
+#+end_src
+
+* 为当前用户创建用户命名空间的映射
+
+podman 底层使用了Linux的用户命名空间来创建非root容器，因此我们还需要为当前用户创建用户命名空间的映射.
+#+begin_src shell
+  sudo touch /etc/subuid
+  sudo usermod --add-subuids 10000-65535 $(whoami)
+  sudo touch /etc/subgid
+  sudo usermod --add-subgids 10000-65535 $(whoami)
+#+end_src
+
+这个时候你若执行 =toolbox create= 尝试创建容器时会得到错误提示: =toolbox: failed to call org.freedesktop.Flatpak.SessionHelper.RequestSession=
+
+该错误信息告诉我们 =toolbox= 还依赖于 =Flatpak=
+
+* 安装 Flatpak
+#+begin_src shell
+  sudo pacman -S flatpak
+#+end_src
+
+* 创建容器
+
+执行 =toolbox create --container 容器名= 会下载一个 OCI 镜像(默认为Fedora)，并据此创建一个容器
+#+begin_example
+  lujun9972:~/ $ toolbox create --container dev1
+  No toolbox containers found. Create now? [y/N] y
+  Image required to create toolbox container.
+  Download registry.fedoraproject.org/f30/fedora-toolbox:30 (500MB)? [y/N]: y
+  Created container: dev1  
+  Enter with: toolbox enter --container dev1
+#+end_example
+
+* 进入容器进行环境配置
+执行 =toolbox enter --container 容器名= 进入容器中，这时你会发现之前安装的许多软件都不见了，但是$HOME目录没有变化。
+#+begin_example
+  lujun9972:~/ $ emacs
+  bash: emacs: command not found
+  lujun9972:~/ $ ls |head
+   1.txt
+   2.mp4
+  'BOINC Manager-lujun9972'
+   Child
+   CodeLibrary
+   Desktop
+   Documents
+   Downloads
+   EAGET
+#+end_example
+
+你可以使用 dnf 来进行软件安装
+#+begin_src shell
+  lujun9972:~/ $ sudo dnf install gvim
+
+  We trust you have received the usual lecture from the local System
+  Administrator. It usually boils down to these three things:
+
+      #1) Respect the privacy of others.
+      #2) Think before you type.
+      #3) With great power comes great responsibility.
+
+  No read/execute access in current directory, moving to /
+  Fedora Modular 30 - x86_64                    527 kB/s | 2.7 MB     00:05    
+  Fedora Modular 30 - x86_64 - Updates           27 kB/s | 3.3 MB     02:04    
+  Fedora 30 - x86_64 - Updates                  1.5 MB/s |  22 MB     00:14    
+  Fedora 30 - x86_64                            1.7 MB/s |  70 MB     00:40    
+  Dependencies resolved.
+#+end_src
+
+讲真，在Archlinux中使用 dnf，感觉真是怪怪的....
+
+* 退出容器
+退出容器就很简单了，直接执行 =exit= 就行了
+
+* 其他操作
+
++ toolbox list :: 列出本机的容器和镜像
++ toolbox rm 容器名 :: 删除指定容器
++ toolbox rmi 镜像名 :: 删除指定镜像
++ toolbox help :: 帮助信息
