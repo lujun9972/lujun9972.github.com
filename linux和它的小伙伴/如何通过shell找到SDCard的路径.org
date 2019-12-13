@@ -1,0 +1,70 @@
+#+TITLE: 如何通过shell找到SDCard的设备路径
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-12-01 日 20:05]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+玩OrangePi经常要写镜像到SD Card中，每次都手工寻找SD Card在 =/dev/= 下的设备路径太麻烦，就想着用shell脚本来自动寻找。
+
+在网上找了一下，在 https://www.enricozini.org/blog/2019/himblick/locating-a-sd-card/ 上发现了一个Python脚本可以自动定位 SD Card的路径:
+#+begin_src python
+  def locate(self) -> Dict[str, Any]:
+      """
+      Locate the SD card to work on
+
+      :returns: the lsblk data structure for the SD device
+      """
+      res = subprocess.run(["lsblk", "-JOb"], text=True, capture_output=True, check=True)
+      res = json.loads(res.stdout)
+      devs = []
+      for dev in res["blockdevices"]:
+          if dev["rm"] and not dev["ro"] and dev["type"] == "disk" and dev["tran"] == "usb":
+              devs.append(dev)
+              log.info("Found %s: %s %s %s %s",
+                       dev["path"], dev["vendor"], dev["model"], dev["serial"],
+                       format_gb(int(dev["size"])))
+      if not devs:
+          raise Fail("No candidate SD cards found")
+      if len(devs) > 1:
+          raise Fail(f"{len(devs)} SD cards found")
+      return devs[0]
+#+end_src
+
+大概看了一下，逻辑很简单，就是在 =lsblk= 的结构中找出 可移动的(rm)、非只读的(ro)、类型为磁盘而不是分区(type)、设备传输类型为usb(tran)的完整设备路径(path).
+(关于lsblk每一列的作用，可以用lsblk --help来查看)
+感觉完全可以用纯shell来实现，于是花了点时间把它改写成shell脚本
+#+begin_src shell
+  function fail()
+  {
+      echo "$@" >&2
+      exit 1
+  }
+  function locating_sd_card()
+  {
+      sd_cards="$(lsblk -JOb |jq '.blockdevices[]|select((.rm) and (.ro|not) and (.type == "disk") and (.tran == "usb"))|.path')"
+      sd_cards_count="$(echo "${sd_cards}"|wc -l)"
+      if [[ ${sd_cards_count} -ne 1 ]];then
+          fail "${sd_cards_count} SD CARDS Found!"
+      else
+          echo "${sd_cards}"
+      fi
+  }
+#+end_src
+
+再加上卸载分区和写镜像到SD卡的函数，就可以一键重置OrangePi了
+#+begin_src shell
+  function umount_sd_card()
+  {
+      lsblk -JOb |jq '.blockdevices[]|select((.rm) and (.ro|not) and (.type == "disk") and (.tran == "usb"))|.children[].mountpoint'|grep -v '[SWAP]'|xargs umount
+  }
+
+  function write_image()
+  {
+      image_file="$1"
+      sd_card=$(locating_sd_card)
+      umount_sd_card
+      dd if="${image_file}" of="${sd_card}" bs=1M
+  }
+#+end_src

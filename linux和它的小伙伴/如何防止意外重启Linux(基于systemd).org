@@ -1,0 +1,87 @@
+#+TITLE: 如何防止意外重启Linux(基于systemd)
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2019-11-30 六 21:55]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://access.redhat.com/solutions/1580343 看到的，觉得很有趣，记录一下。
+
+说是有一个 RedHat 的客户提出需求:为了防止意外重启Linux，要求root用户明确地执行某条命令后才允许对Linux进程重启操作。
+
+我们都知道systemd linux中的reboot是基于 =reboot.target= 来实现的，因此最直观的做法应该就是 mask 掉这个target了.
+#+begin_example
+  lujun9972:~/ $ sudo systemctl mask reboot.target
+  [sudo] lujun9972 的密码：
+  Created symlink /etc/systemd/system/reboot.target → /dev/null.
+  lujun9972:~/ $ sudo systemctl reboot
+  Failed to reboot system via logind: Access denied
+  Failed to start reboot.target: Unit reboot.target is masked.
+  lujun9972:~/ $ reboot now
+  Failed to write reboot parameter file: 权限不够
+  lujun9972:~/ $ sudo reboot now
+  Failed to talk to init daemon.
+#+end_example
+
+然后 RedHat 工程师玩出了另一种花样(下面内容摘自于https://access.redhat.com/solutions/1580343):
+
+1. 创建一个 unit 文件 =/etc/systemd/system/reboot-guard.service=
+   #+begin_src conf
+     [Unit]
+     Description=Reboot Guard
+     [Service]
+     ExecStart=/bin/true
+     [Install]
+     RequiredBy=shutdown.target
+   #+end_src
+   这一步是核心操作了，由于 =/bin/true= 执行后立即停止，因此这个被 =shutdown.target= 依赖的单元被显示停止，那么 =shutdown.target= 单元本身也就跟着立即停止了。
+2. 再创建一个 unit 文件 =/etc/systemd/system/start-reboot-guard.service=
+   #+begin_src conf
+     [Unit]
+     Description=Start Reboot Guard
+     [Service]
+     ExecStart=/bin/systemctl enable reboot-guard
+     [Install]
+     WantedBy=multi-user.target
+   #+end_src
+   这一步保证Linux启动后自动enable reboot-guard 服务
+3. 执行 =systemctl daemon-reload= 重新加载配置
+4. 执行 =systemctl enable reboot-guard start-reboot-guard= 启用新服务
+5. 再尝试重启就会失败了
+   #+begin_example
+     [root]# systemctl reboot
+     Failed to issue method call: Transaction contains conflicting jobs 'stop' and 'start' for reboot.target. Probably contradicting requirement dependencies configured.
+     [root]# shutdown -h now
+     Failed to issue method call: Transaction contains conflicting jobs 'stop' and 'start' for poweroff.target. Probably contradicting requirement dependencies configured.
+
+     Broadcast message from root@example.com on pts/1 (Mon 2015-08-17 13:37:10 EDT):
+
+     The system is going down for power-off NOW!
+   #+end_example
+6. 如果需要重启，那么只需要先执行 =systemctl disable reboot-guard= 禁止 reboot-guard 命令即可
+   #+begin_example
+     [root]# systemctl poweroff
+     Failed to issue method call: Transaction contains conflicting jobs 'stop' and 'start' for poweroff.target. Probably contradicting requirement dependencies configured.
+     [root]# systemctl disable reboot-guard.service 
+     rm '/etc/systemd/system/shutdown.target.requires/reboot-guard.service'
+     [root]# systemctl poweroff
+     Broadcast message from root@example.com on pts/1 (Mon 2015-08-17 13:37:50 EDT):
+
+     The system is going down for system halt NOW!
+     [  OK  ] Started Show Plymouth Power Off Screen.
+     [  OK  ] Started Restore /run/initramfs.
+     [  OK  ] Stopped LSB: Bring up/down networking.
+              Stopping Network Manager...
+     [  OK  ] Stopped Network Manager.
+     ...
+     [  OK  ] Reached target Unmount All Filesystems.
+     [  OK  ] Stopped target Local File Systems (Pre).
+              Stopping Remount Root and Kernel File Systems...
+     [  OK  ] Stopped Remount Root and Kernel File Systems.
+     [  OK  ] Reached target Shutdown.
+     Cannot finalize remaining file systems and devices, giving up.
+     dracut Warning: Killing all remaining processes
+     Powering off.
+     [ 4653.288570] Power down.
+   #+end_example
