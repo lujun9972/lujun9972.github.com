@@ -1,0 +1,65 @@
+#+TITLE: 如何为major-mode定义自己的flyspell模式
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-01-18 六 20:56]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+flyspell 可以为我们提供实时的命令拼写检查。但是Emacs的各种major-mode都有各自的语法规则，flyspell 可能会错误地把语法关键字当成是单词进行检测，这时就需要我们告诉 flyspell 哪些内容是需要检查的，那些内容是不需要检查的。
+
+通过阅读 flyspell 的源代码，可以看出它是通过 =flyspell-generic-check-word-predicate= 来判断是否需要对单词进行拼写检查的。这个变量的 doc-string 是这样描述的
+#+begin_example
+    Automatically becomes buffer-local when set.
+    This variable may be risky if used as a file-local variable.
+
+  Documentation:
+  Function providing per-mode customization over which words are flyspelled.
+  Returns t to continue checking, nil otherwise.
+  Flyspell mode sets this variable to whatever is the ‘flyspell-mode-predicate’
+  property of the major mode name.
+#+end_example
+
+从中可以看出，我们只需要为写好一个判断函数，判断当前位置的单词是否需要进行拼写检查，然后将这个判断函数设置为某个 =major-mode= 的 =flyspell-mode-predicate= 就行了。
+
+这里有个诀窍，判断函数一般可以通过text-property的face来判断是否需要进行拼写检查。
+比如 flyspell-prog-mode 就是通过text-property的face来判断哪些内容是属于字符串或注释的，像下面这样：
+
+#+begin_src emacs-lisp
+  (defvar flyspell-prog-text-faces
+    '(font-lock-string-face font-lock-comment-face font-lock-doc-face)
+    "Faces corresponding to text in programming-mode buffers.")
+
+  (defun flyspell-generic-progmode-verify ()
+    "Used for `flyspell-generic-check-word-predicate' in programming modes."
+    ;; (point) is next char after the word. Must check one char before.
+    (let ((f (get-text-property (- (point) 1) 'face)))
+      (memq f flyspell-prog-text-faces)))
+
+  ;;;###autoload
+  (defun flyspell-prog-mode ()
+    "Turn on `flyspell-mode' for comments and strings."
+    (interactive)
+    (setq flyspell-generic-check-word-predicate
+          #'flyspell-generic-progmode-verify)
+    (setq-local flyspell--prev-meta-tab-binding
+                (or (local-key-binding "\M-\t" t)
+                    (global-key-binding "\M-\t" t)))
+    (flyspell-mode 1)
+    (run-hooks 'flyspell-prog-mode-hook))
+#+end_src
+
+类似的，我们也可以为其他 major-mode 定义哪些内容需要进行单词拼写检测。比如下面的代码可以忽略对 outline 大纲标题的单词拼写
+#+begin_src emacs-lisp
+  (defvar flyspell-outline-ignore-faces
+    '(outline-1 outline-2 outline-3 outline-4 outline-5 outline-5 outline-7 outline-8)
+    "Faces corresponding to text in outline-mode buffers.")
+
+  (defun flyspell-outline-verify ()
+    "Used for `flyspell-generic-check-word-predicate' in outline modes."
+    ;; (point) is next char after the word. Must check one char before.
+    (let ((f (get-text-property (- (point) 1) 'face)))
+      (not (memq f flyspell-outline-ignore-faces))))
+
+  (put 'outline-mode 'flyspell-mode-predicate 'web-mode-flyspell-verify)
+#+end_src
