@@ -1,0 +1,115 @@
+#+TITLE: 使用shell切换触摸板的方法
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-01-28 二 19:45]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们可以使用 =xinput= 来管理输入设备。
+
+首先我们使用 =xinput list= 来获取输入设备的id号：
+#+begin_src shell :results org
+  xinput list
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+⎡ Virtual core pointer                    	id=2	[master pointer  (3)]
+⎜   ↳ Virtual core XTEST pointer              	id=4	[slave  pointer  (2)]
+⎜   ↳ YSPRINGTECH USB OPTICAL MOUSE           	id=10	[slave  pointer  (2)]
+⎜   ↳ SynPS/2 Synaptics TouchPad              	id=13	[slave  pointer  (2)]
+⎜   ↳ TPPS/2 IBM TrackPoint                   	id=14	[slave  pointer  (2)]
+⎣ Virtual core keyboard                   	id=3	[master keyboard (2)]
+    ↳ Virtual core XTEST keyboard             	id=5	[slave  keyboard (3)]
+    ↳ Power Button                            	id=6	[slave  keyboard (3)]
+    ↳ Video Bus                               	id=7	[slave  keyboard (3)]
+    ↳ Video Bus                               	id=8	[slave  keyboard (3)]
+    ↳ Sleep Button                            	id=9	[slave  keyboard (3)]
+    ↳ Integrated Camera: Integrated C         	id=11	[slave  keyboard (3)]
+    ↳ AT Translated Set 2 keyboard            	id=12	[slave  keyboard (3)]
+    ↳ ThinkPad Extra Buttons                  	id=15	[slave  keyboard (3)]
+#+end_src
+
+触摸板的关键字是 =TouchPad=,因此我们可以通过下面命令来获取触摸板的id号:
+#+begin_src shell :results org
+  xinput list | grep -iEo 'touchpad.*id=[0-9]{1,2}' | grep -Eo '[0-9]{1,2}'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+13
+#+end_src
+
+下一步我们通过这个id号查看对应设备的状态:
+#+begin_src shell :results org
+  xinput list-props 13
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Device 'SynPS/2 Synaptics TouchPad':
+	Device Enabled (162):	1
+	Coordinate Transformation Matrix (164):	1.000000, 0.000000, 0.000000, 0.000000, 1.000000, 0.000000, 0.000000, 0.000000, 1.000000
+	libinput Tapping Enabled (315):	0
+	libinput Tapping Enabled Default (316):	0
+	libinput Tapping Drag Enabled (317):	1
+	libinput Tapping Drag Enabled Default (318):	1
+	libinput Tapping Drag Lock Enabled (319):	0
+	libinput Tapping Drag Lock Enabled Default (320):	0
+	libinput Tapping Button Mapping Enabled (321):	1, 0
+	libinput Tapping Button Mapping Default (322):	1, 0
+	libinput Natural Scrolling Enabled (297):	0
+	libinput Natural Scrolling Enabled Default (298):	0
+	libinput Disable While Typing Enabled (323):	1
+	libinput Disable While Typing Enabled Default (324):	1
+	libinput Scroll Methods Available (299):	1, 1, 0
+	libinput Scroll Method Enabled (300):	1, 0, 0
+	libinput Scroll Method Enabled Default (301):	1, 0, 0
+	libinput Accel Speed (306):	0.000000
+	libinput Accel Speed Default (307):	0.000000
+	libinput Left Handed Enabled (311):	0
+	libinput Left Handed Enabled Default (312):	0
+	libinput Send Events Modes Available (282):	1, 1
+	libinput Send Events Mode Enabled (283):	0, 0
+	libinput Send Events Mode Enabled Default (284):	0, 0
+	Device Node (285):	"/dev/input/event10"
+	Device Product ID (286):	2, 7
+	libinput Drag Lock Buttons (313):	<no items>
+	libinput Horizontal Scroll Enabled (314):	1
+#+end_src
+
+这里 =Device Enabled (162):	1= 中的 =1= 就是状态. 所以我们可以通过下面命令来获取状态
+#+begin_src shell :results org
+  xinput list-props 13|grep 'Device Enabled'|awk '{print $4}'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+1
+#+end_src
+
+这里的 =1= 表示设备被启用， =0= 表示设备被禁用。
+
+获取了设备状态后，我们就可以通过 =xinput disable $ID= 或 =xinput enable $ID= 来禁用或启用设备。
+
+最终得到的接本如下:
+
+#+begin_src shell :tangle "~/bin/toggleTouchpad.sh"
+  #!/bin/bash
+
+  declare -i ID
+  ID=$(xinput list | grep -iEo 'Touchpad.*id=[0-9]{1,2}' | grep -Eo '[0-9]{1,2}')
+  declare -i STATE
+  STATE=$(xinput list-props $ID|grep 'Device Enabled'|awk '{print $4}')
+  if [ $STATE -eq 1 ]
+  then
+      xinput disable $ID
+      echo "Touchpad disabled."
+      # notify-send -a 'Touchpad' 'Disabled' -i /usr/share/icons/Adwaita/48x48/devices/input-touchpad*.png
+  else
+      xinput enable $ID
+      echo "Touchpad enabled."
+      # notify-send -a 'Touchpad' 'Enabled' -i /usr/share/icons/Adwaita/48x48/devices/input-touchpad*.png
+  fi
+#+end_src
