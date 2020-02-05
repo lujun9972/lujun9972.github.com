@@ -1,0 +1,80 @@
+#+TITLE: 如何拦截C-g
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2019-12-19 四 20:37]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* C-g的本质
+关于 =C-g= 在 [[https://www.gnu.org/software/emacs/manual/html_node/emacs/Quitting.html][Emacs Manual中的Quitting and Aborting]] 有一段说明
+
+#+begin_example
+  C-g works by setting the variable quit-flag to t the instant C-g is typed; Emacs Lisp checks this variable frequently, and quits if it is non-nil. C-g is only actually executed as a command if you type it while Emacs is waiting for input. In that case, the command it runs is keyboard-quit. 
+#+end_example
+
+也就是说, =C-g= 有两种工作模式:
+
+当Emacs在等待用户输入时, =C-g= 实际上是调用了 =keyboard-quit= 命令，关于这个命令的说明很简单，它仅仅是抛出一个quit信号而已:
+#+begin_example
+  Signal a ‘quit’ condition.
+  During execution of Lisp code, this character causes a quit directly.
+  At top-level, as an editor command, this simply beeps.
+#+end_example
+
+在其他情况下, =C-g= 设置 =quit-flag= 为 =t=, Emacs不断检测该变量，当检测到 =quit-flag= 不为 =nil= 时，则会退出正在执行的elisp代码。
+关于 =quit-flag= 的说明如下:
+#+begin_example
+  Non-nil causes ‘eval’ to abort, unless ‘inhibit-quit’ is non-nil.
+  If the value is t, that means do an ordinary quit.
+  If the value equals ‘throw-on-input’, that means quit by throwing
+  to the tag specified in ‘throw-on-input’; it’s for handling ‘while-no-input’.
+  Typing C-g sets ‘quit-flag’ to t, regardless of ‘inhibit-quit’,
+  but ‘inhibit-quit’ non-nil prevents anything from taking notice of that.
+#+end_example
+
+* 拦截C-g
+知道 =C-g= 会做什么，我们就知道如何对 =C-g= 进行拦截了。
+
+如果我们拦截等待输入时的 =C-g=, 那么只需要忽略信号quit即可.我们可以使用 =condition-case= 捕获信息:
+
+#+begin_src emacs-lisp
+  (condition-case sig
+      (read-string "请输入字符串，按C-g退出")
+    (quit (message "收到信号(%s),退出" sig)))
+#+end_src
+
+#+RESULTS:
+: 收到信号((quit)),退出
+
+若是不允许通过 =C-g= 中断某段elisp代码，则可以通过设置 =inhibit-quit= 来进行:
+
+#+begin_src emacs-lisp
+  (let ((inhibit-quit t))
+    (while t)
+    (setq quit-flag nil))
+#+end_src
+
+执行上面语句后你再按 =C-g= 会发现无法退出死循环(要想退出这个死循环需要快速按下三次 =C-g=)
+
+** with-local-quit
+
+Emacs预定义了一个 =with-local-quit= 宏，可以限制 =C-g= 的退出范围。关于它的描述如下：
+
+#+begin_example
+  Execute BODY, allowing quits to terminate BODY but not escape further.
+  When a quit terminates BODY, ‘with-local-quit’ returns nil but
+  requests another quit.  That quit will be processed as soon as quitting
+  is allowed once again.  (Immediately, if ‘inhibit-quit’ is nil.)
+#+end_example
+
+注意它的最后一句说明: *That quit will be processed as soon as quitting is allowed once again.  (Immediately, if ‘inhibit-quit’ is nil.)*
+
+因此我们一般这么用:
+#+begin_src emacs-lisp
+  (let ((inhibit-quit t))
+    (with-local-quit
+      ;; BODYS
+      )
+    (setq quit-flag nil))
+#+end_src
