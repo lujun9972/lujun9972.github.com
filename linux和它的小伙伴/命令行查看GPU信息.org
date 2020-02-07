@@ -1,0 +1,87 @@
+#+TITLE: 命令行查看GPU信息
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-02-07 五 10:48]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 使用lspci
+
+[[https://en.wikipedia.org/wiki/Conventional_PCI][Peripheral Component Interconnect(PCI)]] 提供了协议来查询外设信息，当然也包括显卡信息了。
+
+在[[https://pci-ids.ucw.cz/][PCI ID仓库]] 中记录了所有已知PCI ID对应的外设
+
+在Linux上可以使用lspci命令来查看PCI设备的信息
+
+#+begin_src shell :results org
+  lspci -v |sed -n '/VGA\|3D/,/^$/p'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+00:02.0 VGA compatible controller: Intel Corporation 3rd Gen Core processor Graphics Controller (rev 09) (prog-if 00 [VGA controller])
+	Subsystem: Lenovo 3rd Gen Core processor Graphics Controller
+	Flags: bus master, fast devsel, latency 0, IRQ 35
+	Memory at f1000000 (64-bit, non-prefetchable) [size=4M]
+	Memory at e0000000 (64-bit, prefetchable) [size=256M]
+	I/O ports at 6000 [size=64]
+	[virtual] Expansion ROM at 000c0000 [disabled] [size=128K]
+	Capabilities: <access denied>
+	Kernel driver in use: i915
+	Kernel modules: i915
+
+01:00.0 3D controller: NVIDIA Corporation GF117M [GeForce 610M/710M/810M/820M / GT 620M/625M/630M/720M] (rev a1)
+	Subsystem: Lenovo NVS 5200M
+	Flags: bus master, fast devsel, latency 0, IRQ 36
+	Memory at f0000000 (32-bit, non-prefetchable) [size=16M]
+	Memory at c0000000 (64-bit, prefetchable) [size=256M]
+	Memory at d0000000 (64-bit, prefetchable) [size=32M]
+	I/O ports at 5000 [size=128]
+	Expansion ROM at <ignored> [disabled]
+	Capabilities: <access denied>
+	Kernel driver in use: nouveau
+	Kernel modules: nouveau
+
+#+end_src
+
+如果没有结果，那可能需要更新一下本地的PCI数据库备份，运行下面命令进行更新
+#+begin_src shell :dir /sudo::
+  sudo update-pciids
+#+end_src
+
+* 使用lshw
+lshw会显示所有硬件设备的信息，而不仅仅是PCI设备的信息
+
+lshw将硬件分成很多类别，我们可以使用 =-C= 选项指定要显示的设备类型:
+#+begin_src shell :results org
+  lshw -C display
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  ,*-display
+       description: 3D controller
+       product: GF117M [GeForce 610M/710M/810M/820M / GT 620M/625M/630M/720M]
+       vendor: NVIDIA Corporation
+       physical id: 0
+       bus info: pci@0000:01:00.0
+       version: a1
+       width: 64 bits
+       clock: 33MHz
+       capabilities: bus_master cap_list
+       configuration: driver=nouveau latency=0
+       resources: irq:36 memory:f0000000-f0ffffff memory:c0000000-cfffffff memory:d0000000-d1ffffff ioport:5000(size=128)
+  ,*-display
+       description: VGA compatible controller
+       product: 3rd Gen Core processor Graphics Controller
+       vendor: Intel Corporation
+       physical id: 2
+       bus info: pci@0000:00:02.0
+       version: 09
+       width: 64 bits
+       clock: 33MHz
+       capabilities: vga_controller bus_master cap_list rom
+       configuration: driver=i915 latency=0
+       resources: irq:35 memory:f1000000-f13fffff memory:e0000000-efffffff ioport:6000(size=64) memory:c0000-dffff
+#+end_src
