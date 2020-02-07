@@ -1,0 +1,428 @@
+#+TITLE: 使用AIDE进行侵入检查
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-02-07 五 17:43]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* AIDE是什么
+[[https://aide.github.io/][AIDE]](Advanced Intrusion Detection Environment) 通过校验文件和目录的完整性来检测系统是否被入侵。
+
+它有如下特性:
+
++ 支持多种指纹算法: md5, sha1, rmd160, tiger, crc32, sha256, sha512, whirlpool等 
++ 支持检查各种属性： 文件类型, Inode, Uid, Gid, 权限, 链接名, 文件大小, Mtime, Ctime, Atime等.
++ 支持 SELinux, XAttrs, Posix ACL 以及扩展文件系统属性.
++ 支持通过正则表达式匹配要校验或者不要校验的文件和目录
++ 支持邮件通知
+
+* 安装AIDE
+#+begin_src shell :dir /sudo:: :results org
+  sudo pacman -S aide --noconfirm
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (2) mhash-0.9.9.9-4  aide-0.16.2-2
+
+Total Download Size:   0.18 MiB
+Total Installed Size:  0.44 MiB
+
+:: Proceed with installation? [Y/n] 
+:: Retrieving packages...
+ mhash-0.9.9.9-4-...     0.0   B  0.00   B/s 00:00 [----------------------]   0% mhash-0.9.9.9-4-...    39.4 KiB  65.6 KiB/s 00:00 [########--------------]  40% mhash-0.9.9.9-4-...    96.8 KiB   315 KiB/s 00:00 [######################] 100%
+ aide-0.16.2-2-x86_64    0.0   B  0.00   B/s 00:00 [----------------------]   0% aide-0.16.2-2-x86_64   89.5 KiB   344 KiB/s 00:00 [######################] 100%
+(0/2) checking keys in keyring                     [----------------------]   0%(1/2) checking keys in keyring                     [###########-----------]  50%(2/2) checking keys in keyring                     [######################] 100%
+(0/2) checking package integrity                   [----------------------]   0%(1/2) checking package integrity                   [###########-----------]  51%(2/2) checking package integrity                   [######################] 100%
+(0/2) loading package files                        [----------------------]   0%(1/2) loading package files                        [###########-----------]  51%(2/2) loading package files                        [######################] 100%
+(0/2) checking for file conflicts                  [----------------------]   0%(1/2) checking for file conflicts                  [###########-----------]  50%(2/2) checking for file conflicts                  [######################] 100%
+(0/2) checking available disk space                [----------------------]   0%(1/2) checking available disk space                [###########-----------]  50%(2/2) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/2) installing mhash                             [----------------------]   0%(1/2) installing mhash                             [######################] 100%
+(2/2) installing aide                              [----------------------]   0%(2/2) installing aide                              [######################] 100%
+:: Running post-transaction hooks...
+(1/1) Arming ConditionNeedsUpdate...
+#+end_src
+
+通过 =--version= 选项可以查看AIDE的版本、启用的特性以及配置文件路径
+#+begin_src shell :results org
+  aide --version 2>&1
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Aide 0.16.2
+
+Compiled with the following options:
+
+WITH_MMAP
+WITH_PCRE
+WITH_POSIX_ACL
+WITH_PRELINK
+WITH_XATTR
+WITH_E2FSATTRS
+WITH_LSTAT64
+WITH_READDIR64
+WITH_ZLIB
+WITH_MHASH
+CONFIG_FILE = "/etc/aide.conf"
+
+#+end_src
+
+从中可以看到，我这里的AIDE版本为 =0.16.2= 配置文件为 =/etc/aide.conf=
+
+* 配置文件简要说明
+
+其实 =/etc/aide.conf= 中的语法挺好猜的，下面是安装好AIDE后的默认配置：
+#+begin_src shell :results pp
+  cat /etc/aide.conf
+#+end_src
+
+#+RESULTS:
+#+begin_example
+# Example configuration file for AIDE.
+#
+@@define DBDIR /var/lib/aide
+@@define LOGDIR /var/log/aide
+
+# The location of the database to be read.
+database=file:@@{DBDIR}/aide.db.gz
+
+# The location of the database to be written.
+#database_out=sql:host:port:database:login_name:passwd:table
+#database_out=file:aide.db.new
+database_out=file:@@{DBDIR}/aide.db.new.gz
+
+# Whether to gzip the output to database
+gzip_dbout=yes
+
+# Default.
+verbose=5
+
+report_url=file:@@{LOGDIR}/aide.log
+report_url=stdout
+#report_url=stderr
+# 
+# Here are all the attributes we can check
+#p:       permissions
+#i:       inode
+#n:       number of links
+#l:       link name
+#u:       user
+#g:       group
+#s:       size
+###b:        block count
+#m:       mtime
+#a:       atime
+#c:       ctime
+#S:       check for growing size
+#I:       ignore changed filename
+#ANF:     allow new files
+#ARF:     allow removed files
+#
+
+# Here are all the digests we can use
+#md5:           md5 checksum
+#sha1:          sha1 checksum
+#sha256:        sha256 checksum
+#sha512:        sha512 checksum
+#rmd160:        rmd160 checksum
+#tiger:         tiger checksum
+#haval:         haval checksum
+#crc32:         crc32 checksum
+#gost:          gost checksum
+#whirlpool:     whirlpool checksum
+
+# These are the default rules 
+#R:             p+i+l+n+u+g+s+m+c+md5
+#L:             p+i+l+n+u+g
+#E:             Empty group
+#>:             Growing logfile p+l+u+g+i+n+S
+
+# You can create custom rules - my home made rule definition goes like this 
+ALLXTRAHASHES = sha1+rmd160+sha256+sha512+whirlpool+tiger+haval+gost+crc32
+ALLXTRAHASHES = sha1+rmd160+sha256+sha512+tiger
+# Everything but access time (Ie. all changes)
+EVERYTHING = R+ALLXTRAHASHES
+
+# Sane, with multiple hashes
+# NORMAL = R+rmd160+sha256+whirlpool
+NORMAL = R+rmd160+sha256
+
+# For directories, don't bother doing hashes
+DIR = p+i+n+u+g+acl+xattrs
+
+# Access control only
+PERMS = p+i+u+g+acl
+
+# Logfile are special, in that they often change
+LOG = >
+
+# Just do md5 and sha256 hashes
+LSPP = R+sha256
+
+# Some files get updated automatically, so the inode/ctime/mtime change
+# but we want to know when the data inside them changes
+DATAONLY =  p+n+u+g+s+acl+xattrs+md5+sha256+rmd160+tiger
+
+
+# Next decide what directories/files you want in the database.
+
+/boot   NORMAL
+/bin    NORMAL
+/sbin   NORMAL
+/lib    NORMAL
+/lib64  NORMAL
+/opt    NORMAL
+/usr    NORMAL
+/root   NORMAL
+# These are too volatile
+!/usr/src
+!/usr/tmp
+
+# Check only permissions, inode, user and group for /etc, but
+# cover some important files closely.
+/etc    PERMS
+!/etc/mtab
+# Ignore backup files
+!/etc/.*~
+/etc/exports  NORMAL
+/etc/fstab    NORMAL
+/etc/passwd   NORMAL
+/etc/group    NORMAL
+/etc/gshadow  NORMAL
+/etc/shadow   NORMAL
+/etc/security/opasswd   NORMAL
+
+/etc/hosts.allow   NORMAL
+/etc/hosts.deny    NORMAL
+
+/etc/sudoers NORMAL
+/etc/skel NORMAL
+
+/etc/logrotate.d NORMAL
+
+/etc/resolv.conf DATAONLY
+
+/etc/nscd.conf NORMAL
+/etc/securetty NORMAL
+
+# Shell/X starting files
+/etc/profile NORMAL
+/etc/bashrc NORMAL
+/etc/bash_completion.d/ NORMAL
+/etc/login.defs NORMAL
+/etc/zprofile NORMAL
+/etc/zshrc NORMAL
+/etc/zlogin NORMAL
+/etc/zlogout NORMAL
+/etc/profile.d/ NORMAL
+/etc/X11/ NORMAL
+
+# Ignore logs
+!/var/lib/pacman/.*
+!/var/cache/.*
+!/var/log/.*  
+!/var/run/.*  
+!/var/spool/.*
+
+#+end_example
+
+基本上你可以看到下面几类语法:
+
++ #开头的语句 :: 很明显是注释
++ @@define 常量 值 :: 定义常量
++ @@{常量} :: 引用常量的值
++ 参数=值 :: 设置参数值,这些参数都是AIDE预设参数，有特殊的意义
++ 规则 = 值 :: 定义检查规则,AIDE默认定义了一些基础规则，可以通过+号把规则累加起来
++ 文件或目录路径 规则 :: 设置指定文件或目录要做哪些检查
++ !文件或目录路径 :: !开头的路径表示剔除这些文件和目录,而且支持通配符
+  
+因此，假如我想把 =/usr/bin= 纳入检查，但是因为我经常会安装/删除应用，所以其中的文件可能会有新增和删除，那么我们可以这么设置:
+
+1. 定义一个新的检查规则
+   #+begin_example
+     EASYDIR = DIR+ANF+ARF
+   #+end_example
+2. 增加一个检查项
+   #+begin_example
+     /usr/bin EASYDIR
+   #+end_example
+   
+* 生成指纹库
+#+begin_src shell :results pp :dir /sudo::
+  sudo aide --init
+#+end_src
+
+#+RESULTS:
+#+begin_example
+Start timestamp: 2020-02-07 20:56:54 +0800 (AIDE 0.16.2)
+AIDE initialized database at /var/lib/aide/aide.db.new.gz
+
+Number of entries:	318063
+
+---------------------------------------------------
+The attributes of the (uncompressed) database(s):
+---------------------------------------------------
+
+/var/lib/aide/aide.db.new.gz
+  MD5      : BBEB8rmPoEc9OvkFg9nn+Q==
+  SHA1     : STe6sxFkLIe+lChXkO2YSTt6fMs=
+  RMD160   : GLXrri9dGDPj0fGxOpS0u40myno=
+  TIGER    : EyNsnUUY7holW/DqDdwuNPv//GwdRezD
+  SHA256   : B0pDhVNDlIUbyy94r/jzPQfT2ms3mIl+
+             DXOySaXCDfs=
+  SHA512   : PiyIVEnyO16w2b/c/Bu/kqpPPp9KFxHi
+             JIqfu5xwteGxn1gYo6IlFsCt7hcakv4M
+             mXVMGNEp5//csAK66poIjw==
+  CRC32    : bqSUrw==
+  HAVAL    : hwldeOmb7M4uHXOFopnOh/J3CywUmLlD
+             ULSyb5zRKHs=
+  GOST     : wggTdDdK9A+IFOIj6CHIiVrbzbIUeTlX
+             zxK8JNBb01w=
+  WHIRLPOOL: Rpd15WdL1JoIdtAobbUkNrtJI5GY/wZZ
+             vHsS43i4nrpcoVfntDagKYzvHnRs15fH
+             9+x6kpnxQx7yUZBLue0O4Q==
+
+
+End timestamp: 2020-02-07 21:01:51 +0800 (run time: 4m 57s)
+#+end_example
+
+注意到生成的数据库路径为 =/var/lib/aide/aide.db.new.gz=,跟配置文件中 =database_out= 的参数一致
+#+begin_example
+  # The location of the database to be written.
+  database_out=file:@@{DBDIR}/aide.db.new.gz
+#+end_example
+
+不过配置文件中配置使用的指纹数据库是
+#+begin_example
+    # The location of the database to be read.
+    database=file:@@{DBDIR}/aide.db.gz
+#+end_example
+
+所以我们还需要重命名一下这个新生成的指纹数据库
+#+begin_src shell :dir /sudo::
+  sudo mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 
+#+end_src
+
+#+RESULTS:
+
+* 指纹检查
+
+现在我们来试试在 =/usr/bin= 目录中增加一个文件 =a=
+#+begin_src shell :dir /sudo::
+  sudo touch /usr/bin/a
+#+end_src
+
+#+RESULTS:
+
+来检查一下
+#+begin_src shell :dir /sudo:: :results org
+  sudo aide --check
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  Start timestamp: 2020-02-07 21:11:37 +0800 (AIDE 0.16.2)
+  AIDE found NO differences between database and filesystem. Looks okay!!
+
+  Number of entries:	318064
+
+  ---------------------------------------------------
+  The attributes of the (uncompressed) database(s):
+  ---------------------------------------------------
+
+
+  /var/lib/aide/aide.db.gz
+    MD5      : TMuc8/DITEKaUQ47jrADcw==
+    SHA1     : xJ6WR8lstuA6MoZ0vngAICK5rYA=
+    RMD160   : lh/vtH2q7ivm/+IVajsYOYOBPyg=
+    TIGER    : bHz2OsozOd87YDJwAXt/oOPW5AjYHnU3
+    SHA256   : AZuLUp+MNaUeKe3pDrBa6q3zFNy9UfGp
+               Zt2ofjQZxdo=
+    SHA512   : TQ9ZlohZYSqfNQmEZfjfDXsXgsimgf3f
+               xUT/l4FtchPjPd4+thRr9PGxnbkl3U4L
+               uGJyPHdyY1tIZlaLEvrB7g==
+    CRC32    : kYSZQA==
+    HAVAL    : mBMVmC7VyVfw8VEEQ8kJmJkfsvG00Us0
+               ae4koC49X48=
+    GOST     : w6iIOcEtBfZMLISoyVxaXZkEMhUtp+R5
+               SMV35hP8ONQ=
+    WHIRLPOOL: j9dKXXVd6hz5Dfm+YWXb+6UP4NNoZSB3
+               jjgF5z2pGolw11g24Hsbs+CFFDgBC5fo
+               X3kHGkYaGRzV0CFUJRTqSA==
+
+
+  End timestamp: 2020-02-07 21:17:18 +0800 (run time: 5m 41s)
+#+end_src
+
+你会发现，并没有提示异常，这是因为我们允许对 =/usr/bin= 目录增加或删除文件。
+
+现在我们来试试在 =/bin= 目录中增加一个文件 =a=
+#+begin_src shell :dir /sudo::
+  sudo touch /bin/b
+#+end_src
+
+再来检查一下
+#+begin_src shell :dir /sudo:: :results org
+  sudo aide --check
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  Start timestamp: 2020-02-07 22:46:49 +0800 (AIDE 0.16.2)
+  AIDE found differences between database and filesystem!!
+
+  Summary:
+    Total number of entries:	318064
+    Added entries:		1
+    Removed entries:		0
+    Changed entries:		0
+
+  ---------------------------------------------------
+  Added entries:
+  ---------------------------------------------------
+
+  f+++++++++++++++: /usr/bin/a
+
+  ---------------------------------------------------
+  The attributes of the (uncompressed) database(s):
+  ---------------------------------------------------
+
+  /var/lib/aide/aide.db.gz
+    MD5      : TMuc8/DITEKaUQ47jrADcw==
+    SHA1     : xJ6WR8lstuA6MoZ0vngAICK5rYA=
+    RMD160   : lh/vtH2q7ivm/+IVajsYOYOBPyg=
+    TIGER    : bHz2OsozOd87YDJwAXt/oOPW5AjYHnU3
+    SHA256   : AZuLUp+MNaUeKe3pDrBa6q3zFNy9UfGp
+               Zt2ofjQZxdo=
+    SHA512   : TQ9ZlohZYSqfNQmEZfjfDXsXgsimgf3f
+               xUT/l4FtchPjPd4+thRr9PGxnbkl3U4L
+               uGJyPHdyY1tIZlaLEvrB7g==
+    CRC32    : kYSZQA==
+    HAVAL    : mBMVmC7VyVfw8VEEQ8kJmJkfsvG00Us0
+               ae4koC49X48=
+    GOST     : w6iIOcEtBfZMLISoyVxaXZkEMhUtp+R5
+               SMV35hP8ONQ=
+    WHIRLPOOL: j9dKXXVd6hz5Dfm+YWXb+6UP4NNoZSB3
+               jjgF5z2pGolw11g24Hsbs+CFFDgBC5fo
+               X3kHGkYaGRzV0CFUJRTqSA==
+
+
+  End timestamp: 2020-02-07 22:52:53 +0800 (run time: 6m 4s)
+#+end_src
+
+* 更新指纹库
+过了一段时间我们对系统进行操作后需要重新更新指纹库:
+#+begin_src shell :dir /sudo::
+  sudo aide --update
+#+end_src
+
+更新的指纹库还是 =/var/lib/aide/aide.db.new.gz=,所以我们还需要再重新移动一次:
+#+begin_src shell :dir /sudo::
+  sudo mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz 
+#+end_src
