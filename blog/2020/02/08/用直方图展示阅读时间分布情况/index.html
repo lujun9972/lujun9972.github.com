@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>用直方图展示阅读时间分布情况 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">用直方图展示阅读时间分布情况</h1>
+<p>
+今天发现了一个Emacs内置库叫 <code>chart</code>,居然可以帮我们在Emacs中画直方图，直接把我震惊了。
+</p>
+
+<p>
+这个库的接口非常简单，只有一个函数 <code>chart-bar-quickie</code>,关于用法可以参见它的doc-string
+</p>
+<pre class="example">
+chart-bar-quickie is a compiled Lisp function in ‘chart.el’.
+
+(chart-bar-quickie DIR TITLE NAMELST NAMETITLE NUMLST NUMTITLE &amp;optional MAX
+SORT-PRED)
+
+Wash over the complex EIEIO stuff and create a nice bar chart.
+Create it going in direction DIR [‘horizontal’ ‘vertical’] with TITLE
+using a name sequence NAMELST labeled NAMETITLE with values NUMLST
+labeled NUMTITLE.
+Optional arguments:
+Set the chart’s max element display to MAX, and sort lists with
+SORT-PRED if desired.
+</pre>
+
+<p>
+刚好最近我在尝试记录阅读书籍的时间，于是就想着可以试试直方图展示一下阅读各本书的时间。
+</p>
+
+<p>
+有了 <code>chart</code> 做图，那么下面最重要的就是如何获取书籍和阅读时间了。
+</p>
+
+<p>
+我把书籍阅读的信息存在 <code>books.org</code> 目录中，其中每个一级标题就是书籍名称。通过查看org的函数列表，我发现一个 <code>org-clock-get-table-data</code> 似乎非常满足我的要求。
+</p>
+<pre class="example">
+org-clock-get-table-data is a compiled Lisp function in
+‘elpa/org-plus-contrib-20191209/org-clock.el’.
+
+(org-clock-get-table-data FILE PARAMS)
+
+Get the clocktable data for file FILE, with parameters PARAMS.
+FILE is only for identification - this function assumes that
+the correct buffer is current, and that the wanted restriction is
+in place.
+The return value will be a list with the file name and the total
+file time (in minutes) as 1st and 2nd elements.  The third element
+of this list will be a list of headline entries.  Each entry has the
+following structure:
+
+  (LEVEL HEADLINE TAGS TIMESTAMP TIME PROPERTIES)
+
+LEVEL:      The level of the headline, as an integer.  This will be
+            the reduced level, so 1,2,3,... even if only odd levels
+            are being used.
+HEADLINE:   The text of the headline.  Depending on PARAMS, this may
+            already be formatted like a link.
+TAGS:       The list of tags of the headline.
+TIMESTAMP:  If PARAMS require it, this will be a time stamp found in the
+            entry, any of SCHEDULED, DEADLINE, NORMAL, or first inactive,
+            in this sequence.
+TIME:       The sum of all time spend in this tree, in minutes.  This time
+            will of cause be restricted to the time block and tags match
+            specified in PARAMS.
+PROPERTIES: The list properties specified in the ‘:properties’ parameter
+            along with their value, as an alist following the pattern
+            (NAME . VALUE).
+</pre>
+
+<p>
+最终的代码如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let*</span> ((org-file <span class="org-string">"~/&#25105;&#30340;GTD/books.org"</span>)
+       (clock-table-data (<span class="org-keyword">with-temp-buffer</span>
+                           (insert-file-contents-literally org-file)
+                           (org-mode)
+                           (org-clock-get-table-data <span class="org-string">"BOOKS"</span>  '(<span class="org-builtin">:scope</span> 'file <span class="org-builtin">:maxlevel</span> 1))))
+       (time-consum-data (nth 2 clock-table-data))
+       (books (mapcar #'cadr time-consum-data))
+       (books (mapcar (<span class="org-keyword">lambda</span> (book)
+                        (decode-coding-string book 'utf-8)) books)) <span class="org-comment-delimiter">;</span><span class="org-comment">&#20351;&#29992;utf-8&#35299;&#26512;&#65292;&#21542;&#21017;&#26159;&#20081;&#30721;</span>
+       (times (mapcar (<span class="org-keyword">lambda</span> (l)
+                       (nth 4 l)) <span class="org-warning">time-consum-data)))</span>
+  (chart-bar-quickie 'vertical' <span class="org-string">"&#38405;&#35835;&#26102;&#38388;"</span>
+                     books <span class="org-string">"&#20070;&#31821;"</span>
+                     times <span class="org-string">"&#32791;&#26102;(&#20998;)"</span>))
+</pre>
+</div>
+
+
+<div class="figure">
+<p><img src="../../../../../assets/blog/2020/02/08/用直方图展示阅读时间分布情况/screenshot-28.png" alt="screenshot-28.png" />
+</p>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-02-08</span>
+    <span title="last modification date" class="post-info">2020-02-08</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-158564d1-4f8d-4644-8c99-17409c9252ba">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
