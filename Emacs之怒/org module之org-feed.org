@@ -1,0 +1,58 @@
+#+TITLE: org module之org-feed
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-02-11 二 16:22]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+该module能让你将RSS feed中的内容保存到Org文件指定的标题下,还是蛮好玩的。
+
+1. 设置 =org-feed-alist=
+   
+   从名字上就能看出，这是一个alist，每个entry的格式为 =(feed名称 URL 存储的Org文件路径 存储的标题)=,比如
+
+   #+begin_src emacs-lisp
+     (push '("科学松鼠会" "https://songshuhui.net/feed" "~/我的GTD/Note.org" "Feeds/科学松鼠会") org-feed-alist)
+   #+end_src
+
+2. 执行 =M-x org-feed-update-all=
+
+
+此外, =org-feed-alist= 还支持在每个entry后面加上多个 =keyword-value 对= 的参数,用来对feed中的每篇文章进行自定义的处理，详情可以参见它的doc-string说明:
+
++ :drawer drawer-name :: 存储feed信息的drawer名称，默认为FEEDSTATUS
++ :filter filter-function :: 过滤item的函数，若通过则返回该entry，否则返回nil
++ :template template-string :: 组建Org entry的模板
++ :formatter formatter-function :: 格式化feed item成Org entry的函数
++ :new-handler function :: 处理新增feed item的函数
++ :changed-handler function :: 处理更新 feed item 的函数
++ :parse-feed function :: 解析feed的函数
++ :parse-entry function :: 解析feed item的函数
+
+默认情况下，每个feed item都会被解析为一个plist，其中feed item中的域名都对应一个property，此外为了方便处理,还有两个特殊的property:
++ :item-full-text :: <item> 标签内的全文本
++ guid-permalink :: 当guid 属性为 permalink 是设置为 t
+
+理论上跟org-eww连用，我们完全可以把feed中的内容摘录到Org文件中保存起来,像这样:
+
+#+begin_src emacs-lisp
+  (defun org-eww-save-by-url (url &optional timeout)
+    (let ((url (replace-regexp-in-string "\\[\\|\\]" "" url))
+          (timeout (or timeout 5)))
+          (message "URL is %s" url)
+          (save-excursion 
+            (eww url)
+            (sit-for timeout)
+            (eww-readable)
+            (org-eww-copy-for-org-mode)
+            (pop kill-ring))))
+
+
+  (setq org-feed-alist '(("科学松鼠会" "https://songshuhui.net/feed" "~/我的GTD/Note.org" "科学松鼠会"
+                          :template "* %h
+  %t
+  from %a
+  %(org-eww-save-by-url \"%a\")")))
+#+end_src
