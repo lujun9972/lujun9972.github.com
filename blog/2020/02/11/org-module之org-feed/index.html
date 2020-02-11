@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>org module之org-feed - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">org module之org-feed</h1>
+<p>
+该module能让你将RSS feed中的内容保存到Org文件指定的标题下,还是蛮好玩的。
+</p>
+
+<ol class="org-ol">
+<li><p>
+设置 <code>org-feed-alist</code>
+</p>
+
+<p>
+从名字上就能看出，这是一个alist，每个entry的格式为 <code>(feed名称 URL 存储的Org文件路径 存储的标题)</code>,比如
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">push</span> '(<span class="org-string">"&#31185;&#23398;&#26494;&#40736;&#20250;"</span> <span class="org-string">"https://songshuhui.net/feed"</span> <span class="org-string">"~/&#25105;&#30340;GTD/Note.org"</span> <span class="org-string">"Feeds/&#31185;&#23398;&#26494;&#40736;&#20250;"</span>) org-feed-alist)
+</pre>
+</div></li>
+
+<li>执行 <code>M-x org-feed-update-all</code></li>
+</ol>
+
+
+<p>
+此外, <code>org-feed-alist</code> 还支持在每个entry后面加上多个 <code>keyword-value 对</code> 的参数,用来对feed中的每篇文章进行自定义的处理，详情可以参见它的doc-string说明:
+</p>
+
+<dl class="org-dl">
+<dt>:drawer drawer-name</dt><dd>存储feed信息的drawer名称，默认为FEEDSTATUS</dd>
+<dt>:filter filter-function</dt><dd>过滤item的函数，若通过则返回该entry，否则返回nil</dd>
+<dt>:template template-string</dt><dd>组建Org entry的模板</dd>
+<dt>:formatter formatter-function</dt><dd>格式化feed item成Org entry的函数</dd>
+<dt>:new-handler function</dt><dd>处理新增feed item的函数</dd>
+<dt>:changed-handler function</dt><dd>处理更新 feed item 的函数</dd>
+<dt>:parse-feed function</dt><dd>解析feed的函数</dd>
+<dt>:parse-entry function</dt><dd>解析feed item的函数</dd>
+</dl>
+
+<p>
+默认情况下，每个feed item都会被解析为一个plist，其中feed item中的域名都对应一个property，此外为了方便处理,还有两个特殊的property:
+</p>
+<dl class="org-dl">
+<dt>:item-full-text</dt><dd>&lt;item&gt; 标签内的全文本</dd>
+<dt>guid-permalink</dt><dd>当guid 属性为 permalink 是设置为 t</dd>
+</dl>
+
+<p>
+理论上跟org-eww连用，我们完全可以把feed中的内容摘录到Org文件中保存起来,像这样:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">org-eww-save-by-url</span> (url <span class="org-type">&amp;optional</span> timeout)
+  (<span class="org-keyword">let</span> ((url (replace-regexp-in-string <span class="org-string">"\\[</span><span class="org-string"><span class="org-constant"><span class="org-regexp-grouping-backslash">\\</span></span></span><span class="org-string"><span class="org-constant"><span class="org-regexp-grouping-construct">|</span></span></span><span class="org-string"><span class="org-constant">\\</span></span><span class="org-string">]"</span> <span class="org-string">""</span> url))
+        (timeout (<span class="org-keyword">or</span> timeout 5)))
+        (message <span class="org-string">"URL is %s"</span> url)
+        (<span class="org-keyword">save-excursion</span> 
+          (eww url)
+          (sit-for timeout)
+          (eww-readable)
+          (org-eww-copy-for-org-mode)
+          (<span class="org-keyword">pop</span> kill-ring))))
+
+
+(<span class="org-keyword">setq</span> org-feed-alist '((<span class="org-string">"&#31185;&#23398;&#26494;&#40736;&#20250;"</span> <span class="org-string">"https://songshuhui.net/feed"</span> <span class="org-string">"~/&#25105;&#30340;GTD/Note.org"</span> <span class="org-string">"&#31185;&#23398;&#26494;&#40736;&#20250;"</span>
+                        <span class="org-builtin">:template</span> <span class="org-string">"* %h</span>
+<span class="org-string">%t</span>
+<span class="org-string">from %a</span>
+<span class="org-string">%(org-eww-save-by-url \"%a\")"</span>)))
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-02-11</span>
+    <span title="last modification date" class="post-info">2020-02-11</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-025c8150-f45b-4c93-ae75-20a6ec24c790">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
