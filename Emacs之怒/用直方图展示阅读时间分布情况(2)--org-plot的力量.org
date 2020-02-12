@@ -1,0 +1,95 @@
+#+TITLE: 用直方图展示阅读时间分布情况(2)--org-plot的力量
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-02-12 三 15:47]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+之前试着用 =chart= 库对阅读时间进行了直方图做图，今天发现原来org中直接就支持用gnuplot对表格中的数据进行做图。
+
+首先我们直接利用Org的clocktable功能对各个标题下的时间进行统计，方法是在文件头加上下面两句话
+#+begin_src org
+  ,#+BEGIN: clocktable :scope file :maxlevel 1
+  ,#+END:
+#+end_src
+其中 =:scope file= 表示只使用本文件的数据进行统计， =:maxlevel 1= 表示只统计一级标题的耗时。
+
+然后按下 =C-c C-c=,就会变成下面这样:
+#+begin_src org
+  ,#+BEGIN: clocktable :scope file :maxlevel 1
+  ,#+CAPTION: Clock summary at [2020-02-12 三 15:51]
+  | Headline                                  |       Time |
+  |-------------------------------------------+------------|
+  | *Total time*                              | *3d 16:32* |
+  |-------------------------------------------+------------|
+  | The Linux Philosophy for SysAdmins        |    1d 2:29 |
+  | Personal Finance with Python              |       5:10 |
+  | Company of One                            |    1d 2:17 |
+  | A One Person Business                     |       5:44 |
+  | Knowledge Management In Practice          |       3:14 |
+  | Java入门123                               |       0:57 |
+  | Unix与Internte安全实践指南                |       0:10 |
+  | 阅读《刻意练习--如何从新手到大师》 [0/10] |       2:37 |
+  | Forge Your Future with Open Source        |       1:47 |
+  | I heart Log                               |       3:53 |
+  | HOW TO START A BLOG THAT PEOPLE WILL...   |       0:51 |
+  | _Blogging_100_Success_Secrets_            |       1:36 |
+  | write your way to success                 |       2:44 |
+  | Web Analytics For Dummies                 |       0:51 |
+  | 大脑使用指南                              |       0:16 |
+  | Developing Game on the Raspberry Pi       |       0:33 |
+  | 深入浅出数据分析                          |       2:48 |
+  | X power tools                             |       2:25 |
+  | 每天节省两小时                            |       0:10 |
+  ,#+END:
+#+end_src
+
+然后我们把这个表格复制出来，加上 =#+PLOT:= 头,变成这样:
+#+begin_src org
+  ,#+PLOT: title:"阅读时间" ind:1 deps:(2) type:2d with:histograms 
+  | Headline                                  |       Time |
+  |-------------------------------------------+------------|
+  | *Total time*                              | *3d 16:32* |
+  |-------------------------------------------+------------|
+  | The Linux Philosophy for SysAdmins        |    1d 2:29 |
+  | Personal Finance with Python              |       5:10 |
+  | Company of One                            |    1d 2:17 |
+  | A One Person Business                     |       5:44 |
+  | Knowledge Management In Practice          |       3:14 |
+  | Java入门123                               |       0:57 |
+  | Unix与Internte安全实践指南                |       0:10 |
+  | 阅读《刻意练习--如何从新手到大师》 [0/10] |       2:37 |
+  | Forge Your Future with Open Source        |       1:47 |
+  | I heart Log                               |       3:53 |
+  | HOW TO START A BLOG THAT PEOPLE WILL...   |       0:51 |
+  | _Blogging_100_Success_Secrets_            |       1:36 |
+  | write your way to success                 |       2:44 |
+  | Web Analytics For Dummies                 |       0:51 |
+  | 大脑使用指南                              |       0:16 |
+  | Developing Game on the Raspberry Pi       |       0:33 |
+  | 深入浅出数据分析                          |       2:48 |
+  | X power tools                             |       2:25 |
+  | 每天节省两小时                            |       0:10 |
+#+end_src
+
+然后在表格上执行 =org-plot/gnuplot= 就可以得到结果:
+[[file:images/read-graph-by-org-gnuplot.png]]
+
+可以看到，X轴的显示还是好乱～～～～
+
+
+默认情况下,Org Plot会自动把表格的标题作为生成图表的标签. 但是通过表格前的#+PLOT:行,你可以定义plot的标签,类型,内容和展示. 下面列出了Org-plot选项的说明：
+
++ set :: 用于设置绘图时的gnuplot选项
++ title :: 指定plot的标题
++ ind :: 指定表格的哪一列作为x轴
++ deps :: 指定描绘哪些列,该设置的格式类似于Lisp中的list,由小括号括起来,内部用空格分隔,例如'dep:(3 4)'指定只描绘第3,4列(默认情况下,除了指明为ind的列,其他的列都会被描绘)
++ type :: 指定plot是2d还是3d还是grid的
++ with :: 对每一个要被绘制的列都插入一个指定的with选项(例如,lines,points,boxes,impulses,等等). 默认值为lines
++ file :: 如果你想将描绘输出成一个文件,指定输出文件的路径
++ labels :: 用一个列表指定各输出列的标签(默认情况下,如果列的标题村爱的话,使用列标题作为标签)
++ line :: 在gnuplot脚本中插入指定的一整行(Specify an entire line to be inserted in the Gnuplot script. )
++ map :: 当描绘类型为3d或grid时,该选项的值设为t则在描绘时描绘的是一个平面映射而不是3维图形(set this to t to graph a flat mapping rather than a 3d slope)
++ timefmt :: 指定Org-mode的时间戳格式,因为它们会被Gnuplot所解析,默认格式为'%Y-%m-%d-%H:%M:%S'
++ script :: 如果你想实现完全的自定义,你可以指定一个脚本文件(把文件名放在双引号内)来实现描绘动作. 在正真描绘之前,这个特定脚本中的每个'$datafile'会被替换成生成的数据文件的实际路径. 注意:即使你设置了这个选项,你也可能仍然需要定义plot的type,因为这个选项会影响到生成的数据文件的内容.
