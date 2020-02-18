@@ -1,0 +1,66 @@
+#+TITLE: 整合appt与org-agenda
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-02-18 二 12:30]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我目前使用org-mode来进行日程管理，而Emacs自带的appt可以为预约提供提前提醒的功能,刚好可以作为org-mode的补充。
+
+* 同步org-agenda信息到appt
+org-agenda实现了一个 =(org-agenda-to-appt)= 函数，可以把org-agenda中的预约信息同步给appt,因此我们可以通过下面设置定时同步预约信息:
+#+begin_src emacs-lisp
+  (require 'appt)
+  ;; 每小时同步一次appt,并且现在就开始同步
+  (run-at-time nil 3600 'org-agenda-to-appt)
+  ;; 更新agenda时，同步appt
+  (add-hook 'org-finalize-agenda-hook 'org-agenda-to-appt)
+  ;; 激活提醒
+  (appt-activate 1)
+#+end_src
+
+* 设置提醒提前时间
+appt默认提前12分钟开始提醒，这个时间太短了，不过我们可以通过修改 =appt-message-warning-time= 的值来做調整:
+#+begin_src emacs-lisp
+  ;; 提前半小时提醒
+  (setq appt-message-warning-time 30)
+#+end_src
+
+针对不同任务，需要提前提醒的时间可能不一样，可以通过headline的属性 =APPT_WARNTIME= 来单独设置,比如下面这个任务会提前1小时提醒我们:
+#+begin_src org
+  ,* 非常重要的任务
+    :PROPERTIES:
+    :APPT_WARNTIME: 60
+    :END:
+#+end_src
+
+* 设置提醒方式
+我希望appt在提醒时会通过beep发声提醒我:
+#+begin_src emacs-lisp
+  (setq appt-audible t)
+#+end_src
+ 
+使用appt提醒有一个缺陷就是如果你刚好没有在使用Emacs，那么这个提醒很可能你就看不到。
+万幸的是，我们可以通过设置 =appt-disp-window-function= 来让appt调用我们自定义的提醒函数(不过此时 =appt-display-format= 必须设置为 ='window=).
+根据 =appt-disp-window-function= 的doc-string，我们可以知道这个函数将要接受三个参数：剩余时间、当前时间和预约内容，而且若同一时间有多个预约，那么这些参数都可能为列表。 该参数默认的实现是 =appt-disp-window=.
+此外，我们可以使用 =notifications= 来生成桌面通知，这样就不怕在使用其他应用时看不见提醒了。
+#+begin_src emacs-lisp
+  (require 'notifications)
+  (defun appt-disp-window-and-notification (min-to-appt current-time appt-msg)
+    (let ((title (format "%s分钟内有新的任务" min-to-appt)))
+      (notifications-notify :timeout 0    ;不自动消失
+                            :title title
+                            :body appt-msg
+                            )
+      (appt-disp-window min-to-appt current-time appt-msg))) ;同时也调用原有的提醒函数
+  (setq appt-display-format 'window) ;; 只有这样才能使用自定义的通知函数
+  (setq appt-disp-window-function #'appt-disp-window-and-notification)
+#+end_src
+
+想过如下图所示：
+
+[[file:./images/screenshot-30.png]]
+
+* 查看现有的提醒
+appt没有直接提供命令查看现有多少个提醒，不过appt的提醒都存在 =appt-time-msg-list= 中，我们可以通过查看该变量来看出已经设置了多少个提醒项了。
