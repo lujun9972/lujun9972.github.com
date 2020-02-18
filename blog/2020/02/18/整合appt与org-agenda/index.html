@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>整合appt与org-agenda - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">整合appt与org-agenda</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org2e30692">同步org-agenda信息到appt</a></li>
+<li><a href="#org4959403">设置提醒提前时间</a></li>
+<li><a href="#org00879be">设置提醒方式</a></li>
+<li><a href="#org021e87a">查看现有的提醒</a></li>
+</ul>
+</div>
+</div>
+<p>
+我目前使用org-mode来进行日程管理，而Emacs自带的appt可以为预约提供提前提醒的功能,刚好可以作为org-mode的补充。
+</p>
+
+<div id="outline-container-org2e30692" class="outline-2">
+<h2 id="org2e30692">同步org-agenda信息到appt</h2>
+<div class="outline-text-2" id="text-org2e30692">
+<p>
+org-agenda实现了一个 <code>(org-agenda-to-appt)</code> 函数，可以把org-agenda中的预约信息同步给appt,因此我们可以通过下面设置定时同步预约信息:
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">appt</span>)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#27599;&#23567;&#26102;&#21516;&#27493;&#19968;&#27425;appt,&#24182;&#19988;&#29616;&#22312;&#23601;&#24320;&#22987;&#21516;&#27493;</span>
+(run-at-time nil 3600 'org-agenda-to-appt)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#26356;&#26032;agenda&#26102;&#65292;&#21516;&#27493;appt</span>
+(add-hook 'org-finalize-agenda-hook 'org-agenda-to-appt)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#28608;&#27963;&#25552;&#37266;</span>
+(appt-activate 1)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4959403" class="outline-2">
+<h2 id="org4959403">设置提醒提前时间</h2>
+<div class="outline-text-2" id="text-org4959403">
+<p>
+appt默认提前12分钟开始提醒，这个时间太短了，不过我们可以通过修改 <code>appt-message-warning-time</code> 的值来做調整:
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#25552;&#21069;&#21322;&#23567;&#26102;&#25552;&#37266;</span>
+(<span class="org-keyword">setq</span> appt-message-warning-time 30)
+</pre>
+</div>
+
+<p>
+针对不同任务，需要提前提醒的时间可能不一样，可以通过headline的属性 <code>APPT_WARNTIME</code> 来单独设置,比如下面这个任务会提前1小时提醒我们:
+</p>
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* &#38750;&#24120;&#37325;&#35201;&#30340;&#20219;&#21153;</span>
+<span class="org-org-special-keyword">  :PROPERTIES:</span>
+  <span class="org-org-special-keyword">:APPT_WARNTIME:</span> <span class="org-org-property-value">60</span>
+<span class="org-org-special-keyword">  :END:</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org00879be" class="outline-2">
+<h2 id="org00879be">设置提醒方式</h2>
+<div class="outline-text-2" id="text-org00879be">
+<p>
+我希望appt在提醒时会通过beep发声提醒我:
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> appt-audible t)
+</pre>
+</div>
+
+<p>
+使用appt提醒有一个缺陷就是如果你刚好没有在使用Emacs，那么这个提醒很可能你就看不到。
+万幸的是，我们可以通过设置 <code>appt-disp-window-function</code> 来让appt调用我们自定义的提醒函数(不过此时 <code>appt-display-format</code> 必须设置为 <code>'window</code>).
+根据 <code>appt-disp-window-function</code> 的doc-string，我们可以知道这个函数将要接受三个参数：剩余时间、当前时间和预约内容，而且若同一时间有多个预约，那么这些参数都可能为列表。 该参数默认的实现是 <code>appt-disp-window</code>.
+此外，我们可以使用 <code>notifications</code> 来生成桌面通知，这样就不怕在使用其他应用时看不见提醒了。
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">notifications</span>)
+(<span class="org-keyword">defun</span> <span class="org-function-name">appt-disp-window-and-notification</span> (min-to-appt current-time appt-msg)
+  (<span class="org-keyword">let</span> ((title (format <span class="org-string">"%s&#20998;&#38047;&#20869;&#26377;&#26032;&#30340;&#20219;&#21153;"</span> min-to-appt)))
+    (notifications-notify <span class="org-builtin">:timeout</span> 0    <span class="org-comment-delimiter">;</span><span class="org-comment">&#19981;&#33258;&#21160;&#28040;&#22833;</span>
+                          <span class="org-builtin">:title</span> title
+                          <span class="org-builtin">:body</span> appt-msg
+                          )
+    (appt-disp-window min-to-appt current-time appt-msg))) <span class="org-comment-delimiter">;</span><span class="org-comment">&#21516;&#26102;&#20063;&#35843;&#29992;&#21407;&#26377;&#30340;&#25552;&#37266;&#20989;&#25968;</span>
+(<span class="org-keyword">setq</span> appt-display-format 'window) <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#26377;&#36825;&#26679;&#25165;&#33021;&#20351;&#29992;&#33258;&#23450;&#20041;&#30340;&#36890;&#30693;&#20989;&#25968;</span>
+(<span class="org-keyword">setq</span> appt-disp-window-function #'appt-disp-window-and-notification)
+</pre>
+</div>
+
+<p>
+想过如下图所示：
+</p>
+
+
+<div class="figure">
+<p><img src="../../../../../assets/blog/2020/02/18/整合appt与org-agenda/screenshot-30.png" alt="screenshot-30.png" />
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org021e87a" class="outline-2">
+<h2 id="org021e87a">查看现有的提醒</h2>
+<div class="outline-text-2" id="text-org021e87a">
+<p>
+appt没有直接提供命令查看现有多少个提醒，不过appt的提醒都存在 <code>appt-time-msg-list</code> 中，我们可以通过查看该变量来看出已经设置了多少个提醒项了。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-02-18</span>
+    <span title="last modification date" class="post-info">2020-02-18</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-0231f28a-d47d-4503-8c8e-d07a08f0f674">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
