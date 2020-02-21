@@ -1,0 +1,64 @@
+#+TITLE: 使用nslookup和nc验证email地址的有效性
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-02-21 五 22:13]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://utf9k.net/blog/email-lookup 上学来的小技巧。
+
+1. 使用nslookup探查邮件服务器地址
+   #+begin_src shell :dir /ssh:192.168.1.9: :results org
+     nslookup -q=MX sina.com.cn
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   Server:		127.0.0.53
+   Address:	127.0.0.53#53
+
+   Non-authoritative answer:
+   sina.com.cn	mail exchanger = 10 freemx3.sinamail.sina.com.cn.
+   sina.com.cn	mail exchanger = 10 freemx1.sinamail.sina.com.cn.
+   sina.com.cn	mail exchanger = 10 freemx2.sinamail.sina.com.cn.
+
+   Authoritative answers can be found from:
+
+   #+end_src
+
+2. 使用nc访问邮件服务器的SMTP服务端口
+   #+begin_example
+     lujun9972@orangepipc2:~$ nc freemx1.sinamail.sina.com.cn 25                  
+     220 mx-14-107.mxsmail.fmail.dbl.sinanode.com ESMTP    
+   #+end_example
+
+3. 按照SMTP协议规范，我们先好打个招呼
+   #+begin_example
+     HELO                                                                         
+     250 mx-14-107.mxsmail.fmail.dbl.sinanode.com     
+   #+end_example
+
+   这里我们受到了250的回应码
+
+4. 告诉服务器邮件来自哪里
+
+   由于我们只是想探测邮件的有效性，因此邮件来源可以随便输一个邮件地址
+   #+begin_example
+     mail from :<test@example.com>                                                
+     250 ok
+   #+end_example
+
+5. 然后告诉服务器邮件想要发送给谁
+
+   这一步就能验证邮件地址的有效性了,先试试一个有效的邮箱:
+   #+begin_example
+     rcpt to: <lujun9972@sina.com.cn>                                             
+     250 ok
+   #+end_example
+   
+   我们可以试试一个无效的邮箱：
+   #+begin_example
+     rcpt to: <notanexistuser@.sina.com.cn>                                       
+     554 User no found.
+   #+end_example
