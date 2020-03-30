@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何查看打开指定文件的进程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何查看打开指定文件的进程</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org68468ed">解决方案一：使用fuser命令</a>
+<ul>
+<li><a href="#org6377c47">安装</a></li>
+<li><a href="#org103e6d7">解决方案</a></li>
+</ul>
+</li>
+<li><a href="#org46e728b">解决方案二：借助/proc</a>
+<ul>
+<li><a href="#org94498c3">安装</a></li>
+<li><a href="#org498f44f">解决方案</a></li>
+</ul>
+</li>
+<li><a href="#orgafef495">相关链接</a></li>
+</ul>
+</div>
+</div>
+<p>
+有时候你会发现某些文件在不停的增长严重占用了磁盘空间，你想找到罪魁祸首是谁，该怎么做呢？
+</p>
+
+<div id="outline-container-org68468ed" class="outline-2">
+<h2 id="org68468ed">解决方案一：使用fuser命令</h2>
+<div class="outline-text-2" id="text-org68468ed">
+<p>
+涉及到的命令: fuser
+</p>
+
+<p>
+本部分以archlinux系统为例
+</p>
+</div>
+
+<div id="outline-container-org6377c47" class="outline-3">
+<h3 id="org6377c47">安装</h3>
+<div class="outline-text-3" id="text-org6377c47">
+<p>
+在archlinux上，fuser命令是属于 <code>psmisc</code> 包中的，因此运行下面命令安装:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S psmisc --noconfirm
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org103e6d7" class="outline-3">
+<h3 id="org103e6d7">解决方案</h3>
+<div class="outline-text-3" id="text-org103e6d7">
+<p>
+fuser的使用方法非常简单，只需要直接后接要查看的文件路径就行了。比如:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sleep 10 &gt;/tmp/test &amp;
+fuser /tmp/test  2&gt;&amp;1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/tmp/test:           2405063
+</pre>
+</div>
+
+<p>
+我们可以看到，fuser告诉我们进程 <code>2405063</code> 打开了 <code>/tmp/test</code> 这个文件，我们用 <code>ps</code> 来看一下
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ps -elf |grep 2405063 |grep -v grep
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">0 S lujun99+ 2405063    1554  0  80   0 -  2092 -      10:50 ?        00:00:00 sleep 10
+</pre>
+</div>
+
+<p>
+若我们只想直接杀掉打开该文件的进程，那么可以直接使用 <code>-k</code> 选项(或者 <code>--kill</code> 选项):
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sleep 10 &gt;/tmp/test &amp;
+fuser -k /tmp/test  2&gt;&amp;1
+ps -elf |grep sleep |grep -v grep
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/tmp/test:           2405271
+[1]+  &#24050;&#26432;&#27515;               sleep 10 &gt; /tmp/test
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org46e728b" class="outline-2">
+<h2 id="org46e728b">解决方案二：借助/proc</h2>
+<div class="outline-text-2" id="text-org46e728b">
+<p>
+涉及到的命令: bash
+</p>
+
+<p>
+本部分以archlinux系统为例
+</p>
+</div>
+
+<div id="outline-container-org94498c3" class="outline-3">
+<h3 id="org94498c3">安装</h3>
+<div class="outline-text-3" id="text-org94498c3">
+<ul class="org-ul">
+<li>无需安装</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-org498f44f" class="outline-3">
+<h3 id="org498f44f">解决方案</h3>
+<div class="outline-text-3" id="text-org498f44f">
+<p>
+我们知道 <code>/proc/$pid/fd/</code> 目录下存储着进程号为 <code>$pid</code> 的进程所打开的所有文件描述符号和对应的文件路径:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls -l /proc/$<span class="org-variable-name">$</span>/fd/
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#24635;&#29992;&#37327; 0
+lr-x------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 0 -&gt; /tmp/ob-input-sYOtni
+l-wx------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 1 -&gt; pipe:[10559772]
+l-wx------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 2 -&gt; /tmp/emacsQh0w9R
+</pre>
+</div>
+
+<p>
+所以我们可以通过遍历该目录下的所有文件描述符所指向的文件路径来找出打开文件的进程号:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/</span><span class="org-keyword">env</span><span class="org-comment"> bash</span>
+<span class="org-keyword">function</span> <span class="org-function-name">abs_path</span>()
+{
+    <span class="org-builtin">local</span> <span class="org-variable-name">file</span>=<span class="org-string">"$1"</span>
+    <span class="org-builtin">local</span> <span class="org-variable-name">abs_dir</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">cd</span><span class="org-string"> $(</span><span class="org-sh-quoted-exec">dirname</span><span class="org-string"> $1);pwd)"</span>
+    <span class="org-builtin">local</span> <span class="org-variable-name">basename</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">basename</span><span class="org-string"> $1)"</span>
+    <span class="org-builtin">echo</span> <span class="org-string">"${abs_dir}/${basename}"</span>
+}
+<span class="org-keyword">function</span> <span class="org-function-name">is_opened_file</span>()
+{
+    <span class="org-builtin">local</span> <span class="org-variable-name">pid</span>=<span class="org-string">"$1"</span>
+    <span class="org-builtin">local</span> <span class="org-variable-name">file</span>=$(<span class="org-sh-quoted-exec">abs_path</span> <span class="org-string">"$2"</span>)
+    <span class="org-keyword">for</span> f<span class="org-keyword"> in</span> /proc/${<span class="org-variable-name">pid</span>}/fd/*
+    <span class="org-keyword">do</span>
+        <span class="org-keyword">if</span> [[ <span class="org-string">"$(</span><span class="org-sh-quoted-exec">readlink</span><span class="org-string"> $f)"</span> == <span class="org-string">"${file}"</span> ]];<span class="org-keyword">then</span>
+            <span class="org-keyword">return</span> 0
+        <span class="org-keyword">fi</span>
+    <span class="org-keyword">done</span>
+    <span class="org-keyword">return</span> 1
+}
+<span class="org-keyword">function</span> <span class="org-function-name">fileuser</span>()
+{
+    <span class="org-variable-name">file</span>=<span class="org-string">"$1"</span>
+    <span class="org-keyword">for</span> pid<span class="org-keyword"> in</span> $(<span class="org-sh-quoted-exec">cd</span> /proc;ls -d [0-9]*);
+    <span class="org-keyword">do</span>
+        <span class="org-keyword">if</span> is_opened_file <span class="org-string">"${pid}"</span> <span class="org-string">"${file}"</span>;<span class="org-keyword">then</span>
+            <span class="org-builtin">echo</span> ${<span class="org-variable-name">pid</span>}
+        <span class="org-keyword">fi</span>
+    <span class="org-keyword">done</span>
+}
+
+sleep 10 &gt; /tmp/test &amp;
+fileuser /tmp/test
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">2461994
+</pre>
+</div>
+
+<p>
+不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多10秒钟才出结果。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgafef495" class="outline-2">
+<h2 id="orgafef495">相关链接</h2>
+<div class="outline-text-2" id="text-orgafef495">
+<p>
+更多常见选项请运行 <code>man fuser</code> 或 <code>fuser --help</code> 查看帮助
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-03-30</span>
+    <span title="last modification date" class="post-info">2020-03-30</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-743a2467-3a20-4a6c-8e37-afc538f78720">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
