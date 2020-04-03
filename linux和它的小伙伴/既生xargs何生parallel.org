@@ -1,0 +1,310 @@
+#+TITLE: 既生xargs何生parallel
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-01 三 12:02]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+xargs和parallel都能并发运行多个命令，然而对这两个命令的区别一直不太清楚，直到看到了这篇文章:https://www.gnu.org/software/parallel/parallel_alternatives.html#DIFFERENCES-BETWEEN-xargs-AND-GNU-Parallel
+
+简单的说，parallel就是增强版的xargs。
+
+* xargs 不能很好的处理特殊字符(比如空格, \, ' 和 ")
+比如下面这个例子
+
+#+begin_src shell :results org
+  touch important_file
+  touch 'not important_file'
+  ls not* | xargs rm              
+#+end_src
+会删除 =import_file=,并提示 =rm: 无法删除 'not': 没有那个文件或目录=
+
+#+begin_src shell
+  mkdir -p "My brother's 12\" records"
+  ls | xargs rmdir
+#+end_src
+会提示 =/usr/bin/xargs: 未匹配的 单 引用；默认情况下，引用是针对 xargs 的，除非您使用了 -0 选项= 和 =rmdir: 删除 'My' 失败: 没有那个文件或目录=
+
+#+begin_src shell
+  touch 'c:\windows\system32\clfs.sys'
+  echo 'c:\windows\system32\clfs.sys' | xargs ls -l
+#+end_src
+会提示: =ls: 无法访问 'c:windowssystem32clfs.sys': 没有那个文件或目录=
+
+一般遇到这种情况你需要使用xargs的 =-0= 参数来指定使用 =NUL= 作为分隔符，然而这同时要求产生输入的命令的支持。
+
+还有一种变通方案是使用 xargs 的 =-d= 选项指定使用换行符作为分隔符,比如:
+#+begin_src shell
+  touch 'c:\windows\system32\clfs.sys'
+  touch 'not important_file'
+  ls |xargs -d "\n" -n1 rm
+#+end_src
+
+* xargs 没有参数直接按CPU Core数量来并法运行任务，而必须人工指定并法度
+
+在parallel默认依据CPU Core数量来决定并发的任务数，而且除了能通过 =-P N= 直接设定并发度外,还能通过 =-P +N=, =-P -N=, =-P N%= 来在CPU Core的数量基准进行调整(减少N个，增加N个，乘于N%)
+
+而xargs只能通过 =-P N= 来手工设定并法度， 不过这也不是什么太大的问题，我们可以通过 =grep processor /proc/cpuinfo |wc -l= 来统计CPU的Core数量
+
+* xargs 可能会导致输出串行
+也就是可能一行输出的前半部分是一个进程的输出，而后半部分是另一个进程的输出。例如:
+
+#+begin_src shell :results org
+  slow_seq() {
+      echo Count to "$@"
+      seq "$@" |
+          perl -ne '$|=1; for(split//){ print; select($a,$a,$a,0.100);}'
+  }
+  export -f slow_seq
+  echo "这是期望值"
+  seq 8 | xargs -n1 -P1 -I {} bash -c 'slow_seq {}'
+  echo "使用parallel进行并发"
+  seq 8 | parallel -P8 slow_seq {}
+  echo "使用xargs进行并发"
+  seq 8 | xargs -n1 -P8 -I {} bash -c 'slow_seq {}'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+这是期望值
+Count to 1
+1
+Count to 2
+1
+2
+Count to 3
+1
+2
+3
+Count to 4
+1
+2
+3
+4
+Count to 5
+1
+2
+3
+4
+5
+Count to 6
+1
+2
+3
+4
+5
+6
+Count to 7
+1
+2
+3
+4
+5
+6
+7
+Count to 8
+1
+2
+3
+4
+5
+6
+7
+8
+使用parallel进行并发
+Count to 1
+1
+Count to 2
+1
+2
+Count to 3
+1
+2
+3
+Count to 4
+1
+2
+3
+4
+Count to 5
+1
+2
+3
+4
+5
+Count to 6
+1
+2
+3
+4
+5
+6
+Count to 7
+1
+2
+3
+4
+5
+6
+7
+Count to 8
+1
+2
+3
+4
+5
+6
+7
+8
+使用xargs进行并发
+Count to 1
+Count to 2
+Count to 3
+Count to 4
+11Count to 5
+11Count to 6
+Count to 7
+1Count to 8
+111
+
+
+
+
+
+
+
+2222222
+
+
+
+
+
+
+333333
+
+
+
+
+
+44444
+
+
+
+
+5555
+
+
+
+666
+
+
+77
+
+8
+#+end_src
+
+* xargs 不支持保持多任务输出的顺序
+parallel 可以通过 =-k= 或 =--keep-order= 选项来保证多任务的输出顺序与顺序执行时的顺序一直。
+
+而xargs无此功能，也就是说任务有多行输出的话，可能导致多个任务的输出混杂在一起.
+
+* xargs 不支持远程运行任务
+parallel可以通过 =--sshlogin= 来将任务发送到远程主机上并发运行.
+
+其他与远程运行的命令包括 =--ssh=, =--return=, =--transfer=, =--transferfile=, =--tf=, =--cleanup=, =--env=
+
+这个能力极其恐怖，下面是摘自 =man parallel= 中的一个远程执行任务的例子:
+#+begin_example
+  EXAMPLE: Using remote computers
+         To run commands on a remote computer SSH needs to be set
+         up and you must be able to login without entering a
+         password (The commands ssh-copy-id, ssh-agent, and
+         sshpass may help you do that).
+
+         If you need to login to a whole cluster, you typically do
+         not want to accept the host key for every host. You want
+         to accept them the first time and be warned if they are
+         ever changed. To do that:
+
+           # Add the servers to the sshloginfile
+           (echo servera; echo serverb) > .parallel/my_cluster
+           # Make sure .ssh/config exist
+           touch .ssh/config
+           cp .ssh/config .ssh/config.backup
+           # Disable StrictHostKeyChecking temporarily
+           (echo 'Host *'; echo StrictHostKeyChecking no) >> .ssh/config
+           parallel --slf my_cluster --nonall true
+           # Remove the disabling of StrictHostKeyChecking
+           mv .ssh/config.backup .ssh/config
+
+         The servers in .parallel/my_cluster are now added in
+         .ssh/known_hosts.
+
+         To run echo on server.example.com:
+
+           seq 10 | parallel --sshlogin server.example.com echo
+
+         To run commands on more than one remote computer run:
+
+           seq 10 | parallel --sshlogin s1.example.com,s2.example.net echo
+
+         Or:
+
+           seq 10 | parallel --sshlogin server.example.com \
+             --sshlogin server2.example.net echo
+
+         If the login username is foo on server2.example.net use:
+
+           seq 10 | parallel --sshlogin server.example.com \
+             --sshlogin foo@server2.example.net echo
+
+         If your list of hosts is server1-88.example.net with
+         login foo:
+
+           seq 10 | parallel -Sfoo@server{1..88}.example.net echo
+
+         To distribute the commands to a list of computers, make a
+         file mycomputers with all the computers:
+
+           server.example.com
+           foo@server2.example.com
+           server3.example.com
+
+         Then run:
+
+           seq 10 | parallel --sshloginfile mycomputers echo
+
+         To include the local computer add the special sshlogin
+         ':' to the list:
+
+           server.example.com
+           foo@server2.example.com
+           server3.example.com
+           :
+
+         GNU parallel will try to determine the number of CPUs on
+         each of the remote computers, and run one job per CPU -
+         even if the remote computers do not have the same number
+         of CPUs.
+
+         If the number of CPUs on the remote computers is not
+         identified correctly the number of CPUs can be added in
+         front. Here the computer has 8 CPUs.
+
+           seq 10 | parallel --sshlogin 8/server.example.com echo
+#+end_example
+* xargs 不支持context替换
+so you will have to create the arguments.
+
+* If you use a replace string in xargs (-I) you can not force xargs to use more than one argument.
+
+Quoting in xargs works like -q in GNU parallel. This means composed commands and redirection require using bash -c.
+
+  ls | parallel "wc {} >{}.wc"
+  ls | parallel "echo {}; ls {}|wc"
+
+becomes (assuming you have 8 cores and that none of the filenames contain space, " or ').
+
+  ls | xargs -d "\n" -P8 -I {} bash -c "wc {} >{}.wc"
+  ls | xargs -d "\n" -P8 -I {} bash -c "echo {}; ls {}|wc"
