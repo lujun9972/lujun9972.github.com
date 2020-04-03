@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>可怕的e命令 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">可怕的e命令</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org18e375c">故障</a></li>
+<li><a href="#org2adab30">原因</a></li>
+<li><a href="#org4ea067c">解决办法</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org18e375c" class="outline-2">
+<h2 id="org18e375c">故障</h2>
+<div class="outline-text-2" id="text-org18e375c">
+<p>
+监控告警某系统业务成功率突然下降了一半，在排查应用日志后发现有一台机一直提示打开文件失败，经过与正常机器对比，发现有一个文件目录消失了。
+而使用history查看操作历史并未发现有任何人做删除操作。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2adab30" class="outline-2">
+<h2 id="org2adab30">原因</h2>
+<div class="outline-text-2" id="text-org2adab30">
+<p>
+通过KVM历史回顾，发现故障产生的时候，有个同事运行了一个很奇怪的命令 <code>e</code>. 
+</p>
+
+<p>
+与该同事进行沟通，该同事反映它当时只是想执行 <code>exit</code> 操作，但可能中途不小心按到了回车符，所以就变成了执行命令 <code>e</code>. 该同事发现运行了错误的程序后随即关闭了终端窗口。
+</p>
+
+<p>
+经过复盘，我们发现在AIX上 <code>e</code> 命令运行的是一个 <code>INTERACTIVE TEN/PLUS File Manager</code>, 其会打开一个双面板的界面，其中左边列出了当前目录下的所有文件(和目录),像下面这样
+<img src="../../../../../assets/blog/2020/04/02/可怕的e命令/e1.PNG" alt="e1.PNG" />
+</p>
+
+<p>
+随后输入的任何字母都会 <b>立即</b> 修改光标所在的文件名(输入的字母会插在文件名前面). 所以当那个同事输入后面的 <code>xit</code> 时，实际上已经把光标所在的文件名给改了，像下面这样:
+<img src="../../../../../assets/blog/2020/04/02/可怕的e命令/e2.PNG" alt="e2.PNG" />
+</p>
+
+<p>
+随后运行 <code>ls -ld xit*</code> 果然看到被修改的文件名
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4ea067c" class="outline-2">
+<h2 id="org4ea067c">解决办法</h2>
+<div class="outline-text-2" id="text-org4ea067c">
+<p>
+为了防止再出现类似的情况，最好是卸载该命令。 <code>e</code> 是 <code>bos.INed</code> 中的命令，然而由于不能确定还有哪些应用依赖于该包，所以还是不敢直接卸载该包。
+</p>
+
+<p>
+最后只能临时取消 <code>e</code> 命令的执行权限
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">chmod -x /usr/bin/e
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-04-02</span>
+    <span title="last modification date" class="post-info">2020-04-02</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/异闻录">异闻录</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-6fd2bbc1-0be5-452e-b5e0-bd9915ea8c4d">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
