@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>既生xargs何生parallel - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">既生xargs何生parallel</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org4ef6dc5">xargs 不能很好的处理特殊字符(比如空格, \, ' 和 ")</a></li>
+<li><a href="#org97177e5">xargs 没有参数直接按CPU Core数量来并法运行任务，而必须人工指定并法度</a></li>
+<li><a href="#org9cb119d">xargs 可能会导致输出串行</a></li>
+<li><a href="#orgaf70828">xargs 不支持保持多任务输出的顺序</a></li>
+<li><a href="#org285a3b8">xargs 不支持远程运行任务</a></li>
+<li><a href="#org7e2b258">xargs 不支持context替换</a></li>
+<li><a href="#orgedbcc32">If you use a replace string in xargs (-I) you can not force xargs to use more than one argument.</a></li>
+</ul>
+</div>
+</div>
+<p>
+xargs和parallel都能并发运行多个命令，然而对这两个命令的区别一直不太清楚，直到看到了这篇文章:<a href="https://www.gnu.org/software/parallel/parallel_alternatives.html#DIFFERENCES-BETWEEN-xargs-AND-GNU-Parallel">https://www.gnu.org/software/parallel/parallel_alternatives.html#DIFFERENCES-BETWEEN-xargs-AND-GNU-Parallel</a>
+</p>
+
+<p>
+简单的说，parallel就是增强版的xargs。
+</p>
+
+<div id="outline-container-org4ef6dc5" class="outline-2">
+<h2 id="org4ef6dc5">xargs 不能很好的处理特殊字符(比如空格, \, ' 和 ")</h2>
+<div class="outline-text-2" id="text-org4ef6dc5">
+<p>
+比如下面这个例子
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">touch important_file
+touch <span class="org-string">'not important_file'</span>
+ls not* | xargs rm              
+</pre>
+</div>
+<p>
+会删除 <code>import_file</code>,并提示 <code>rm: 无法删除 'not': 没有那个文件或目录</code>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mkdir -p <span class="org-string">"My brother's 12\" records"</span>
+ls | xargs rmdir
+</pre>
+</div>
+<p>
+会提示 <code>/usr/bin/xargs: 未匹配的 单 引用；默认情况下，引用是针对 xargs 的，除非您使用了 -0 选项</code> 和 <code>rmdir: 删除 'My' 失败: 没有那个文件或目录</code>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">touch <span class="org-string">'c:\windows\system32\clfs.sys'</span>
+<span class="org-builtin">echo</span> <span class="org-string">'c:\windows\system32\clfs.sys'</span> | xargs ls -l
+</pre>
+</div>
+<p>
+会提示: <code>ls: 无法访问 'c:windowssystem32clfs.sys': 没有那个文件或目录</code>
+</p>
+
+<p>
+一般遇到这种情况你需要使用xargs的 <code>-0</code> 参数来指定使用 <code>NUL</code> 作为分隔符，然而这同时要求产生输入的命令的支持。
+</p>
+
+<p>
+还有一种变通方案是使用 xargs 的 <code>-d</code> 选项指定使用换行符作为分隔符,比如:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">touch <span class="org-string">'c:\windows\system32\clfs.sys'</span>
+touch <span class="org-string">'not important_file'</span>
+ls |xargs -d <span class="org-string">"\n"</span> -n1 rm
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org97177e5" class="outline-2">
+<h2 id="org97177e5">xargs 没有参数直接按CPU Core数量来并法运行任务，而必须人工指定并法度</h2>
+<div class="outline-text-2" id="text-org97177e5">
+<p>
+在parallel默认依据CPU Core数量来决定并发的任务数，而且除了能通过 <code>-P N</code> 直接设定并发度外,还能通过 <code>-P +N</code>, <code>-P -N</code>, <code>-P N%</code> 来在CPU Core的数量基准进行调整(减少N个，增加N个，乘于N%)
+</p>
+
+<p>
+而xargs只能通过 <code>-P N</code> 来手工设定并法度， 不过这也不是什么太大的问题，我们可以通过 <code>grep processor /proc/cpuinfo |wc -l</code> 来统计CPU的Core数量
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9cb119d" class="outline-2">
+<h2 id="org9cb119d">xargs 可能会导致输出串行</h2>
+<div class="outline-text-2" id="text-org9cb119d">
+<p>
+也就是可能一行输出的前半部分是一个进程的输出，而后半部分是另一个进程的输出。例如:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">slow_seq</span>() {
+    <span class="org-builtin">echo</span> Count to <span class="org-string">"$@"</span>
+    seq <span class="org-string">"$@"</span> |
+        perl -ne <span class="org-string">'$|=1; for(split//){ print; select($a,$a,$a,0.100);}'</span>
+}
+<span class="org-builtin">export</span> -f slow_seq
+<span class="org-builtin">echo</span> <span class="org-string">"&#36825;&#26159;&#26399;&#26395;&#20540;"</span>
+seq 8 | xargs -n1 -P1 -I {} bash -c <span class="org-string">'slow_seq {}'</span>
+<span class="org-builtin">echo</span> <span class="org-string">"&#20351;&#29992;parallel&#36827;&#34892;&#24182;&#21457;"</span>
+seq 8 | parallel -P8 slow_seq {}
+<span class="org-builtin">echo</span> <span class="org-string">"&#20351;&#29992;xargs&#36827;&#34892;&#24182;&#21457;"</span>
+seq 8 | xargs -n1 -P8 -I {} bash -c <span class="org-string">'slow_seq {}'</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#36825;&#26159;&#26399;&#26395;&#20540;
+Count to 1
+1
+Count to 2
+1
+2
+Count to 3
+1
+2
+3
+Count to 4
+1
+2
+3
+4
+Count to 5
+1
+2
+3
+4
+5
+Count to 6
+1
+2
+3
+4
+5
+6
+Count to 7
+1
+2
+3
+4
+5
+6
+7
+Count to 8
+1
+2
+3
+4
+5
+6
+7
+8
+&#20351;&#29992;parallel&#36827;&#34892;&#24182;&#21457;
+Count to 1
+1
+Count to 2
+1
+2
+Count to 3
+1
+2
+3
+Count to 4
+1
+2
+3
+4
+Count to 5
+1
+2
+3
+4
+5
+Count to 6
+1
+2
+3
+4
+5
+6
+Count to 7
+1
+2
+3
+4
+5
+6
+7
+Count to 8
+1
+2
+3
+4
+5
+6
+7
+8
+&#20351;&#29992;xargs&#36827;&#34892;&#24182;&#21457;
+Count to 1
+Count to 2
+Count to 3
+Count to 4
+11Count to 5
+11Count to 6
+Count to 7
+1Count to 8
+111
+
+
+
+
+
+
+
+2222222
+
+
+
+
+
+
+333333
+
+
+
+
+
+44444
+
+
+
+
+5555
+
+
+
+666
+
+
+77
+
+8
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgaf70828" class="outline-2">
+<h2 id="orgaf70828">xargs 不支持保持多任务输出的顺序</h2>
+<div class="outline-text-2" id="text-orgaf70828">
+<p>
+parallel 可以通过 <code>-k</code> 或 <code>--keep-order</code> 选项来保证多任务的输出顺序与顺序执行时的顺序一直。
+</p>
+
+<p>
+而xargs无此功能，也就是说任务有多行输出的话，可能导致多个任务的输出混杂在一起.
+</p>
+</div>
+</div>
+
+<div id="outline-container-org285a3b8" class="outline-2">
+<h2 id="org285a3b8">xargs 不支持远程运行任务</h2>
+<div class="outline-text-2" id="text-org285a3b8">
+<p>
+parallel可以通过 <code>--sshlogin</code> 来将任务发送到远程主机上并发运行.
+</p>
+
+<p>
+其他与远程运行的命令包括 <code>--ssh</code>, <code>--return</code>, <code>--transfer</code>, <code>--transferfile</code>, <code>--tf</code>, <code>--cleanup</code>, <code>--env</code>
+</p>
+
+<p>
+这个能力极其恐怖，下面是摘自 <code>man parallel</code> 中的一个远程执行任务的例子:
+</p>
+<pre class="example">
+EXAMPLE: Using remote computers
+       To run commands on a remote computer SSH needs to be set
+       up and you must be able to login without entering a
+       password (The commands ssh-copy-id, ssh-agent, and
+       sshpass may help you do that).
+
+       If you need to login to a whole cluster, you typically do
+       not want to accept the host key for every host. You want
+       to accept them the first time and be warned if they are
+       ever changed. To do that:
+
+         # Add the servers to the sshloginfile
+         (echo servera; echo serverb) &gt; .parallel/my_cluster
+         # Make sure .ssh/config exist
+         touch .ssh/config
+         cp .ssh/config .ssh/config.backup
+         # Disable StrictHostKeyChecking temporarily
+         (echo 'Host *'; echo StrictHostKeyChecking no) &gt;&gt; .ssh/config
+         parallel --slf my_cluster --nonall true
+         # Remove the disabling of StrictHostKeyChecking
+         mv .ssh/config.backup .ssh/config
+
+       The servers in .parallel/my_cluster are now added in
+       .ssh/known_hosts.
+
+       To run echo on server.example.com:
+
+         seq 10 | parallel --sshlogin server.example.com echo
+
+       To run commands on more than one remote computer run:
+
+         seq 10 | parallel --sshlogin s1.example.com,s2.example.net echo
+
+       Or:
+
+         seq 10 | parallel --sshlogin server.example.com \
+           --sshlogin server2.example.net echo
+
+       If the login username is foo on server2.example.net use:
+
+         seq 10 | parallel --sshlogin server.example.com \
+           --sshlogin foo@server2.example.net echo
+
+       If your list of hosts is server1-88.example.net with
+       login foo:
+
+         seq 10 | parallel -Sfoo@server{1..88}.example.net echo
+
+       To distribute the commands to a list of computers, make a
+       file mycomputers with all the computers:
+
+         server.example.com
+         foo@server2.example.com
+         server3.example.com
+
+       Then run:
+
+         seq 10 | parallel --sshloginfile mycomputers echo
+
+       To include the local computer add the special sshlogin
+       ':' to the list:
+
+         server.example.com
+         foo@server2.example.com
+         server3.example.com
+         :
+
+       GNU parallel will try to determine the number of CPUs on
+       each of the remote computers, and run one job per CPU -
+       even if the remote computers do not have the same number
+       of CPUs.
+
+       If the number of CPUs on the remote computers is not
+       identified correctly the number of CPUs can be added in
+       front. Here the computer has 8 CPUs.
+
+         seq 10 | parallel --sshlogin 8/server.example.com echo
+</pre>
+</div>
+</div>
+<div id="outline-container-org7e2b258" class="outline-2">
+<h2 id="org7e2b258">xargs 不支持context替换</h2>
+<div class="outline-text-2" id="text-org7e2b258">
+<p>
+so you will have to create the arguments.
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgedbcc32" class="outline-2">
+<h2 id="orgedbcc32">If you use a replace string in xargs (-I) you can not force xargs to use more than one argument.</h2>
+<div class="outline-text-2" id="text-orgedbcc32">
+<p>
+Quoting in xargs works like -q in GNU parallel. This means composed commands and redirection require using bash -c.
+</p>
+
+<p>
+ls | parallel "wc {} &gt;{}.wc"
+ls | parallel "echo {}; ls {}|wc"
+</p>
+
+<p>
+becomes (assuming you have 8 cores and that none of the filenames contain space, " or ').
+</p>
+
+<p>
+ls | xargs -d "\n" -P8 -I {} bash -c "wc {} &gt;{}.wc"
+ls | xargs -d "\n" -P8 -I {} bash -c "echo {}; ls {}|wc"
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-04-01</span>
+    <span title="last modification date" class="post-info">2020-04-03</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-8ee40276-dd2b-43c7-ac7e-68a60e84001b">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
