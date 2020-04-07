@@ -1,0 +1,97 @@
+#+TITLE: 把OrangePi打造成tor代理节点
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-07 二 21:51]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+[[https://www.torproject.org/][Tor]] 是什么东西，咱就不多说了，可以看[[https://en.wikipedia.org/wiki/Tor_(anonymity_network)][Wiki]]。
+
+* 安装
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  sudo apt install tor -y
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Reading package lists... 0%Reading package lists... 100%Reading package lists... Done
+Building dependency tree... 0%Building dependency tree... 0%Building dependency tree... 50%Building dependency tree... 50%Building dependency tree... 65%Building dependency tree... 87%Building dependency tree       
+Reading state information... 0%Reading state information... 0%Reading state information... Done
+Suggested packages:
+  mixmaster torbrowser-launcher socat tor-arm apparmor-utils obfs4proxy
+Recommended packages:
+  tor-geoipdb torsocks
+The following NEW packages will be installed:
+  tor
+0 upgraded, 1 newly installed, 0 to remove and 0 not upgraded.
+Need to get 1,223 kB of archives.
+After this operation, 4,223 kB of additional disk space will be used.
+[33m0% [Working][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m0% [Connecting to mirrors.ustc.edu.cn][0m[33m                                      0% [Waiting for headers][0m                        Get:1 http://mirrors.ustc.edu.cn/ubuntu-ports bionic/universe arm64 tor arm64 0.3.2.10-1 [1,223 kB]
+[33m0% [1 tor 0 B/1,223 kB 0%][0m[33m17% [1 tor 254 kB/1,223 kB 21%]                                   39.9 kB/s 24s[0m[33m48% [1 tor 736 kB/1,223 kB 60%]                                   39.9 kB/s 12s[0m[33m65% [1 tor 995 kB/1,223 kB 81%]                                    39.9 kB/s 5s[0m[33m100% [Working]                                                     39.9 kB/s 0s[0m                                                                               Fetched 1,223 kB in 8s (163 kB/s)
+Selecting previously unselected package tor.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 59883 files and directories currently installed.)
+Preparing to unpack .../tor_0.3.2.10-1_arm64.deb ...
+Unpacking tor (0.3.2.10-1) ...
+Setting up tor (0.3.2.10-1) ...
+Something or somebody made /var/lib/tor disappear.
+Creating one for you again.
+Something or somebody made /var/log/tor disappear.
+Creating one for you again.
+Created symlink /etc/systemd/system/multi-user.target.wants/tor.service → /lib/systemd/system/tor.service.
+Processing triggers for man-db (2.8.3-2ubuntu0.1) ...
+Processing triggers for systemd (237-3ubuntu10.39) ...
+#+end_src
+
+这会生成两个service: =tor= 和 =tor@default=
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  systemctl status tor.service
+  systemctl status tor@default.service
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+● tor.service - Anonymizing overlay network for TCP (multi-instance-master)
+   Loaded: loaded (/lib/systemd/system/tor.service; enabled; vendor preset: enabled)
+   Active: active (exited) since Tue 2020-04-07 21:58:27 HKT; 30min ago
+ Main PID: 11923 (code=exited, status=0/SUCCESS)
+    Tasks: 0 (limit: 1027)
+   CGroup: /system.slice/tor.service
+
+Apr 07 21:58:27 orangepipc2 systemd[1]: Starting Anonymizing overlay network…...
+Apr 07 21:58:27 orangepipc2 systemd[1]: Started Anonymizing overlay network …r).
+Hint: Some lines were ellipsized, use -l to show in full.
+● tor@default.service - Anonymizing overlay network for TCP
+   Loaded: loaded (/lib/systemd/system/tor@default.service; enabled-runtime; vendor preset: enabled)
+   Active: active (running) since Tue 2020-04-07 21:58:29 HKT; 30min ago
+ Main PID: 11976 (tor)
+    Tasks: 1 (limit: 1027)
+   CGroup: /system.slice/system-tor.slice/tor@default.service
+           └─11976 /usr/bin/tor --defaults-torrc /usr/share/tor/tor-service-d… 0
+#+end_src
+
+* 配置Tor
+通过查看 =man tor= 的 =FILES= 部分，可以看到 =Tor= 的配置文件为:
++ /etc/tor/torrc
++ $HOME/.torrc
+  
+在配置文件中输入下面配置信息
+#+begin_src conf
+  SocksPort 192.168.1.9:9050    # 192.168.1.9是OrangePi的IP，监听端口为9050
+  SocksPolicy accept 192.168.1.0/24 # 允许192.168.1.0/24网段的主机连接到该代理
+  RunAsDaemon 1                     # 以daemon方式运行
+  DataDirectory /var/lib/tor        # /var/lib/tor 中存储数据
+#+end_src
+
+然后重启Tor服务
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  sudo systemctl restart tor@default.service
+#+end_src
+
+* 配置浏览器
+在浏览器中设置Sock5代理为OrangePi的地址和9050端口。
+
+然后访问 https://check.torproject.org/ 就可以检测浏览器是否已经通过Tor网络访问互联网了。
+
+* 最后
+经过测试，在墙内似乎是无法访问tor网络的，所以在墙内搭建tor是没有意义的...
