@@ -53,29 +53,30 @@
 <h2>&#30446;&#24405;</h2>
 <div id="text-table-of-contents">
 <ul>
-<li><a href="#org68468ed">解决方案一：使用fuser命令</a>
+<li><a href="#org8061a97">解决方案一：使用fuser命令</a>
 <ul>
-<li><a href="#org6377c47">安装</a></li>
-<li><a href="#org103e6d7">解决方案</a></li>
+<li><a href="#org593f904">安装</a></li>
+<li><a href="#orgc83bc69">解决方案</a></li>
 </ul>
 </li>
-<li><a href="#org46e728b">解决方案二：借助/proc</a>
+<li><a href="#org3d20c98">解决方案二：借助/proc</a>
 <ul>
-<li><a href="#org94498c3">安装</a></li>
-<li><a href="#org498f44f">解决方案</a></li>
+<li><a href="#org06d9fda">安装</a></li>
+<li><a href="#orgf52f738">解决方案</a></li>
 </ul>
 </li>
-<li><a href="#orgafef495">相关链接</a></li>
+<li><a href="#org6a4e8e3">相关链接</a></li>
 </ul>
 </div>
 </div>
 <p>
-有时候你会发现某些文件在不停的增长严重占用了磁盘空间，你想找到罪魁祸首是谁，该怎么做呢？
+有时候你会发现某些文件在不停的增长严重占用了磁盘空间，或者删除某个大文件后发现磁盘空间没有被回收。
+这说明该文件正在被某个进程所占用，你想找到罪魁祸首是谁，该怎么做呢？
 </p>
 
-<div id="outline-container-org68468ed" class="outline-2">
-<h2 id="org68468ed">解决方案一：使用fuser命令</h2>
-<div class="outline-text-2" id="text-org68468ed">
+<div id="outline-container-org8061a97" class="outline-2">
+<h2 id="org8061a97">解决方案一：使用fuser命令</h2>
+<div class="outline-text-2" id="text-org8061a97">
 <p>
 涉及到的命令: fuser
 </p>
@@ -85,9 +86,9 @@
 </p>
 </div>
 
-<div id="outline-container-org6377c47" class="outline-3">
-<h3 id="org6377c47">安装</h3>
-<div class="outline-text-3" id="text-org6377c47">
+<div id="outline-container-org593f904" class="outline-3">
+<h3 id="org593f904">安装</h3>
+<div class="outline-text-3" id="text-org593f904">
 <p>
 在archlinux上，fuser命令是属于 <code>psmisc</code> 包中的，因此运行下面命令安装:
 </p>
@@ -99,9 +100,9 @@
 </div>
 </div>
 
-<div id="outline-container-org103e6d7" class="outline-3">
-<h3 id="org103e6d7">解决方案</h3>
-<div class="outline-text-3" id="text-org103e6d7">
+<div id="outline-container-orgc83bc69" class="outline-3">
+<h3 id="orgc83bc69">解决方案</h3>
+<div class="outline-text-3" id="text-orgc83bc69">
 <p>
 fuser的使用方法非常简单，只需要直接后接要查看的文件路径就行了。比如:
 </p>
@@ -148,9 +149,9 @@ ps -elf |grep sleep |grep -v grep
 </div>
 </div>
 
-<div id="outline-container-org46e728b" class="outline-2">
-<h2 id="org46e728b">解决方案二：借助/proc</h2>
-<div class="outline-text-2" id="text-org46e728b">
+<div id="outline-container-org3d20c98" class="outline-2">
+<h2 id="org3d20c98">解决方案二：借助/proc</h2>
+<div class="outline-text-2" id="text-org3d20c98">
 <p>
 涉及到的命令: bash
 </p>
@@ -160,17 +161,17 @@ ps -elf |grep sleep |grep -v grep
 </p>
 </div>
 
-<div id="outline-container-org94498c3" class="outline-3">
-<h3 id="org94498c3">安装</h3>
-<div class="outline-text-3" id="text-org94498c3">
+<div id="outline-container-org06d9fda" class="outline-3">
+<h3 id="org06d9fda">安装</h3>
+<div class="outline-text-3" id="text-org06d9fda">
 <ul class="org-ul">
 <li>无需安装</li>
 </ul>
 </div>
 </div>
-<div id="outline-container-org498f44f" class="outline-3">
-<h3 id="org498f44f">解决方案</h3>
-<div class="outline-text-3" id="text-org498f44f">
+<div id="outline-container-orgf52f738" class="outline-3">
+<h3 id="orgf52f738">解决方案</h3>
+<div class="outline-text-3" id="text-orgf52f738">
 <p>
 我们知道 <code>/proc/$pid/fd/</code> 目录下存储着进程号为 <code>$pid</code> 的进程所打开的所有文件描述符号和对应的文件路径:
 </p>
@@ -190,19 +191,32 @@ l-wx------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 2 -&gt; /tmp/emacsQh0w9R
 <p>
 所以我们可以通过遍历该目录下的所有文件描述符所指向的文件路径来找出打开文件的进程号:
 </p>
+
+<p>
+首先, <code>/proc/$pid/fd</code> 目录中的软链接都是指向绝对路径的，因此我们需要定义一个函数获取指定文件的绝对路径:
+</p>
 <div class="org-src-container">
-<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/</span><span class="org-keyword">env</span><span class="org-comment"> bash</span>
-<span class="org-keyword">function</span> <span class="org-function-name">abs_path</span>()
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">abs_path</span>()
 {
     <span class="org-builtin">local</span> <span class="org-variable-name">file</span>=<span class="org-string">"$1"</span>
     <span class="org-builtin">local</span> <span class="org-variable-name">abs_dir</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">cd</span><span class="org-string"> $(</span><span class="org-sh-quoted-exec">dirname</span><span class="org-string"> $1);pwd)"</span>
     <span class="org-builtin">local</span> <span class="org-variable-name">basename</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">basename</span><span class="org-string"> $1)"</span>
     <span class="org-builtin">echo</span> <span class="org-string">"${abs_dir}/${basename}"</span>
 }
-<span class="org-keyword">function</span> <span class="org-function-name">is_opened_file</span>()
+</pre>
+</div>
+<p>
+基于兼容性考虑，这里我们使用 <code>dirname</code> 命令和 <code>basename</code> 来获取文件路径中的目录和文件名，而没有使用bash的参数扩展功能来截取.
+</p>
+
+<p>
+下一步我们定义一个函数来判断某个进程是否打开了指定文件:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">is_opened_file</span>()
 {
     <span class="org-builtin">local</span> <span class="org-variable-name">pid</span>=<span class="org-string">"$1"</span>
-    <span class="org-builtin">local</span> <span class="org-variable-name">file</span>=$(<span class="org-sh-quoted-exec">abs_path</span> <span class="org-string">"$2"</span>)
+    <span class="org-builtin">local</span> <span class="org-variable-name">file</span>=<span class="org-string">"$2"</span>
     <span class="org-keyword">for</span> f<span class="org-keyword"> in</span> /proc/${<span class="org-variable-name">pid</span>}/fd/*
     <span class="org-keyword">do</span>
         <span class="org-keyword">if</span> [[ <span class="org-string">"$(</span><span class="org-sh-quoted-exec">readlink</span><span class="org-string"> $f)"</span> == <span class="org-string">"${file}"</span> ]];<span class="org-keyword">then</span>
@@ -211,9 +225,19 @@ l-wx------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 2 -&gt; /tmp/emacsQh0w9R
     <span class="org-keyword">done</span>
     <span class="org-keyword">return</span> 1
 }
-<span class="org-keyword">function</span> <span class="org-function-name">fileuser</span>()
+</pre>
+</div>
+<p>
+注意到，该函数没有去获取文件的绝对路径，这是基于性能考虑。因为我们需要遍历系统所有进程(通常有上千个)中打开的文件描述符来找出打开指定文件的进程，如果每次遍历都获取一次绝对路径那么性能消耗会非常严重，也是没有必要的。
+</p>
+
+<p>
+最后，我们遍历整个 <code>/proc</code> 下的进程目录，找出打开指定文件的进程号:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">fileuser</span>()
 {
-    <span class="org-variable-name">file</span>=<span class="org-string">"$1"</span>
+    <span class="org-variable-name">file</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">abs_path</span><span class="org-string"> "$1")"</span>
     <span class="org-keyword">for</span> pid<span class="org-keyword"> in</span> $(<span class="org-sh-quoted-exec">cd</span> /proc;ls -d [0-9]*);
     <span class="org-keyword">do</span>
         <span class="org-keyword">if</span> is_opened_file <span class="org-string">"${pid}"</span> <span class="org-string">"${file}"</span>;<span class="org-keyword">then</span>
@@ -221,8 +245,14 @@ l-wx------ 1 lujun9972 lujun9972 64  3&#26376; 30 10:59 2 -&gt; /tmp/emacsQh0w9R
         <span class="org-keyword">fi</span>
     <span class="org-keyword">done</span>
 }
+</pre>
+</div>
 
-sleep 10 &gt; /tmp/test &amp;
+<p>
+现在我们来测试一下:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sleep 10 &gt; /tmp/test &amp;
 fileuser /tmp/test
 </pre>
 </div>
@@ -233,15 +263,15 @@ fileuser /tmp/test
 </div>
 
 <p>
-不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多10秒钟才出结果。
+不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多5秒钟才出结果。
 </p>
 </div>
 </div>
 </div>
 
-<div id="outline-container-orgafef495" class="outline-2">
-<h2 id="orgafef495">相关链接</h2>
-<div class="outline-text-2" id="text-orgafef495">
+<div id="outline-container-org6a4e8e3" class="outline-2">
+<h2 id="org6a4e8e3">相关链接</h2>
+<div class="outline-text-2" id="text-org6a4e8e3">
 <p>
 更多常见选项请运行 <code>man fuser</code> 或 <code>fuser --help</code> 查看帮助
 </p>
@@ -253,7 +283,7 @@ fileuser /tmp/test
 <div>
   <div class="post-meta">
     <span title="post date" class="post-info">2020-03-30</span>
-    <span title="last modification date" class="post-info">2020-03-30</span>
+    <span title="last modification date" class="post-info">2020-04-07</span>
     <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
     <span title="author" class="post-info">lujun9972</span>
   </div>
@@ -290,7 +320,7 @@ fileuser /tmp/test
   <div class="footer">
     <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-743a2467-3a20-4a6c-8e37-afc538f78720">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-f97ae288-2f43-4ecd-a9da-7b14f0d7b698">lujun9972</a>
       &nbsp;&nbsp;-&nbsp;&nbsp;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
       Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
