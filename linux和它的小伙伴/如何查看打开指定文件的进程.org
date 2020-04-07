@@ -6,7 +6,8 @@
 #+STARTUP:  inlineimages
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
 
-有时候你会发现某些文件在不停的增长严重占用了磁盘空间，你想找到罪魁祸首是谁，该怎么做呢？
+有时候你会发现某些文件在不停的增长严重占用了磁盘空间，或者删除某个大文件后发现磁盘空间没有被回收。
+这说明该文件正在被某个进程所占用，你想找到罪魁祸首是谁，该怎么做呢？
 
 * 解决方案一：使用fuser命令
 涉及到的命令: fuser
@@ -78,8 +79,9 @@ l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
 #+end_src
 
 所以我们可以通过遍历该目录下的所有文件描述符所指向的文件路径来找出打开文件的进程号:
-#+begin_src shell :results org
-  #!/usr/bin/env bash
+
+首先, =/proc/$pid/fd= 目录中的软链接都是指向绝对路径的，因此我们需要定义一个函数获取指定文件的绝对路径:
+#+begin_src shell
   function abs_path()
   {
       local file="$1"
@@ -87,10 +89,15 @@ l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
       local basename="$(basename $1)"
       echo "${abs_dir}/${basename}"
   }
+#+end_src
+基于兼容性考虑，这里我们使用 =dirname= 命令和 =basename= 来获取文件路径中的目录和文件名，而没有使用bash的参数扩展功能来截取.
+
+下一步我们定义一个函数来判断某个进程是否打开了指定文件:
+#+begin_src shell
   function is_opened_file()
   {
       local pid="$1"
-      local file=$(abs_path "$2")
+      local file="$2"
       for f in /proc/${pid}/fd/*
       do
           if [[ "$(readlink $f)" == "${file}" ]];then
@@ -99,9 +106,14 @@ l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
       done
       return 1
   }
+#+end_src
+注意到，该函数没有去获取文件的绝对路径，这是基于性能考虑。因为我们需要遍历系统所有进程(通常有上千个)中打开的文件描述符来找出打开指定文件的进程，如果每次遍历都获取一次绝对路径那么性能消耗会非常严重，也是没有必要的。
+
+最后，我们遍历整个 =/proc= 下的进程目录，找出打开指定文件的进程号:
+#+begin_src shell :results org
   function fileuser()
   {
-      file="$1"
+      file="$(abs_path "$1")"
       for pid in $(cd /proc;ls -d [0-9]*);
       do
           if is_opened_file "${pid}" "${file}";then
@@ -109,7 +121,10 @@ l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
           fi
       done
   }
+#+end_src
 
+现在我们来测试一下:
+#+begin_src shell
   sleep 10 > /tmp/test &
   fileuser /tmp/test
 #+end_src
@@ -119,7 +134,7 @@ l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
 2461994
 #+end_src
 
-不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多10秒钟才出结果。
+不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多5秒钟才出结果。
 
 * 相关链接
 更多常见选项请运行 =man fuser= 或 =fuser --help= 查看帮助
