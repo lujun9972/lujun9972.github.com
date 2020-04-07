@@ -1,0 +1,61 @@
+#+TITLE: Bash read的超时由谁决定?
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2020-04-07 二 15:26]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 症状
+事情的起因是我想将系统检查脚本收集到的数据发送到一个服务器中汇集起来存入数据库中,于是用shell写了个简单的脚本,大概是这样的:
+#+begin_src shell
+  nc -kl 1234 |while read a b c d;do
+      echo "insert into baseline values('$a','$b','$c','$d');"
+  done |sqlite3 baseline.db
+#+end_src
+
+然后我发现很奇怪的，每隔一段时间 =nc= 进程就会退出,导致发送检查数据时提示连接服务器端口失败。
+
+* 排查
+
+使用ps抓取进程变动情况，发现每隔一段时间 =while= 循环的那个 =bash= 进程就会消失
+
+刚开始的进程是这样的:
+#+begin_example
+  lujun9972:~/ $ ps -elf |grep 2357400|grep -v grep
+  0 S lujun99+  200407 2357400  0  80   0 -   763 -      15:53 pts/0    00:00:00 nc -l 1234
+  1 S lujun99+  200408 2357400  0  80   0 -  4111 -      15:53 pts/0    00:00:00 bash
+  0 S lujun99+ 2357400 2357398  0  80   0 -  4176 -      3月27 pts/0   00:00:01 bash
+#+end_example
+
+过了一会变成了:
+#+begin_example
+  lujun9972:~/ $ ps -elf |grep 2357400|grep -v grep
+  0 S lujun99+  200407 2357400  0  80   0 -   763 -      15:53 pts/0    00:00:00 nc -l 1234
+  0 S lujun99+ 2357400 2357398  0  80   0 -  4176 -      3月27 pts/0   00:00:01 bash
+#+end_example
+
+这很明显是while循环被退出了呀。但是我并没有使用 read 的 =-t= 选项指定超时时间啊？
+
+经过搜索 =man bash=,终于发现罪魁祸首原来是 =TMOUT= 这个环境变量。关于 =TMOUT= 的说明， =man bash= 中是这么说的:
+#+begin_example
+  TMOUT  如果设置为大于  0  的值，TMOUT 被当作内建命令 read
+         的默认超时 等待时间。如果等待终端输入时， TMOUT 秒
+         之后仍然没有输入，   select   命令将终止。在交互的
+         shell 中，它的值被解释为显示了  主提示符之后等待输
+         入的秒数。如果经过这个秒数之后仍然没有输入，  Bash
+         将退出。
+#+end_example
+
+原来，为了安全期间，生产环境的主机都设置了 =TMOUT= 参数，在操作员一段时间未操作的情况下自动断开与主机的连接。
+而这个 =TMOUT= 又同时作为 =read= 命令的默认超时时间，而read在超时后返回码为 =142=, 所以就退出了 =while= 循环了.
+=while= 循环退出后 =nc= 再收到网络发来的数据后就会由于输出句柄被关闭而退出了。
+
+* 解决
+将命令改成
+#+begin_src shell
+  nc -kl 1234 |while TMOUT="" read a b c d;do
+      echo "insert into baseline values('$a','$b','$c','$d');"
+  done |sqlite3 baseline.db
+#+end_src
+后问题得到了解决。
