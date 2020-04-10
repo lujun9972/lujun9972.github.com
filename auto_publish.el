@@ -23,6 +23,7 @@ There are two things you can do about this warning:
 (package-install 'dockerfile-mode)
 (package-install 'docker-compose-mode)
 (package-install 'ox-gfm)
+(package-install 'request)
 
 (setq load-path (cons  "~/EGO/" load-path))
 (setq load-path (cons  "~/csdn-publish/" load-path))
@@ -48,6 +49,7 @@ There are two things you can do about this warning:
 (require 'ob-shell)
 (require 'ox-gfm)
 (require 'cl-lib)
+(require 'request)
 ;; publish CSDN
 (require 'csdn-publish)
 (let* ((ego-current-project-name "blog")
