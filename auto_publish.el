@@ -59,8 +59,9 @@ There are two things you can do about this warning:
        (changed-files (ego-git-get-changed-files repo-dir base-git-commit))
        (updated-files (plist-get changed-files :update))
        (deleted-files (plist-get changed-files :delete))
-       (updated-org-files (cl-delete-if-not (lambda (file)
-                                              (string-suffix-p ".org" file)) updated-files)))
+       (updated-org-files (cl-delete "README.org"
+                                     (cl-delete-if-not (lambda (file)
+                                                         (string-suffix-p ".org" file)) updated-files))))
   (csdn-publish-articles updated-org-files))
 ;; publish ego log
 (ego-do-publication "blog" nil nil nil)
