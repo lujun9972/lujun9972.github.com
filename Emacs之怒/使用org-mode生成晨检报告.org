@@ -1,0 +1,46 @@
+#+TITLE: 使用org-mode生成晨检报告
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-04-10 五 22:20]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我们设置了每天8点多自动进行调用一次晨检脚本，该脚本会将检查的一些数据存入本地的一个SQLite数据库中。
+
+今天我发现org-mode自带了 =ob-sqlite= 模块，可以在org-mode中对SQLite数据库进行操作，这使得用org-mode生成晨检报告成为可能。
+
+=ob-sqlite= 本身的使用非常简单，只需要先 =ob-sqlite=
+#+begin_src emacs-lisp
+  (require 'ob-sqlite)
+#+end_src
+
+然后就可以在org中执行SQL数据库了,比如用下面语句可以查出磁盘使用量超过85%的主机:
+#+begin_src org
+  ,#+begin_src sqlite :db ~/baseline.sqlite3
+    select distinct(host) from baseline where day='20200401' and type='磁盘空闲量检查' and value>85;
+  ,#+end_src
+
+  ,#+RESULTS:
+  | XXXX01 |
+  | XXXX02 |
+  | YYYY01 |
+  | YYYY02 |
+#+end_src
+
+那么下一个要解决的问题就是如何动态修改 =day= 参数了，我希望它能动态的指向当前的日期，而不是让我手工进行调整。
+
+万幸的是，org-mode的代码块普遍支持通过 =:var= header参数传递参数值,且若变量的值是以 `(',`[',`''或``' 开头的,则它被认为是Emacs lisp代码,其代码的运行返回值才会作为变量真正的值. 
+
+如此，我们可以修改上面内容为:
+#+begin_src org
+  ,#+begin_src sqlite :db ~/baseline.sqlite3 :var day=(format-time-string "%Y%m%d")
+    select distinct(host) from baseline where day='$day' and type='磁盘空闲量检查' and value>85;
+  ,#+end_src
+
+  ,#+RESULTS:
+  | XXXX01 |
+  | XXXX02 |
+  | YYYY01 |
+  | YYYY02 |
+#+end_src
