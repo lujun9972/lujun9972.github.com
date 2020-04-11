@@ -52,6 +52,7 @@ There are two things you can do about this warning:
 (require 'request)
 ;; publish CSDN
 (require 'csdn-publish)
+(setq csdn-publish-open-url nil)
 (let* ((ego-current-project-name "blog")
        (repo-dir (ego--get-repository-directory))
        (base-git-commit (or (ego--get-first-commit-before-publish)
