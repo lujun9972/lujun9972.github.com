@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>为Linux安装虚拟PDF打印机 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">为Linux安装虚拟PDF打印机</h1>
+<p>
+今天发现一个 <a href="https://www.cups-pdf.de/">CUPS-PDF</a> 项目,可以为 <a href="https://zh.wikipedia.org/wiki/CUPS">CUPS</a>(Common Unix Printing System) 添加 PDF 打印机.
+</p>
+
+<p>
+步骤非常简单:
+</p>
+
+<ol class="org-ol">
+<li><p>
+安装 <code>CPUS-PDF</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt install -y cups-pdf
+</pre>
+</div></li>
+
+<li><p>
+根据 <a href="https://www.cups-pdf.de/documentation.shtml">CPUS-PDF的文档说明</a>, 需要设置 <code>cups-pdf</code> 的所有者为 <code>root</code>,且权限为 <code>0700</code>
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo chown root:root /usr/lib/cups/backend/cups-pdf
+sudo chmod 0700 /usr/lib/cups/backend/cups-pdf
+</pre>
+</div></li>
+
+<li><p>
+重启CUPS服务
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl restart cups.service
+</pre>
+</div></li>
+
+<li><p>
+可以通过修改 <code>/etc/cups/cups-pdf.conf</code> 的 <code>OUT</code> 参数来设置pdf的输出位置
+</p>
+<div class="org-src-container">
+<pre class="src src-conf"><span class="org-comment-delimiter">### </span><span class="org-comment">Key: Out (config)                                                        </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">CUPS-PDF output directory                                                </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">special qualifiers:                                                      </span>
+<span class="org-comment-delimiter">##     </span><span class="org-comment">${HOME} will be expanded to the user's home directory                 </span>
+<span class="org-comment-delimiter">##     </span><span class="org-comment">${USER} will be expanded to the user name                             </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">in case it is an NFS export make sure it is exported without             </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">root_squash!                                                             </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">on Ubuntu, the cupsd AppArmor profile needs to be updated                </span>
+<span class="org-comment-delimiter">##  </span><span class="org-comment">to match the output path as per instructions in LP:147551                </span>
+<span class="org-comment-delimiter">### </span><span class="org-comment">Default: /var/spool/cups-pdf/${USER}                                     </span>
+
+Out ${HOME}/PDF                                                              
+</pre>
+</div></li>
+
+<li><p>
+然后在CUPS的admin页面中就能看到一个PDF打印机了
+</p>
+
+
+<div class="figure">
+<p><img src="../../../../../assets/blog/2020/04/11/为linux安装虚拟pdf打印机/screenshot-73.png" alt="screenshot-73.png" />
+</p>
+</div>
+
+<p>
+或者用 <code>lpstat</code> 来查看:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">lpstat -p -d
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">printer PDF is idle.  enabled since Sat 11 Apr 2020 09:52:10 PM HKT
+system default destination: PDF
+</pre>
+</div></li>
+
+<li><p>
+使用 <code>lpr</code> 打印一个文件试试
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">lp ~/dead.letter
+ls ~/PDF
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">request id is PDF-5 (1 file(s))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls ~/PDF
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">dead.letter__2_PDF-job_5.pdf
+</pre>
+</div></li>
+
+<li>最后要注意的是，根据 <a href="https://www.cups-pdf.de/cups-pdf-CURRENT/README">README</a> 的说明，客户端选择打印机时，供应商应该选择 <code>Postscript</code>, model选择 <code>Color Printer</code></li>
+</ol>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-04-11</span>
+    <span title="last modification date" class="post-info">2020-04-11</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-82dc03d5-368d-4294-a0d7-17ba7b70363c">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
