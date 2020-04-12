@@ -65,7 +65,7 @@ There are two things you can do about this warning:
        (publish-org-files (cl-delete-if (lambda (file)
                                           (string= (file-name-nondirectory file) "README.org"))
                                         updated-org-files)))
-  (message "%s" publish-org-files)
-  (csdn-publish-articles publish-org-files))
+  (when publish-org-files
+    (csdn-publish-articles publish-org-files)))
 ;; publish ego log
 (ego-do-publication "blog" nil nil nil)
