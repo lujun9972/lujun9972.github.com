@@ -1,0 +1,108 @@
+#+TITLE: 如何判断磁盘是SSD还是HDD
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-18 六 15:57]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.ostechnix.com/how-to-find-if-the-disk-is-ssd-or-hdd-in-linux/ 上学到的技巧，记录一下。
+
+磁盘速度越来越称为限制系统性能的重要因素，目前家用计算机中的磁盘一般分两类，SSD和HDD，且两类磁盘的读写速度相差巨大。
+那么在Linux下要如何判断磁盘是SSD还是HDD的呢？
+
+我们知道，传统的HDD磁盘与SSD很大一个不同就在于传统的HDD磁盘是通过磁盘旋转来将磁头转到指定磁道上来实现读写的，而SSD将数据存储在可即使访问的闪存芯片上的。
+因此只要直到了磁盘是否需要旋转就能区分磁盘为SSD还是HDD了。
+
+* 解决方案一：使用lsblk命令
+涉及到的命令: lsblk
+
+本部分以archlinux系统为例
+
+** 安装
+lsblk命令是属于 =util-linux= 包中，一般在大多数的Linux发行版中都会预先安装。 若未预安装则需要手工进行安装，在Archlinux中运行下面命令安装:
+
+#+begin_src shell :results org
+  sudo pacman -S util-linux --noconfirm
+#+end_src
+
+** 解决方案
+
+lsblk命令会读取 =sysfs= 文件系统和 =udev= 配置来获取块设备(磁盘就是一种块设备)的信息。
+
+我们可以通过下面命令来查看磁盘是否会旋转：
+#+begin_src shell :results org
+  lsblk -d -o name,rota
+#+end_src
+
+这里 =-d= 选项是 =--nodeps= 的缩写，表示只输出磁盘信息，而不输出磁盘上分区的信息。
+=-o= 选项是 =--output= 的缩写，可以用来指定输出的列，我们这里只让它输出磁盘名和是否旋转
+
+该命令在我电脑上运行的结果如下：
+#+begin_src org
+NAME ROTA
+sda     0
+sdb     1
+#+end_src
+
+也就是说，我这台机上装了两块磁盘，其中 =sda= 是 =SSD= 磁盘， =sdb= 是 =HDD= 磁盘。
+
+* 解决方案二：借助/sys
+涉及到的命令: bash
+
+本部分以archlinux系统为例
+
+** 安装
+- 无需安装
+** 解决方案
+
+事实上 =lsblk= 命令正是读取 =/sys= 中的文件内容来给出某个磁盘是否旋转的信息来的。
+你可以通过 =strace lsblk -d -o name,rota= 来进行验证，其输出中会包含类似这样的输出:
+#+begin_example
+  ..... 省略 .....
+  openat(AT_FDCWD, "/sys/block/sdb/dev", O_RDONLY|O_CLOEXEC) = 5
+  fstat(5, {st_mode=S_IFREG|0444, st_size=4096, ...}) = 0
+  read(5, "8:16\n", 4096)                 = 5
+  close(5)                                = 0
+  ..... 省略 .....
+  openat(AT_FDCWD, "/sys/block/sda/dev", O_RDONLY|O_CLOEXEC) = 5
+  fstat(5, {st_mode=S_IFREG|0444, st_size=4096, ...}) = 0
+  read(5, "8:0\n", 4096)                  = 4
+  close(5)                                = 0
+  ..... 省略 .....
+  openat(AT_FDCWD, "/sys/dev/block/8:16", O_RDONLY|O_CLOEXEC) = 3
+  openat(3, "queue/rotational", O_RDONLY|O_CLOEXEC) = 4
+  read(4, "1\n", 8191)                    = 2
+  read(4, "", 8189)                       = 0
+  close(4)                                = 0
+  close(3)                                = 0
+  openat(AT_FDCWD, "/sys/dev/block/8:0", O_RDONLY|O_CLOEXEC) = 3
+  openat(3, "queue/rotational", O_RDONLY|O_CLOEXEC) = 4
+  read(4, "0\n", 8191)                    = 2
+  read(4, "", 8189)                       = 0
+  close(4)                                = 0
+  close(3)                                = 0
+#+end_example
+
+因此，我们也可以按照这一过程，自己从 =/sys= 中获取信息。
+
+比如，我们要查看 =sda= 是否为SSD磁盘可以这样操作
+#+begin_src shell :results org
+  DISKID=$(cat /sys/block/sda/dev)
+  cat /sys/dev/block/${DISKID}/queue/rotational
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+0
+#+end_src
+
+不过，由于 =/sys/block/sda= 和 =/sys/dev/block/$(cat /sys/block/sda/dev)= 指向的是同一个目录，所以其实上面的操作可以简化为:
+#+begin_src shell :results org
+  cat /sys/block/sda/queue/rotational
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+0
+#+end_src
