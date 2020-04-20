@@ -52,6 +52,7 @@ There are two things you can do about this warning:
 (require 'request)
 ;; publish CSDN
 (require 'csdn-publish)
+(setq csdn-publish-open-url nil)
 (let* ((ego-current-project-name "blog")
        (repo-dir (ego--get-repository-directory))
        (base-git-commit (or (ego--get-first-commit-before-publish)
@@ -60,7 +61,11 @@ There are two things you can do about this warning:
        (updated-files (plist-get changed-files :update))
        (deleted-files (plist-get changed-files :delete))
        (updated-org-files (cl-delete-if-not (lambda (file)
-                                              (string-suffix-p ".org" file)) updated-files)))
-  (csdn-publish-articles updated-org-files))
+                                              (string-suffix-p ".org" file)) updated-files))
+       (publish-org-files (cl-delete-if (lambda (file)
+                                          (string= (file-name-nondirectory file) "README.org"))
+                                        updated-org-files)))
+  (when publish-org-files
+    (csdn-publish-articles publish-org-files)))
 ;; publish ego log
 (ego-do-publication "blog" nil nil nil)

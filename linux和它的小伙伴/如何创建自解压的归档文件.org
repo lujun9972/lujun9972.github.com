@@ -1,0 +1,178 @@
+#+TITLE: 如何创建自解压的归档文件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-11 六 19:22]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+当要发送多个文件给他人时，我们经常会将多个文件打成一个归档文件。
+但是如果对方对Linux命令行不熟悉，你可能经常需要跟他解释如何解压缩这个归档文件，时间长了你会不会觉得很烦人？
+
+在windows上,常用的压缩文件都支持将文件压缩成一个 =exe= 文件，这样接受者只需要执行这个文件就能够自动解压了，那么Linux上能不能也实现这个能力呢？
+
+* 解决方案一：使用shar命令
+涉及到的命令: shar
+
+本部分以archlinux系统为例
+
+** 安装
+shar命令是属于 =sharutils= 包，我们可以通过下面命令安装:
+
+#+begin_src shell :results org :dir /sudo::
+  sudo pacman -S sharutils --noconfirm
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+resolving dependencies...
+looking for conflicting packages...
+
+Packages (1) sharutils-4.15.2-3
+
+Total Download Size:   0.25 MiB
+Total Installed Size:  1.52 MiB
+
+:: Proceed with installation? [Y/n] 
+:: Retrieving packages...
+ sharutils-4.15.2...     0.0   B  0.00   B/s 00:00 [----------------------]   0% sharutils-4.15.2...    71.7 KiB   116 KiB/s 00:01 [######----------------]  28% sharutils-4.15.2...   120.9 KiB   152 KiB/s 00:00 [##########------------]  48% sharutils-4.15.2...   185.6 KiB   198 KiB/s 00:00 [################------]  73% sharutils-4.15.2...   205.3 KiB   151 KiB/s 00:00 [#################-----]  81% sharutils-4.15.2...   206.7 KiB   102 KiB/s 00:00 [##################----]  82% sharutils-4.15.2...   208.1 KiB  69.6 KiB/s 00:00 [##################----]  82% sharutils-4.15.2...   209.5 KiB  48.0 KiB/s 00:00 [##################----]  83% sharutils-4.15.2...   212.3 KiB  34.3 KiB/s 00:01 [##################----]  84% sharutils-4.15.2...   213.8 KiB  24.9 KiB/s 00:01 [##################----]  84% sharutils-4.15.2...   234.8 KiB  50.6 KiB/s 00:00 [####################--]  93% sharutils-4.15.2...   251.6 KiB  90.6 KiB/s 00:03 [######################] 100%
+(0/1) checking keys in keyring                     [----------------------]   0%(1/1) checking keys in keyring                     [######################] 100%
+(0/1) checking package integrity                   [----------------------]   0%(1/1) checking package integrity                   [######################] 100%
+(0/1) loading package files                        [----------------------]   0%(1/1) loading package files                        [######################] 100%
+(0/1) checking for file conflicts                  [----------------------]   0%(1/1) checking for file conflicts                  [######################] 100%
+(0/1) checking available disk space                [----------------------]   0%(1/1) checking available disk space                [######################] 100%
+:: Processing package changes...
+(1/1) installing sharutils                         [----------------------]   0%(1/1) installing sharutils                         [######################] 100%
+:: Running post-transaction hooks...
+(1/2) Arming ConditionNeedsUpdate...
+(2/2) Updating the info directory file...
+#+end_src
+
+** 解决方案
+
+使用shar创建自解压归档文件非常简单，只需要直接后接要打包的文件列表然后将输出保存成归档文件即可。
+
+比如,假设我们有两个log文件要打包发送给别人:
+#+begin_src shell :results org :dir /tmp
+  ls *.log
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+error.log
+info.log
+#+end_src
+
+我们可以用下面命令来将这两个文件打包起来：
+#+begin_src shell :results org :dir /tmp
+  shar *.log >log.shar
+  file log.shar
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+log.shar: shell archive text
+#+end_src
+
+我们可以发现生成了一个名为 =log.shar= 的文件，而且该文件居然是个 =Shell= 脚本！这也从另一个侧面反映了该文件是可执行的。
+
+然后我们就可以将该文件发送他人了.
+
+接受者收到该文件后就可以直接通过运行该脚本来进行解压了(然而由于该shell脚本中也需要使用shar命令，因此接收方也需要预先安装好shar):
+#+begin_src shell :results org :dir /tmp
+  echo "让我们先把日志文件清掉"
+  rm *.log
+  echo "直接执行归档文件"
+  sh log.shar
+  echo "猜猜日志文件有没有恢复呢？"
+  ls *.log
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+让我们先把日志文件清掉
+直接执行归档文件
+x - created lock directory _sh28695.
+x - extracting error.log (文本文件)
+x - extracting info.log (文本文件)
+x - removed lock directory _sh28695.
+猜猜日志文件有没有恢复呢？
+error.log
+info.log
+#+end_src
+
+* 解决方案二：gzip+tar+bash
+涉及到的命令: bash,gzip,tar
+
+本部分以archlinux系统为例
+
+** 安装
+- 无需安装
+** 解决方案
+使用 =shar= 的解决方案需要发送方和接收方都预先安装好 =shar=,有时候不一定能够满足这个条件。
+现在让我们试着手工实现这个功能把。
+
+我们知道，shell脚本有下面三个特征：
+
+1. =$0= 参数代表的了shell脚本本身
+2. shell是解释型语言，它只会一行一行地读取并执行命令，而不关心未执行到的语句的语法是否正确
+3. =exit= 命令会让shell脚本直接退出。
+
+这三个特征使得我们创建自己的自解压shell脚本：
+#+begin_src shell
+  sed -n '3,$p' $0|tar -zxf -
+  exit $?
+  后面是tar.gz文件的内容
+  ......
+#+end_src
+
+这个脚本很好理解:
+
+第一行的 =sed -n '3,$p' $0|tar -zxf -= 表示将本脚本从第三行开始到结尾的内容提取出来，发送给 =tar -zxf= 命令来解压.
+
+第二行的 =exit $?= 直接退出该shell脚本的执行，这样后面乱七八糟的内容就不会被当成shell来执行了
+
+后面的就是打包文件的真正内容了，这部分内容需要跟第一行的命令相匹配，比如这里的例子中是用 =tar -zxvf= 命令来解压，那么后面的内容就应该是 =tar -zcf= 创建的归档内容。
+
+不过每次要手工构造这么个脚本也太麻烦了，我们可以自己写一个脚本来帮我们来构造:
+
+将下面内容保存成一个 =shar.sh= 文件
+#+begin_src shell
+echo "sed -n '3,\$p' \$0|tar -zxf - "
+echo 'exit $?'
+tar -zcf - $@
+#+end_src
+
+然后给这个文件加上执行权限
+#+begin_src shell :dir ~/bin
+  chmod +x shar.sh
+#+end_src
+
+现在让我们试试这个脚本:
+#+begin_src shell :dir /tmp :results org
+  echo "首先创建归档文件"
+  ~/bin/shar.sh *.log >log.tar.gz.sh
+  echo "删掉之前的日志文件"
+  rm *.log
+  echo "让我们试试执行归档文件"
+  sh log.tar.gz.sh
+  echo "猜猜日志文件有没有恢复呢？"
+  ls *.log
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+首先创建归档文件
+删掉之前的日志文件
+让我们试试执行归档文件
+猜猜日志文件有没有恢复呢？
+error.log
+info.log
+#+end_src
+
+相比于第一个解决方案来说，这个解决方案不需要双方特意安装新的应用（gzip和tar是几乎每个Linux发行版都自带的）。
+
+* 相关命令
++ gzip
++ tar
