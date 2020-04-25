@@ -1,0 +1,123 @@
+#+TITLE: 如何找出程序读取的配置文件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-24 五 13:28]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+* 解决方案一：查看manual手册
+涉及到的命令: man
+
+本部分以archlinux系统为例
+
+** 安装
+
+无需安装
+** 解决方案
+
+man手册中有一个 =FILES= 章节专门用来提供应用相关文件的说明，其中通常都会包含应用读取的配置文件说明。
+
+比如，我们来看看gvim的文件说明吧:
+#+begin_src shell :results org
+  man gvim |sed -n '/^FILES/,/^[^ ]/p'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+FILES
+       /usr/share/vim/vim82/doc/*.txt
+                      The  Vim documentation files.  Use ":help doc-file-list"
+                      to get the complete list.
+
+       /usr/share/vim/vim82/doc/tags
+                      The tags file used for finding information in the  docu‐
+                      mentation files.
+
+       /usr/share/vim/vim82/syntax/syntax.vim
+                      System wide syntax initializations.
+
+       /usr/share/vim/vim82/syntax/*.vim
+                      Syntax files for various languages.
+
+       /etc/vimrc     System wide Vim initializations.
+
+       ~/.vimrc       Your personal Vim initializations.
+
+       /etc/gvimrc    System wide gvim initializations.
+
+       ~/.gvimrc      Your personal gvim initializations.
+
+       /usr/share/vim/vim82/optwin.vim
+                      Script  used  for  the ":options" command, a nice way to
+                      view and set options.
+
+       /usr/share/vim/vim82/menu.vim
+                      System wide menu initializations for gvim.
+
+       /usr/share/vim/vim82/bugreport.vim
+                      Script to generate a bug report.  See ":help bugs".
+
+       /usr/share/vim/vim82/filetype.vim
+                      Script to detect the type of a file by  its  name.   See
+                      ":help 'filetype'".
+
+       /usr/share/vim/vim82/scripts.vim
+                      Script  to  detect  the  type of a file by its contents.
+                      See ":help 'filetype'".
+
+       /usr/share/vim/vim82/print/*.ps
+                      Files used for PostScript printing.
+
+       For recent info read the VIM home page:
+       <URL:http://www.vim.org/>
+
+SEE ALSO
+#+end_src
+
+* 解决方案二：使用strace命令
+涉及到的命令: strace
+
+本部分以archlinux系统为例
+
+** 安装
+在archlinux上，运行下面命令安装:
+#+begin_src shell 
+  sudo pacman -S strace --noconfirm
+#+end_src
+** 解决方案
+对于缺少man手册的程序又该怎么找出它的配置文件呢？
+
+在Linux中我们常使用strace来跟踪进程执行时的系统调用和所接收的信号。因此我们可以通过跟踪进程检查和打开哪些文件来找出配置文件。
+
+使用strace跟踪进程的方法很简单，只需要执行 =strace 程序= 即可。不过如此一来strace会把程序运行过程中的所有系统调用都输出来，结果会很乱。
+不过我们这里只需要关注 =stat= 和 =openat= 这两个系统调用即可，因此我们可以使用 ~-e trace=stat,openat~ 来指定跟踪的系统调用。
+
+考虑到一般配置文件都是以 =conf=, =cfg=, =ini= 和 =rc= 结尾的文件，我们还可以再通过 =grep= 过滤以这些结尾的文件。
+比如我们可以通过下面这个命令来查找 =gvim= 读取的配置参数:
+#+begin_src shell :results org
+  strace -e trace=stat,openat gvim 2>&1 |grep -E 'conf"|cfg"|ini"|rc"'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  stat("/etc/vimrc", {st_mode=S_IFREG|0644, st_size=912, ...}) = 0
+  openat(AT_FDCWD, "/etc/vimrc", O_RDONLY) = 4
+  stat("/home/lujun9972/.vimrc", 0x7ffc9198ceb0) = -1 ENOENT (没有那个文件或目录)
+  openat(AT_FDCWD, "/home/lujun9972/.vimrc", O_RDONLY) = -1 ENOENT (没有那个文件或目录)
+  openat(AT_FDCWD, "/home/lujun9972/_vimrc", O_RDONLY) = -1 ENOENT (没有那个文件或目录)
+  stat("/home/lujun9972/.vim/vimrc", 0x7ffc9198ceb0) = -1 ENOENT (没有那个文件或目录)
+  openat(AT_FDCWD, "/home/lujun9972/.vim/vimrc", O_RDONLY) = -1 ENOENT (没有那个文件或目录)
+  stat("/home/lujun9972/.exrc", 0x7ffc9198ceb0) = -1 ENOENT (没有那个文件或目录)
+  openat(AT_FDCWD, "/home/lujun9972/.exrc", O_RDONLY) = -1 ENOENT (没有那个文件或目录)
+#+end_src
+
+从中我们大概可以知道， =gvim= 会以此读取下面这些配置文件:
++ /etc/vimrc
++ $HOME/.vimrc
++ $HOME/_vimrc
++ $HOME/.vim/vimrc
++ $HOME/.exrc
+
+跟上面的manual相比，我们可以发现strace实际上还会读取 =$HOME/.exrc= 的内容，但在 manual 中是没有体现的。
