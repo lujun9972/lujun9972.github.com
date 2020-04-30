@@ -53,13 +53,23 @@ There are two things you can do about this warning:
 ;; publish CSDN
 (require 'csdn-publish)
 (setq csdn-publish-open-url nil)
+
 (defun get-origin-link (filename)
   (let* ((vc-root (file-name-as-directory (file-truename (vc-git-root filename))))
-         (site-domain "https://www.lujun9972.win")
-         (ego-current-project-name (car project))
-         (options (car (ego--get-org-file-options filename vc-root nil)))
-         (uri (plist-get options :uri)))
-    (concat (replace-regexp-in-string "/?$" ""  site-domain) uri)))
+         (project (cl-find-if (lambda (project)
+                                (let* ((properties (cdr project))
+                                       (repository-directory (plist-get properties :repository-directory))
+                                       (abs-path (file-name-as-directory (file-truename repository-directory))))
+                                  (string= vc-root abs-path)))
+                              ego-project-config-alist)))
+    (if project
+        (let* ((site-domain  "https://www.lujun9972.win")
+               (ego-current-project-name (car project))
+               (options (car (ego--get-org-file-options filename vc-root nil)))
+               (uri (plist-get options :uri)))
+          (concat (replace-regexp-in-string "/?$" ""  site-domain) uri))
+      (csdn-publish-convert-link filename))))
+
 
 (setq csdn-publish-original-link-getter #'get-origin-link)
 
