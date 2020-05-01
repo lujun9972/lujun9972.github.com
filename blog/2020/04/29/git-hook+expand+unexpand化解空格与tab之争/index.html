@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>git hook+expand+unexpand化解空格与TAB之争 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">git hook+expand+unexpand化解空格与TAB之争</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgf78298b">使用expand将TAB转换为SPACE</a></li>
+<li><a href="#orgd786169">使用unexpand将SPACE转换为TAB</a></li>
+<li><a href="#orgc445d04">使用git hook实现代码的自动转换</a></li>
+</ul>
+</div>
+</div>
+<p>
+SPACE与TAB之争由来已久，但是有一个观点是两派都公认赞同的，那就是 <b>不能两者混用</b>.
+</p>
+
+
+<div class="figure">
+<p><img src="../../../../../assets/blog/2020/04/29/git-hook+expand+unexpand化解空格与tab之争/TAB_VS_SPACE.jpg" alt="TAB_VS_SPACE.jpg" />
+</p>
+</div>
+
+<p>
+为此，Linux很贴心的提供了 <code>expand</code> 和 <code>unexpand</code> 命令来帮助我们进行 <code>TAB</code> 和 <code>SPACE</code> 之间的相互转换。
+</p>
+
+<div id="outline-container-orgf78298b" class="outline-2">
+<h2 id="orgf78298b">使用expand将TAB转换为SPACE</h2>
+<div class="outline-text-2" id="text-orgf78298b">
+<p>
+使用expand将TAB转换为SPACE的方法很简单，直接执行 <code>expand 文件</code> 就会把 <code>文件</code> 中的所有 <code>TAB</code> 都替换空格(默认按8个空格进行对齐)了。
+</p>
+
+<p>
+例如假设我们有下面一个测试文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat -T /tmp/test
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">^Ihello  ^Itest^I
+</pre>
+</div>
+
+<p>
+其中 <code>cat</code> 的 <code>-T</code> 选项文件内容其中的 <code>TAB</code> 显示为 <code>^I</code>
+</p>
+
+<p>
+我们现在来用 <code>expand</code> 对其进行转换
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">expand /tmp/test |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">hello   test    
+</pre>
+</div>
+
+<p>
+如果觉得使用8空格对齐太空了，那么可以使用 <code>-t</code> 选项指定对齐的空格数。比如下面命令按4个空格进行对齐:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">expand -t 4 /tmp/test |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">hello   test    
+</pre>
+</div>
+
+<p>
+另一方面，我们在写代码时可能只需要转换行首的空格，而字符串中的 <code>TAB</code> 是不需要进行转换的，那么就可以使用 <code>-i</code> 选项指定 <code>expand</code> 只对行首的空格进行转换:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">expand -i -t 4 /tmp/test |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">hello  ^Itest^I
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd786169" class="outline-2">
+<h2 id="orgd786169">使用unexpand将SPACE转换为TAB</h2>
+<div class="outline-text-2" id="text-orgd786169">
+<p>
+<code>unexpand</code>, 从名字上就知道它是 <code>expand</code> 的反操作，即把SPACE转换为TAB. 
+他们的使用方法也很类似，但是有一点不同就是 <code>expand</code> 在默认情况下替换所有的 <code>TAB</code>,当只替换行首的 <code>TAB</code> 时需要指定 <code>-i</code> 选项;而 <code>unexpand</code> 在默认情况下只替换行首的 <code>SPACE</code>,若要替换 <code>SPACE</code> 时需要明确指定 <code>-a</code> 选项.
+</p>
+
+<p>
+还是例如假设我们有下面一个测试文件
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat -T /tmp/test.space
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">hello   test    
+</pre>
+</div>
+
+<p>
+我们现在来用 <code>unexpand</code> 对其进行转换
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">unexpand /tmp/test.space |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">^Ihello   test    
+</pre>
+</div>
+<p>
+你会发现只替换了前面的8个空格为 <code>TAB</code>
+</p>
+
+<p>
+同样我们可以使用 <code>-t</code> 选项指定 <code>TAB</code> 对齐的空格数。比如下面命令按4个空格进行对齐:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">unexpand -t 4 /tmp/test.space |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">^I^Ihello^Itest^I
+</pre>
+</div>
+<p>
+结果的前面是两个 <code>TAB</code>,也就是每四个空格转换为了一个 <code>TAB</code>.
+</p>
+
+<p>
+若要将所有的空格全部替换，那么需要明确使用 <code>-a</code> 选项进行转换:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">unexpand -a -t 4 /tmp/test.space |cat -T
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">^I^Ihello^Itest^I
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc445d04" class="outline-2">
+<h2 id="orgc445d04">使用git hook实现代码的自动转换</h2>
+<div class="outline-text-2" id="text-orgc445d04">
+<p>
+在确定好规范使用SPACE或TAB后，我们可以借助git的pre-commit hook来让我们在代码提交前自动进行规范化的转换。
+</p>
+
+<p>
+比如，假设我们定义的规范是只使用 <code>SPACE</code> 规范，那么我们可以创建下面的 pre-commit hook
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">if</span> git rev-parse --verify HEAD &gt;/dev/null 2&gt;&amp;1
+<span class="org-keyword">then</span>
+  <span class="org-variable-name">against</span>=HEAD
+<span class="org-keyword">else</span>
+  <span class="org-comment-delimiter"># </span><span class="org-comment">Initial commit: diff against an empty tree object</span>
+  <span class="org-variable-name">against</span>=$(<span class="org-sh-quoted-exec">git</span> hash-object -t tree /dev/null)
+<span class="org-keyword">fi</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">Redirect output to stderr.</span>
+<span class="org-keyword">exec</span> 1&gt;&amp;2
+<span class="org-variable-name">TMPFILE</span>=$(<span class="org-sh-quoted-exec">mktemp</span>)
+<span class="org-keyword">trap</span> <span class="org-string">'rm -f ${TMPFILE}'</span> EXIT
+<span class="org-keyword">for</span> file<span class="org-keyword"> in</span> $(<span class="org-sh-quoted-exec">git</span> diff --cached --name-only --diff-filter=ACM $<span class="org-variable-name">against</span>)
+<span class="org-keyword">do</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#21482;&#23545;text&#31867;&#25991;&#20214;&#36827;&#34892;&#36716;&#25442;</span>
+    <span class="org-keyword">if</span> file <span class="org-string">"${file}"</span> |grep <span class="org-string">'text'</span> 2&gt;&amp;1 &gt;/dev/null;<span class="org-keyword">then</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"expanding ${file}"</span>
+        expand -i -t 4 <span class="org-string">"${file}"</span> &gt; <span class="org-string">"${TMPFILE}"</span>
+        cp <span class="org-string">"${TMPFILE}"</span> <span class="org-string">"${file}"</span>
+        git add <span class="org-string">"${file}"</span>
+    <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<p>
+将该文件保存为 <code>.git/hooks/pre-commit</code>,然后添加可执行权限后，每次提交就会对文件进行格式化处理了:
+</p>
+<pre class="example">
+lujun9972:a/ (master U:1 ?:3✗) $ cat -T test
+^Ihello  ^Itest^I^I
+lujun9972:a/ (master U:1 ?:3✗) $ git commit -a -m update
+expanding test
+[master 88b2f66] update
+ 1 file changed, 1 deletion(-)
+lujun9972:a/ (master ?:3✗) $ cat -T test
+    hello  ^Itest^I^I
+</pre>
+
+<p>
+然后我们再通过 <code>post-commit</code> hook 将转换的文件再转换回TAB来:
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">TMPFILE</span>=$(<span class="org-sh-quoted-exec">mktemp</span>)
+<span class="org-variable-name">against</span>=<span class="org-string">"HEAD^1"</span>
+<span class="org-keyword">trap</span> <span class="org-string">'rm -f ${TMPFILE}'</span> EXIT
+<span class="org-keyword">for</span> file<span class="org-keyword"> in</span> $(<span class="org-sh-quoted-exec">git</span> diff --cached --name-only --diff-filter=ACM $<span class="org-variable-name">against</span>)
+<span class="org-keyword">do</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#21482;&#23545;text&#31867;&#25991;&#20214;&#36827;&#34892;&#36716;&#25442;</span>
+    <span class="org-keyword">if</span> file <span class="org-string">"${file}"</span> |grep <span class="org-string">'text'</span> 2&gt;&amp;1 &gt;/dev/null;<span class="org-keyword">then</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"unexpanding ${file}"</span>
+        unexpand -t 4 <span class="org-string">"${file}"</span> &gt; <span class="org-string">"${TMPFILE}"</span>
+        cp <span class="org-string">"${TMPFILE}"</span> <span class="org-string">"${file}"</span>
+        git add <span class="org-string">"${file}"</span>
+    <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<p>
+类似的，我们还可以通过 <code>post-merge</code> hook(实现跟post-commit一样) 来将远端仓库中的代码也自动转回 <code>TAB</code>,
+</p>
+
+<p>
+如此一来, <code>TAB</code> 还好者们就可以安心的在本地使用 <code>TAB</code>,然后由git帮你自动进行 <code>SPACE</code> 的转换了.
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-04-29</span>
+    <span title="last modification date" class="post-info">2020-05-01</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-a7258a8d-a8d7-4996-9ca0-9a4209bdee9e">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
