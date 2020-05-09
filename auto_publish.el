@@ -22,8 +22,11 @@ There are two things you can do about this warning:
 (package-install 'lua-mode)
 (package-install 'dockerfile-mode)
 (package-install 'docker-compose-mode)
+(package-install 'ox-gfm)
+(package-install 'request)
 
 (setq load-path (cons  "~/EGO/" load-path))
+(setq load-path (cons  "~/csdn-publish/" load-path))
 (require 'log-edit)
 (require 'htmlize)
 (require 'ego)
@@ -44,4 +47,45 @@ There are two things you can do about this warning:
 (setq org-html-htmlize-output-type 'css)
 (setq safe-local-variable-values '((org-export-use-babel . t)))
 (require 'ob-shell)
+(require 'ox-gfm)
+(require 'cl-lib)
+(require 'request)
+;; publish CSDN
+(require 'csdn-publish)
+(setq csdn-publish-open-url nil)
+
+(defun get-origin-link (filename)
+  (let* ((vc-root (file-name-as-directory (file-truename (vc-git-root filename))))
+         (project (cl-find-if (lambda (project)
+                                (let* ((properties (cdr project))
+                                       (repository-directory (plist-get properties :repository-directory))
+                                       (abs-path (file-name-as-directory (file-truename repository-directory))))
+                                  (string= vc-root abs-path)))
+                              ego-project-config-alist)))
+    (if project
+        (let* ((site-domain  "https://www.lujun9972.win")
+               (ego-current-project-name (car project))
+               (options (car (ego--get-org-file-options filename vc-root nil)))
+               (uri (plist-get options :uri)))
+          (concat (replace-regexp-in-string "/?$" ""  site-domain) uri))
+      (csdn-publish-convert-link filename))))
+
+
+(setq csdn-publish-original-link-getter #'get-origin-link)
+
+(let* ((ego-current-project-name "blog")
+       (repo-dir (ego--get-repository-directory))
+       (base-git-commit (or (ego--get-first-commit-before-publish)
+                            "HEAD~1"))
+       (changed-files (ego-git-get-changed-files repo-dir base-git-commit))
+       (updated-files (plist-get changed-files :update))
+       (deleted-files (plist-get changed-files :delete))
+       (updated-org-files (cl-delete-if-not (lambda (file)
+                                              (string-suffix-p ".org" file)) updated-files))
+       (publish-org-files (cl-delete-if (lambda (file)
+                                          (string= (file-name-nondirectory file) "README.org"))
+                                        updated-org-files)))
+  (when publish-org-files
+    (csdn-publish-articles publish-org-files)))
+;; publish ego log
 (ego-do-publication "blog" nil nil nil)

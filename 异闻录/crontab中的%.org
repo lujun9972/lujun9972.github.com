@@ -1,0 +1,65 @@
+#+TITLE: crontab中的%
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2020-04-08 三 22:30]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 故障
+某日定义了一个crontab定时运行一个检查脚本，然把结果存在以 =年月日时分秒= 为后缀的结果文件中，像这样:
+#+begin_example
+  ,*/10 * * * * /path/to/check.sh >/tmp/results.$(date +%Y%m%d-%H%M%S)
+#+end_example
+然而并没有起作用，在/tmp/下并没有生成results文件。
+
+* 排查
+一开始以为是crond服务没有开,查看 =cronie.service= 状态发现服务是active的. =crond= 进程也是running状态的
+#+begin_src shell :results org
+  systemctl status cronie.service
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+● cronie.service - Periodic Command Scheduler
+     Loaded: loaded (/usr/lib/systemd/system/cronie.service; disabled; vendor preset: disabled)
+     Active: active (running) since Thu 2020-04-09 10:39:51 HKT; 3min 48s ago
+   Main PID: 733593 (crond)
+      Tasks: 3 (limit: 4433)
+     Memory: 397.6M
+     CGroup: /system.slice/cronie.service
+             ├─733593 /usr/bin/crond -n
+             └─733597 /usr/bin/CROND -n
+#+end_src
+
+用 =ps= 命令也能确认 =crond= 进程的存在:
+#+begin_src shell :results org
+  ps -elf |grep crond |grep -v grep
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+4 S root      733593       1  0  80   0 -  2413 -      10:39 ?        00:00:00 /usr/bin/crond -n
+#+end_src
+
+无奈之下翻阅 =man crontab=,发现在其中有这么一段话:
+#+begin_example
+  The  "sixth" field (the rest of the line) specifies the command to be run.  The entire command portion of the line, up to a
+       newline or a "%" character, will be executed by /bin/sh or by the shell specified in the SHELL variable of the cronfile.  A
+       "%"  character  in  the command, unless escaped with a backslash (\), will be changed into newline characters, and all data
+       after the first % will be sent to the command as standard input.
+#+end_example
+
+也就是说，crontab命令中的 =%= 会被当成回车来看待，而且 =%= 后的内容会作为该命令的标准输入.
+
+所以命令 =/path/to/check.sh >/tmp/results.$(date +%Y%m%d-%H%M%S)= 就变成了
+#+begin_src shell
+  /path/to/check.sh >/tmp/results.$(date +<<EOF
+  Y%m%d-%H%M%S)
+  EOF
+#+end_src
+
+在执行时就会提示 =unexpected EOF while looking for matching `)'=
+
+* 解决
+解决的方法是在 =%= 前加上反斜杠(\)进行转义就可以了。

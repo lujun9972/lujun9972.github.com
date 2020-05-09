@@ -1,0 +1,183 @@
+#+TITLE: Linux作为Remote Desktop Server
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-06 一 19:43]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+远程桌面可不仅仅是Windows的专有之物，借助Xrdp，我们也可以通过Windows的远程桌面访问Linux的图形界面.
+
+* 安装
+Xrdp依赖于X11的桌面环境，因此请先确认你已经安装了桌面环境。
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  sudo apt install lxde xorg dbus-x11 x11-xserver-utils -y
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Reading package lists... 0%Reading package lists... 100%Reading package lists... Done
+Building dependency tree... 0%Building dependency tree... 0%Building dependency tree... 50%Building dependency tree... 50%Building dependency tree... 64%Building dependency tree... 86%Building dependency tree       
+Reading state information... 0%Reading state information... 0%Reading state information... Done
+The following additional packages will be installed:
+  galculator gnome-terminal gnome-terminal-data gpicview laptop-detect leafpad
+  libdbus-glib-1-2 libegl-mesa0 libegl1 libegl1-mesa libevdev2 libfm-data
+  ......
+#+end_src
+
+安装后会生成一个xrdp服务
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  systemctl status xrdp 
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+● xrdp.service - xrdp daemon
+   Loaded: loaded (/lib/systemd/system/xrdp.service; enabled; vendor preset: enabled)
+   Active: active (running) since Mon 2020-04-06 22:33:43 HKT; 37s ago
+     Docs: man:xrdp(8)
+           man:xrdp.ini(5)
+ Main PID: 23603 (xrdp)
+    Tasks: 1 (limit: 1027)
+   CGroup: /system.slice/xrdp.service
+           └─23603 /usr/sbin/xrdp
+
+Apr 06 22:33:42 orangepipc2 systemd[1]: Starting xrdp daemon...
+Apr 06 22:33:42 orangepipc2 xrdp[23602]: (23602)(281473523171344)[DEBUG] Tes…89.
+Apr 06 22:33:42 orangepipc2 xrdp[23602]: (23602)(281473523171344)[DEBUG] Clo…89)
+Apr 06 22:33:42 orangepipc2 systemd[1]: xrdp.service: Can't open PID file /v…ory
+Apr 06 22:33:43 orangepipc2 systemd[1]: Started xrdp daemon.
+Apr 06 22:33:44 orangepipc2 xrdp[23603]: (23603)(281473523171344)[INFO ] sta…603
+Apr 06 22:33:44 orangepipc2 xrdp[23603]: (23603)(281473523171344)[INFO ] lis…0.0
+Hint: Some lines were ellipsized, use -l to show in full.
+#+end_src
+
+还生成了一个名为 =xrdp= 的用户,通过查阅 =/lib/systemd/system/xrdp.service= 可以看到xrdp服务使用xrdp用户来启动的
+#+begin_src conf
+  [Unit]
+  Description=xrdp daemon
+  Documentation=man:xrdp(8) man:xrdp.ini(5)
+  Requires=xrdp-sesman.service
+  After=network.target xrdp-sesman.service
+
+  [Service]
+  Type=forking
+  PIDFile=/var/run/xrdp/xrdp.pid
+  RuntimeDirectory=xrdp
+  EnvironmentFile=-/etc/sysconfig/xrdp
+  EnvironmentFile=-/etc/default/xrdp
+  User=xrdp
+  Group=xrdp
+  PermissionsStartOnly=true
+  ExecStartPre=/bin/sh /usr/share/xrdp/socksetup
+  ExecStart=/usr/sbin/xrdp $XRDP_OPTIONS
+  ExecStop=/usr/sbin/xrdp $XRDP_OPTIONS --kill
+
+  [Install]
+  WantedBy=multi-user.target
+#+end_src
+
+* 配置
+根据 =man xrdp= 中 =FILES= 中的说明，Xrdp的配置文件为 =/etc/xrdp/xrdp.ini=
+#+begin_src shell  :dir /ssh:root@192.168.1.9: :results org
+  man xrdp |sed -n '/^FILES/,/^$/p'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+FILES
+       /usr/bin/xrdp
+       /etc/xrdp/xrdp.ini
+       /var/log/xrdp.log
+       /var/run/xrdp.pid
+
+#+end_src
+
+在 =xrdp.ini= 中可以配置认证证书:
+#+begin_src conf
+  ; X.509 certificate and private key                                          
+  ; openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 365                                                                        
+  certificate=                                                                 
+  key_file=           
+#+end_src
+
+根据 =man xrdp.ini= 的说法:
+#+begin_example
+  certificate=/path/to/certificate
+
+  key_file=/path/to/private_key
+         Set  location of TLS certificate and private key. They must be
+         written  in  PEM  format.   If  not  specified,  defaults   to
+         /etc/xrdp/cert.pem, /etc/xrdp/key.pem.
+
+         This  parameter  is effective only if security_layer is set to
+         tls or negotiate.
+#+end_example
+这两个为空，则默认使用 =/etc/xrdp/cert.pem= 和 =/etc/xrdp/key.pem= 这两个文件.
+而这两个文件分别为软链接:
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  ls -l /etc/xrdp/*.pem
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+lrwxrwxrwx 1 root root 36 Apr  6 22:33 /etc/xrdp/cert.pem -> /etc/ssl/certs/ssl-cert-snakeoil.pem
+lrwxrwxrwx 1 root root 38 Apr  6 22:33 /etc/xrdp/key.pem -> /etc/ssl/private/ssl-cert-snakeoil.key
+#+end_src
+
+其中 =/etc/ssl/private/ssl-cert-snakeoil.key= 只有加入 =ssl-cert= 组才能读取
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  sudo ls -l /etc/ssl/private/ssl-cert-snakeoil.key
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+-rw-r----- 1 root ssl-cert 1704 Apr  6 22:33 /etc/ssl/private/ssl-cert-snakeoil.key
+#+end_src
+
+因为我们使用 =xrdp= 来启动服务，因此所以这里我们让 =xrdp= 加入 =ssl-cert= 组
+#+begin_src shell :dir /ssh:root@192.168.1.9: :results org
+  sudo adduser xrdp ssl-cert
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Adding user `xrdp' to group `ssl-cert' ...
+Adding user xrdp to group ssl-cert
+Done.
+#+end_src
+
+在 =/etc/xrdp/sesman.init= 中则可以配置启动Xorg的参数
+#+begin_src conf
+  [Xorg] ; Specify the path of non-suid Xorg executable. It might differ depending
+  ; on your distribution and version. The typical path is shown as follows:
+  ;
+  ; Fedora 26 or later    :  param=/usr/libexec/Xorg
+  ; Debian 9 or later     :  param=/usr/lib/xorg/Xorg
+  ; Ubuntu 16.04 or later :  param=/usr/lib/xorg/Xorg
+  ; Arch Linux            :  param=/usr/lib/xorg-server/Xorg
+  ; CentOS 7              :  param=/usr/bin/Xorg or param=Xorg
+  ;
+  param=Xorg
+  ; Leave the rest paramaters as-is unless you understand what will happen.
+  param=-config
+  param=xrdp/xorg.conf
+  param=-noreset
+  param=-nolisten
+  param=tcp
+  param=-logfile
+  param=.xorgxrdp.%s.log
+#+end_src
+
+启动桌面环境的脚本
+#+begin_src conf
+  EnableUserWindowManager=true
+  ; Give in relative path to user's home directory
+  UserWindowManager=startwm.sh
+  ; Give in full path or relative path to /etc/xrdp
+  DefaultWindowManager=startwm.sh
+  ; Give in full path or relative path to /etc/xrdp
+  ReconnectScript=reconnectwm.sh
+#+end_src
+
+还有其他一些内容，具体可以通过 =man 5 sesman.ini= 来查看。

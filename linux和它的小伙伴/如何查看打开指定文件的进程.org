@@ -1,0 +1,140 @@
+#+TITLE: 如何查看打开指定文件的进程
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-03-30 一 10:34]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有时候你会发现某些文件在不停的增长严重占用了磁盘空间，或者删除某个大文件后发现磁盘空间没有被回收。
+这说明该文件正在被某个进程所占用，你想找到罪魁祸首是谁，该怎么做呢？
+
+* 解决方案一：使用fuser命令
+涉及到的命令: fuser
+
+本部分以archlinux系统为例
+
+** 安装
+在archlinux上，fuser命令是属于 =psmisc= 包中的，因此运行下面命令安装:
+
+#+begin_src shell :results org
+  sudo pacman -S psmisc --noconfirm
+#+end_src
+
+** 解决方案
+
+fuser的使用方法非常简单，只需要直接后接要查看的文件路径就行了。比如:
+#+begin_src shell :results org
+  sleep 10 >/tmp/test &
+  fuser /tmp/test  2>&1
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+/tmp/test:           2405063
+#+end_src
+
+我们可以看到，fuser告诉我们进程 =2405063= 打开了 =/tmp/test= 这个文件，我们用 =ps= 来看一下
+#+begin_src shell :results org
+  ps -elf |grep 2405063 |grep -v grep
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+0 S lujun99+ 2405063    1554  0  80   0 -  2092 -      10:50 ?        00:00:00 sleep 10
+#+end_src
+
+若我们只想直接杀掉打开该文件的进程，那么可以直接使用 =-k= 选项(或者 =--kill= 选项):
+#+begin_src shell :results org
+  sleep 10 >/tmp/test &
+  fuser -k /tmp/test  2>&1
+  ps -elf |grep sleep |grep -v grep
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  /tmp/test:           2405271
+  [1]+  已杀死               sleep 10 > /tmp/test
+#+end_src
+
+* 解决方案二：借助/proc
+涉及到的命令: bash
+
+本部分以archlinux系统为例
+
+** 安装
+- 无需安装
+** 解决方案
+我们知道 =/proc/$pid/fd/= 目录下存储着进程号为 =$pid= 的进程所打开的所有文件描述符号和对应的文件路径:
+#+begin_src shell :results org
+  ls -l /proc/$$/fd/
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+总用量 0
+lr-x------ 1 lujun9972 lujun9972 64  3月 30 10:59 0 -> /tmp/ob-input-sYOtni
+l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 1 -> pipe:[10559772]
+l-wx------ 1 lujun9972 lujun9972 64  3月 30 10:59 2 -> /tmp/emacsQh0w9R
+#+end_src
+
+所以我们可以通过遍历该目录下的所有文件描述符所指向的文件路径来找出打开文件的进程号:
+
+首先, =/proc/$pid/fd= 目录中的软链接都是指向绝对路径的，因此我们需要定义一个函数获取指定文件的绝对路径:
+#+begin_src shell
+  function abs_path()
+  {
+      local file="$1"
+      local abs_dir="$(cd $(dirname $1);pwd)"
+      local basename="$(basename $1)"
+      echo "${abs_dir}/${basename}"
+  }
+#+end_src
+基于兼容性考虑，这里我们使用 =dirname= 命令和 =basename= 来获取文件路径中的目录和文件名，而没有使用bash的参数扩展功能来截取.
+
+下一步我们定义一个函数来判断某个进程是否打开了指定文件:
+#+begin_src shell
+  function is_opened_file()
+  {
+      local pid="$1"
+      local file="$2"
+      for f in /proc/${pid}/fd/*
+      do
+          if [[ "$(readlink $f)" == "${file}" ]];then
+              return 0
+          fi
+      done
+      return 1
+  }
+#+end_src
+注意到，该函数没有去获取文件的绝对路径，这是基于性能考虑。因为我们需要遍历系统所有进程(通常有上千个)中打开的文件描述符来找出打开指定文件的进程，如果每次遍历都获取一次绝对路径那么性能消耗会非常严重，也是没有必要的。
+
+最后，我们遍历整个 =/proc= 下的进程目录，找出打开指定文件的进程号:
+#+begin_src shell :results org
+  function fileuser()
+  {
+      file="$(abs_path "$1")"
+      for pid in $(cd /proc;ls -d [0-9]*);
+      do
+          if is_opened_file "${pid}" "${file}";then
+              echo ${pid}
+          fi
+      done
+  }
+#+end_src
+
+现在我们来测试一下:
+#+begin_src shell
+  sleep 10 > /tmp/test &
+  fileuser /tmp/test
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+2461994
+#+end_src
+
+不过相比于第一个解决方案来说，这个解决方案特别慢，在我电脑上耗费了差不多5秒钟才出结果。
+
+* 相关链接
+更多常见选项请运行 =man fuser= 或 =fuser --help= 查看帮助

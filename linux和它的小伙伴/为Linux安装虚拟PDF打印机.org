@@ -1,0 +1,79 @@
+#+TITLE: 为Linux安装虚拟PDF打印机
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-04-11 六 20:32]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天发现一个 [[https://www.cups-pdf.de/][CUPS-PDF]] 项目,可以为 [[https://zh.wikipedia.org/wiki/CUPS][CUPS]](Common Unix Printing System) 添加 PDF 打印机.
+
+步骤非常简单:
+
+1. 安装 =CPUS-PDF=
+   #+begin_src shell :dir /ssh:root@192.168.1.9:
+     sudo apt install -y cups-pdf
+   #+end_src
+
+2. 根据 [[https://www.cups-pdf.de/documentation.shtml][CPUS-PDF的文档说明]], 需要设置 =cups-pdf= 的所有者为 =root=,且权限为 =0700=
+   #+begin_src shell :dir /ssh:root@192.168.1.9:
+     sudo chown root:root /usr/lib/cups/backend/cups-pdf
+     sudo chmod 0700 /usr/lib/cups/backend/cups-pdf
+   #+end_src
+
+3. 重启CUPS服务
+   #+begin_src shell :dir /ssh:root@192.168.1.9:
+     sudo systemctl restart cups.service
+   #+end_src
+
+4. 可以通过修改 =/etc/cups/cups-pdf.conf= 的 =OUT= 参数来设置pdf的输出位置
+   #+begin_src conf
+     ### Key: Out (config)                                                        
+     ##  CUPS-PDF output directory                                                
+     ##  special qualifiers:                                                      
+     ##     ${HOME} will be expanded to the user's home directory                 
+     ##     ${USER} will be expanded to the user name                             
+     ##  in case it is an NFS export make sure it is exported without             
+     ##  root_squash!                                                             
+     ##  on Ubuntu, the cupsd AppArmor profile needs to be updated                
+     ##  to match the output path as per instructions in LP:147551                
+     ### Default: /var/spool/cups-pdf/${USER}                                     
+                                                                             
+     Out ${HOME}/PDF                                                              
+   #+end_src
+
+5. 然后在CUPS的admin页面中就能看到一个PDF打印机了
+
+   [[file:./images/screenshot-73.png]]
+   
+   或者用 =lpstat= 来查看:
+   #+begin_src shell :dir /ssh:lujun9972@192.168.1.9: :results org
+     lpstat -p -d
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   printer PDF is idle.  enabled since Sat 11 Apr 2020 09:52:10 PM HKT
+   system default destination: PDF
+   #+end_src
+
+6. 使用 =lpr= 打印一个文件试试
+   #+begin_src shell :dir /ssh:lujun9972@192.168.1.9: :results org
+     lp ~/dead.letter
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   request id is PDF-5 (1 file(s))
+   #+end_src
+
+   #+begin_src shell :dir /ssh:lujun9972@192.168.1.9: :results org
+     ls ~/PDF
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   dead.letter__2_PDF-job_5.pdf
+   #+end_src
+
+7. 最后要注意的是，根据 [[https://www.cups-pdf.de/cups-pdf-CURRENT/README][README]] 的说明，客户端选择打印机时，供应商应该选择 =Postscript=, model选择 =Color Printer=

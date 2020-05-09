@@ -1,0 +1,116 @@
+#+TITLE: [译]Org-mode中的AWK源码块
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-04-22 三 19:02]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近玩AWK比较多，刚好看到org原生支持AWK，想着以后可能会常用，索性翻译一下，方便下次翻阅。
+
+原文地址：https://www.orgmode.org/worg/org-contrib/babel/languages/ob-doc-awk.html
+
+* 简介
+=AWK= 是一门基于正则表达式的专为操作记录数据而优化的特定任务语言. 其小巧但图灵完备，执行效率高,易于表达，功能强大, 且语法独特.
+
+Org mode中的表正好用来表示 =AWK= 处理的记录数据.
+
+* 要求和配置
+AWK的变种有很多. 变量 =org-babel-awk-command= 可以设置 =AWK= 可执行文件的名称. 默认值为 "awk".
+
+要在Org mode中启用 =AWK= 源码块支持, 向 =org-babel-load-languages= 添加合适的点对(dotted pair)即可
+
+#+begin_src emacs-lisp :exports code
+  (org-babel-do-load-languages
+   'org-babel-load-languages
+   '((awk . t)))
+#+end_src
+
+* Org-mode中AWK源码块的功能特点
+** Header 参数
+有三个 =AWK= 特有的 header 参数.
+   - =:cmd-line= :: 指定传递给 =AWK= 命令的命令行参数
+   - =:in-file= :: 指定 =AWK= 处理的数据文件路径
+   - =:stdin= :: 指定某个Org-mde的数据或代码块引用, 其值会通过STDIN传递给 =AWK= 进程
+** Sessions
+=AWK= 不支持session
+
+* 使用案例
+
+下面两个例子来自于 GNU Awk 用户手册.
+
+假设有这么一个表格 =bbs-list=
+
+#+begin_src org
+  ,#+name: bbs-list
+  | aardvark | 555-5553 | 1200/300      | B |
+  | alpo-net | 555-3412 | 2400/1200/300 | A |
+  | barfly   | 555-7685 | 1200/300      | A |
+  | bites    | 555-1675 | 2400/1200/300 | A |
+  | camelot  | 555-0542 | 300           | C |
+  | core     | 555-2912 | 1200/300      | C |
+  | fooey    | 555-1234 | 2400/1200/300 | B |
+  | foot     | 555-6699 | 1200/300      | B |
+  | macfoo   | 555-6480 | 1200/300      | A |
+  | sdace    | 555-3430 | 2400/1200/300 | A |
+  | sabafoo  | 555-2127 | 1200/300      | C |
+#+end_src
+
+以及 =AWK= 源码块
+#+begin_src org
+  ,#+begin_src awk :stdin bbs-list
+  /foo/ { print $0 }
+  ,#+end_src
+#+end_src
+
+会输出原表中的一个子集
+
+#+begin_src org
+  ,#+results:
+  | fooey   | 555-1234 | 2400/1200/300 | B |
+  | foot    | 555-6699 | 1200/300      | B |
+  | macfoo  | 555-6480 | 1200/300      | A |
+  | sabafoo | 555-2127 | 1200/300      | C |
+#+end_src
+
+假设有一个名为 =inventory-shipped= 的表格
+
+#+begin_src org
+  ,#+name: inventory-shipped
+  | Jan | 13 | 25 | 15 | 115 |
+  | Feb | 15 | 32 | 24 | 226 |
+  | Mar | 15 | 24 | 34 | 228 |
+  | Apr | 31 | 52 | 63 | 420 |
+  | May | 16 | 34 | 29 | 208 |
+  | Jun | 31 | 42 | 75 | 492 |
+  | Jul | 24 | 34 | 67 | 436 |
+  | Aug | 15 | 34 | 47 | 316 |
+  | Sep | 13 | 55 | 37 | 277 |
+  | Oct | 29 | 54 | 68 | 525 |
+  | Nov | 20 | 87 | 82 | 577 |
+  | Dec | 17 | 35 | 61 | 401 |
+  |     |    |    |    |     |
+  | Jan | 21 | 36 | 64 | 620 |
+  | Feb | 26 | 58 | 80 | 652 |
+  | Mar | 24 | 75 | 70 | 495 |
+  | Apr | 21 | 70 | 74 | 514 |
+#+end_src
+
+以及这么一小段 =AWK= 代码
+
+#+begin_src org
+  ,#+begin_src awk :stdin inventory-shipped :exports results
+  $1 ~ /J/
+  ,#+end_src
+#+end_src
+
+会输出其中的一个子集
+
+#+begin_src org
+  ,#+results:
+  | Jan | 13 | 25 | 15 | 115 |
+  | Jun | 31 | 42 | 75 | 492 |
+  | Jul | 24 | 34 | 67 | 436 |
+  | Jan | 21 | 36 | 64 | 620 |
+#+end_src
+
