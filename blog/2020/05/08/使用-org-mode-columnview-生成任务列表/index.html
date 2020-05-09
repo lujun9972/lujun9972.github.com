@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用 org-mode columnview 生成任务列表 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒,org-mode" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用 org-mode columnview 生成任务列表</h1>
+<p>
+org-mode的columnview<a href="https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks">动态块</a>能够帮你把树形的代办事项归整为表格，方便查看
+</p>
+
+<p>
+在org-mode中可以通过两个命令来插入colmnviewa动态块:
+</p>
+
+<ul class="org-ul">
+<li>一个是通过 <code>M-x org-dynamic-block-insert-dblock</code> 插入一个动态块，默认情况下 org-mode 自带了两类动态块 <code>columnview</code> 和 <code>clocktable</code> ，然后我们选择 <code>columnview</code> 即可</li>
+<li>另一个是通过 <code>M-x org-columns-insert-dblock</code> 直接插入columnviewa动态块</li>
+</ul>
+
+
+<p>
+一个 columnview 动态块大概长这个样子的:
+</p>
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-meta-line">#+BEGIN: columnview :&#21442;&#25968;1 &#21442;&#25968;&#20540; :&#21442;&#25968;N h&#21442;&#25968;&#20540;</span>
+
+<span class="org-org-meta-line">#+END:</span>
+
+</pre>
+</div>
+
+<p>
+其中 <code>columnview</code> 标识动态块的类型，该名字决定了org-mode会调用哪个函数来生成动态块的内容，比如这里调用的函数就是 <code>org-dblock-write:columnview</code>. 
+后面的 <code>:参数1 参数值 :参数N h参数值</code> 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+</p>
+
+<p>
+我们可以通过查看 <code>org-dblock-write:columnview</code> 的docstring来找出 <code>columnwive</code> 动态块支持的参数:
+</p>
+<pre class="example">
+(org-dblock-write:columnview PARAMS)
+
+Write the column view table.
+
+PARAMS is a property list of parameters:
+
+‘:id’ (mandatory)
+
+    The ID property of the entry where the columns view should be
+    built.  When the symbol ‘local’, call locally.  When ‘global’
+    call column view with the cursor at the beginning of the
+    buffer (usually this means that the whole buffer switches to
+    column view).  When "file:path/to/file.org", invoke column
+    view at the start of that file.  Otherwise, the ID is located
+    using ‘org-id-find’.
+
+‘:exclude-tags’
+
+    List of tags to exclude from column view table.
+
+‘:format’
+
+    When non-nil, specify the column view format to use.
+
+‘:hlines’
+
+    When non-nil, insert a hline before each item.  When
+    a number, insert a hline before each level inferior or equal
+    to that number.
+
+‘:indent’
+
+    When non-nil, indent each ITEM field according to its level.
+
+‘:match’
+
+    When set to a string, use this as a tags/property match filter.
+
+‘:maxlevel’
+
+    When set to a number, don’t capture headlines below this level.
+
+‘:skip-empty-rows’
+
+    When non-nil, skip rows where all specifiers other than ITEM
+    are empty.
+
+‘:vlines’
+
+    When non-nil, make each column a column group to enforce
+    vertical lines.
+</pre>
+
+<p>
+这里比较重要的参数有
+</p>
+
+<dl class="org-dl">
+<dt>:id</dt><dd>这是最重要的参数. 它指定了column视图的数据来源。</dd>
+<dt>:maxlevel</dt><dd>若设置为数字N,表示不捕捉层级在N级以下的条目</dd>
+<dt>:skip-empty-rows</dt><dd>若设置为`t`,则会跳过那些除了`ITEM`属性列外,其他属性列都是空值的行</dd>
+<dt>:format</dt><dd>设置column视图的格式。</dd>
+</dl>
+
+<p>
+其中 <code>:format</code> 是一个以多个列定义式组成的字符串，各定义式之间使用空格进行分隔。
+column的定义式中可以包含有列的属性. 一般来说列的定义式看起来是这样做的
+</p>
+<div class="org-src-container">
+<pre class="src src-org">,%[width]property[(title)][{summary-type}]
+</pre>
+</div>
+<p>
+除了百分号和属性名之外,所有的都是可选的. 各部分的意思如下所示
+</p>
+<pre class="example">
+width           整型,代表了列的宽度,如果忽略则由org自动决定
+
+property        该列所表示的属性,可以是上文提到的哪些特殊属性
+
+title           列的标题,如果忽略,则会使用属性名代替
+
+{summary-type}  总和的类型,如果指定了,那么父节点的列值由其下子节点的值计算得到
+                支持的总和类型包括:
+                {+}       该列的累加值
+                {+;%.1f}  指定了格式的列累加值
+                {$}       货币格式，其实就是 ‘+;%.2f’.
+                {:}       把列中的值作为时间进行累加，格式为HH[:MM]
+                {X}       Checkbox 的状态, 若所有子checkboxd都标记为‘[X]’ 则显示‘[X]’.
+                {X/}      Checkbox 的状态, 显示格式为‘[n/m]’.
+                {X%}      Checkbox 的状态, 显示格式为‘[n%]’.
+                {min}     列中的最小值
+                {max}     列中的最大值
+                {mean}    列的算术平均值
+                {:min}    列中的最小值（以时间为单位）
+                {:max}    列中的最大值（以时间为单位）
+                {:mean}   列中的算术平均值（以时间为单位）
+                {@min}    列中的最小值（以时间区间为单位）
+                {@max}    列中的最大值（以时间区间为单位）
+                {@mean}   列中的算术平均值（以时间区间为单位）
+                {est+}    耗时的范围
+
+</pre>
+
+<p>
+我一般使用 columnview 来生成任务列表方便我对任务进度进行追踪。下面是一个例子
+</p>
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* &#20219;&#21153;&#20998;&#27966;</span>
+
+<span class="org-org-meta-line">#+BEGIN: columnview :hlines 1 :id local :format "%ITEM(&#20219;&#21153;) %CHARGER(&#36127;&#36131;&#20154;) %DEADLINE(&#27515;&#32447;) %TODO(&#29366;&#24577;)" :skip-empty-rows t</span>
+<span class="org-org-table">| &#20219;&#21153;   | &#36127;&#36131;&#20154;    | &#27515;&#32447;            | &#29366;&#24577;  |</span>
+<span class="org-org-table">|--------+-----------+-----------------+-------|</span>
+<span class="org-org-table">| &#20219;&#21153;&#19968; | &#30002;xx      |                 | NEXT  |</span>
+<span class="org-org-table">| &#20219;&#21153;&#20108; | &#20057;xx      | </span><span class="org-org-date">&lt;2020-05-12 &#20108;&gt;</span><span class="org-org-table"> | TODAY |</span>
+<span class="org-org-table">| &#20219;&#21153;&#19977; | &#30002;xx &#20057;xx |                 | TODO  |</span>
+<span class="org-org-meta-line">#+END:</span>
+
+<span class="org-org-level-2">** NEXT &#20219;&#21153;&#19968;</span>
+<span class="org-org-special-keyword">   :PROPERTIES:</span>
+   <span class="org-org-special-keyword">:CHARGER:</span>  <span class="org-org-property-value">&#30002;xx</span>
+<span class="org-org-special-keyword">   :END:</span>
++ <span class="org-org-checkbox">[ ]</span> xxxx
++ <span class="org-org-checkbox">[ ]</span> yyyy
++ <span class="org-org-checkbox">[ ]</span> zzzz
++ <span class="org-org-checkbox">[X]</span> abcd
+<span class="org-org-level-2">** TODAY </span><span class="org-org-priority">[#A]</span><span class="org-org-level-2"> &#20219;&#21153;&#20108;</span>
+   <span class="org-org-special-keyword">DEADLINE:</span> <span class="org-org-date">&lt;2020-05-12 &#20108;&gt;</span>
+<span class="org-org-special-keyword">   :PROPERTIES:</span>
+   <span class="org-org-special-keyword">:CHARGER:</span>  <span class="org-org-property-value">&#20057;xx</span>
+<span class="org-org-special-keyword">   :END:</span>
++ <span class="org-org-checkbox">[ ]</span> 111111
++ <span class="org-org-checkbox">[ ]</span> 222222
+<span class="org-org-level-2">** </span><span class="org-org-todo">TODO</span><span class="org-org-level-2"> </span><span class="org-org-priority">[#C]</span><span class="org-org-level-2"> &#20219;&#21153;&#19977;</span>
+<span class="org-org-special-keyword">   :PROPERTIES:</span>
+   <span class="org-org-special-keyword">:CHARGER:</span>  <span class="org-org-property-value">&#30002;xx &#20057;xx</span>
+<span class="org-org-special-keyword">   :END:</span>
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-05-08</span>
+    <span title="last modification date" class="post-info">2020-05-09</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a> : <a href="../../../../../tags/org-mode">org-mode</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-9eee3a55-ecf6-4f2d-b907-7416d9a15650">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
