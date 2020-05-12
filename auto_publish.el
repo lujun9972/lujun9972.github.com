@@ -91,7 +91,7 @@ There are two things you can do about this warning:
     (csdn-publish-articles publish-org-files)))
 ;; 设置发布到toutiao
 (defun post-to-toutiao (attr-plist)
-  (let ((uri (plist-get attr-plist :uri))
+  (let ((uri (concat "https://www.lujun9972.win" (plist-get attr-plist :uri)))
         (title (plist-get attr-plist :title))
         (category (plist-get attr-plist :category))
         (toutiao-request-sync t))
