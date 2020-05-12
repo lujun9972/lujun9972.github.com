@@ -27,9 +27,11 @@ There are two things you can do about this warning:
 
 (setq load-path (cons  "~/EGO/" load-path))
 (setq load-path (cons  "~/csdn-publish/" load-path))
+(setq load-path (cons  "~/toutiao/" load-path))
 (require 'log-edit)
 (require 'htmlize)
 (require 'ego)
+(require 'toutiao)
 (setq ego-project-config-alist
  `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>DarkSun的个人博客" :theme
     (DarkSun)
@@ -87,5 +89,16 @@ There are two things you can do about this warning:
                                         updated-org-files)))
   (when publish-org-files
     (csdn-publish-articles publish-org-files)))
+;; 设置发布到toutiao
+(defun post-to-toutiao (attr-plist)
+  (let ((uri (plist-get attr-plist :uri))
+        (title (plist-get attr-plist :title))
+        (category (plist-get attr-plist :category))
+        (toutiao-request-sync t))
+    (unless (string= category "Emacs之怒")
+      (setq category "杂说乱炖"))
+    (toutiao-post uri title category)))
+(add-hook 'ego-post-publish-hooks #'post-to-toutiao)
+
 ;; publish ego log
 (ego-do-publication "blog" nil nil nil)
