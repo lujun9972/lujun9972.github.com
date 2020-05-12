@@ -97,6 +97,7 @@ There are two things you can do about this warning:
         (toutiao-request-sync t))
     (unless (string= category "Emacs之怒")
       (setq category "杂说乱炖"))
+    (message "toutiao DEBUG[%s][%s][%s]" uri title category)
     (toutiao-post uri title category)))
 (add-hook 'ego-post-publish-hooks #'post-to-toutiao)
 
