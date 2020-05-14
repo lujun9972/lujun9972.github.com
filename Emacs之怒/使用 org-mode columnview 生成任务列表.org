@@ -1,0 +1,156 @@
+#+TITLE: 使用 org-mode columnview 生成任务列表
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒,org-mode
+#+DATE: [2020-05-08 五 20:07]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+org-mode的columnview[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]能够帮你把树形的代办事项归整为表格，方便查看
+
+在org-mode中可以通过两个命令来插入colmnviewa动态块:
+
++ 一个是通过 =M-x org-dynamic-block-insert-dblock= 插入一个动态块，默认情况下 org-mode 自带了两类动态块 =columnview= 和 =clocktable= ，然后我们选择 =columnview= 即可
++ 另一个是通过 =M-x org-columns-insert-dblock= 直接插入columnviewa动态块
+
+  
+一个 columnview 动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: columnview :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =columnview= 标识动态块的类型，该名字决定了org-mode会调用哪个函数来生成动态块的内容，比如这里调用的函数就是 =org-dblock-write:columnview=. 
+后面的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+我们可以通过查看 =org-dblock-write:columnview= 的docstring来找出 =columnwive= 动态块支持的参数:
+#+begin_example
+  (org-dblock-write:columnview PARAMS)
+
+  Write the column view table.
+
+  PARAMS is a property list of parameters:
+
+  ‘:id’ (mandatory)
+
+      The ID property of the entry where the columns view should be
+      built.  When the symbol ‘local’, call locally.  When ‘global’
+      call column view with the cursor at the beginning of the
+      buffer (usually this means that the whole buffer switches to
+      column view).  When "file:path/to/file.org", invoke column
+      view at the start of that file.  Otherwise, the ID is located
+      using ‘org-id-find’.
+
+  ‘:exclude-tags’
+
+      List of tags to exclude from column view table.
+
+  ‘:format’
+
+      When non-nil, specify the column view format to use.
+
+  ‘:hlines’
+
+      When non-nil, insert a hline before each item.  When
+      a number, insert a hline before each level inferior or equal
+      to that number.
+
+  ‘:indent’
+
+      When non-nil, indent each ITEM field according to its level.
+
+  ‘:match’
+
+      When set to a string, use this as a tags/property match filter.
+
+  ‘:maxlevel’
+
+      When set to a number, don’t capture headlines below this level.
+
+  ‘:skip-empty-rows’
+
+      When non-nil, skip rows where all specifiers other than ITEM
+      are empty.
+
+  ‘:vlines’
+
+      When non-nil, make each column a column group to enforce
+      vertical lines.
+#+end_example
+
+这里比较重要的参数有
+
++ :id :: 这是最重要的参数. 它指定了column视图的数据来源。
++ :maxlevel :: 若设置为数字N,表示不捕捉层级在N级以下的条目
++ :skip-empty-rows :: 若设置为`t`,则会跳过那些除了`ITEM`属性列外,其他属性列都是空值的行
++ :format :: 设置column视图的格式。
+
+其中 =:format= 是一个以多个列定义式组成的字符串，各定义式之间使用空格进行分隔。
+column的定义式中可以包含有列的属性. 一般来说列的定义式看起来是这样做的
+#+BEGIN_SRC org
+  ,%[width]property[(title)][{summary-type}]
+#+END_SRC
+除了百分号和属性名之外,所有的都是可选的. 各部分的意思如下所示
+#+BEGIN_EXAMPLE
+  width           整型,代表了列的宽度,如果忽略则由org自动决定
+
+  property        该列所表示的属性,可以是上文提到的哪些特殊属性
+
+  title           列的标题,如果忽略,则会使用属性名代替
+
+  {summary-type}  总和的类型,如果指定了,那么父节点的列值由其下子节点的值计算得到
+                  支持的总和类型包括:
+                  {+}       该列的累加值
+                  {+;%.1f}  指定了格式的列累加值
+                  {$}       货币格式，其实就是 ‘+;%.2f’.
+                  {:}       把列中的值作为时间进行累加，格式为HH[:MM]
+                  {X}       Checkbox 的状态, 若所有子checkboxd都标记为‘[X]’ 则显示‘[X]’.
+                  {X/}      Checkbox 的状态, 显示格式为‘[n/m]’.
+                  {X%}      Checkbox 的状态, 显示格式为‘[n%]’.
+                  {min}     列中的最小值
+                  {max}     列中的最大值
+                  {mean}    列的算术平均值
+                  {:min}    列中的最小值（以时间为单位）
+                  {:max}    列中的最大值（以时间为单位）
+                  {:mean}   列中的算术平均值（以时间为单位）
+                  {@min}    列中的最小值（以时间区间为单位）
+                  {@max}    列中的最大值（以时间区间为单位）
+                  {@mean}   列中的算术平均值（以时间区间为单位）
+                  {est+}    耗时的范围
+
+#+END_EXAMPLE
+
+我一般使用 columnview 来生成任务列表方便我对任务进度进行追踪。下面是一个例子
+#+begin_src org
+  ,* 任务分派
+
+  ,#+BEGIN: columnview :hlines 1 :id local :format "%ITEM(任务) %CHARGER(负责人) %DEADLINE(死线) %TODO(状态)" :skip-empty-rows t
+  | 任务   | 负责人    | 死线            | 状态  |
+  |--------+-----------+-----------------+-------|
+  | 任务一 | 甲xx      |                 | NEXT  |
+  | 任务二 | 乙xx      | <2020-05-12 二> | TODAY |
+  | 任务三 | 甲xx 乙xx |                 | TODO  |
+  ,#+END:
+
+  ,** NEXT 任务一
+     :PROPERTIES:
+     :CHARGER:  甲xx
+     :END:
+  + [ ] xxxx
+  + [ ] yyyy
+  + [ ] zzzz
+  + [X] abcd
+  ,** TODAY [#A] 任务二
+     DEADLINE: <2020-05-12 二>
+     :PROPERTIES:
+     :CHARGER:  乙xx
+     :END:
+  + [ ] 111111
+  + [ ] 222222
+  ,** TODO [#C] 任务三
+     :PROPERTIES:
+     :CHARGER:  甲xx 乙xx
+     :END:
+#+end_src

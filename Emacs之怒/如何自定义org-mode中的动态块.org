@@ -1,0 +1,67 @@
+#+TITLE: 如何自定义org-mode中的动态块
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒,org-mode
+#+DATE: [2020-05-09 六 19:28]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+org-mode的[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]看起来跟代码块很类似，也是有一个开始和结束的标签，只不过动态块中的内容是通过特定函数自动生成的。
+其中最常见的动态块就是 =clocktable= 和 =columnview= 了。我常常用在进行季度总结和跟踪任务列表时用到它们。
+
+一个动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: 动态块类型 :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =动态块类型= 决定了org-mode会调用哪个函数来生成动态块的内容，调用的函数名称为规范 =org-dblock-write:动态块类型=. 
+
+这意味着，其实你完全可以自定义自己的动态块，比如下面这段代码摘自org的manual
+#+begin_src elisp
+  (defun org-dblock-write:block-update-time (params)
+    (let ((fmt (or (plist-get params :format) "%d. %m. %Y")))
+      (insert "Last block update at: "
+              (format-time-string fmt))))
+#+end_src
+
+#+RESULTS:
+: org-dblock-write:block-update-time
+
+它定义了一名为 =block-update-time= 的动态块，然后我们就可以插入该动态块了
+#+begin_src org
+  ,#+BEGIN: block-update-time :format "on %m/%d/%Y at %H:%M"
+  Last block update at: on 05/08/2020 at 21:03
+  ,#+END:
+#+end_src
+
+之后的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+不过光是定义了生成动态块还不够，你无法通过命令 =org-dynamic-block-insert-dblock= 来帮你插入动态块，而只能手工编写动态块。
+这时我们就需要使用函数 =org-dynamic-block-define= 来注册自己的动态块类型。
+#+begin_example
+  (org-dynamic-block-define TYPE FUNC)
+
+  Define dynamic block TYPE with FUNC.
+  TYPE is a string.  FUNC is the function creating the dynamic
+  block of such type.
+#+end_example
+
+也就是说,我们还需要定义一个命令来生成自定义的动态块，在这个命令中我们可以通过 =org-create-dblock= 和 =org-update-dblock= 来插入和更新动态块.
+#+begin_src emacs-lisp
+  (defun org-update-time-dblock ()
+    "Create a dynamic block capturing a column view table."
+    (interactive)
+    (org-create-dblock
+     (list :name "block-update-time"))
+    (org-update-dblock))
+
+  (org-dynamic-block-define "update-time" #'org-update-time-dblock)
+#+end_src
+
+#+RESULTS:
+: org-update-time-dblock
+
+之后我们就能使用 =org-dynamic-block-insert-dblock= 和 =org-update-time-dblock= 这两个命令来插入自定义动态块了。
