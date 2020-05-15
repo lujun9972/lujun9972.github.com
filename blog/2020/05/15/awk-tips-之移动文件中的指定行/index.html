@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>AWK tips 之移动文件中的指定行 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴,tips" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">AWK tips 之移动文件中的指定行</h1>
+<p>
+从 <a href="https://www.datafix.com.au/BASHing/2020-05-13.html">https://www.datafix.com.au/BASHing/2020-05-13.html</a> 上看到的 AWK 技巧，记录一下。
+</p>
+
+<p>
+假设有这个一个文件：
+</p>
+<pre class="example">
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+295|fruit|apple|6|0.94|5.64
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+</pre>
+
+<p>
+现在想把 SaleID 为 295 的这条记录移动到 0039 后面，用 AWK 如何实现？
+</p>
+
+<p>
+这里的技巧在于对同一个文件遍历两次，第一次找出待移动的记录并记录到某个变量中，第二次在恰当的位置输出它。最后的解决方法为：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">awk -F<span class="org-string">"|"</span> <span class="org-string">'FNR==NR {if ($1=="295") {x=$0}; next} \</span>
+<span class="org-string">$1=="0039" {$0=$0 RS x} $1!="295" {print}'</span> demo demo
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+</pre>
+</div>
+
+<p>
+这里 <code>FNR==NR {第一个文件的处理逻辑;next} 第二个文件的处理逻辑</code> 是一种常见的搭配，用来先通过第一个文件构造必要的变量，然后利用这些构造出的变量来处理第二个文件。
+</p>
+
+<p>
+这里的关键在于，第一个文件的处理过程一定要以 <code>next</code> 结尾，这样才会让 AWK 中断后面的模式匹配和操作，直到遍厉完第一个文件的内容。
+</p>
+
+<p>
+当然，如果我们直到被移动记录的行数和插入的位置的话，也可以直接使用 <code>FNR</code> 作为匹配条件，例如上面的操作可以改为
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">awk <span class="org-string">'FNR==NR {if (NR==9) {x=$0}; next} \</span>
+<span class="org-string"> FNR==4 {$0=$0 RS x} FNR!=9 {print}'</span> demo demo
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+</pre>
+</div>
+
+<p>
+在进一步，我们可以将这段 AWK 代码封装成一个函数：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">shiftline</span>()
+{
+    awk -v <span class="org-variable-name">target</span>=<span class="org-string">"$2"</span> -v <span class="org-variable-name">putafter</span>=<span class="org-string">"$3"</span> <span class="org-string">'FNR==NR {if (NR==target) {x=$0; next} else next} FNR==putafter {$0=$0 RS x} FNR!=target {print}'</span> <span class="org-string">"$1"</span> <span class="org-string">"$1"</span>
+}
+
+shiftline demo 9 4
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-05-15</span>
+    <span title="last modification date" class="post-info">2020-05-15</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a> : <a href="../../../../../tags/tips">tips</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-5f8ad1f2-fef1-434e-b837-3d4c26b255c5">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

@@ -4,79 +4,817 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Thu, 14 May 2020 13:38:52 UTC</pubDate>
-    <lastBuildDate>Thu, 14 May 2020 13:38:52 UTC</lastBuildDate>
+    <pubDate>Fri, 15 May 2020 11:01:29 UTC</pubDate>
+    <lastBuildDate>Fri, 15 May 2020 11:01:29 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
+<title>AWK tips 之移动文件中的指定行</title>
+<link>https://lujun9972.github.io/blog/2020/05/15/awk-tips-之移动文件中的指定行/index.html</link>
+<description>从 https://www.datafix.com.au/BASHing/2020-05-13.html 上看到的 AWK 技巧，记录一下。
+
+假设有这个一个文件：
+#+begin_example
+  SaleID|Class|Item|Count|UnitP|TotalP
+  146|fish|BG fillets|3|15.00|45.00
+  2785|fruit|banana|1|0.45|0.45
+  0039|fruit|banana|1|0.45|0.45
+  119|meat|liver paste|1|2.10|2.10
+  6253|veg|carrot bunch|2|4.90|9.80
+  8847|fish|tin tuna|4|1.50|6.00
+  3776|veg|pak choy|2|2.50|5.00
+  295|fruit|apple|6|0.94|5.64
+  534|fish|tin tuna|1|1.50|1.50
+  1221|meat|pork slices|8|4.20|33.60 
+#+end_example
+
+现在想把 SaleID 为 295 的这条记录移动到 0039 后面，用 AWK 如何实现？
+
+这里的技巧在于对同一个文件遍历两次，第一次找出待移动的记录并记录到某个变量中，第二次在恰当的位置输出它。最后的解决方法为：
+#+begin_src shell :dir /tmp :results org
+  awk -F&quot;|&quot; &#39;FNR==NR {if ($1==&quot;295&quot;) {x=$0}; next} \
+  $1==&quot;0039&quot; {$0=$0 RS x} $1!=&quot;295&quot; {print}&#39; demo demo
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
+
+这里 ~FNR==NR {第一个文件的处理逻辑;next} 第二个文件的处理逻辑~ 是一种常见的搭配，用来先通过第一个文件构造必要的变量，然后利用这些构造出的变量来处理第二个文件。
+
+这里的关键在于，第一个文件的处理过程一定要以 =next= 结尾，这样才会让 AWK 中断后面的模式匹配和操作，直到遍厉完第一个文件的内容。
+
+当然，如果我们直到被移动记录的行数和插入的位置的话，也可以直接使用 =FNR= 作为匹配条件，例如上面的操作可以改为
+#+begin_src shell :dir /tmp :results org
+  awk &#39;FNR==NR {if (NR==9) {x=$0}; next} \
+   FNR==4 {$0=$0 RS x} FNR!=9 {print}&#39; demo demo
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
+
+在进一步，我们可以将这段 AWK 代码封装成一个函数：
+#+begin_src shell :dir /tmp :results org
+  shiftline()
+  {
+      awk -v target=&quot;$2&quot; -v putafter=&quot;$3&quot; &#39;FNR==NR {if (NR==target) {x=$0; next} else next} FNR==putafter {$0=$0 RS x} FNR!=target {print}&#39; &quot;$1&quot; &quot;$1&quot;
+  }
+
+  shiftline demo 9 4
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
+</description>
+<pubDate>2020-05-15</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/05/15/awk-tips-之移动文件中的指定行/index.html</guid>
+</item>
+<item>
 <title>找回已连接Wifi的密码</title>
 <link>https://lujun9972.github.io/blog/2020/05/14/找回已连接wifi的密码/index.html</link>
-<description>No Description</description>
+<description>根据Wifi管理组件的不同，存储Wifi密码的配置文件路径也不同。
+
+* NetworkManager
+在 Ubuntu 中默认是使用 =NetworkManger= 来进行管理Wifi。
+其配置文件存储在 =/etc/NetworkManager/system-connections/= 目录中，且密码对应字段为 =psk= ,因此我们可以通过下面命令找回密码:
+#+begin_src shell
+  sudo grep -r &#39;^psk=&#39; /etc/NetworkManager/system-connections/
+#+end_src
+
+* netctl
+我在archlinux下使用 =netctl= 来管理Wifi。
+其配置文件存储在 =/etc/netctl= 目录下，且密码对应字段为 =Key= (注意第一个字符大写),因此我们可以通过下面命令找回密码:
+#+begin_src shell :dir /sudo::
+  sudo grep -r &#39;^Key=&#39; /etc/netctl/
+#+end_src
+</description>
 <pubDate>2020-05-14</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/14/找回已连接wifi的密码/index.html</guid>
 </item>
 <item>
 <title>如何从apt upgrade中排除指定包</title>
 <link>https://lujun9972.github.io/blog/2020/05/13/如何从apt-upgrade中排除指定包/index.html</link>
-<description>No Description</description>
+<description>在 archlinux 下可以直接通过 =pacman -Syu --ingore= 来跳过指定包进行升级, 然而ubuntu 下的 apt 居然不提供类似的排除选项，这很让我感到吃惊.
+不过网上apt的内容倒是蛮多，经过简单的搜索，很容易找到解决方法。
+
+1. 先用 =apt-mark hold= 来保留要排除的软件包
+   #+begin_src shell :dir /sudo::
+     sudo apt-mark hold emacs-snapshot
+   #+end_src
+
+   #+RESULTS:
+   : emacs-snapshot set on hold.
+
+2. 执行升级操作
+   #+begin_src shell :dir /sudo::
+     sudo apt upgrade -y
+   #+end_src
+
+3. 用 =apt-mark unhold= 来取消包的保留
+   #+begin_src shell :dir /sudo::
+     sudo apt-mark unhold emacs-snapshot
+   #+end_src
+
+   #+RESULTS:
+   : Canceled hold on emacs-snapshot.
+
+   
+如果没有 =apt-mark= 命令，则还可以使用 =dpkg --set-selections= 来保留软件包，关于它的manual如下：
+#+begin_example
+  --set-selections
+              Set package selections using file read from stdin. This file should be in the format  “package  state”,
+              where  state  is one of install, hold, deinstall or purge. Blank lines and comment lines beginning with
+              ‘#’ are also permitted.
+
+              The available file needs to be up-to-date for this command to be  useful,  otherwise  unknown  packages
+              will be ignored with a warning. See the --update-avail and --merge-avail commands for more information.
+#+end_example
+
+所以步骤可以修改为
+1. 保留要排除的软件包
+   #+begin_src shell :dir /sudo::
+     echo &quot;emacs-snapshot hold&quot; |sudo dpkg --set-selections
+   #+end_src
+
+   #+RESULTS:
+
+2. 执行升级操作
+   #+begin_src shell :dir /sudo::
+     sudo apt upgrade -y
+   #+end_src
+
+3. 取消包的保留
+   #+begin_src shell :dir /sudo::
+     echo &quot;emacs-snapshot install&quot; |sudo dpkg --set-selections
+   #+end_src
+
+   #+RESULTS:
+</description>
 <pubDate>2020-05-13</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/13/如何从apt-upgrade中排除指定包/index.html</guid>
 </item>
 <item>
 <title>git branch大扫除</title>
 <link>https://lujun9972.github.io/blog/2020/05/12/git-branch大扫除/index.html</link>
-<description>No Description</description>
+<description>从 http://www.joachim-breitner.de/blog/751-Spring_cleaning__local_git_branches 上看到的小技巧，觉得很棒，记录一下。
+
+在git项目中经常会包含大量的分支，比如在在我 [[https://github.com/LCTT/TranslateProject][Linux中国]] 的选题仓库中就包含了一对各式各样的分支:
+#+begin_src shell :results org :dir /ssh:lujun9972@tencent_cloud#8022:~/github/TranslateProject
+  git branch
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  add-MjAxODA4MDUgV2hlcmUgVmltIENhbWUgRnJvbS5tZAo=
+  add-MjAxODA5MDIgTGVhcm5pbmcgQkFTSUMgTGlrZSBJdC1zIDE5ODMubWQK
+  add-MjAxODEwMTUgSW50ZXJuZXRzIG9mIEludGVyZXN0IC03LSBJYW4gQ29vcGVyIG9uIFRlc3QgRHJpdmVuIERldmVsb3BtZW50Lm1kCg==
+  add-MjAxODExMDMgSW50ZXJuZXRzIG9mIEludGVyZXN0IC04LSBUb2RkIEZlcm5hbmRleiBvbiB0aGUgbWFudWZhY3R1cmluZyBvZiBtb2Rlcm4gc2VtaWNvbmR1Y3RvcnMubWQK
+  add-MjAxODExMTEgSW50ZXJuZXRzIG9mIEludGVyZXN0IC05LSBKYXNvbiBTY290dCBvbiB0aGUgQ29weXJpZ2h0IEZ1cnkgUm9hZC5tZAo=
+  add-MjAxODExMTUgSW50ZXJuZXRzIG9mIEludGVyZXN0IC0xMC0gTWlrZSBIYXJyaXNvbiBvbiB0aGUgRWlkb3Bob3IubWQK
+  add-MjAxODEyMzAgSW50ZXJuZXRzIG9mIEludGVyZXN0IC0xMS0gWWVzdGVyZGF5LXMgQ29tcHV0ZXIgb2YgVG9tb3Jyb3ctIFRoZSBYZXJveCBBbHRvLm1kCg==
+  add-MjAxOTA0MDMgQWJzb2x1dGUgVW5pdCAodGVzdCkubWQK
+  add-MjAxOTA2MDUgSG93IHRvIG5hdmlnYXRlIHRoZSBLdWJlcm5ldGVzIGxlYXJuaW5nIGN1cnZlLm1kCg==
+  add-MjAxOTA2MTAgV2h5IGNvbnRhaW5lcnMgYW5kIEt1YmVybmV0ZXMgaGF2ZSB0aGUgcG90ZW50aWFsIHRvIHJ1biBhbG1vc3QgYW55dGhpbmcubWQK
+  add-MjAxOTA2MjggVW5kbyByZWxlYXNlcyBMaXZlIFJlY29yZGVyIDUuMCBmb3IgTGludXggZGVidWdnaW5nLm1kCg==
+  add-MjAxOTA3MDUgU3lkbmV5IEhpZ2ggUGVyZm9ybWFuY2UgR28gd29ya3Nob3AubWQK
+  add-MjAxOTA3MDkgUmVkIEhhdCwgSUJNLCBhbmQgRmVkb3JhLm1kCg==
+  add-MjAxOTA4MzAgSFBFIGludHJvZHVjZXMgVk13YXJlIHNlcnZpY2VzIG9uIEdyZWVuTGFrZS5tZAo=
+  add-MjAxOTA5MDIgVXNpbmcgcHJlZGljdGl2ZSBhbmFseXRpY3MgdG8gdHJvdWJsZXNob290IG5ldHdvcmsgaXNzdWVzLSBGYWN0IG9yIGZpY3Rpb24ubWQK
+  add-MjAxOTA5MDUgUS1BLSBIUEUtcyBuZXR3b3JraW5nIGNoaWVmIG9wZW5zIHVwIGFib3V0IGludGVsbGlnZW50IGVkZ2UsIENpc2NvIGFuZCBtaWNybyBkYXRhIGNlbnRlcnMubWQK
+  add-MjAxOTA5MDYgMi1NaW51dGUgTGludXggVGlwLSBUaGUgZW52IGNvbW1hbmQubWQK
+  add-MjAxOTA5MDkgTW92aW5nIHRvIFNELVdBTi0gQ29uc2lkZXIgU2VjdXJpdHkgQ2FyZWZ1bGx5LCBTYXkgRXhwZXJ0cyBhbmQgSVQgTWFuYWdlcnMubWQK
+  add-MjAxOTA5MTEgNSBXYXlzIFNELVdBTiBQcm9tb3RlIEJ1c2luZXNzIEFnaWxpdHkubWQK
+  add-MjAxOTA5MTEgOCBLZXkgQ29uc2lkZXJhdGlvbnMgV2hlbiBTZWxlY3RpbmcgYSBNYW5hZ2VkIFNELVdBTiBTZXJ2aWNlIFByb3ZpZGVyLm1kCg==
+  add-MjAxOTA5MTEgQ2lzY28gYWRkcyBzcGVlZCwgc21hcnRzIHRvIE1EUyBzdG9yYWdlIG5ldHdvcmtpbmcgZmFtaWx5Lm1kCg==
+  add-MjAxOTA5MTEgU0QtV0FOLSBEb2VzIFlvdXIgSVQgVGVhbSBIYXZlIFdoYXQgSXQgVGFrZXMubWQK
+  add-MjAxOTA5MTIgNSBNdXN0LWhhdmUgU0QtV0FOIFNlY3VyaXR5IENhcGFiaWxpdGllcy5tZAo=
+  add-MjAxOTA5MTIgSUJNIHoxNSBtYWluZnJhbWUsIGFtcHMtdXAgY2xvdWQsIHNlY3VyaXR5IGZlYXR1cmVzLm1kCg==
+  add-MjAxOTA5MTIgVG9wIDMgTWlzY29uY2VwdGlvbnMgQWJvdXQgU0QtV0FOLm1kCg==
+  add-MjAxOTA5MTMgR05PTUUgMy4zNCByZWxlYXNlZCAtIGNvbWluZyBzb29uIGluIEZlZG9yYSAzMS5tZAo=
+  add-MjAxOTA5MTMgSm9pbiBPcGVuIEphbSAyMDE5IHRvIGJ1aWxkIG9wZW4gc291cmNlIGluZGllIGdhbWVzLm1kCg==
+  add-MjAxOTA5MTMgV2hhdCBwb2xpdGljcyBjYW4gdGVhY2ggdXMgYWJvdXQgb3BlbiBzb3VyY2UubWQK
+  add-MjAxOTAyMTYgU29tZSBQcmVzZW50YXRpb24gU2xpZGVzLm1kCg==
+  add-MjAxOTAyMjAgSW50ZXJuZXRzIG9mIEludGVyZXN0IC0xMi0gVGVzdGluZyBNaWNoYWVsIEZlYXRoZXJzLSBQYXRpZW5jZS5tZAo=
+  add-MjAxOTEwMzEgRmlyZWZveCB0aXBzIGZvciBGZWRvcmEgMzEubWQK
+  add-MjAxOTExMTUgRmVkb3JhIHBhc3RlYmluIGFuZCBmcGFzdGUgdXBkYXRlcy5tZAo=
+  add-MjAxOTExMTggRmVkb3JhIHNoaXJ0cyBhbmQgc3dlYXRzaGlydHMgZnJvbSBIRUxMT1RVWC5tZAo=
+  add-MjAxOTExMjIgU2hhcmluZyBGZWRvcmEubWQK
+  add-MjAxOTExMjQgQmF1aCAtIE1hbmFnZSBTbmFwcywgRmxhdHBha3MgYW5kIEFwcEltYWdlcyBmcm9tIE9uZSBJbnRlcmZhY2UubWQK
+  add-MjAxOTEyMTIgNyB3YXlzIHRvIHJlbWVtYmVyIExpbnV4IGNvbW1hbmRzLm1kCg==
+  add-MjAxOTEyMTMgSG93IHRvIHVzZSB0aGUgTGludXggdW5pcSBjb21tYW5kLm1kCg==
+  add-MjAxOTEyMzEgT25lIE9mIFRoZSBSZWFzb25zIFdoeSBMaW51eCA1LjUgQ2FuIEJlIFJ1bm5pbmcgU2xvd2VyLm1kCg==
+  add-MjAyMDA1MDcgSG93IHRvIHJlcGVhdCBhIExpbnV4IGNvbW1hbmQgdW50aWwgaXQgc3VjY2VlZHMubWQK
+  add-MjAyMDAzMTAgUnVuIEt1YmVybmV0ZXMgb24gYSBSYXNwYmVycnkgUGkgd2l0aCBrM3MubWQK
+,* master
+  revert-c291cmNlcy90ZWNoLzIwMjAwNDA3IEhvdyB0byB1c2UgcHllbnYgdG8gcnVuIG11bHRpcGxlIHZlcnNpb25zIG9mIFB5dGhvbiBvbiBhIE1hYy5tZAo=
+#+end_src
+
+
+这些分支大致会处于下面几种状态：
+
+1. master分支, 指向上游的master分支
+2. 已经推送到remote仓库的开发分支.
+3. 已经发起pull request但未处理的开发分支.
+4. 已经发起pull request，且merge到master的开发分支
+5. 已经发起pull request, 且sqush或rebase到master的开发分支
+6. 已经发起pull request, 但被拒绝,但remote branch还在的开发分支
+7. 已经发起pull request, 但被拒绝,且remote branch已被删除的开发分支
+8. 尚未推送到remote的本地开发分支
+
+   
+实际上，这些分支还可以进一步合并为三类:
+1. master分支
+2. 推送到remote仓库的开发分支(remote branch或pull request)
+3. 未推送到remote仓库的分支
+
+
+一个比较简单的方法就是使用 =git branch --merged= 列出所有已合并入master的本地分支然后删掉除当前分支(以* 开头的分支):
+#+begin_src shell
+  git branch --merged | egrep -v &quot;(^\*|master)&quot; | xargs git branch -d
+#+end_src
+
+不过这种方法只能删除已经merge到master的分支，其他状态的分支无法被删除，比如在我 [[https://github.com/LCTT/TranslateProject][Linux中国]] 的选题仓库运行 =git branch --merge= 的结果如下
+#+begin_src shell :results org :dir /ssh:lujun9972@tencent_cloud#8022:~/github/TranslateProject
+  git branch --merged |egrep -v &quot;(^\*|master)&quot;
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  add-MjAxOTA2MDUgSG93IHRvIG5hdmlnYXRlIHRoZSBLdWJlcm5ldGVzIGxlYXJuaW5nIGN1cnZlLm1kCg==
+  add-MjAxOTA2MTAgV2h5IGNvbnRhaW5lcnMgYW5kIEt1YmVybmV0ZXMgaGF2ZSB0aGUgcG90ZW50aWFsIHRvIHJ1biBhbG1vc3QgYW55dGhpbmcubWQK
+#+end_src
+
+可以看到，删除的效果不佳啊。
+
+*下面是重点来了*
+
+事实上，github 上的pull request（不管是否关闭） 都对应了一个branch，通过下面操作可以将这些branch拉取下来:
+
+1. 修改 =.git/config= 在 =[remote &quot;origin&quot;]= 中添加下面内容(假设你的远程repo为origin):
+   #+begin_src conf
+     [remote &quot;origin&quot;]
+       url = …
+       fetch = +refs/heads/*:refs/remotes/origin/*
+       fetch = +refs/pull/*/head:refs/remotes/origin/pr/*
+   #+end_src
+
+2. 运行 =git fetch= 拉去remote上的分支。
+
+
+你会看到大量类似 =remotes/origin/pr/XXXX= 的分支
+
+下面的事情就简单了，遍历所有remote上的分支，然后删除已经合并到该分支上的本地开发队列就行了:
+#+begin_src shell
+  for r in $(git branch -r --format=&#39;%(refname)&#39;); do git branch --merged $r; done | sort -u | grep -v &#39;^\*&#39; | xargs -r git branch -D
+#+end_src
+
+当然，你也很容易发现，若远程仓库pull request特别多，那么这个循环操作也会比较慢。
+</description>
 <pubDate>2020-05-12</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/12/git-branch大扫除/index.html</guid>
 </item>
 <item>
 <title>使用 org-mode columnview 生成任务列表</title>
 <link>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</link>
-<description>No Description</description>
+<description>org-mode的columnview[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]能够帮你把树形的代办事项归整为表格，方便查看
+
+在org-mode中可以通过两个命令来插入colmnviewa动态块:
+
++ 一个是通过 =M-x org-dynamic-block-insert-dblock= 插入一个动态块，默认情况下 org-mode 自带了两类动态块 =columnview= 和 =clocktable= ，然后我们选择 =columnview= 即可
++ 另一个是通过 =M-x org-columns-insert-dblock= 直接插入columnviewa动态块
+
+  
+一个 columnview 动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: columnview :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =columnview= 标识动态块的类型，该名字决定了org-mode会调用哪个函数来生成动态块的内容，比如这里调用的函数就是 =org-dblock-write:columnview=. 
+后面的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+我们可以通过查看 =org-dblock-write:columnview= 的docstring来找出 =columnwive= 动态块支持的参数:
+#+begin_example
+  (org-dblock-write:columnview PARAMS)
+
+  Write the column view table.
+
+  PARAMS is a property list of parameters:
+
+  ‘:id’ (mandatory)
+
+      The ID property of the entry where the columns view should be
+      built.  When the symbol ‘local’, call locally.  When ‘global’
+      call column view with the cursor at the beginning of the
+      buffer (usually this means that the whole buffer switches to
+      column view).  When &quot;file:path/to/file.org&quot;, invoke column
+      view at the start of that file.  Otherwise, the ID is located
+      using ‘org-id-find’.
+
+  ‘:exclude-tags’
+
+      List of tags to exclude from column view table.
+
+  ‘:format’
+
+      When non-nil, specify the column view format to use.
+
+  ‘:hlines’
+
+      When non-nil, insert a hline before each item.  When
+      a number, insert a hline before each level inferior or equal
+      to that number.
+
+  ‘:indent’
+
+      When non-nil, indent each ITEM field according to its level.
+
+  ‘:match’
+
+      When set to a string, use this as a tags/property match filter.
+
+  ‘:maxlevel’
+
+      When set to a number, don’t capture headlines below this level.
+
+  ‘:skip-empty-rows’
+
+      When non-nil, skip rows where all specifiers other than ITEM
+      are empty.
+
+  ‘:vlines’
+
+      When non-nil, make each column a column group to enforce
+      vertical lines.
+#+end_example
+
+这里比较重要的参数有
+
++ :id :: 这是最重要的参数. 它指定了column视图的数据来源。
++ :maxlevel :: 若设置为数字N,表示不捕捉层级在N级以下的条目
++ :skip-empty-rows :: 若设置为`t`,则会跳过那些除了`ITEM`属性列外,其他属性列都是空值的行
++ :format :: 设置column视图的格式。
+
+其中 =:format= 是一个以多个列定义式组成的字符串，各定义式之间使用空格进行分隔。
+column的定义式中可以包含有列的属性. 一般来说列的定义式看起来是这样做的
+#+BEGIN_SRC org
+  ,%[width]property[(title)][{summary-type}]
+#+END_SRC
+除了百分号和属性名之外,所有的都是可选的. 各部分的意思如下所示
+#+BEGIN_EXAMPLE
+  width           整型,代表了列的宽度,如果忽略则由org自动决定
+
+  property        该列所表示的属性,可以是上文提到的哪些特殊属性
+
+  title           列的标题,如果忽略,则会使用属性名代替
+
+  {summary-type}  总和的类型,如果指定了,那么父节点的列值由其下子节点的值计算得到
+                  支持的总和类型包括:
+                  {+}       该列的累加值
+                  {+;%.1f}  指定了格式的列累加值
+                  {$}       货币格式，其实就是 ‘+;%.2f’.
+                  {:}       把列中的值作为时间进行累加，格式为HH[:MM]
+                  {X}       Checkbox 的状态, 若所有子checkboxd都标记为‘[X]’ 则显示‘[X]’.
+                  {X/}      Checkbox 的状态, 显示格式为‘[n/m]’.
+                  {X%}      Checkbox 的状态, 显示格式为‘[n%]’.
+                  {min}     列中的最小值
+                  {max}     列中的最大值
+                  {mean}    列的算术平均值
+                  {:min}    列中的最小值（以时间为单位）
+                  {:max}    列中的最大值（以时间为单位）
+                  {:mean}   列中的算术平均值（以时间为单位）
+                  {@min}    列中的最小值（以时间区间为单位）
+                  {@max}    列中的最大值（以时间区间为单位）
+                  {@mean}   列中的算术平均值（以时间区间为单位）
+                  {est+}    耗时的范围
+
+#+END_EXAMPLE
+
+我一般使用 columnview 来生成任务列表方便我对任务进度进行追踪。下面是一个例子
+#+begin_src org
+  ,* 任务分派
+
+  ,#+BEGIN: columnview :hlines 1 :id local :format &quot;%ITEM(任务) %CHARGER(负责人) %DEADLINE(死线) %TODO(状态)&quot; :skip-empty-rows t
+  | 任务   | 负责人    | 死线            | 状态  |
+  |--------+-----------+-----------------+-------|
+  | 任务一 | 甲xx      |                 | NEXT  |
+  | 任务二 | 乙xx      | &lt;2020-05-12 二&gt; | TODAY |
+  | 任务三 | 甲xx 乙xx |                 | TODO  |
+  ,#+END:
+
+  ,** NEXT 任务一
+     :PROPERTIES:
+     :CHARGER:  甲xx
+     :END:
+  + [ ] xxxx
+  + [ ] yyyy
+  + [ ] zzzz
+  + [X] abcd
+  ,** TODAY [#A] 任务二
+     DEADLINE: &lt;2020-05-12 二&gt;
+     :PROPERTIES:
+     :CHARGER:  乙xx
+     :END:
+  + [ ] 111111
+  + [ ] 222222
+  ,** TODO [#C] 任务三
+     :PROPERTIES:
+     :CHARGER:  甲xx 乙xx
+     :END:
+#+end_src
+</description>
 <pubDate>2020-05-09</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</guid>
 </item>
 <item>
 <title>如何自定义org-mode中的动态块</title>
 <link>https://lujun9972.github.io/blog/2020/05/09/如何自定义org-mode中的动态块/index.html</link>
-<description>No Description</description>
+<description>org-mode的[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]看起来跟代码块很类似，也是有一个开始和结束的标签，只不过动态块中的内容是通过特定函数自动生成的。
+其中最常见的动态块就是 =clocktable= 和 =columnview= 了。我常常用在进行季度总结和跟踪任务列表时用到它们。
+
+一个动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: 动态块类型 :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =动态块类型= 决定了org-mode会调用哪个函数来生成动态块的内容，调用的函数名称为规范 =org-dblock-write:动态块类型=. 
+
+这意味着，其实你完全可以自定义自己的动态块，比如下面这段代码摘自org的manual
+#+begin_src elisp
+  (defun org-dblock-write:block-update-time (params)
+    (let ((fmt (or (plist-get params :format) &quot;%d. %m. %Y&quot;)))
+      (insert &quot;Last block update at: &quot;
+              (format-time-string fmt))))
+#+end_src
+
+#+RESULTS:
+: org-dblock-write:block-update-time
+
+它定义了一名为 =block-update-time= 的动态块，然后我们就可以插入该动态块了
+#+begin_src org
+  ,#+BEGIN: block-update-time :format &quot;on %m/%d/%Y at %H:%M&quot;
+  Last block update at: on 05/08/2020 at 21:03
+  ,#+END:
+#+end_src
+
+之后的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+不过光是定义了生成动态块还不够，你无法通过命令 =org-dynamic-block-insert-dblock= 来帮你插入动态块，而只能手工编写动态块。
+这时我们就需要使用函数 =org-dynamic-block-define= 来注册自己的动态块类型。
+#+begin_example
+  (org-dynamic-block-define TYPE FUNC)
+
+  Define dynamic block TYPE with FUNC.
+  TYPE is a string.  FUNC is the function creating the dynamic
+  block of such type.
+#+end_example
+
+也就是说,我们还需要定义一个命令来生成自定义的动态块，在这个命令中我们可以通过 =org-create-dblock= 和 =org-update-dblock= 来插入和更新动态块.
+#+begin_src emacs-lisp
+  (defun org-update-time-dblock ()
+    &quot;Create a dynamic block capturing a column view table.&quot;
+    (interactive)
+    (org-create-dblock
+     (list :name &quot;block-update-time&quot;))
+    (org-update-dblock))
+
+  (org-dynamic-block-define &quot;update-time&quot; #&#39;org-update-time-dblock)
+#+end_src
+
+#+RESULTS:
+: org-update-time-dblock
+
+之后我们就能使用 =org-dynamic-block-insert-dblock= 和 =org-update-time-dblock= 这两个命令来插入自定义动态块了。
+</description>
 <pubDate>2020-05-09</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/09/如何自定义org-mode中的动态块/index.html</guid>
 </item>
 <item>
 <title>笑话理解之Multiplication</title>
 <link>https://lujun9972.github.io/blog/2020/05/05/笑话理解之multiplication/index.html</link>
-<description>No Description</description>
+<description>* Love Multiplication
+#+begin_example
+  Mrs. Johnson the elementary school math teacher was having children do problems on the blackboard that day.
+
+  &quot;Who would like to do the first problem, addition?&quot;
+
+  No one raised their hand. She called on Tommy, and with some help he finally got it right.
+
+  &quot;Who would like to do the second problem, subtraction?&quot;
+
+  Students hid their faces. She called on Mark, who got the problem but there was some suspicion his girlfriend Lisa whispered it to him.
+
+  &quot;Who would like to do the third problem, division?&quot;
+
+  Now a low collective groan could be heard as everyone looked at nothing in particular. The teacher called on Suzy, who got it right.
+
+  &quot;Who would like to do the last problem, multiplication?&quot;
+
+  Johnny&#39;s hand shot up, surprising everyone in the room. Mrs. Johnson finally gained her composure in the stunned silence.
+
+  &quot;Why the enthusiasm, Johnny?&quot;
+
+  &quot;The Bible says to &#39;Go Forth and Multiply&#39;!&quot;
+#+end_example
+
+=Multiply= 是 =乘法= 也有 =繁殖= 的意思。
+
+同时 =Go Forth and Multiply= 也是 =fuck off= 委婉的说法
+</description>
 <pubDate>2020-05-05</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/05/笑话理解之multiplication/index.html</guid>
 </item>
 <item>
 <title>org-mode协助进行月度回顾</title>
 <link>https://lujun9972.github.io/blog/2020/05/03/org-mode协助进行月度回顾/index.html</link>
-<description>No Description</description>
+<description>使用org-mode记录时间消费情况的一个好处就是可以协助进行月度回顾。
+
+一种方法是使用 =org-agenda-log-mode= 来展示每天的工作日程(在org-agenda窗口中按下 =l= 键)
+
+[[file:images/org-agenda-log-mode.png]]
+
+不过默认org-agenda只显示本周的内容因此还需要设置一下:
++ 我们可以通过设置 =org-agenda-start-day= 来指定 org-agenda 显示的开始日期
++ 还可以通过设置 =org-agenda-span= 来指定 org-agenda 显示的日期数
+  
+为了方便，我一般都是自定义一个 =月度回顾= 的 org-agenda 视图来查看:
+#+begin_src emacs-lisp
+  (push &#39;(&quot;r&quot; &quot;月度回顾&quot; ((agenda &quot;&quot; ((org-agenda-span 30)
+                                      (org-agenda-start-day &quot;-30d&quot;)))))
+        org-agenda-custom-commands)
+#+end_src
+
+不过这种方法有两个不方便的地方：
+1. org-agenda要准备30天的数据，耗时比较长
+2. 工作都分散在每天的日程中了，在分析长跨度工作的耗时时比较麻烦
+
+所幸的是 org-mode 还提供了 org-table 的功能，能够对一段时间内的工作耗时进行汇总。
+比如我想汇总一下 2020年4月份都做了哪些工作，每项工作耗时是多少，那么可以在一个org文件中输入一个clocktable:
+#+begin_src org
+  ,#+BEGIN: clocktable :scope agenda :maxlevel 2 :tstart &quot;&lt;2020-04-01&gt;&quot; :tend &quot;&lt;2020-04-30&gt;&quot;
+  ,#+END:
+#+end_src
+
+然后将光标放在 clocktable 中,按下 =C-c C-c=, org-mode 就会根据 =#+BEGIN= 中设置的参数去汇总数据填充内容了
+#+begin_src org
+  ,#+BEGIN: clocktable :scope agenda :maxlevel 1 :tstart &quot;&lt;2020-04-01&gt;&quot; :tend &quot;&lt;2020-04-30&gt;&quot;
+  ,#+CAPTION: Clock summary at [2020-05-03 日 14:59]
+  | File               | Headline                                |       Time |
+  |--------------------+-----------------------------------------+------------|
+  | books.org          | *File time*                             |     *0:55* |
+  |                    | HOW TO START A BLOG THAT PEOPLE WILL... |       0:40 |
+  |                    | Python编程快速上手                      |       0:02 |
+  |                    | 大脑黑客                                |       0:13 |
+  |--------------------+-----------------------------------------+------------|
+  | home.org           | *File time*                             |  *1d 8:59* |
+  |                    | 配置Emacs                               |       2:10 |
+  |                    | 背单词                                  |      21:30 |
+  |                    | LCTT                                    |       0:21 |
+  |                    | 写blog                                  |       3:10 |
+  |                    | PROJECTS                                |       2:10 |
+  |--------------------+-----------------------------------------+------------|
+  | office.org         | *File time*                             | *5d 17:11* |
+  |                    | Regular                                 |    1d 8:10 |
+  |                    | 自动发布项目                            |       7:07 |
+  |                    | 运维自动化                              |       6:38 |
+  |                    | 查数                                    |      15:38 |
+  |                    | 发布                                    |       1:50 |
+  |                    | 管理工作                                |    1d 7:48 |
+  |                    | 其他                                    |   1d 17:25 |
+  省略.....
+  ,#+END:
+#+end_src
+</description>
 <pubDate>2020-05-03</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/03/org-mode协助进行月度回顾/index.html</guid>
 </item>
 <item>
 <title>体验COBOL语言</title>
 <link>https://lujun9972.github.io/blog/2020/05/01/体验cobol语言/index.html</link>
-<description>No Description</description>
+<description>最近由于新冠肺炎导致COBOL程序员短缺的报道时有发生，于是对这门超级古老的语言感到好奇。
+经过一番搜索，居然发现archlinux上就有一个COBOL语言的编译器叫 =gnucobol=.
+
+在[[https://open-cobol.sourceforge.io/][它的官网上]] 有许多资料，包括[[https://open-cobol.sourceforge.io/HTML/gnucobpg.html][COBOL编程指南]] 和 [[https://open-cobol.sourceforge.io/doc/gnucobol.html][gnucobol本身的使用手册]]. 有兴趣的同学可以试试。
+
+下面是一个COBOL版的Hello world
+#+begin_example
+  000100* HELLO.COB GnuCOBOL example
+  000200 IDENTIFICATION DIVISION.
+  000300 PROGRAM-ID. hello.
+  000400 PROCEDURE DIVISION.
+  000500     DISPLAY &quot;Hello, world!&quot;.
+  000600     STOP RUN.
+#+end_example
+
+前六位是标号， =*= 开头的行为注释行。给我的感觉是跟AS400上的RPG有点像。
+</description>
 <pubDate>2020-05-01</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/01/体验cobol语言/index.html</guid>
 </item>
 <item>
 <title>git hook+expand+unexpand化解空格与TAB之争</title>
 <link>https://lujun9972.github.io/blog/2020/04/29/git-hook+expand+unexpand化解空格与tab之争/index.html</link>
-<description>No Description</description>
+<description>SPACE与TAB之争由来已久，但是有一个观点是两派都公认赞同的，那就是 *不能两者混用*.
+
+[[file:images/TAB_VS_SPACE.jpg]]
+
+为此，Linux很贴心的提供了 =expand= 和 =unexpand= 命令来帮助我们进行 =TAB= 和 =SPACE= 之间的相互转换。
+
+* 使用expand将TAB转换为SPACE
+
+使用expand将TAB转换为SPACE的方法很简单，直接执行 =expand 文件= 就会把 =文件= 中的所有 =TAB= 都替换空格(默认按8个空格进行对齐)了。
+
+例如假设我们有下面一个测试文件
+#+begin_src shell :results org
+  cat -T /tmp/test
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+^Ihello  ^Itest^I
+#+end_src
+
+其中 =cat= 的 =-T= 选项文件内容其中的 =TAB= 显示为 =^I=
+
+我们现在来用 =expand= 对其进行转换
+#+begin_src shell :results org
+  expand /tmp/test |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+        hello   test    
+#+end_src
+
+如果觉得使用8空格对齐太空了，那么可以使用 =-t= 选项指定对齐的空格数。比如下面命令按4个空格进行对齐:
+#+begin_src shell :results org
+  expand -t 4 /tmp/test |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+    hello   test    
+#+end_src
+
+另一方面，我们在写代码时可能只需要转换行首的空格，而字符串中的 =TAB= 是不需要进行转换的，那么就可以使用 =-i= 选项指定 =expand= 只对行首的空格进行转换:
+#+begin_src shell :results org
+  expand -i -t 4 /tmp/test |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+    hello  ^Itest^I
+#+end_src
+
+* 使用unexpand将SPACE转换为TAB
+=unexpand=, 从名字上就知道它是 =expand= 的反操作，即把SPACE转换为TAB. 
+他们的使用方法也很类似，但是有一点不同就是 =expand= 在默认情况下替换所有的 =TAB=,当只替换行首的 =TAB= 时需要指定 =-i= 选项;而 =unexpand= 在默认情况下只替换行首的 =SPACE=,若要替换 =SPACE= 时需要明确指定 =-a= 选项.
+
+还是例如假设我们有下面一个测试文件
+#+begin_src shell :results org
+  cat -T /tmp/test.space
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+        hello   test    
+#+end_src
+
+我们现在来用 =unexpand= 对其进行转换
+#+begin_src shell :results org
+  unexpand /tmp/test.space |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+^Ihello   test    
+#+end_src
+你会发现只替换了前面的8个空格为 =TAB=
+
+同样我们可以使用 =-t= 选项指定 =TAB= 对齐的空格数。比如下面命令按4个空格进行对齐:
+#+begin_src shell :results org
+  unexpand -t 4 /tmp/test.space |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+^I^Ihello^Itest^I
+#+end_src
+结果的前面是两个 =TAB=,也就是每四个空格转换为了一个 =TAB=.
+
+若要将所有的空格全部替换，那么需要明确使用 =-a= 选项进行转换:
+#+begin_src shell :results org
+  unexpand -a -t 4 /tmp/test.space |cat -T
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+^I^Ihello^Itest^I
+#+end_src
+
+* 使用git hook实现代码的自动转换
+在确定好规范使用SPACE或TAB后，我们可以借助git的pre-commit hook来让我们在代码提交前自动进行规范化的转换。
+
+比如，假设我们定义的规范是只使用 =SPACE= 规范，那么我们可以创建下面的 pre-commit hook
+#+begin_src shell
+  if git rev-parse --verify HEAD &gt;/dev/null 2&gt;&amp;1
+  then
+    against=HEAD
+  else
+    # Initial commit: diff against an empty tree object
+    against=$(git hash-object -t tree /dev/null)
+  fi
+  # Redirect output to stderr.
+  exec 1&gt;&amp;2
+  TMPFILE=$(mktemp)
+  trap &#39;rm -f ${TMPFILE}&#39; EXIT
+  for file in $(git diff --cached --name-only --diff-filter=ACM $against)
+  do
+      # 只对text类文件进行转换
+      if file &quot;${file}&quot; |grep &#39;text&#39; 2&gt;&amp;1 &gt;/dev/null;then
+          echo &quot;expanding ${file}&quot;
+          expand -i -t 4 &quot;${file}&quot; &gt; &quot;${TMPFILE}&quot;
+          cp &quot;${TMPFILE}&quot; &quot;${file}&quot;
+          git add &quot;${file}&quot;
+      fi
+  done
+#+end_src
+
+将该文件保存为 =.git/hooks/pre-commit=,然后添加可执行权限后，每次提交就会对文件进行格式化处理了:
+#+begin_example
+  lujun9972:a/ (master U:1 ?:3✗) $ cat -T test
+  ^Ihello  ^Itest^I^I
+  lujun9972:a/ (master U:1 ?:3✗) $ git commit -a -m update
+  expanding test
+  [master 88b2f66] update
+   1 file changed, 1 deletion(-)
+  lujun9972:a/ (master ?:3✗) $ cat -T test
+      hello  ^Itest^I^I
+#+end_example
+
+然后我们再通过 =post-commit= hook 将转换的文件再转换回TAB来:
+#+begin_src shell
+  TMPFILE=$(mktemp)
+  against=&quot;HEAD^1&quot;
+  trap &#39;rm -f ${TMPFILE}&#39; EXIT
+  for file in $(git diff --cached --name-only --diff-filter=ACM $against)
+  do
+      # 只对text类文件进行转换
+      if file &quot;${file}&quot; |grep &#39;text&#39; 2&gt;&amp;1 &gt;/dev/null;then
+          echo &quot;unexpanding ${file}&quot;
+          unexpand -t 4 &quot;${file}&quot; &gt; &quot;${TMPFILE}&quot;
+          cp &quot;${TMPFILE}&quot; &quot;${file}&quot;
+          git add &quot;${file}&quot;
+      fi
+  done
+#+end_src
+
+类似的，我们还可以通过 =post-merge= hook(实现跟post-commit一样) 来将远端仓库中的代码也自动转回 =TAB=,
+
+如此一来, =TAB= 还好者们就可以安心的在本地使用 =TAB=,然后由git帮你自动进行 =SPACE= 的转换了.
+</description>
 <pubDate>2020-05-01</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/04/29/git-hook+expand+unexpand化解空格与tab之争/index.html</guid>
-</item>
-<item>
-<title>PlantUML Tips之设置连接线风格</title>
-<link>https://lujun9972.github.io/blog/2020/04/22/plantuml-tips之设置连接线风格/index.html</link>
-<description>No Description</description>
-<pubDate>2020-04-30</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/04/22/plantuml-tips之设置连接线风格/index.html</guid>
 </item>
 </channel>
 </rss>
