@@ -1,0 +1,97 @@
+#+TITLE: AWK tips 之移动文件中的指定行
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,tips
+#+DATE: [2020-05-15 五 17:47]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.datafix.com.au/BASHing/2020-05-13.html 上看到的 AWK 技巧，记录一下。
+
+假设有这个一个文件：
+#+begin_example
+  SaleID|Class|Item|Count|UnitP|TotalP
+  146|fish|BG fillets|3|15.00|45.00
+  2785|fruit|banana|1|0.45|0.45
+  0039|fruit|banana|1|0.45|0.45
+  119|meat|liver paste|1|2.10|2.10
+  6253|veg|carrot bunch|2|4.90|9.80
+  8847|fish|tin tuna|4|1.50|6.00
+  3776|veg|pak choy|2|2.50|5.00
+  295|fruit|apple|6|0.94|5.64
+  534|fish|tin tuna|1|1.50|1.50
+  1221|meat|pork slices|8|4.20|33.60 
+#+end_example
+
+现在想把 SaleID 为 295 的这条记录移动到 0039 后面，用 AWK 如何实现？
+
+这里的技巧在于对同一个文件遍历两次，第一次找出待移动的记录并记录到某个变量中，第二次在恰当的位置输出它。最后的解决方法为：
+#+begin_src shell :dir /tmp :results org
+  awk -F"|" 'FNR==NR {if ($1=="295") {x=$0}; next} \
+  $1=="0039" {$0=$0 RS x} $1!="295" {print}' demo demo
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
+
+这里 ~FNR==NR {第一个文件的处理逻辑;next} 第二个文件的处理逻辑~ 是一种常见的搭配，用来先通过第一个文件构造必要的变量，然后利用这些构造出的变量来处理第二个文件。
+
+这里的关键在于，第一个文件的处理过程一定要以 =next= 结尾，这样才会让 AWK 中断后面的模式匹配和操作，直到遍厉完第一个文件的内容。
+
+当然，如果我们直到被移动记录的行数和插入的位置的话，也可以直接使用 =FNR= 作为匹配条件，例如上面的操作可以改为
+#+begin_src shell :dir /tmp :results org
+  awk 'FNR==NR {if (NR==9) {x=$0}; next} \
+   FNR==4 {$0=$0 RS x} FNR!=9 {print}' demo demo
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
+
+在进一步，我们可以将这段 AWK 代码封装成一个函数：
+#+begin_src shell :dir /tmp :results org
+  shiftline()
+  {
+      awk -v target="$2" -v putafter="$3" 'FNR==NR {if (NR==target) {x=$0; next} else next} FNR==putafter {$0=$0 RS x} FNR!=target {print}' "$1" "$1"
+  }
+
+  shiftline demo 9 4
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+SaleID|Class|Item|Count|UnitP|TotalP
+146|fish|BG fillets|3|15.00|45.00
+2785|fruit|banana|1|0.45|0.45
+0039|fruit|banana|1|0.45|0.45
+295|fruit|apple|6|0.94|5.64
+119|meat|liver paste|1|2.10|2.10
+6253|veg|carrot bunch|2|4.90|9.80
+8847|fish|tin tuna|4|1.50|6.00
+3776|veg|pak choy|2|2.50|5.00
+534|fish|tin tuna|1|1.50|1.50
+1221|meat|pork slices|8|4.20|33.60 
+#+end_src
