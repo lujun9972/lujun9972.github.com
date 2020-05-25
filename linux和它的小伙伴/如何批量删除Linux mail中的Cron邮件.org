@@ -1,0 +1,240 @@
+#+TITLE: 如何批量删除Linux mail中的Cron邮件
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴 cron
+#+DATE: [2020-05-25 一 14:46]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我在 cron 中设置了每天定时运行 [[https://github.com/LCTT/TranslateProject][Linux中国]] 的选题脚本。然后由于cron会将任务的执行结果通过邮件通知用户，这样一来过了一段时间后我的 mail box 中就充满了 CRON 发来邮箱了。
+
+看了网上的一些资料，我知道可以通过 =echo 'd *'|mail= 来删除所有 mail box 中的邮件，但是这样会把非 CRON 的邮件也删掉，这不是我想要的。
+
+好在翻阅了一下 =man mail= 发现 =d= 命令后面可以通过直接跟 =发件人地址= 或 =/关键字= 的方式删除指定发件人的邮件，或删除标题中包含 =关键字= 的邮件。
+
+由于所有的 =CRON= 发送的邮件都以 =(Cron Daemon)= 作为发件人，因此可以通过 =echo '"(Cron Daemon)"'|mail= 来删除所有 CRON 发出的邮件（这里不要忘了括号外的双引号，因为 =()= 在指定邮件的语法中有特殊意义）
+
+那么若我只是想删除某个 CRON 任务发送的邮件又该怎么办呢？ 
+=CRON= 发送的邮件的标题格式一般都是这样的 =Cron <主机名> CRON命令=.
+#+begin_src shell :dir /ssh:lujun9972@tencent_cloud.lujun9972.win#8022: :results org
+    echo -n |mail
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Heirloom Mail version 12.5 7/5/10.  Type ? for help.
+"/var/spool/mail/lujun9972": 11 messages 10 unread
+>U  1 (Cron Daemon)         Mon May 25 15:03  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  2 (Cron Daemon)         Mon May 25 15:04  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  3 (Cron Daemon)         Mon May 25 15:05  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  4 (Cron Daemon)         Mon May 25 15:06  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  5 (Cron Daemon)         Mon May 25 15:07  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  6 (Cron Daemon)         Mon May 25 15:08  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+    7 (Cron Daemon)         Mon May 25 15:09  26/965   "Cron <lujun9972@VM_0_8_centos> date"
+ U  8 (Cron Daemon)         Mon May 25 15:10  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U  9 (Cron Daemon)         Mon May 25 15:11  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U 10 (Cron Daemon)         Mon May 25 15:12  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+ U 11 (Cron Daemon)         Mon May 25 15:13  26/964   "Cron <lujun9972@VM_0_8_centos> date"
+Held 11 messages in /var/spool/mail/lujun9972
+#+end_src
+
+因此，我们可以通过 =echo 'd /命令关键字'|mail= 来删除某个特定任务的邮件，比如下面命令删除 =date= 命令产生的邮件：
+#+begin_src shell :dir /ssh:lujun9972@tencent_cloud.lujun9972.win#8022: :results org
+    echo 'd /date' |mail
+    echo -n |mail
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  No mail for lujun9972
+#+end_src
+
+=mail= 命令中关于指定邮件的语法特别灵活，下面说明摘取自 =man mail=
+#+begin_src shell  :dir /ssh:lujun9972@tencent_cloud.lujun9972.win#8022: :results org
+    man mail |sed -n '/Specifying messages/,/Replying to or originating mail/p'
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+   Specifying messages
+       Commands  such  as print and delete can be given a list of message num‐
+       bers as arguments to apply to a  number  of  messages  at  once.   Thus
+       `delete  1 2' deletes messages 1 and 2, while `delete 1-5' deletes mes‐
+       sages 1 through 5.  In sorted or threaded mode (see the sort and thread
+       commands),  `delete  1-5' deletes the messages that are located between
+       (and including) messages 1 through 5 in the sorted/threaded  order,  as
+       shown  in  the  header  summary.   The  following special message names
+       exist:
+
+       :n     All new messages.
+
+       :o     All old messages (any not in state read or new).
+
+       :u     All unread messages.
+
+       :d     All deleted messages (for the undelete command).
+
+       :r     All read messages.
+
+       :f     All `flagged' messages.
+
+       :a     All answered messages (cf. the markanswered variable).
+
+       :t     All messages marked as draft.
+
+       :k     All `killed' messages.
+
+       :j     All messages classified as junk.
+
+       .      The current message.
+
+       ;      The message that was previously the current message.
+
+       ,      The parent message of the current message, that is  the  message
+              with  the  Message-ID  given  in the `In-Reply-To:' field or the
+              last entry of the `References:' field of the current message.
+
+       -      The next  previous  undeleted  message,  or  the  next  previous
+              deleted  message  for  the undelete command.  In sorted/threaded
+              mode, the next previous  such  message  in  the  sorted/threaded
+              order.
+
+       +      The  next undeleted message, or the next deleted message for the
+              undelete command.  In sorted/threaded mode, the next  such  mes‐
+              sage in the sorted/threaded order.
+
+       ^      The  first  undeleted  message, or the first deleted message for
+              the undelete command.  In sorted/threaded mode, the  first  such
+              message in the sorted/threaded order.
+
+       $      The  last message.  In sorted/threaded mode, the last message in
+              the sorted/threaded order.
+
+       &x     In threaded mode, selects the message addressed with x, where  x
+              is  any  other  message specification, and all messages from the
+              thread that begins at it.  Otherwise, it is identical to x.   If
+              x  is  omitted, the thread beginning with the current message is
+              selected.
+
+       ,*      All messages.
+
+       `      All messages that were included in the message list for the pre‐
+              vious command.
+
+       /string
+              All  messages  that  contain  string  in the subject field (case
+              ignored).  See also the searchheaders variable.   If  string  is
+              empty,  the  string from the previous specification of that type
+              is used again.
+
+       address
+              All messages from address.  By default, this is a case-sensitive
+              search  for  the complete email address.  If the allnet variable
+              is set, only the local part of the addresses  is  evaluated  for
+              the  comparison.   Otherwise  if the showname variable is set, a
+              case-sensitive search for the complete real name of a sender  is
+              performed.  The IMAP-style (from address) expression can be used
+              instead if substring matches are desired.
+
+       (criterion)
+              All messages that satisfy the given IMAP-style SEARCH criterion.
+              This addressing mode is available with all types of folders; for
+              folders not located on IMAP servers, or for  servers  unable  to
+              execute  the  SEARCH  command,  mailx  will  perform  the search
+              locally.  Strings must be enclosed by double quotes `"' in their
+              entirety  if they contain white space or parentheses; within the
+              quotes, only backslash `\' is recognized as an escape character.
+              All  string searches are case-insensitive.  When the description
+              indicates that the `envelope' representation of an address field
+              is  used,  this  means that the search string is checked against
+              both a list constructed as
+
+              ("real name" "source-route" "local-part" "domain-part")
+
+              for each address, and the addresses without real names from  the
+              respective header field.  Criteria can be nested using parenthe‐
+              ses.
+
+       (criterion1 criterion2 ... criterionN)
+              All messages that satisfy all of the given criteria.
+
+       (or criterion1 criterion2)
+              All messages that satisfy either criterion1  or  criterion2,  or
+              both.  To connect more than two criteria using `or', (or) speci‐
+              fications have to be nested  using  additional  parentheses,  as
+              with  `(or a (or b c))';  `(or a b c)'  means  ((a or b) and c).
+              For a simple `or' operation of independent criteria on the  low‐
+              est  nesting level, it is possible to achieve similar effects by
+              using three separate criteria, as with `(a) (b) (c)'.
+
+       (not criterion)
+              All messages that do not satisfy criterion.
+
+       (bcc string)
+              All messages that contain string in the  `envelope'  representa‐
+              tion of the Bcc: field.
+
+       (cc string)
+              All  messages  that contain string in the `envelope' representa‐
+              tion of the Cc: field.
+
+       (from string)
+              All messages that contain string in the  `envelope'  representa‐
+              tion of the From: field.
+
+       (subject string)
+              All messages that contain string in the Subject: field.
+
+       (to string)
+              All  messages  that contain string in the `envelope' representa‐
+              tion of the To: field.
+
+       (header name string)
+              All messages that contain string in the specified Name: field.
+
+       (body string)
+              All messages that contain string in their body.
+
+       (text string)
+              All messages that contain string in their header or body.
+
+       (larger size)
+              All messages that are larger than size (in bytes).
+
+       (smaller size)
+              All messages that are smaller than size (in bytes).
+
+       (before date)
+              All messages that were received before date; date must be in the
+              form d[d]-mon-yyyy, where d[d] is the day of the month as one or
+              two digits, mon is the name of the month—one  of  `Jan',  `Feb',
+              `Mar',  `Apr',  `May', `Jun', `Jul', `Aug', `Sep', `Oct', `Nov',
+              or  `Dec',  and  yyyy  is  the  year  as   four   digits;   e.g.
+              "30-Aug-2004".
+
+       (on date)
+              All messages that were received on the specified date.
+
+       (since date)
+              All messages that were received since the specified date.
+
+       (sentbefore date)
+              All messages that were sent on the specified date.
+
+       (senton date)
+              All messages that were sent on the specified date.
+
+       (sentsince date)
+              All messages that were sent since the specified date.
+
+       ()     The  same criterion as for the previous search.  This specifica‐
+              tion cannot be used as part of another criterion.  If the previ‐
+              ous  command line contained more than one independent criterion,
+              the last of those criteria is used.
+
+       A practical method to read a set of messages is to issue a from command
+       with  the  search criteria first to check for appropriate messages, and
+       to read each single message then by typing ``' repeatedly.
+
+   Replying to or originating mail
+#+end_src
