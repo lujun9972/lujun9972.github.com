@@ -1,0 +1,101 @@
+#+TITLE: 使用strace解决pacman提示无法锁定数据库的问题
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-05-25 一 21:49]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+某次滚动升级archlinux的时候忘了插电，导致滚动到一半的时候断电了。导致插电后再升级时提示：
+#+begin_example
+  :: 正在同步软件包数据库...
+  错误：无法升级 core (无法锁定数据库)
+  错误：无法升级 extra (无法锁定数据库)
+  错误：无法升级 community (无法锁定数据库)
+  错误：无法升级 multilib (无法锁定数据库)
+  错误：无法升级 archlinuxcn (无法锁定数据库)
+  错误：未能成功同步所有数据库
+#+end_example
+
+从错误提示我能推测出大概率是升级到一半断电导致某个锁文件未被删除，问题是，这个锁文件在哪呢？
+
+还好有 =strace=,可以帮我找出锁文件的路径
+#+begin_src shell :results org :dir /sudo::
+  sudo strace -e openat pacman -Syu --noconfirm 2>&1
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libalpm.so.12", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libarchive.so.13", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libc.so.6", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libgpgme.so.11", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libcurl.so.4", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libcrypto.so.1.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libacl.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libexpat.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/liblzma.so.5", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libzstd.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/liblz4.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libbz2.so.1.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libz.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libassuan.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libgpg-error.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libnghttp2.so.14", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libidn2.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libssh2.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libpsl.so.5", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libssl.so.1.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libgssapi_krb5.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libkrb5.so.3", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libk5crypto.so.3", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libcom_err.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libpthread.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libdl.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libattr.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libunistring.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libkrb5support.so.0", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libkeyutils.so.1", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/libresolv.so.2", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/lib/locale/locale-archive", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/etc/pacman.conf", O_RDONLY) = 3
+openat(AT_FDCWD, "/etc/pacman.d/mirrorlist", O_RDONLY) = 4
+openat(AT_FDCWD, "/etc/pacman.d/mirrorlist", O_RDONLY) = 4
+openat(AT_FDCWD, "/etc/pacman.d/mirrorlist", O_RDONLY) = 4
+openat(AT_FDCWD, "/etc/pacman.d/mirrorlist", O_RDONLY) = 4
+openat(AT_FDCWD, "/var/lib/pacman/local/", O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
+openat(AT_FDCWD, "/var/lib/pacman/local/ALPM_DB_VERSION", O_RDONLY) = 4
+openat(AT_FDCWD, "/usr/share/locale/locale.alias", O_RDONLY|O_CLOEXEC) = 3
+openat(AT_FDCWD, "/usr/share/locale/en_US.utf8/LC_MESSAGES/libc.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US/LC_MESSAGES/libc.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.utf8/LC_MESSAGES/libc.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en/LC_MESSAGES/libc.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/var/log/pacman.log", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0644) = 3
+openat(AT_FDCWD, "/etc/localtime", O_RDONLY|O_CLOEXEC) = 4
+openat(AT_FDCWD, "/usr/share/locale/en_US.utf8/LC_MESSAGES/pacman.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US/LC_MESSAGES/pacman.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.utf8/LC_MESSAGES/pacman.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en/LC_MESSAGES/pacman.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+:: Synchronizing package databases...
+openat(AT_FDCWD, "/var/lib/pacman/db.lck", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
+openat(AT_FDCWD, "/usr/share/locale/en_US.utf8/LC_MESSAGES/libalpm.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en_US/LC_MESSAGES/libalpm.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en.utf8/LC_MESSAGES/libalpm.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/usr/share/locale/en/LC_MESSAGES/libalpm.mo", O_RDONLY) = -1 ENOENT (No such file or directory)
+error: failed to update core (unable to lock database)
+openat(AT_FDCWD, "/var/lib/pacman/db.lck", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
+error: failed to update extra (unable to lock database)
+openat(AT_FDCWD, "/var/lib/pacman/db.lck", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
+error: failed to update community (unable to lock database)
+openat(AT_FDCWD, "/var/lib/pacman/db.lck", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
+error: failed to update multilib (unable to lock database)
+openat(AT_FDCWD, "/var/lib/pacman/db.lck", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
+error: failed to update archlinuxcn (unable to lock database)
+error: failed to synchronize all databases
++++ exited with 1 +++
+#+end_src
+
+可以看到，在输出 =:: Synchronizing package databases...= 后，pacman会去检查 ="/var/lib/pacman/db.lck"= 是否存在,然后跟着提示 =error: failed to update archlinuxcn (unable to lock database)=
+
+所以很容易就能推测出，锁文件为 =/var/lib/pacman/db.lck=,跟网上搜索的内容一致。
