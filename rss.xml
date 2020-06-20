@@ -4,10 +4,34 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 03 Jun 2020 13:00:07 UTC</pubDate>
-    <lastBuildDate>Wed, 03 Jun 2020 13:00:07 UTC</lastBuildDate>
+    <pubDate>Sat, 20 Jun 2020 11:25:49 UTC</pubDate>
+    <lastBuildDate>Sat, 20 Jun 2020 11:25:49 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>如何通过HTTP协议访问指定版本的SVN库内容</title>
+<link>https://lujun9972.github.io/blog/2020/06/20/如何通过http协议访问指定版本的svn库内容/index.html</link>
+<description>在汇总晨检报告时，有同事反馈提交的内容被覆盖了，需要从某个指定版本中取出被覆盖的内容。
+然而我在跳板机上只能通过HTTP协议用浏览器访问SVN仓库，默认访问的是最新版本内容。
+
+那么要如何通过HTTP协议访问指定版本的内容呢?经过一番搜索，在 http://beerpla.net/2010/02/20/how-to-view-a-specific-svn-revision-in-your-browser/ 找到了解决方法，于是想着记录下来。
+
+方法其实很简单，就是在URL的仓库根后面加上 =/!svn/bc/版本号/= 即可。
+
+比如，我们想要看 https://plugins.svn.wordpress.org/stats/trunk/readme.txt 的 100000 版本的内容，我们可以这么做：
+
+1. 找到仓库的根URL为 https://plugins.svn.wordpress.org
+2. 在仓库根URL后加上 =/!svn/bc/100000/=: https://plugins.svn.wordpress.org/!svn/bc/100000/
+3. 接上后续的文件路径: https://plugins.svn.wordpress.org/!svn/bc/100000/stats/trunk/readme.txt
+
+所以访问路径 https://plugins.svn.wordpress.org/!svn/bc/100000/stats/trunk/readme.txt 即可。
+
+另外，若 SVN 版本操作1.6,还可以通过在 URL 后添加 ~?p=版本号~, 也即访问 https://plugins.svn.wordpress.org/stats/trunk/readme.txt?p=100000 也能起到相同的作用。
+ 
+</description>
+<pubDate>2020-06-20</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/06/20/如何通过http协议访问指定版本的svn库内容/index.html</guid>
+</item>
 <item>
 <title>如何设置git push和git pull的超时时间？</title>
 <link>https://lujun9972.github.io/blog/2020/06/03/如何设置git-push和git-pull的超时时间？/index.html</link>
@@ -848,72 +872,6 @@ column的定义式中可以包含有列的属性. 一般来说列的定义式看
 </description>
 <pubDate>2020-05-09</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</guid>
-</item>
-<item>
-<title>如何自定义org-mode中的动态块</title>
-<link>https://lujun9972.github.io/blog/2020/05/09/如何自定义org-mode中的动态块/index.html</link>
-<description>org-mode的[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]看起来跟代码块很类似，也是有一个开始和结束的标签，只不过动态块中的内容是通过特定函数自动生成的。
-其中最常见的动态块就是 =clocktable= 和 =columnview= 了。我常常用在进行季度总结和跟踪任务列表时用到它们。
-
-一个动态块大概长这个样子的:
-#+begin_src org
-  ,#+BEGIN: 动态块类型 :参数1 参数值 :参数N h参数值
-
-  ,#+END:
-
-#+end_src
-
-其中 =动态块类型= 决定了org-mode会调用哪个函数来生成动态块的内容，调用的函数名称为规范 =org-dblock-write:动态块类型=. 
-
-这意味着，其实你完全可以自定义自己的动态块，比如下面这段代码摘自org的manual
-#+begin_src elisp
-  (defun org-dblock-write:block-update-time (params)
-    (let ((fmt (or (plist-get params :format) &quot;%d. %m. %Y&quot;)))
-      (insert &quot;Last block update at: &quot;
-              (format-time-string fmt))))
-#+end_src
-
-#+RESULTS:
-: org-dblock-write:block-update-time
-
-它定义了一名为 =block-update-time= 的动态块，然后我们就可以插入该动态块了
-#+begin_src org
-  ,#+BEGIN: block-update-time :format &quot;on %m/%d/%Y at %H:%M&quot;
-  Last block update at: on 05/08/2020 at 21:03
-  ,#+END:
-#+end_src
-
-之后的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
-
-不过光是定义了生成动态块还不够，你无法通过命令 =org-dynamic-block-insert-dblock= 来帮你插入动态块，而只能手工编写动态块。
-这时我们就需要使用函数 =org-dynamic-block-define= 来注册自己的动态块类型。
-#+begin_example
-  (org-dynamic-block-define TYPE FUNC)
-
-  Define dynamic block TYPE with FUNC.
-  TYPE is a string.  FUNC is the function creating the dynamic
-  block of such type.
-#+end_example
-
-也就是说,我们还需要定义一个命令来生成自定义的动态块，在这个命令中我们可以通过 =org-create-dblock= 和 =org-update-dblock= 来插入和更新动态块.
-#+begin_src emacs-lisp
-  (defun org-update-time-dblock ()
-    &quot;Create a dynamic block capturing a column view table.&quot;
-    (interactive)
-    (org-create-dblock
-     (list :name &quot;block-update-time&quot;))
-    (org-update-dblock))
-
-  (org-dynamic-block-define &quot;update-time&quot; #&#39;org-update-time-dblock)
-#+end_src
-
-#+RESULTS:
-: org-update-time-dblock
-
-之后我们就能使用 =org-dynamic-block-insert-dblock= 和 =org-update-time-dblock= 这两个命令来插入自定义动态块了。
-</description>
-<pubDate>2020-05-09</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/05/09/如何自定义org-mode中的动态块/index.html</guid>
 </item>
 </channel>
 </rss>
