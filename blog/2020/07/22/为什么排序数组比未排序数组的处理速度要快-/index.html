@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>为什么排序数组比未排序数组的处理速度要快? - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">为什么排序数组比未排序数组的处理速度要快?</h1>
+<p>
+今天在 Stack Overflow 上看到一个有趣的问题： Why is processing a sorted array faster than processing an unsorted array?
+</p>
+
+<p>
+提问者列了一段代码：
+</p>
+<div class="org-src-container">
+<pre class="src src-C++"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;algorithm&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;ctime&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;iostream&gt;</span>
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>()
+{
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#29983;&#25104;&#25968;&#25454;</span>
+  <span class="org-keyword">const</span> <span class="org-type">unsigned</span> <span class="org-variable-name">arraySize</span> = 32768;
+  <span class="org-type">int</span> <span class="org-variable-name">data</span>[arraySize];
+
+  <span class="org-keyword">for</span> (<span class="org-type">unsigned</span> <span class="org-variable-name">c</span> = 0; c &lt; arraySize; ++c)
+    data[c] = <span class="org-constant">std</span>::rand() % 256;
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">!!! &#36825;&#19968;&#34892;&#20250;&#23548;&#33268;&#21518;&#38754;&#30340;&#24490;&#29615;&#36816;&#34892;&#36895;&#24230;&#21464;&#24555;.</span>
+  <span class="org-comment-delimiter">// </span><span class="org-comment">std::sort(data, data + arraySize);</span>
+
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#27979;&#35797;&#36816;&#31639;&#36895;&#24230;</span>
+  <span class="org-type">clock_t</span> <span class="org-variable-name">start</span> = clock();
+  <span class="org-type">long</span> <span class="org-type">long</span> <span class="org-variable-name">sum</span> = 0;
+
+  <span class="org-keyword">for</span> (<span class="org-type">unsigned</span> <span class="org-variable-name">i</span> = 0; i &lt; 100000; ++i)
+    {
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#20027;&#24490;&#29615;</span>
+      <span class="org-keyword">for</span> (<span class="org-type">unsigned</span> <span class="org-variable-name">c</span> = 0; c &lt; arraySize; ++c)
+        {
+          <span class="org-keyword">if</span> (data[c] &gt;= 128)
+            sum += data[c];
+        }
+    }
+
+  <span class="org-type">double</span> <span class="org-variable-name">elapsedTime</span> = <span class="org-keyword">static_cast</span>&lt;<span class="org-type">double</span>&gt;(clock() - start) / CLOCKS_PER_SEC;
+
+  <span class="org-constant">std</span>::cout &lt;&lt; elapsedTime &lt;&lt; <span class="org-constant">std</span>::endl;
+  <span class="org-constant">std</span>::cout &lt;&lt; <span class="org-string">"sum = "</span> &lt;&lt; sum &lt;&lt; <span class="org-constant">std</span>::endl;
+}
+</pre>
+</div>
+
+<p>
+这段代码奇就奇怪在当注释掉 <code>std::sort(data, data + arraySize);</code> 这行代码后，循环运算的速度有了明显的提升。
+</p>
+
+<p>
+比如在我Win10 的 WSL 上加上排序代码后的运算时间为 <code>6.65907</code> 秒，去掉排序代码后的运算时间为 <code>20.5398</code>.
+</p>
+
+<p>
+那么产生这一现象的原因是什么呢？那就是分支预测。
+</p>
+
+<p>
+分支预测(Branch Prediction)是一种用来解决分支指令导致流水线失败的方法。
+即CPU的分支预测器预测条件表达式中哪一路最可能发生，然后根据预测结果进行取指令和执行指令等操作。
+这样一来，在预测成功的情况下，CPU就避免了由于流水线停顿而导致的时间浪费。而在分支预测错误的情况下，则需要将流水线中推测执行的所有中间结果全部放弃，重新从另一个分支出发取指令和执行指令。
+由于现代的CPU使用的流水线普遍很长，一般分支预测失败会损失大约10-20个时钟周期。
+</p>
+
+<p>
+那么回到上面的这段代码。代码中有且仅有一个分支语句就是 <code>if (data[c] &gt;= 128)</code>,而这个语句就是导致两个数组运算速度差距如此之大的罪魁祸首。
+</p>
+
+<p>
+现代的CPU普遍采用动态预测器，即根据历史的分支执行信息来进行预测。
+比如最简单的1 bit 动态预测就是直接根据该指令上次是否跳转来预测此次是否跳转。如果上次跳转，则预测此次也会跳转。
+当然实际使用的动态预测模型不会这么简单啦。
+</p>
+
+<p>
+当预先对数组进行排序后，预测变得十分简单，因此在执行过程中CPU可以充分利用流水线的能力进行加速。
+而在完全随机的情况下，预测变得不可能，CPU猜错的概率为 50%,也就是有一半的概率需要清空流水线，损失那10-20个时钟周期。
+</p>
+
+<p>
+由于条件语句能够极大的干扰 CPU 流水线的运行，因此一个常用的提速方法就是去掉条件语句，比如在最高赞的那个答案中，给出的解决方案就是把
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-keyword">if</span> (data[c] &gt;= 128)
+  sum += data[c];
+</pre>
+</div>
+
+<p>
+改写成
+</p>
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-type">int</span> <span class="org-variable-name">t</span> = (data[c] - 128) &gt;&gt; 31;
+sum += ~t &amp; data[c];
+</pre>
+</div>
+
+<p>
+不过这个可读性不是一般的差～～～
+</p>
+
+<p>
+随便一提，在这个问题后面还有一个高赞答案是使用 <code>?:</code> (据说会编译成条件传送指令cmov)进行改写:
+</p>
+<div class="org-src-container">
+<pre class="src src-C">sum += data[c] &gt;=128 ? data[c] : 0;
+</pre>
+</div>
+
+<p>
+但是我测试的结果发现这样修改后的速度并没有变快,不知道是什么原因。
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-07-22</span>
+    <span title="last modification date" class="post-info">2020-07-22</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/编程之旅">编程之旅</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-005e68f3-cf58-481f-94e4-fa8d8bc919ff">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
