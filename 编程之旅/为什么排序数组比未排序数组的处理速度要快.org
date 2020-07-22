@@ -1,0 +1,89 @@
+#+TITLE: 为什么排序数组比未排序数组的处理速度要快?
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2020-07-22 三 16:32]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天在 Stack Overflow 上看到一个有趣的问题： Why is processing a sorted array faster than processing an unsorted array?
+
+提问者列了一段代码：
+#+begin_src C++ :results org
+  #include <algorithm>
+  #include <ctime>
+  #include <iostream>
+
+  int main()
+  {
+    // 生成数据
+    const unsigned arraySize = 32768;
+    int data[arraySize];
+
+    for (unsigned c = 0; c < arraySize; ++c)
+      data[c] = std::rand() % 256;
+
+    // !!! 这一行会导致后面的循环运行速度变快.
+    // std::sort(data, data + arraySize);
+
+    // 测试运算速度
+    clock_t start = clock();
+    long long sum = 0;
+
+    for (unsigned i = 0; i < 100000; ++i)
+      {
+        // 主循环
+        for (unsigned c = 0; c < arraySize; ++c)
+          {
+            if (data[c] >= 128)
+              sum += data[c];
+          }
+      }
+
+    double elapsedTime = static_cast<double>(clock() - start) / CLOCKS_PER_SEC;
+
+    std::cout << elapsedTime << std::endl;
+    std::cout << "sum = " << sum << std::endl;
+  }
+#+end_src
+
+这段代码奇就奇怪在当注释掉 =std::sort(data, data + arraySize);= 这行代码后，循环运算的速度有了明显的提升。
+
+比如在我Win10 的 WSL 上加上排序代码后的运算时间为 =6.65907= 秒，去掉排序代码后的运算时间为 =20.5398=.
+
+那么产生这一现象的原因是什么呢？那就是分支预测。
+
+分支预测(Branch Prediction)是一种用来解决分支指令导致流水线失败的方法。
+即CPU的分支预测器预测条件表达式中哪一路最可能发生，然后根据预测结果进行取指令和执行指令等操作。
+这样一来，在预测成功的情况下，CPU就避免了由于流水线停顿而导致的时间浪费。而在分支预测错误的情况下，则需要将流水线中推测执行的所有中间结果全部放弃，重新从另一个分支出发取指令和执行指令。
+由于现代的CPU使用的流水线普遍很长，一般分支预测失败会损失大约10-20个时钟周期。
+
+那么回到上面的这段代码。代码中有且仅有一个分支语句就是 ~if (data[c] >= 128)~,而这个语句就是导致两个数组运算速度差距如此之大的罪魁祸首。
+
+现代的CPU普遍采用动态预测器，即根据历史的分支执行信息来进行预测。
+比如最简单的1 bit 动态预测就是直接根据该指令上次是否跳转来预测此次是否跳转。如果上次跳转，则预测此次也会跳转。
+当然实际使用的动态预测模型不会这么简单啦。
+
+当预先对数组进行排序后，预测变得十分简单，因此在执行过程中CPU可以充分利用流水线的能力进行加速。
+而在完全随机的情况下，预测变得不可能，CPU猜错的概率为 50%,也就是有一半的概率需要清空流水线，损失那10-20个时钟周期。
+
+由于条件语句能够极大的干扰 CPU 流水线的运行，因此一个常用的提速方法就是去掉条件语句，比如在最高赞的那个答案中，给出的解决方案就是把
+#+begin_src C
+  if (data[c] >= 128)
+    sum += data[c];
+#+end_src
+
+改写成
+#+begin_src C
+  int t = (data[c] - 128) >> 31;
+  sum += ~t & data[c];
+#+end_src
+
+不过这个可读性不是一般的差～～～
+
+随便一提，在这个问题后面还有一个高赞答案是使用 =?:= (据说会编译成条件传送指令cmov)进行改写:
+#+begin_src C
+  sum += data[c] >=128 ? data[c] : 0;
+#+end_src
+
+但是我测试的结果发现这样修改后的速度并没有变快,不知道是什么原因。
