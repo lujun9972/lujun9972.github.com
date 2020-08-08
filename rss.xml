@@ -4,10 +4,73 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 22 Jul 2020 13:32:21 UTC</pubDate>
-    <lastBuildDate>Wed, 22 Jul 2020 13:32:21 UTC</lastBuildDate>
+    <pubDate>Sat, 08 Aug 2020 14:31:35 UTC</pubDate>
+    <lastBuildDate>Sat, 08 Aug 2020 14:31:35 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>使用systemd-detect-virt判断Linux是否运行在虚拟机中</title>
+<link>https://lujun9972.github.io/blog/2020/08/08/使用systemd-detect-virt判断linux是否运行在虚拟机中/index.html</link>
+<description>之前我一直是用 =dmidecode= 来判断Linux是否运行在虚拟环境：
+
+在物理机上：
+#+begin_src shell :dir /sudo:: :results org
+  sudo dmidecode -s system-product-name
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+2353ABU
+#+end_src
+
+在虚拟机上：
+#+begin_src shell :dir /ssh:192.168.1.85|sudo:192.168.1.85: :results org
+  sudo dmidecode -s system-product-name
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+VirtualBox
+#+end_src
+
+但是它有个缺陷，就是不支持容器的检查。在容器中运行 =dmidecode= 会提示错误信息 =/dev/mem: No such file or directory=
+若你把 =/dev= 挂载进容器，则又会被识别为物理急。
+
+不过今天我发现，原来 =systemd= 已经提供了一个命令来帮你完成这项任务了，那就是 =systemd-detect-virt=.
+
+在物理机上：
+#+begin_src shell :dir /sudo:: :results org
+  systemd-detect-virt;exit 0
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+none
+#+end_src
+
+在虚拟机上：
+#+begin_src shell :dir /ssh:192.168.1.85|sudo:192.168.1.85: :results org
+  systemd-detect-virt;exit 0
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+oracle
+#+end_src
+
+在容器上:
+#+begin_src shell :dir /docker:a4622369efdd: :results org
+  systemd-detect-virt;exit 0
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+docker
+#+end_src
+</description>
+<pubDate>2020-08-08</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/08/08/使用systemd-detect-virt判断linux是否运行在虚拟机中/index.html</guid>
+</item>
 <item>
 <title>为什么排序数组比未排序数组的处理速度要快?</title>
 <link>https://lujun9972.github.io/blog/2020/07/22/为什么排序数组比未排序数组的处理速度要快-/index.html</link>
@@ -271,106 +334,6 @@ honey: =蜂蜜=, =爱人=
 </description>
 <pubDate>2020-06-03</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/06/03/如何设置git-push和git-pull的超时时间？/index.html</guid>
-</item>
-<item>
-<title>使用strace解决pacman提示无法锁定数据库的问题</title>
-<link>https://lujun9972.github.io/blog/2020/05/25/使用strace解决pacman提示无法锁定数据库的问题/index.html</link>
-<description>某次滚动升级archlinux的时候忘了插电，导致滚动到一半的时候断电了。导致插电后再升级时提示：
-#+begin_example
-  :: 正在同步软件包数据库...
-  错误：无法升级 core (无法锁定数据库)
-  错误：无法升级 extra (无法锁定数据库)
-  错误：无法升级 community (无法锁定数据库)
-  错误：无法升级 multilib (无法锁定数据库)
-  错误：无法升级 archlinuxcn (无法锁定数据库)
-  错误：未能成功同步所有数据库
-#+end_example
-
-从错误提示我能推测出大概率是升级到一半断电导致某个锁文件未被删除，问题是，这个锁文件在哪呢？
-
-还好有 =strace=,可以帮我找出锁文件的路径
-#+begin_src shell :results org :dir /sudo::
-  sudo strace -e openat pacman -Syu --noconfirm 2&gt;&amp;1
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-openat(AT_FDCWD, &quot;/etc/ld.so.cache&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libalpm.so.12&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libarchive.so.13&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libc.so.6&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libgpgme.so.11&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libcurl.so.4&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libcrypto.so.1.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libacl.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libexpat.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/liblzma.so.5&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libzstd.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/liblz4.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libbz2.so.1.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libz.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libassuan.so.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libgpg-error.so.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libnghttp2.so.14&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libidn2.so.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libssh2.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libpsl.so.5&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libssl.so.1.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libgssapi_krb5.so.2&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libkrb5.so.3&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libk5crypto.so.3&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libcom_err.so.2&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libpthread.so.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libdl.so.2&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libattr.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libunistring.so.2&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libkrb5support.so.0&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libkeyutils.so.1&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/libresolv.so.2&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/lib/locale/locale-archive&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/etc/pacman.conf&quot;, O_RDONLY) = 3
-openat(AT_FDCWD, &quot;/etc/pacman.d/mirrorlist&quot;, O_RDONLY) = 4
-openat(AT_FDCWD, &quot;/etc/pacman.d/mirrorlist&quot;, O_RDONLY) = 4
-openat(AT_FDCWD, &quot;/etc/pacman.d/mirrorlist&quot;, O_RDONLY) = 4
-openat(AT_FDCWD, &quot;/etc/pacman.d/mirrorlist&quot;, O_RDONLY) = 4
-openat(AT_FDCWD, &quot;/var/lib/pacman/local/&quot;, O_RDONLY|O_NONBLOCK|O_CLOEXEC|O_DIRECTORY) = 3
-openat(AT_FDCWD, &quot;/var/lib/pacman/local/ALPM_DB_VERSION&quot;, O_RDONLY) = 4
-openat(AT_FDCWD, &quot;/usr/share/locale/locale.alias&quot;, O_RDONLY|O_CLOEXEC) = 3
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US.utf8/LC_MESSAGES/libc.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US/LC_MESSAGES/libc.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en.utf8/LC_MESSAGES/libc.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en/LC_MESSAGES/libc.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/var/log/pacman.log&quot;, O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0644) = 3
-openat(AT_FDCWD, &quot;/etc/localtime&quot;, O_RDONLY|O_CLOEXEC) = 4
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US.utf8/LC_MESSAGES/pacman.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US/LC_MESSAGES/pacman.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en.utf8/LC_MESSAGES/pacman.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en/LC_MESSAGES/pacman.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-:: Synchronizing package databases...
-openat(AT_FDCWD, &quot;/var/lib/pacman/db.lck&quot;, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US.utf8/LC_MESSAGES/libalpm.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en_US/LC_MESSAGES/libalpm.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en.utf8/LC_MESSAGES/libalpm.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-openat(AT_FDCWD, &quot;/usr/share/locale/en/LC_MESSAGES/libalpm.mo&quot;, O_RDONLY) = -1 ENOENT (No such file or directory)
-error: failed to update core (unable to lock database)
-openat(AT_FDCWD, &quot;/var/lib/pacman/db.lck&quot;, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
-error: failed to update extra (unable to lock database)
-openat(AT_FDCWD, &quot;/var/lib/pacman/db.lck&quot;, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
-error: failed to update community (unable to lock database)
-openat(AT_FDCWD, &quot;/var/lib/pacman/db.lck&quot;, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
-error: failed to update multilib (unable to lock database)
-openat(AT_FDCWD, &quot;/var/lib/pacman/db.lck&quot;, O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, 000) = -1 EEXIST (File exists)
-error: failed to update archlinuxcn (unable to lock database)
-error: failed to synchronize all databases
-+++ exited with 1 +++
-#+end_src
-
-可以看到，在输出 =:: Synchronizing package databases...= 后，pacman会去检查 =&quot;/var/lib/pacman/db.lck&quot;= 是否存在,然后跟着提示 =error: failed to update archlinuxcn (unable to lock database)=
-
-所以很容易就能推测出，锁文件为 =/var/lib/pacman/db.lck=,跟网上搜索的内容一致。
-</description>
-<pubDate>2020-05-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/05/25/使用strace解决pacman提示无法锁定数据库的问题/index.html</guid>
 </item>
 </channel>
 </rss>
