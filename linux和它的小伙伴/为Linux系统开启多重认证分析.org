@@ -1,0 +1,114 @@
+#+TITLE: 为Linux系统开启多因素认证
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-08-15 六 18:15]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+通常我们登陆系统时只需要输入用户名和密码即可（若是通过SSH登陆则还可以通过密钥对来登陆）。
+而多因素认证可以要求用户提供附加的认证信息来加强安全性，这个附加信息可能是一条短信验证码，安全令牌应用生成的一次性密码，指纹等内容。
+
+本文要做的就是通过 google-authenticator 为Linux增加基于安全令牌的多因素认证
+
+* 安装
+首先在Linux上安装PAM模块google-authenticator
+#+begin_src shell
+  sudo pacman -S libpam-google-authenticator
+#+end_src
+
+然后，在手机上安装 =小米安全令牌= 应用
+
+* 配置 google-authenticator 模块
+运行 =google-authenticator= 来生成 OTP code。该命令会询问是否基于时间生成认证码，并生成一个二维码供你扫描。
+
+[[file:images/OTP.png]]
+
+在手机上打开 =小米安全令牌= 扫描这个二维码就能看认证码了，输入认证码后，再回答几个问题就完成了google-authentiator模块的配置了
+#+begin_example
+  Enter code from app (-1 to skip): 383791
+  Code confirmed
+  Your emergency scratch codes are:
+    28577389
+    12044244
+    52789565
+    81786311
+    51903013
+
+  Do you want me to update your "/home/lujun9972/.google_authenticator" file? (y/n) y
+
+  Do you want to disallow multiple uses of the same authentication
+  token? This restricts you to one login about every 30s, but it increases
+  your chances to notice or even prevent man-in-the-middle attacks (y/n) y
+
+  By default, a new token is generated every 30 seconds by the mobile app.
+  In order to compensate for possible time-skew between the client and the server,
+  we allow an extra token before and after the current time. This allows for a
+  time skew of up to 30 seconds between authentication server and client. If you
+  experience problems with poor time synchronization, you can increase the window
+  from its default size of 3 permitted codes (one previous code, the current
+  code, the next code) to 17 permitted codes (the 8 previous codes, the current
+  code, and the 8 next codes). This will permit for a time skew of up to 4 minutes
+  between client and server.
+  Do you want to do so? (y/n) y
+
+  If the computer that you are logging into isn't hardened against brute-force
+  login attempts, you can enable rate-limiting for the authentication module.
+  By default, this limits attackers to no more than 3 login attempts every 30s.
+  Do you want to enable rate-limiting? (y/n) y
+#+end_example
+
+* 启用google-authenticator模块
+一般来说，通过 =login= 登陆系统要求接触到物理机器，本身安全性已经足够高了，开启多因素认证意义不大，我们主要对通过网络认证的 =sshd= 进行约束。
+
+1. 为 =sshd= PAM启用google-authenticator认证
+
+   往 =/etc/pam.d/sshd= 中添加如下内容:
+   #+begin_src conf
+     auth required pam_google_authenticator.so nullok
+   #+end_src
+   
+   其中 =nullok= 的意思是对于未配置多因素认证的用户不需要输入认证码。若没有这个参数则会强制要求主机上的所有用户都必须启用多因素认证。
+
+2. 配置 =sshd= 使用PAM进行认证
+
+   编辑 =/etc/ssh/sshd_config= 确定 =UsePAM= 的值为 =yes=
+
+3. 配置 =sshd= 提示输入认证码
+
+   编辑 =/etc/ssh/sshd_config= 确定 =ChallengeResponseAuthentication= 的值为 =yes=
+
+4. 重启 =sshd= 服务
+   
+   #+begin_src shell
+     sudo systemctl restart sshd
+   #+end_src
+
+
+这样一来，通过 =sshd= 登陆 =lujun9972= 这个用户时就会要求输入认证码了，而登陆其他用户时则无需输入验证码:
+#+begin_example
+  lujun9972@orangepipc2:~$ ssh 192.168.1.206 -p 8022
+  The authenticity of host '[192.168.1.206]:8022 ([192.168.1.206]:8022)' can't be established.
+  ECDSA key fingerprint is SHA256:zIiiOyKuX/q7d+CI5HKNTTiqcHQ+QSf+caivgdS/OG8.
+  Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+  Warning: Permanently added '[192.168.1.206]:8022' (ECDSA) to the list of known hosts.
+  Password: 
+  Verification code: 
+  Last login: Sat Aug 15 19:35:37 2020 from 127.0.0.1
+  Test whether fcitx is running correctly with dbus...
+  Fcitx is running correctly.
+
+  =========================================================
+  Launch fbterm...
+  stdin isn't a interactive tty!
+  lujun9972:~/ $ exit
+  logout
+  Connection to 192.168.1.206 closed.
+  lujun9972@orangepipc2:~$ ssh daddy@192.168.1.206 -p 8022
+  Password: 
+  Last login: Sat Aug 15 19:37:50 2020 from 127.0.0.1
+  [daddy@T520 /]$ exit
+  logout
+  Connection to 192.168.1.206 closed.
+  lujun9972@orangepipc2:~$ 
+#+end_example
