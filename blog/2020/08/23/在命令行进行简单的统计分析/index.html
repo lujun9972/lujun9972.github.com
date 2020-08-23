@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>在命令行进行简单的统计分析 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">在命令行进行简单的统计分析</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#org42eb68a">使用awk获取最小值、最大值、中位数和平均值</a></li>
+<li><a href="#org20dc3a0">使用datamash进行统计分析</a>
+<ul>
+<li><a href="#org6ce594d">常见的选项说明</a></li>
+<li><a href="#org8d7c94b">常见的统计操作</a></li>
+<li><a href="#org505e298">例子</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org42eb68a" class="outline-2">
+<h2 id="org42eb68a">使用awk获取最小值、最大值、中位数和平均值</h2>
+<div class="outline-text-2" id="text-org42eb68a">
+<p>
+使用awk先把数据存入一个数组中，然后对数组进行排序后就可以自己写代码找出最小值、最大值、中位数和平均值了：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-awk"><span class="org-comment-delimiter">#</span><span class="org-comment">! /usr/bin/awk -f</span>
+{
+    sum += $1                   <span class="org-comment-delimiter"># </span><span class="org-comment">&#20551;&#35774;&#25968;&#25454;&#25918;&#22312;&#31532;&#19968;&#21015;</span>
+    nums[<span class="org-variable-name">NR</span>] = $1  <span class="org-comment-delimiter"># </span><span class="org-comment">&#23558;&#25968;&#25454;&#35760;&#24405;&#21040;&#25968;&#32452;&#20013;</span>
+}
+<span class="org-keyword">END</span> {
+    <span class="org-keyword">if</span> (<span class="org-variable-name">NR</span> == 0) <span class="org-keyword">exit</span>  <span class="org-comment-delimiter">#</span><span class="org-comment">&#38450;&#27490;&#20986;&#29616;&#22788;&#20110;0&#30340;&#24773;&#20917;To avoid division by zero</span>
+
+    <span class="org-preprocessor">asort</span>(nums)  <span class="org-comment-delimiter">#  </span><span class="org-comment">&#20808;&#23545;&#25968;&#25454;&#36827;&#34892;&#25490;&#24207;&#65292;&#29992;&#20110;&#35760;&#24405;&#20013;&#20301;&#25968;</span>
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#35745;&#31639;&#20013;&#20301;&#25968;</span>
+    median = (<span class="org-variable-name">NR</span> % 2 == 0) ? ( nums[<span class="org-variable-name">NR</span> / 2] + nums[<span class="org-variable-name">NR</span> / 2 + 1] ) / 2  : nums[<span class="org-preprocessor">int</span>(<span class="org-variable-name">NR</span> / 2) + 1]
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#35745;&#31639;&#24179;&#22343;</span>
+    mean = sum/<span class="org-variable-name">NR</span>
+
+    <span class="org-preprocessor">printf</span> <span class="org-string">"min = %s, max = %s, median = %s, mean = %s\n"</span>, nums[1], nums[<span class="org-variable-name">NR</span>], median, mean
+}
+</pre>
+</div>
+
+<p>
+我们可以实验一下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">seq -10 3 30|~/bin/calculate.awk
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">min = -10, max = 29, median = 9.5, mean = 9.5
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org20dc3a0" class="outline-2">
+<h2 id="org20dc3a0">使用datamash进行统计分析</h2>
+<div class="outline-text-2" id="text-org20dc3a0">
+<p>
+使用awk虽然可以进行统计分析，但是需要自己去实现大量的细节，很麻烦。 <code>datamash</code> 则是一个直接提供了基本统计能力的命令行程序。
+</p>
+
+<p>
+datamash的使用非常简单，其调用规则为 <code>datamash 选项 统计操作1 数据列1 [统计操作2 数据列2]...</code>. 
+它会对 <code>数据列N</code> 所表示的数据执行 <code>统计操作N</code>. 其中 <code>数据列</code> 一般是一个表示第几列的数字，但是当数据文件中的第一行是标题时，可以通过 <code>-H</code> 选项来指明数据文件中包含标题行，此时 <code>数据列</code> 可以是标题名来代替。
+</p>
+</div>
+
+<div id="outline-container-org6ce594d" class="outline-3">
+<h3 id="org6ce594d">常见的选项说明</h3>
+<div class="outline-text-3" id="text-org6ce594d">
+<dl class="org-dl">
+<dt>分组</dt><dd>datamash支持对数据进行分组统计，通过使用 <code>--group=数据列1[,数据列2,数据列3]</code> 可以指明根据哪几个域进行分组</dd>
+<dt>排序</dt><dd>datamash需要输入的数据是预先经过排序的，若数据未经过排序则需要通过 <code>--sort</code> 选项预先进行排序</dd>
+<dt>忽略大小写差异</dt><dd>通过 <code>--ignore-case</code> 选项可以让 datamash 在分组时忽略大小写的差异</dd>
+<dt>设置分隔符</dt><dd>默认情况下datamash使用 <code>TAB</code> 作为列的分隔符，通过 <code>--field-separator=x</code> 可以设置 <code>x</code> 作为列分隔符，也可以通过 <code>--whitespace</code> 设置使用一个或多个空格或者tab作为分隔符。</dd>
+<dt>转置</dt><dd>通过 <code>transpose</code> 选项可以交换行列式</dd>
+<dt>反转</dt><dd>通过 <code>reverse</code> 选项可以反转字段的顺序</dd>
+<dt>跳过空值</dt><dd><code>--narm</code> 跳过空域</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-org8d7c94b" class="outline-3">
+<h3 id="org8d7c94b">常见的统计操作</h3>
+<div class="outline-text-3" id="text-org8d7c94b">
+<dl class="org-dl">
+<dt>count</dt><dd>计算总数据量</dd>
+<dt>rand</dt><dd>随机返回一个值</dd>
+<dt>sum</dt><dd>汇总</dd>
+<dt>min</dt><dd>取最小值</dd>
+<dt>max</dt><dd>取最大值</dd>
+<dt>absmin</dt><dd>取绝对值最小的那个值</dd>
+<dt>absmax</dt><dd>取绝对值最大的那个值</dd>
+<dt>range</dt><dd>值域范围，即max - min</dd>
+<dt>mean</dt><dd>取均值</dd>
+<dt>median</dt><dd>取中位数</dd>
+<dt>q1</dt><dd>取第一四分位</dd>
+<dt>q3</dt><dd>取第三四分位</dd>
+<dt>iqr</dt><dd>取四分位距</dd>
+<dt>mode</dt><dd>取众数</dd>
+<dt>antimode</dt><dd>取最少出现的数</dd>
+<dt>pstdev</dt><dd>总体标准差</dd>
+<dt>sstdev</dt><dd>样本标准差</dd>
+<dt>pvar</dt><dd>总体方差</dd>
+<dt>svar</dt><dd>样本方差</dd>
+<dt>pskew</dt><dd>总体偏度</dd>
+<dt>sskew</dt><dd>样本偏度</dd>
+<dt>pkurt</dt><dd>总体峰度</dd>
+<dt>skurt</dt><dd>样本峰度</dd>
+<dt>pcov</dt><dd>总体协方差，需要两组数据，用 <code>列1:列2</code> 来表示</dd>
+<dt>scov</dt><dd>样本协方差，需要两组数据，用 <code>列1:列2</code> 来表示</dd>
+<dt>ppearson</dt><dd>总体皮尔逊相关系数，需要两组数据，用 <code>列1:列2</code> 来表示</dd>
+<dt>spearson</dt><dd>样本皮尔逊相关系数，需要两组数据，用 <code>列1:列2</code> 来表示</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-org505e298" class="outline-3">
+<h3 id="org505e298">例子</h3>
+<div class="outline-text-3" id="text-org505e298">
+<p>
+比如上面的awk脚本可以用一行datamash命令代替：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">seq -10 3 30|datamash min 1 max 1 median 1 mean 1
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">-10     29      9.5     9.5
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-08-23</span>
+    <span title="last modification date" class="post-info">2020-08-23</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-2b9fd1d1-6232-4422-8f7b-8e0ac56b63df">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
