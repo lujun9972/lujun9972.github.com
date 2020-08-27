@@ -1,0 +1,98 @@
+#+TITLE: 在命令行进行简单的统计分析
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-08-23 日 19:59]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 使用awk获取最小值、最大值、中位数和平均值
+
+使用awk先把数据存入一个数组中，然后对数组进行排序后就可以自己写代码找出最小值、最大值、中位数和平均值了：
+
+#+begin_src awk :tangle ~/bin/calculate.awk
+  #! /usr/bin/awk -f
+  {
+      sum += $1                   # 假设数据放在第一列
+      nums[NR] = $1  # 将数据记录到数组中
+  }
+  END {
+      if (NR == 0) exit  #防止出现处于0的情况To avoid division by zero
+
+      asort(nums)  #  先对数据进行排序，用于记录中位数
+
+      # 计算中位数
+      median = (NR % 2 == 0) ? ( nums[NR / 2] + nums[NR / 2 + 1] ) / 2  : nums[int(NR / 2) + 1]
+
+      # 计算平均
+      mean = sum/NR
+
+      printf "min = %s, max = %s, median = %s, mean = %s\n", nums[1], nums[NR], median, mean
+  }
+#+end_src
+
+我们可以实验一下：
+#+begin_src shell :results org
+  seq -10 3 30|~/bin/calculate.awk
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+min = -10, max = 29, median = 9.5, mean = 9.5
+#+end_src
+
+* 使用datamash进行统计分析
+使用awk虽然可以进行统计分析，但是需要自己去实现大量的细节，很麻烦。 =datamash= 则是一个直接提供了基本统计能力的命令行程序。
+
+datamash的使用非常简单，其调用规则为 =datamash 选项 统计操作1 数据列1 [统计操作2 数据列2]...=. 
+它会对 =数据列N= 所表示的数据执行 =统计操作N=. 其中 =数据列= 一般是一个表示第几列的数字，但是当数据文件中的第一行是标题时，可以通过 =-H= 选项来指明数据文件中包含标题行，此时 =数据列= 可以是标题名来代替。
+
+** 常见的选项说明
+
++ 分组 :: datamash支持对数据进行分组统计，通过使用 ~--group=数据列1[,数据列2,数据列3]~ 可以指明根据哪几个域进行分组
++ 排序 :: datamash需要输入的数据是预先经过排序的，若数据未经过排序则需要通过 ~--sort~ 选项预先进行排序
++ 忽略大小写差异 :: 通过 ~--ignore-case~ 选项可以让 datamash 在分组时忽略大小写的差异
++ 设置分隔符 :: 默认情况下datamash使用 ~TAB~ 作为列的分隔符，通过 ~--field-separator=x~ 可以设置 ~x~ 作为列分隔符，也可以通过 ~--whitespace~ 设置使用一个或多个空格或者tab作为分隔符。
++ 转置 :: 通过 ~transpose~ 选项可以交换行列式
++ 反转 :: 通过 ~reverse~ 选项可以反转字段的顺序
++ 跳过空值 :: ~--narm~ 跳过空域
+
+** 常见的统计操作
++ count :: 计算总数据量
++ rand :: 随机返回一个值
++ sum :: 汇总
++ min :: 取最小值
++ max :: 取最大值
++ absmin :: 取绝对值最小的那个值
++ absmax :: 取绝对值最大的那个值
++ range :: 值域范围，即max - min
++ mean :: 取均值
++ median :: 取中位数
++ q1 :: 取第一四分位
++ q3 :: 取第三四分位
++ iqr :: 取四分位距
++ mode :: 取众数
++ antimode :: 取最少出现的数
++ pstdev :: 总体标准差
++ sstdev :: 样本标准差
++ pvar :: 总体方差
++ svar :: 样本方差
++ pskew :: 总体偏度
++ sskew :: 样本偏度
++ pkurt :: 总体峰度
++ skurt :: 样本峰度
++ pcov :: 总体协方差，需要两组数据，用 =列1:列2= 来表示
++ scov :: 样本协方差，需要两组数据，用 =列1:列2= 来表示
++ ppearson :: 总体皮尔逊相关系数，需要两组数据，用 =列1:列2= 来表示
++ spearson :: 样本皮尔逊相关系数，需要两组数据，用 =列1:列2= 来表示
+
+** 例子
+比如上面的awk脚本可以用一行datamash命令代替：
+#+begin_src shell :results org
+  seq -10 3 30|datamash min 1 max 1 median 1 mean 1
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+-10	29	9.5	9.5
+#+end_src
