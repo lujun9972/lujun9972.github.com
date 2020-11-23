@@ -4,10 +4,64 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 13 Nov 2020 06:47:28 UTC</pubDate>
-    <lastBuildDate>Fri, 13 Nov 2020 06:47:28 UTC</lastBuildDate>
+    <pubDate>Mon, 23 Nov 2020 03:29:49 UTC</pubDate>
+    <lastBuildDate>Mon, 23 Nov 2020 03:29:49 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>使用xr帮助分析Elisp正则表达式</title>
+<link>https://lujun9972.github.io/blog/2020/11/23/使用xr帮助分析elisp正则表达式/index.html</link>
+<description>Elisp 的正则表达式语法以繁杂著称，分析起来特别麻烦。今天发现一个 =xr= 库非常好用，可以把Elisp正则表达式语法翻译成 =rx= 的格式，方便我们对其进行分析。
+例如我们尝试使用 =xr= 对 =org-heading-regexp= 进行分析：
+#+begin_src emacs-lisp :results code :exports both
+  (xr org-heading-regexp)
+#+end_src
+
+#+RESULTS:
+#+begin_src emacs-lisp
+(seq bol
+     (group
+      (one-or-more &quot;*&quot;))
+     (opt
+      (one-or-more &quot; &quot;)
+      (group
+       (*? nonl)))
+     (zero-or-more
+      (any &quot;	 &quot;))
+     eol)
+#+end_src
+
+从中可以很清楚的看到整个正则表达式分成5个部分：
+1. =bol= 表示行首
+2. =(group (one-or-more &quot;*&quot;))= 一个或多个星号组成的分组
+3. =(opt (one-or-more &quot; &quot;) (group (*? nonl)))= 一个可选项，由一个或多个空格和任意多个非换行字符的分组（其中 *? 说明使用贪婪算法）组成。
+4. =(zero-or-mode (any &quot;	 &quot;))= 任意多个制表符或空格
+5. =eol= 表示行末
+
+
+注意到，结果中有很多类似 =bol=, =nonl=, =eol= 这样的缩写，我们可以通过将第二个参数设置为 =&#39;verbose= 来输出详细说明：
+
+#+begin_src emacs-lisp :results code :exports both
+  (xr org-heading-regexp &#39;verbose)
+#+end_src
+
+#+RESULTS:
+#+begin_src emacs-lisp
+(seq line-start
+     (group
+      (one-or-more &quot;*&quot;))
+     (zero-or-one
+      (one-or-more &quot; &quot;)
+      (group
+       (*? not-newline)))
+     (zero-or-more
+      (any &quot;	 &quot;))
+     line-end)
+#+end_src
+</description>
+<pubDate>2020-11-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/11/23/使用xr帮助分析elisp正则表达式/index.html</guid>
+</item>
 <item>
 <title>笑话理解之Swallow</title>
 <link>https://lujun9972.github.io/blog/2020/11/13/笑话理解之swallow/index.html</link>
@@ -299,103 +353,6 @@ When Joseph served in Pharaoh&#39;s court
 </description>
 <pubDate>2020-08-27</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/08/27/笑话理解之on-the-house/index.html</guid>
-</item>
-<item>
-<title>在命令行进行简单的统计分析</title>
-<link>https://lujun9972.github.io/blog/2020/08/23/在命令行进行简单的统计分析/index.html</link>
-<description>* 使用awk获取最小值、最大值、中位数和平均值
-
-使用awk先把数据存入一个数组中，然后对数组进行排序后就可以自己写代码找出最小值、最大值、中位数和平均值了：
-
-#+begin_src awk :tangle ~/bin/calculate.awk
-  #! /usr/bin/awk -f
-  {
-      sum += $1                   # 假设数据放在第一列
-      nums[NR] = $1  # 将数据记录到数组中
-  }
-  END {
-      if (NR == 0) exit  #防止出现处于0的情况To avoid division by zero
-
-      asort(nums)  #  先对数据进行排序，用于记录中位数
-
-      # 计算中位数
-      median = (NR % 2 == 0) ? ( nums[NR / 2] + nums[NR / 2 + 1] ) / 2  : nums[int(NR / 2) + 1]
-
-      # 计算平均
-      mean = sum/NR
-
-      printf &quot;min = %s, max = %s, median = %s, mean = %s\n&quot;, nums[1], nums[NR], median, mean
-  }
-#+end_src
-
-我们可以实验一下：
-#+begin_src shell :results org
-  seq -10 3 30|~/bin/calculate.awk
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-min = -10, max = 29, median = 9.5, mean = 9.5
-#+end_src
-
-* 使用datamash进行统计分析
-使用awk虽然可以进行统计分析，但是需要自己去实现大量的细节，很麻烦。 =datamash= 则是一个直接提供了基本统计能力的命令行程序。
-
-datamash的使用非常简单，其调用规则为 =datamash 选项 统计操作1 数据列1 [统计操作2 数据列2]...=. 
-它会对 =数据列N= 所表示的数据执行 =统计操作N=. 其中 =数据列= 一般是一个表示第几列的数字，但是当数据文件中的第一行是标题时，可以通过 =-H= 选项来指明数据文件中包含标题行，此时 =数据列= 可以是标题名来代替。
-
-** 常见的选项说明
-
-+ 分组 :: datamash支持对数据进行分组统计，通过使用 ~--group=数据列1[,数据列2,数据列3]~ 可以指明根据哪几个域进行分组
-+ 排序 :: datamash需要输入的数据是预先经过排序的，若数据未经过排序则需要通过 ~--sort~ 选项预先进行排序
-+ 忽略大小写差异 :: 通过 ~--ignore-case~ 选项可以让 datamash 在分组时忽略大小写的差异
-+ 设置分隔符 :: 默认情况下datamash使用 ~TAB~ 作为列的分隔符，通过 ~--field-separator=x~ 可以设置 ~x~ 作为列分隔符，也可以通过 ~--whitespace~ 设置使用一个或多个空格或者tab作为分隔符。
-+ 转置 :: 通过 ~transpose~ 选项可以交换行列式
-+ 反转 :: 通过 ~reverse~ 选项可以反转字段的顺序
-+ 跳过空值 :: ~--narm~ 跳过空域
-
-** 常见的统计操作
-+ count :: 计算总数据量
-+ rand :: 随机返回一个值
-+ sum :: 汇总
-+ min :: 取最小值
-+ max :: 取最大值
-+ absmin :: 取绝对值最小的那个值
-+ absmax :: 取绝对值最大的那个值
-+ range :: 值域范围，即max - min
-+ mean :: 取均值
-+ median :: 取中位数
-+ q1 :: 取第一四分位
-+ q3 :: 取第三四分位
-+ iqr :: 取四分位距
-+ mode :: 取众数
-+ antimode :: 取最少出现的数
-+ pstdev :: 总体标准差
-+ sstdev :: 样本标准差
-+ pvar :: 总体方差
-+ svar :: 样本方差
-+ pskew :: 总体偏度
-+ sskew :: 样本偏度
-+ pkurt :: 总体峰度
-+ skurt :: 样本峰度
-+ pcov :: 总体协方差，需要两组数据，用 =列1:列2= 来表示
-+ scov :: 样本协方差，需要两组数据，用 =列1:列2= 来表示
-+ ppearson :: 总体皮尔逊相关系数，需要两组数据，用 =列1:列2= 来表示
-+ spearson :: 样本皮尔逊相关系数，需要两组数据，用 =列1:列2= 来表示
-
-** 例子
-比如上面的awk脚本可以用一行datamash命令代替：
-#+begin_src shell :results org
-  seq -10 3 30|datamash min 1 max 1 median 1 mean 1
-#+end_src
-
-#+RESULTS:
-#+begin_src org
--10	29	9.5	9.5
-#+end_src
-</description>
-<pubDate>2020-08-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/08/23/在命令行进行简单的统计分析/index.html</guid>
 </item>
 </channel>
 </rss>
