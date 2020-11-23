@@ -1,0 +1,55 @@
+#+TITLE: 使用xr帮助分析Elisp正则表达式
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2020-11-23 一 10:55]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Elisp 的正则表达式语法以繁杂著称，分析起来特别麻烦。今天发现一个 =xr= 库非常好用，可以把Elisp正则表达式语法翻译成 =rx= 的格式，方便我们对其进行分析。
+例如我们尝试使用 =xr= 对 =org-heading-regexp= 进行分析：
+#+begin_src emacs-lisp :results code :exports both
+  (xr org-heading-regexp)
+#+end_src
+
+#+RESULTS:
+#+begin_src emacs-lisp
+(seq bol
+     (group
+      (one-or-more "*"))
+     (opt
+      (one-or-more " ")
+      (group
+       (*? nonl)))
+     (zero-or-more
+      (any "	 "))
+     eol)
+#+end_src
+
+从中可以很清楚的看到整个正则表达式分成5个部分：
+1. =bol= 表示行首
+2. =(group (one-or-more "*"))= 一个或多个星号组成的分组
+3. =(opt (one-or-more " ") (group (*? nonl)))= 一个可选项，由一个或多个空格和任意多个非换行字符的分组（其中 *? 说明使用贪婪算法）组成。
+4. =(zero-or-mode (any "	 "))= 任意多个制表符或空格
+5. =eol= 表示行末
+
+
+注意到，结果中有很多类似 =bol=, =nonl=, =eol= 这样的缩写，我们可以通过将第二个参数设置为 ='verbose= 来输出详细说明：
+
+#+begin_src emacs-lisp :results code :exports both
+  (xr org-heading-regexp 'verbose)
+#+end_src
+
+#+RESULTS:
+#+begin_src emacs-lisp
+(seq line-start
+     (group
+      (one-or-more "*"))
+     (zero-or-one
+      (one-or-more " ")
+      (group
+       (*? not-newline)))
+     (zero-or-more
+      (any "	 "))
+     line-end)
+#+end_src
