@@ -1,0 +1,59 @@
+#+TITLE: 使用Pi-hole屏蔽广告
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-12-05 六 20:40]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 获取Pi的对外IP地址
+我们一般通过ssh登陆树莓派来进行管理，因此可以从 =SSH_CONNECTION= 环境变量中获取树莓派的对外IP
+#+begin_src shell :dir /ssh:pi@192.168.1.14:
+  IP=$(echo ${SSH_CONNECTION}|cut -d ' ' -f 3)
+  echo ${IP}
+#+end_src
+
+#+RESULTS:
+: 192.168.1.14
+
+=SSH_CONNECTION= 变量标识了ssh链接的客户端和服务端信息，该变量包含了四个用空格分隔的值，包括：客户端IP地址，客户端端口，服务端IP地址，服务端端口。
+详细的说明可以参见 =man ssh=.
+
+* 安装Pi-hole
+安装Pi-hole最简单的方法就是用容器了，一行命令搞定：
+#+begin_src shell  :dir /ssh:pi@192.168.1.14:
+  sudo docker run -d \
+    --name=pihole \
+    -e TZ=Asia/Chongqing \
+    -e WEBPASSWORD=password \
+    -e SERVERIP=${IP} \
+    -v $(pwd)/etc-pihole:/etc/pihole \
+    -v $(pwd)/etc-dnsmasq:/etc/dnsmasq.d \
+    -p 443:443/tcp \
+    -p 80:80/tcp \
+    -p 67:67/udp \
+    -p 53:53/tcp \
+    -p 53:53/udp \
+    --cap-add=NET_ADMIN \
+    --restart=unless-stopped \
+    pihole/pihole
+#+end_src
+
+* 配置DNS
+下一步需要配置DNS指向树梅派，为了防止树梅派故障无法提供DNS服务，我不打算改掉之前的DNS，而是在前面加上树梅派作为第一DNS。
+
+创建一个新的 =/etc/resolv.conf.head=,并加入下面内容
+#+begin_src conf
+  nameserver 192.168.1.14
+#+end_src
+
+其中 =192.168.1.14= 为树梅派的IP地址。
+
+* 配置拦截域名
+ 用 =password= 登陆 =http://$IP/admin=, 选择 Group Management -> Adlists ，为 Default 规则组添加两个URL：
+ #+begin_example
+   https://gitee.com/privacy-protection-tools/anti-ad/raw/master/domains.txt
+   https://share.is26.com/subscribe/adblock.hosts
+ #+end_example
+
+ 然后再 Tools -> Update Gravity 点击“Update”更新屏蔽域名表
