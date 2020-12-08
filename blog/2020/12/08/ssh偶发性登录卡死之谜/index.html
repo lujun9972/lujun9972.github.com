@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>ssh偶发性登录卡死之谜 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">ssh偶发性登录卡死之谜</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgda455a4">现象</a></li>
+<li><a href="#org56e5068">排查过程</a></li>
+<li><a href="#orgf5d1c83">解决方法</a></li>
+<li><a href="#org1ba08bd">疑问</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgda455a4" class="outline-2">
+<h2 id="orgda455a4">现象</h2>
+<div class="outline-text-2" id="text-orgda455a4">
+<p>
+今天遇到一个非常诡异的 ssh 登陆失败的情况，：
+</p>
+
+<ol class="org-ol">
+<li>通过 ssh 登陆某主机（假设为user@Server）经常卡死，但经过多次尝试偶尔会出现登陆成功的情况。</li>
+<li>尝试用 ssh 登陆该主机的其他用户（tmpusr@Server），经常能成功，但是多次尝试会出现偶尔登陆卡死的情况。</li>
+<li>使用 ssh -vvv user@Server 尝试调试，发现能够正常登陆，而且每次都能登陆成功。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org56e5068" class="outline-2">
+<h2 id="org56e5068">排查过程</h2>
+<div class="outline-text-2" id="text-org56e5068">
+<ol class="org-ol">
+<li>使用 <code>strace -yo /tmp/ssh.log ssh user@server</code> 追踪系统调用情况，发现卡在了 <code>read socket</code> 上了，也就是在等待 <code>Server</code> 回复内容一直没等待。</li>
+
+<li><p>
+使用 <code>netstat</code> 观察 Client 端的网络链接情况
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">netstat -tuanpe |grep ssh
+</pre>
+</div>
+<p>
+结果为
+</p>
+<pre class="example">
+(Not all processes could be identified, non-owned process info
+ will not be shown, you would have to be root to see it all.)
+tcp        0      1 10.7.2.3:60078          10.8.24.17:22           SYN_SENT    5000       152156234  4772/ssh
+</pre>
+
+<p>
+连接状态 SYN_SENT 为 TCP 建立链接三次握手的第一步，表示已经发了SYN信号给Server，但并未收到Server回复的SYN ACK
+</p></li>
+
+<li><p>
+使用 <code>netstat</code> 观察 Server 端的网络链接情况
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">netstat -an |grep <span class="org-string">'ServerIP.22'</span>|grep <span class="org-string">'ClientIP'</span>
+</pre>
+</div>
+<p>
+结果为
+</p>
+<pre class="example">
+tcp4       0      0  ServerIP.22          ClientIP.60078         SYN_RCVD
+</pre>
+
+<p>
+连接状态 SYN_RCVD 为 TCP 建立链接三次握手的第二步，表示 Server 确实已经收到了 Client 发来的SYN信号，且回复了SYN ACK
+</p></li>
+
+<li>通过步骤2和3,我们可以推测出 ssh 登陆卡死的原因是 Server 回复的 SYN ACK 没有发送到 Client 端，导致 TCP 链接无法创建起来。</li>
+
+<li><p>
+使用 ping 大包的方式检测网络质量
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ping -s 65508 ClientIP
+</pre>
+</div>
+<p>
+结果为
+</p>
+<pre class="example">
+65515 bytes from ClientIP: icmp_seq=0 ttl=63 time=0 ms
+65515 bytes from ClientIP: icmp_seq=1 ttl=63 time=0 ms
+65515 bytes from ClientIP: icmp_seq=2 ttl=63 time=0 ms
+65515 bytes from ClientIP: icmp_seq=3 ttl=63 time=0 ms
+65515 bytes from ClientIP: icmp_seq=4 ttl=63 time=0 ms
+65515 bytes from ClientIP: icmp_seq=5 ttl=63 time=0 ms
+</pre>
+<p>
+可以判断网络质量并不差
+</p></li>
+
+<li><p>
+检查Server端的路由配置
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">netstat -r
+</pre>
+</div>
+<p>
+结果为
+</p>
+<pre class="example">
+Routing tables
+Destination        Gateway           Flags   Refs     Use  If   Exp  Groups
+
+Route Tree for Protocol Family 2 (Internet):
+default            XX.XX.XX.XX         UG        3   2048482 en0      -      -
+ClientNet            YY.YY.YY.YY      UG        2    181966 en2      -      -   =&gt;
+ClientNet            YY.YY.YY.YY      UG        1    178100 en0      -      -
+</pre>
+
+<p>
+很惊奇的发现发送到 Client所在网络的路由配了两个，分别使用 <code>en2</code> 和 <code>en0</code> 两个网卡
+</p></li>
+
+<li>检查这两个网卡的IP配置发现只有 <code>en2</code> 这个网卡是与网关相通的，而 <code>en0</code> 这个网卡并不通。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgf5d1c83" class="outline-2">
+<h2 id="orgf5d1c83">解决方法</h2>
+<div class="outline-text-2" id="text-orgf5d1c83">
+<p>
+删除多余的错误路由配置后恢复正常。
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo route del ClientNet dev en0
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1ba08bd" class="outline-2">
+<h2 id="org1ba08bd">疑问</h2>
+<div class="outline-text-2" id="text-org1ba08bd">
+<p>
+虽说问题解决了，但还有些奇怪的现象无法解释：
+</p>
+
+<ol class="org-ol">
+<li>为什么登陆 <code>user◎Server</code> 的成功率低，而登陆 <code>tmpusr@Server</code> 的成功率高呢？</li>
+<li><code>ssh -vvv user@Server</code> 与 <code>ssh user@Server</code> 的登陆过程有什么不同，为什么加了调试项就能正常登陆呢？</li>
+</ol>
+
+<p>
+希望能有大佬能给出原因。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-12-08</span>
+    <span title="last modification date" class="post-info">2020-12-08</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/异闻录">异闻录</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-9753a93b-007a-474d-b382-89119efc3a2f">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
