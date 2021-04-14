@@ -4,10 +4,129 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 09 Mar 2021 00:48:58 UTC</pubDate>
-    <lastBuildDate>Tue, 09 Mar 2021 00:48:58 UTC</lastBuildDate>
+    <pubDate>Wed, 14 Apr 2021 09:35:32 UTC</pubDate>
+    <lastBuildDate>Wed, 14 Apr 2021 09:35:32 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>升级库文件后如何查找需要重启的服务</title>
+<link>https://lujun9972.github.io/blog/2021/04/14/升级库文件后如何查找需要重启的服务/index.html</link>
+<description>从 https://www.cyberciti.biz/faq/how-to-restart-systemd-without-rebooting-linux-when-critical-libraries-installed/ 上看到的一个小技巧。
+
+当升级库文件后，那些使用该库的服务需要重启后才会真正使用该库文件中的内容。一个常用的方法是直接重启系统，这样所有服务在启动时自然使用的是最新库的内容，但是作为服务器是不可能允许随意重启的，那么在不重启的情况下如何找出受到影像的服务呢？
+
+这里有个简单的方法：
+#+begin_src shell :dir /ssh:lujun9972@tencent_cloud.lujun9972.win#8022: :results org
+  sudo lsof -d &#39;DEL&#39; | grep &#39;lib&#39; | cut -f 1 -d &#39; &#39; | sort -u
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  acpid
+  agetty
+  atd
+  dbus-daem
+  dhclient
+  dictd
+  gdbus
+  gmain
+  JS
+  lsmd
+  master
+  polkitd
+  qmgr
+  sshd
+  systemd-l
+#+end_src
+
+其原理就是用 lsof 查出所有 FD 为 =DEL(已删除的映射文件)= 且路径中带 =lib= 的命令。然后就可以使用 =systemctl restart= 重启服务了。
+
+不过 =systemd= 本身作为1号进程不能通过 =systemctl restart= 来进行重启，而需要使用 =sudo systemctl daemon-reexec= 来重启。
+
+关于 =systemctl daemon-reexec= 的说明如下：
+#+begin_example
+  daemon-reexec  Reexecute the systemd manager. This will serialize the manager state, reexecute the process and deserialize the state again. This command is of little use except for debugging and package upgrades. Sometimes, it might be helpful as a heavy-weight daemon-reload. While the daemon is being reexecuted, all sockets systemd listening on behalf of user configuration will stay accessible.
+#+end_example
+</description>
+<pubDate>2021-04-14</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/04/14/升级库文件后如何查找需要重启的服务/index.html</guid>
+</item>
+<item>
+<title>Bash中的TryCatch语句</title>
+<link>https://lujun9972.github.io/blog/2021/04/14/bash中的trycatch语句/index.html</link>
+<description>Bash 中是没有原生的Try Catch 语句的，但是今天从 https://www.xmodulo.com/catch-handle-errors-bash.html 上我看到了一种模拟 Try Catch 的方法。
+
+函数定义如下（经过了一些改造，更好理解一些，而且原文是有一点小错误的）：
+
+#+begin_src shell :tangle :~/bin/lib/trycatch.sh
+  function try()
+  {
+      if [[ $SHELLOPTS = *errexit* ]];then      # $SHELLOPTS 中包含了 shell 的配置项
+         ERREXIT_P=&quot;Y&quot;                          # 保存ERREXIT的启用情况
+         set +e                                 # 若开启了ERREXIT则需要关闭该配置项，否则后面throw()返回非0值时会直接终止代码运行，也就没法运行后面的catch()语句了
+      fi
+  }
+
+  function throw()
+  {
+      exit $1
+  }
+
+  function catch()
+  {
+      export exception_code=$?
+      if [[ ${ERREXIT_P} == &quot;Y&quot; ]];then
+       set -e                     # 恢复原ERREXIT配置项
+      fi
+      return $exception_code
+  }
+#+end_src
+
+这套函数的使用方法如下例子所示：
+#+begin_src shell
+  # 引入 trycatch 语句
+  source ./trycatch.sh
+
+  # 定义异常类型
+  export ERR_BAD=100
+  export ERR_WORSE=101
+  export ERR_CRITICAL=102
+
+  try
+  (                               # 注意这里进入子shell执行命令
+      echo &quot;Start of the try block&quot;
+
+      # 当命令执行出错（返回非0值），则throw 会退出子shell 的执行，并返回异常.
+      run-command || throw $ERR_BAD
+      run-command2 || throw $ERR_WORSE
+      run-command3 || throw $ERR_CRITICAL
+
+      echo &quot;End of the try block&quot;
+  )
+  catch || {                      # 若子shell执行有异常，则执行后面 {} 中的语句
+      case $exception_code in     # exception_code 中存放的是子 shell 的返回值，在有异常的情况下也就是throw 出来的异常码
+          $ERR_BAD)
+              echo &quot;This error is bad&quot;
+          ;;
+          $ERR_WORSE)
+              echo &quot;This error is worse&quot;
+          ;;
+          $ERR_CRITICAL)
+              echo &quot;This error is critical&quot;
+          ;;
+          ,*)
+              echo &quot;Unknown error: $exit_code&quot;
+              throw $exit_code    # re-throw an unhandled exception
+          ;;
+      esac
+  }
+#+end_src
+
+这套TryCatch模拟语句最大的坑莫过于 try 的语句是在子shell 中执行了，这使得 try 中的执行内容无法修改其他代码块中的变量。
+</description>
+<pubDate>2021-04-14</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/04/14/bash中的trycatch语句/index.html</guid>
+</item>
 <item>
 <title>笑话理解之Seeman</title>
 <link>https://lujun9972.github.io/blog/2021/03/09/笑话理解之seeman/index.html</link>
@@ -134,44 +253,6 @@
 </description>
 <pubDate>2020-12-21</pubDate>
 <guid>https://lujun9972.github.io/blog/2020/12/21/笑话理解之leak/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Major</title>
-<link>https://lujun9972.github.io/blog/2020/12/21/笑话理解之major/index.html</link>
-<description>* A flat major
-#+begin_example
-  What do you get when you drop a piano on an army base?
-
-  A flat major.
-#+end_example
-
-=major= 即表示 =音乐中的大调= 也有 =空军少校= 的意思。
-</description>
-<pubDate>2020-12-21</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/12/21/笑话理解之major/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Hearing</title>
-<link>https://lujun9972.github.io/blog/2020/12/09/笑话理解之hearing/index.html</link>
-<description>* The Hearing Problem
-#+begin_example
-  In a church one Sunday morning a preacher said, &quot;Anyone with &#39;special needs&#39; who wants to be prayed over, please come forward to the front of the altar.&quot;
-
-  With that, Peter got in line and when it was his turn the Preacher asked, &quot;Peter, what do you want me to pray about for you?&quot;
-
-  He replied, &quot;Preacher, I need you to pray for help with my hearing.&quot;
-
-  The preacher put one finger of one hand on Peter&#39;s ear, placed his other hand on top of Peter&#39;s head, and then prayed and prayed and the whole congregation joined in with much enthusiasm.
-
-  After a few minutes, the preacher removed his hands, stood back and asked, &quot;Peter, how is your hearing now?&quot;
-
-  Peter answered, &quot;I don&#39;t know. My hearing is actually next Thursday in the magistrate court.&quot;
-#+end_example
-
-=hearing= 既有 =听力= 也有 =听证会= 的意思。
-</description>
-<pubDate>2020-12-09</pubDate>
-<guid>https://lujun9972.github.io/blog/2020/12/09/笑话理解之hearing/index.html</guid>
 </item>
 </channel>
 </rss>
