@@ -1,0 +1,44 @@
+#+TITLE: 升级库文件后如何查找需要重启的服务
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2021-04-14 三 10:03]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.cyberciti.biz/faq/how-to-restart-systemd-without-rebooting-linux-when-critical-libraries-installed/ 上看到的一个小技巧。
+
+当升级库文件后，那些使用该库的服务需要重启后才会真正使用该库文件中的内容。一个常用的方法是直接重启系统，这样所有服务在启动时自然使用的是最新库的内容，但是作为服务器是不可能允许随意重启的，那么在不重启的情况下如何找出受到影像的服务呢？
+
+这里有个简单的方法：
+#+begin_src shell :dir /ssh:lujun9972@tencent_cloud.lujun9972.win#8022: :results org
+  sudo lsof | grep 'DEL.*lib' | cut -f 1 -d ' ' | sort -u
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+  acpid
+  agetty
+  atd
+  dbus-daem
+  dhclient
+  dictd
+  gdbus
+  gmain
+  JS
+  lsmd
+  master
+  polkitd
+  qmgr
+  sshd
+  systemd-l
+#+end_src
+
+其原理就是用 lsof 查出所有 FD 为 =DEL(已删除的映射文件)= 且路径中带 =lib= 的命令。然后就可以使用 =systemctl restart= 重启服务了。
+
+不过 =systemd= 本身作为1号进程不能通过 =systemctl restart= 来进行重启，而需要使用 =sudo systemctl daemon-reexec= 来重启。
+
+关于 =systemctl daemon-reexec= 的说明如下：
+#+begin_example
+  daemon-reexec  Reexecute the systemd manager. This will serialize the manager state, reexecute the process and deserialize the state again. This command is of little use except for debugging and package upgrades. Sometimes, it might be helpful as a heavy-weight daemon-reload. While the daemon is being reexecuted, all sockets systemd listening on behalf of user configuration will stay accessible.
+#+end_example
