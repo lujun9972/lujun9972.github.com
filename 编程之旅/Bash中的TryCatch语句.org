@@ -1,0 +1,77 @@
+#+TITLE: Bash中的TryCatch语句
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2021-04-14 三 16:31]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Bash 中是没有原生的Try Catch 语句的，但是今天从 https://www.xmodulo.com/catch-handle-errors-bash.html 上我看到了一种模拟 Try Catch 的方法。
+
+函数定义如下（经过了一些改造，更好理解一些，而且原文是有一点小错误的）：
+
+#+begin_src shell :tangle :~/bin/lib/trycatch.sh
+  function try()
+  {
+      if [[ $SHELLOPTS = *errexit* ]];then      # $SHELLOPTS 中包含了 shell 的配置项
+         ERREXIT_P="Y"                          # 保存ERREXIT的启用情况
+         set +e                                 # 若开启了ERREXIT则需要关闭该配置项，否则后面throw()返回非0值时会直接终止代码运行，也就没法运行后面的catch()语句了
+      fi
+  }
+
+  function throw()
+  {
+      exit $1
+  }
+
+  function catch()
+  {
+      export exception_code=$?
+      if [[ ${ERREXIT_P} == "Y" ]];then
+       set -e                     # 恢复原ERREXIT配置项
+      fi
+      return $exception_code
+  }
+#+end_src
+
+这套函数的使用方法如下例子所示：
+#+begin_src shell
+  # 引入 trycatch 语句
+  source ./trycatch.sh
+
+  # 定义异常类型
+  export ERR_BAD=100
+  export ERR_WORSE=101
+  export ERR_CRITICAL=102
+
+  try
+  (                               # 注意这里进入子shell执行命令
+      echo "Start of the try block"
+
+      # 当命令执行出错（返回非0值），则throw 会退出子shell 的执行，并返回异常.
+      run-command || throw $ERR_BAD
+      run-command2 || throw $ERR_WORSE
+      run-command3 || throw $ERR_CRITICAL
+
+      echo "End of the try block"
+  )
+  catch || {                      # 若子shell执行有异常，则执行后面 {} 中的语句
+      case $exception_code in     # exception_code 中存放的是子 shell 的返回值，在有异常的情况下也就是throw 出来的异常码
+          $ERR_BAD)
+              echo "This error is bad"
+          ;;
+          $ERR_WORSE)
+              echo "This error is worse"
+          ;;
+          $ERR_CRITICAL)
+              echo "This error is critical"
+          ;;
+          ,*)
+              echo "Unknown error: $exit_code"
+              throw $exit_code    # re-throw an unhandled exception
+          ;;
+      esac
+  }
+#+end_src
+
+这套TryCatch模拟语句最大的坑莫过于 try 的语句是在子shell 中执行了，这使得 try 中的执行内容无法修改其他代码块中的变量。
