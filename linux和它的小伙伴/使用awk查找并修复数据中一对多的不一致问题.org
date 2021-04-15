@@ -1,0 +1,141 @@
+#+TITLE: 使用awk查找并修复数据中一对多的不一致问题
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2021-04-15 四 18:12]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从 https://www.datafix.com.au/BASHing/2021-03-17.html 上看到的一个 =awk= 小技巧。
+
+所谓“一对多”的不一致问题是指这么一种情况：属性1与属性2本来应该是 =1:1= 或者 =N:1= 的关系，但是由于数据错误导致同一个属性1有了多个属性2与之对应。
+
+例如下面数据中， 每个 =item= 本来应该只有唯一的一个 =class=,但是实际上 =banana= 和 =potato= 有多个 =class= 与之对应。
+#+begin_example
+  saleID	date	item	class	kg
+  001	2021-01-02	capsicum	vegetable	11.9
+  002	2021-01-02	banana	fruit	12.7
+  003	2021-01-02	capsicum	vegetable	3.7
+  004	2021-01-02	potato	vegetable	4.1
+  005	2021-01-02	capsicum	vegetable	6.0
+  006	2021-01-02	potato	fruit	13.0
+  007	2021-01-02	banana	vegetable	9.1
+  008	2021-01-02	potato	vegetable	15.0
+  009	2021-01-02	apple	fruit	5.6
+  010	2021-01-02	banana	fruit	7.7
+  011	2021-01-02	pumpkin	vegetable	8.3
+  012	2021-01-02	pumpkin	vegetable	5.6
+  013	2021-01-02	apple	fruit	3.5
+  014	2021-01-02	pumpkin	vegetable	5.3
+  015	2021-01-02	capsicum	vegetable	10.3
+  016	2021-01-03	apple	fruit	12.2
+  017	2021-01-03	pumpkin	vegetable	12.6
+  018	2021-01-03	potato	vegetable	4.4
+  019	2021-01-03	apple	fruit	12.5
+  020	2021-01-03	pumpkin	vegetable	11.6
+  021	2021-01-03	banana	vegetable	14.5
+  022	2021-01-03	capsicum	vegetable	4.1
+  023	2021-01-03	banana		5.9
+  024	2021-01-03	potato	vegetable	4.8
+  025	2021-01-03	apple	fruit	15.6
+#+end_example
+
+为了找出一对多的关系，我们需要使用二维数组来保存 =属性1= 和 =属性2= 的关系，然后判断 =属性1= 这个一维数组中是否包含数组个数大于1的数值就行了（原文的判断方法比这要复杂，我简化了一下）。awk 程序如下
+#+begin_src shell :results org
+awk '{b[$3][$4]++}
+END {for (i in b) {if (length(b[i])>1){
+            for (j in b[i]){
+                print b[i][j] "|" i FS j}}}}' /tmp/test.txt
+
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+4|potato vegetable
+1|potato fruit
+2|banana vegetable
+1|banana 5.9
+2|banana fruit
+#+end_src
+这里第一列是每个 =属性1 属性2= 对的数量，第二列是重复的 =属性1 属性2= 对的值。
+
+为了方便复用，我们可以定义一个 =one2many= 的函数：
+#+NAME: one2many
+#+begin_src shell :tangle /tmp/one2many.sh
+  one2many() {
+      sep="$1"                    # 数据分隔符
+      one="$2"                    # 属性1
+      many="$3"                   # 属性2
+      file="$4"                   # 数据文件路径
+      awk -F"${sep}" -v one="${one}" -v many="${many}" '$one != "" {b[$one][$many]++}
+  END {for (i in b)
+           {if (length(b[i]) > 1) {
+              for (j in b[i])
+                  {print b[i][j] FS i FS j}}}}' "${file}"
+  }
+#+end_src
+
+这个函数与上面命令不同之处在于通过 =-F= 指定数据分隔符，通过 =-v= 将函数参数传递给 awk 变量，使用 =FS= 变量替代 =|= 作为数量与重复属性对之间的分隔符。
+
+那么，我们可以直接使用该函数进行数据检测：
+#+begin_src shell :noweb eval :results org
+  <<one2many>>
+  one2many " " 3 4 /tmp/test.txt
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+4 potato vegetable
+1 potato fruit
+2 banana vegetable
+1 banana 5.9
+2 banana fruit
+#+end_src
+
+修复相对来说就比较简单了，我们首先创建一个查询表，用来查询 =属性1= 对应的 =属性2=,这个查询可以从 =one2many= 函数的结果中截取：
+#+begin_src shell :noweb eval :results org
+  <<one2many>>
+  one2many " " 3 4 /tmp/test.txt |sed -n '1p;5p' |tee /tmp/lookup
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+4 potato vegetable
+2 banana fruit
+#+end_src
+
+然后在 awk 中查询 =属性1= 的值若在查询表中则将 =属性2= 的值直接改为查询表中的对应结果：
+#+begin_src shell :results org
+  awk 'FNR==NR {lookup[$1]=$2; next} # 通过FNR==NR判断是否在遍历查询表文件
+  $3 in lookup {$4=lookup[$3]} 1' /tmp/lookup /tmp/test.txt # awk 最后那个1表示执行awk 的默认操作，即输出$0
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+saleID	date	item	class	kg
+001	2021-01-02	capsicum	vegetable	11.9
+002	2021-01-02	banana	fruit	12.7
+003	2021-01-02	capsicum	vegetable	3.7
+004	2021-01-02	potato	vegetable	4.1
+005	2021-01-02	capsicum	vegetable	6.0
+006	2021-01-02	potato	fruit	13.0
+007	2021-01-02	banana	vegetable	9.1
+008	2021-01-02	potato	vegetable	15.0
+009	2021-01-02	apple	fruit	5.6
+010	2021-01-02	banana	fruit	7.7
+011	2021-01-02	pumpkin	vegetable	8.3
+012	2021-01-02	pumpkin	vegetable	5.6
+013	2021-01-02	apple	fruit	3.5
+014	2021-01-02	pumpkin	vegetable	5.3
+015	2021-01-02	capsicum	vegetable	10.3
+016	2021-01-03	apple	fruit	12.2
+017	2021-01-03	pumpkin	vegetable	12.6
+018	2021-01-03	potato	vegetable	4.4
+019	2021-01-03	apple	fruit	12.5
+020	2021-01-03	pumpkin	vegetable	11.6
+021	2021-01-03	banana	vegetable	14.5
+022	2021-01-03	capsicum	vegetable	4.1
+023	2021-01-03	banana		5.9
+024	2021-01-03	potato	vegetable	4.8
+025	2021-01-03	apple	fruit	15.6
+#+end_src
