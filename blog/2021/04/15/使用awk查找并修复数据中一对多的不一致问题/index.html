@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用awk查找并修复数据中一对多的不一致问题 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用awk查找并修复数据中一对多的不一致问题</h1>
+<p>
+从 <a href="https://www.datafix.com.au/BASHing/2021-03-17.html">https://www.datafix.com.au/BASHing/2021-03-17.html</a> 上看到的一个 <code>awk</code> 小技巧。
+</p>
+
+<p>
+所谓“一对多”的不一致问题是指这么一种情况：属性1与属性2本来应该是 <code>1:1</code> 或者 <code>N:1</code> 的关系，但是由于数据错误导致同一个属性1有了多个属性2与之对应。
+</p>
+
+<p>
+例如下面数据中， 每个 <code>item</code> 本来应该只有唯一的一个 <code>class</code>,但是实际上 <code>banana</code> 和 <code>potato</code> 有多个 <code>class</code> 与之对应。
+</p>
+<pre class="example">
+saleID	date	item	class	kg
+001	2021-01-02	capsicum	vegetable	11.9
+002	2021-01-02	banana	fruit	12.7
+003	2021-01-02	capsicum	vegetable	3.7
+004	2021-01-02	potato	vegetable	4.1
+005	2021-01-02	capsicum	vegetable	6.0
+006	2021-01-02	potato	fruit	13.0
+007	2021-01-02	banana	vegetable	9.1
+008	2021-01-02	potato	vegetable	15.0
+009	2021-01-02	apple	fruit	5.6
+010	2021-01-02	banana	fruit	7.7
+011	2021-01-02	pumpkin	vegetable	8.3
+012	2021-01-02	pumpkin	vegetable	5.6
+013	2021-01-02	apple	fruit	3.5
+014	2021-01-02	pumpkin	vegetable	5.3
+015	2021-01-02	capsicum	vegetable	10.3
+016	2021-01-03	apple	fruit	12.2
+017	2021-01-03	pumpkin	vegetable	12.6
+018	2021-01-03	potato	vegetable	4.4
+019	2021-01-03	apple	fruit	12.5
+020	2021-01-03	pumpkin	vegetable	11.6
+021	2021-01-03	banana	vegetable	14.5
+022	2021-01-03	capsicum	vegetable	4.1
+023	2021-01-03	banana		5.9
+024	2021-01-03	potato	vegetable	4.8
+025	2021-01-03	apple	fruit	15.6
+</pre>
+
+<p>
+为了找出一对多的关系，我们需要使用二维数组来保存 <code>属性1</code> 和 <code>属性2</code> 的关系，然后判断 <code>属性1</code> 这个一维数组中是否包含数组个数大于1的数值就行了（原文的判断方法比这要复杂，我简化了一下）。awk 程序如下
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">awk <span class="org-string">'{b[$3][$4]++}</span>
+<span class="org-string">END {for (i in b) {if (length(b[i])&gt;1){</span>
+<span class="org-string">            for (j in b[i]){</span>
+<span class="org-string">                print b[i][j] "|" i FS j}}}}'</span> /tmp/test.txt
+
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">4|potato vegetable
+1|potato fruit
+2|banana vegetable
+1|banana 5.9
+2|banana fruit
+</pre>
+</div>
+<p>
+这里第一列是每个 <code>属性1 属性2</code> 对的数量，第二列是重复的 <code>属性1 属性2</code> 对的值。
+</p>
+
+<p>
+为了方便复用，我们可以定义一个 <code>one2many</code> 的函数：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell" id="org9319954"><span class="org-function-name">one2many</span>() {
+    <span class="org-variable-name">sep</span>=<span class="org-string">"$1"</span>                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#25968;&#25454;&#20998;&#38548;&#31526;</span>
+    <span class="org-variable-name">one</span>=<span class="org-string">"$2"</span>                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#23646;&#24615;1</span>
+    <span class="org-variable-name">many</span>=<span class="org-string">"$3"</span>                   <span class="org-comment-delimiter"># </span><span class="org-comment">&#23646;&#24615;2</span>
+    <span class="org-variable-name">file</span>=<span class="org-string">"$4"</span>                   <span class="org-comment-delimiter"># </span><span class="org-comment">&#25968;&#25454;&#25991;&#20214;&#36335;&#24452;</span>
+    awk -F<span class="org-string">"${sep}"</span> -v <span class="org-variable-name">one</span>=<span class="org-string">"${one}"</span> -v <span class="org-variable-name">many</span>=<span class="org-string">"${many}"</span> <span class="org-string">'$one != "" {b[$one][$many]++}</span>
+<span class="org-string">END {for (i in b)</span>
+<span class="org-string">         {if (length(b[i]) &gt; 1) {</span>
+<span class="org-string">            for (j in b[i])</span>
+<span class="org-string">                {print b[i][j] FS i FS j}}}}'</span> <span class="org-string">"${file}"</span>
+}
+</pre>
+</div>
+
+<p>
+这个函数与上面命令不同之处在于通过 <code>-F</code> 指定数据分隔符，通过 <code>-v</code> 将函数参数传递给 awk 变量，使用 <code>FS</code> 变量替代 <code>|</code> 作为数量与重复属性对之间的分隔符。
+</p>
+
+<p>
+那么，我们可以直接使用该函数进行数据检测：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">&lt;&lt;one2many&gt;&gt;
+one2many <span class="org-string">" "</span> 3 4 /tmp/test.txt
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">4 potato vegetable
+1 potato fruit
+2 banana vegetable
+1 banana 5.9
+2 banana fruit
+</pre>
+</div>
+
+<p>
+修复相对来说就比较简单了，我们首先创建一个查询表，用来查询 <code>属性1</code> 对应的 <code>属性2</code>,这个查询可以从 <code>one2many</code> 函数的结果中截取：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">&lt;&lt;one2many&gt;&gt;
+one2many <span class="org-string">" "</span> 3 4 /tmp/test.txt |sed -n <span class="org-string">'1p;5p'</span> |tee /tmp/lookup
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">4 potato vegetable
+2 banana fruit
+</pre>
+</div>
+
+<p>
+然后在 awk 中查询 <code>属性1</code> 的值若在查询表中则将 <code>属性2</code> 的值直接改为查询表中的对应结果：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">awk <span class="org-string">'FNR==NR {lookup[$1]=$2; next} # &#36890;&#36807;FNR==NR&#21028;&#26029;&#26159;&#21542;&#22312;&#36941;&#21382;&#26597;&#35810;&#34920;&#25991;&#20214;</span>
+<span class="org-string">$3 in lookup {$4=lookup[$3]} 1'</span> /tmp/lookup /tmp/test.txt <span class="org-comment-delimiter"># </span><span class="org-comment">awk &#26368;&#21518;&#37027;&#20010;1&#34920;&#31034;&#25191;&#34892;awk &#30340;&#40664;&#35748;&#25805;&#20316;&#65292;&#21363;&#36755;&#20986;$0</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">saleID  date    item    class   kg
+001     2021-01-02      capsicum        vegetable       11.9
+002     2021-01-02      banana  fruit   12.7
+003     2021-01-02      capsicum        vegetable       3.7
+004     2021-01-02      potato  vegetable       4.1
+005     2021-01-02      capsicum        vegetable       6.0
+006     2021-01-02      potato  fruit   13.0
+007     2021-01-02      banana  vegetable       9.1
+008     2021-01-02      potato  vegetable       15.0
+009     2021-01-02      apple   fruit   5.6
+010     2021-01-02      banana  fruit   7.7
+011     2021-01-02      pumpkin vegetable       8.3
+012     2021-01-02      pumpkin vegetable       5.6
+013     2021-01-02      apple   fruit   3.5
+014     2021-01-02      pumpkin vegetable       5.3
+015     2021-01-02      capsicum        vegetable       10.3
+016     2021-01-03      apple   fruit   12.2
+017     2021-01-03      pumpkin vegetable       12.6
+018     2021-01-03      potato  vegetable       4.4
+019     2021-01-03      apple   fruit   12.5
+020     2021-01-03      pumpkin vegetable       11.6
+021     2021-01-03      banana  vegetable       14.5
+022     2021-01-03      capsicum        vegetable       4.1
+023     2021-01-03      banana          5.9
+024     2021-01-03      potato  vegetable       4.8
+025     2021-01-03      apple   fruit   15.6
+</pre>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2021-04-15</span>
+    <span title="last modification date" class="post-info">2021-04-15</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-72b15419-e35f-4605-9a73-2affa6f51f10">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
