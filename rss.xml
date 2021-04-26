@@ -4,10 +4,132 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 16 Apr 2021 07:23:04 UTC</pubDate>
-    <lastBuildDate>Fri, 16 Apr 2021 07:23:04 UTC</lastBuildDate>
+    <pubDate>Mon, 26 Apr 2021 03:45:51 UTC</pubDate>
+    <lastBuildDate>Mon, 26 Apr 2021 03:45:51 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>为ping命令增加时间信息的正确方法</title>
+<link>https://lujun9972.github.io/blog/2021/04/26/为ping命令增加时间信息的正确方法/index.html</link>
+<description>不知道为什么，在网上搜索为 ping 命令增加时间信息方法时，给出来得解决方案都是将 ping 命令的结果传递给一个循环，然后在循环内生成时间。
+
+这个循环可能是一个流式处理命令，比如 awk:
+#+begin_src shell :results org
+  ping www.baidu.com -c 5 | awk &#39;{ print strftime(&quot;%Y-%m-%d %H:%M:%S&quot;,systime())&quot;\t&quot;$0 }&#39;
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+2021-04-26 11:26:24	PING www.a.shifen.com (14.215.177.38) 56(84) bytes of data.
+2021-04-26 11:26:24	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=1 ttl=52 time=12.1 ms
+2021-04-26 11:26:24	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=2 ttl=52 time=9.51 ms
+2021-04-26 11:26:25	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=3 ttl=52 time=18.4 ms
+2021-04-26 11:26:26	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=4 ttl=52 time=15.4 ms
+2021-04-26 11:26:27	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=5 ttl=52 time=9.81 ms
+2021-04-26 11:26:27	
+2021-04-26 11:26:27	--- www.a.shifen.com ping statistics ---
+2021-04-26 11:26:27	5 packets transmitted, 5 received, 0% packet loss, time 10077ms
+2021-04-26 11:26:27	rtt min/avg/max/mdev = 9.519/13.089/18.481/3.432 ms
+#+end_src
+
+也可能是一个 while 循环语句：
+#+begin_src shell :results org
+  ping www.baidu.com -c 5 |while read result
+  do
+      echo &quot;$(date) ${result}&quot;
+  done
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+2021年 04月 26日 星期一 11:25:09 CST PING www.a.shifen.com (14.215.177.38) 56(84) bytes of data.
+2021年 04月 26日 星期一 11:25:09 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=1 ttl=52 time=8.73 ms
+2021年 04月 26日 星期一 11:25:09 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=2 ttl=52 time=16.4 ms
+2021年 04月 26日 星期一 11:25:10 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=3 ttl=52 time=9.98 ms
+2021年 04月 26日 星期一 11:25:11 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=4 ttl=52 time=10.8 ms
+2021年 04月 26日 星期一 11:25:12 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=5 ttl=52 time=17.3 ms
+2021年 04月 26日 星期一 11:25:12 CST 
+2021年 04月 26日 星期一 11:25:12 CST --- www.a.shifen.com ping statistics ---
+2021年 04月 26日 星期一 11:25:12 CST 5 packets transmitted, 5 received, 0% packet loss, time 7043ms
+2021年 04月 26日 星期一 11:25:12 CST rtt min/avg/max/mdev = 8.731/12.684/17.392/3.548 ms
+#+end_src
+
+但是这有个问题，那就是时间戳不是由 =ping= 命令生成的，而是在循环体内生成的。这就导致若我们在时间戳生成之前用 =sed= 和 =awk= 之类的命令对 =ping= 结果加工后，由于它们的缓存机制会使得输出到循环的时间比实际 ping 命令产生结果的时间产生较大差别。
+
+例如下面命令的输出中，生成的时间是同一秒，这明显是不对的。
+#+begin_src shell :results org
+  ping www.baidu.com -c 5|awk &#39;1&#39; | awk &#39;{ print strftime(&quot;%Y-%m-%d %H:%M:%S&quot;,systime())&quot;\t&quot;$0 }&#39;
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+2021-04-26 11:27:01	PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
+2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=13.2 ms
+2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=8.32 ms
+2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=18.1 ms
+2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=8.61 ms
+2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=9.09 ms
+2021-04-26 11:27:01	
+2021-04-26 11:27:01	--- www.a.shifen.com ping statistics ---
+2021-04-26 11:27:01	5 packets transmitted, 5 received, 0% packet loss, time 4052ms
+2021-04-26 11:27:01	rtt min/avg/max/mdev = 8.322/11.492/18.191/3.794 ms
+#+end_src
+
+
+事实上，通过查看 =ping= 命令的 manual, 我们可以发现 ping 命令的 =-D= 选项本身就会为每一行输出生成时间戳：
+#+begin_example
+   -D     Print timestamp (unix time + microseconds as in gettimeofday) before each line.
+#+end_example
+
+#+begin_src shell :results org
+  ping -c 5 www.baidu.com -D
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
+[1619407749.478198] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=8.86 ms
+[1619407749.492436] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=13.8 ms
+[1619407750.493666] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=13.4 ms
+[1619407751.492797] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=10.5 ms
+[1619407752.501662] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=17.1 ms
+
+--- www.a.shifen.com ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 4042ms
+rtt min/avg/max/mdev = 8.861/12.776/17.120/2.861 ms
+#+end_src
+
+唯一的问题就是这个时间戳采取的是是从1970年1月1日（UTC/GMT的午夜）开始所经过的秒数，不方便理解，但是没关系，我们可以用 =date= 进行一下转换：
+#+begin_src shell :results org
+  ping -c 5 www.baidu.com -D |awk &#39;1&#39; |while read result
+  do
+      if [[ &quot;${result}&quot; =~ &quot;[&quot; ]] # 以 [ 开头的行带时间戳
+      then
+         read timestamp rest &lt; &lt;(echo ${result}|tr -d &#39;[]&#39;)
+         echo $(date -d @${timestamp}) &quot;${rest}&quot;
+         else
+             echo &quot;${result}&quot;
+      fi
+  done
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
+2021年 04月 26日 星期一 11:41:25 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=8.97 ms
+2021年 04月 26日 星期一 11:41:25 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=7.89 ms
+2021年 04月 26日 星期一 11:41:26 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=27.3 ms
+2021年 04月 26日 星期一 11:41:27 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=20.6 ms
+2021年 04月 26日 星期一 11:41:28 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=22.2 ms
+
+--- www.a.shifen.com ping statistics ---
+5 packets transmitted, 5 received, 0% packet loss, time 4069ms
+rtt min/avg/max/mdev = 7.897/17.425/27.343/7.671 ms
+#+end_src
+</description>
+<pubDate>2021-04-26</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/04/26/为ping命令增加时间信息的正确方法/index.html</guid>
+</item>
 <item>
 <title>在Linux下创建内存磁盘的不同方法及区别</title>
 <link>https://lujun9972.github.io/blog/2021/04/16/在linux下创建内存磁盘的不同方法及区别/index.html</link>
@@ -368,25 +490,6 @@ saleID	date	item	class	kg
 </description>
 <pubDate>2021-02-01</pubDate>
 <guid>https://lujun9972.github.io/blog/2021/02/01/笑话理解之letter/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Bark</title>
-<link>https://lujun9972.github.io/blog/2021/01/25/笑话理解之bark/index.html</link>
-<description>* Bark
-#+begin_example
-  Teacher: &quot;What do we call the outer part of a tree?&quot;
-
-  Pupil: &quot;Don&#39;t know Miss!&quot;
-
-  Teacher: &quot;Bark, silly, bark!&quot;
-
-  Pupil: &quot;Woof, woof!&quot;
-#+end_example
-
-=Bark= 既有 =树皮= 的意思，也有 =狗叫= 的意思。
-</description>
-<pubDate>2021-01-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/01/25/笑话理解之bark/index.html</guid>
 </item>
 </channel>
 </rss>
