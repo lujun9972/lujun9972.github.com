@@ -4,10 +4,202 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 15 Jun 2021 11:12:34 UTC</pubDate>
-    <lastBuildDate>Tue, 15 Jun 2021 11:12:34 UTC</lastBuildDate>
+    <pubDate>Tue, 27 Jul 2021 05:04:23 UTC</pubDate>
+    <lastBuildDate>Tue, 27 Jul 2021 05:04:23 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>AIX中的timeout脚本</title>
+<link>https://lujun9972.github.io/blog/2021/07/27/aix中的timeout脚本/index.html</link>
+<description>AIX 下没有现成的 =timeout= 命令来限时运行命令，于是就想着自己实现一个类似的脚本。本来以为挺简单的一件事情，结果埋者一堆坑。
+
+最后的结果如下：
+#+begin_src shell 
+  #! /usr/bin/ksh
+  waitfor=$1
+  shift
+  command=$*
+  $command &amp;
+  commandpid=$!
+  (sleep $waitfor;kill $commandpid) &amp; # 坑1
+  watchdogpid=$!
+  wait $commandpid
+  kill $watchdogpid               # 坑2
+#+end_src
+
+这里有两个需要关注的地方：
+1. =(sleep $waitof;kill $commandpid) &amp;= 在超时杀掉工作命令后就退出了，工作命令被杀掉之后 =wait $commandpid= 执行完成，主进程继续执行 =kill $watchdogpid=.
+   然而由于监控进程早已退出，在忙碌的系统中，可能出现 =$watchdogpid= 被其他进程重复使用，导致误杀其他进程的风险。
+   要解决这一风险，可以让监控进程在杀掉工作进程后再等待一段时间，以便让主进程杀掉监控进程。
+2. =kill $watchdogpid= 在 =ksh= 中并不会把子进程一起杀掉，也就是说 =sleep $waitfor= 这个进程依然在运行，只不过父进程从 =$watchdogpid= 变成了 =1=.
+   不仅如此 =AIX= 上的 =kill= 居然不支持 =PID= 为负数的情况，这使得妄想通过 =kill -$watchdogpid= 杀掉整个进程组变得不可能。
+
+
+最后经过尝试，发现在ksh交互模式下，用 =kill %jobID= 的方式是能够将整个 =JOB= 杀干净的，因此最后的结果如下：
+#+begin_src shell 
+  #! /usr/bin/ksh -i
+  waitfor=$1
+  shift
+  command=$*
+  $command &amp;
+  commandpid=$!
+  (sleep $waitfor;kill $commandpid;sleep 1) &amp;
+  wait $commandpid
+  kill %2 &gt;/dev/null 2&gt;&amp;1
+#+end_src
+
+不过这种实现有个比较大的缺点就是由于整个实现实在交互式ksh环境中执行的，因此会污染 ksh 的 history 命令历史。
+</description>
+<pubDate>2021-07-27</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/07/27/aix中的timeout脚本/index.html</guid>
+</item>
+<item>
+<title>脚本获取TLS/SSL证书失效日期</title>
+<link>https://lujun9972.github.io/blog/2021/07/21/脚本获取tls-ssl证书失效日期/index.html</link>
+<description>从 https://www.cyberciti.biz/faq/find-check-tls-ssl-certificate-expiry-date-from-linux-unix/ 上看到的使用小脚本，记录一下
+
+在 Web 服务器上可以通过 TLS/SSL 来对服务器和浏览器之间的连接进行加密，TLS/SSL 使用 X509 证书来进行加密，当证书失效后浏览器访问该 Web 服务器就会出现错误提示。
+通过下面这个脚本能够获取 TLS/SSL 证书的生效日期和失效日期
+#+begin_src shell :var SERVER_NAME=&quot;www.baidu.com&quot; :var PORT=&quot;443&quot; :results org
+  exec 2&gt;/dev/null
+  openssl s_client -servername ${SERVER_NAME} -connect ${SERVER_NAME}:${PORT} | openssl x509 -noout -dates
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+notBefore=Jul  1 01:16:03 2021 GMT
+notAfter=Aug  2 01:16:03 2022 GMT
+#+end_src
+
+openssl 是一款非常好用的 TLS/SSL 诊断工具，这里用到了以下参数：
+
++ s_client :: 将 openssl 作为 TLS/SSL 客户端工具使用
++ -servername ${SERVER_NAME} :: 设置 TLS 的 SNI(Server Name Indication)扩展，该字段用来解决一个服务器拥有多个域名的情况
++ -connect ${SERVER_NAME}:${PORT} :: 指定要连接的TLS/SSL服务器的地址与端口
++ x509 :: X509证书数据解析工具
++ -noout :: 不显示证书内容，只显示证书的状态
++ -dates :: 输出 TLS/SSL 证书的生效日期与实效日期
+
+我们还可以使用 =openssl x509= 直接解析 PEM格式的证书文件：
+#+begin_src shell
+openssl x509 -noout -dates ${PEM_FILE_PATH}
+#+end_src
+
+我们甚至可以直接检查证书是否会在多少秒后失效，从而达到预警的效果：
+#+begin_src shell :var SERVER_NAME=&quot;www.baidu.com&quot; :var PORT=&quot;443&quot; :results org
+  exec 2&gt;/dev/null
+  openssl s_client -servername ${SERVER_NAME} -connect ${SERVER_NAME}:${PORT} | openssl x509 -noout -checkend $((365*24*3600))
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+Certificate will not expire
+#+end_src
+</description>
+<pubDate>2021-07-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/07/21/脚本获取tls-ssl证书失效日期/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Fission</title>
+<link>https://lujun9972.github.io/blog/2021/06/24/笑话理解之fission/index.html</link>
+<description>#+begin_example
+  What can you do in radiation-contaminated rivers?
+
+  Nuclear fission.
+#+end_example
+
+=fission= 音同 =fishing=
+</description>
+<pubDate>2021-06-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之fission/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Funny</title>
+<link>https://lujun9972.github.io/blog/2021/06/24/笑话理解之funny/index.html</link>
+<description>* taste of clowns
+
+#+begin_example
+  Why don&#39;t cannibals eat clowns?
+
+  Because they taste funny!
+#+end_example
+
+=funny= 既有 =好笑= 也有 =古怪= 的意思
+</description>
+<pubDate>2021-06-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之funny/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Move</title>
+<link>https://lujun9972.github.io/blog/2021/06/24/笑话理解之move/index.html</link>
+<description>* When will my baby move?
+#+begin_example
+  I&#39;m two months pregnant now. When will my baby move?
+
+  With any luck, right after it finishes college.
+#+end_example
+
+=move= 既有 =动= 的意思，也有 =离家= 的意思
+</description>
+<pubDate>2021-06-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之move/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Muffin</title>
+<link>https://lujun9972.github.io/blog/2021/06/24/笑话理解之muffin/index.html</link>
+<description>#+begin_example
+  A little girl goes to the barbers with her dad and stands next to the chair eating a muffin while her dad gets a haircut.
+
+  The barber smiles at her and says: &quot;Your gonna get hair on your muffin!&quot;
+
+  &quot;I know&quot; she says &quot;im gonna get tits too you dirty old bastard!&quot;
+#+end_example
+
+=hair= 即可以指 =头发=,也可以统指 =毛发=, =muffin= 是 =松饼= 的意思，同时也是 =女阴= 的粗俗说法。
+</description>
+<pubDate>2021-06-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之muffin/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Solution</title>
+<link>https://lujun9972.github.io/blog/2021/06/24/笑话理解之solution/index.html</link>
+<description>* teach a blonde maths
+#+begin_example
+  How do you teach a blonde maths?
+
+  Add a bed, subtract her knickers, divide her legs, enter your square root, leave your solution and hope she doesn&#39;t multiply!
+#+end_example
+
+=solution= 既有 =解决方案= 的意思，也有 =溶液= 的意思。
+</description>
+<pubDate>2021-06-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之solution/index.html</guid>
+</item>
+<item>
+<title>ftp中的put命令</title>
+<link>https://lujun9972.github.io/blog/2021/06/17/ftp中的put命令/index.html</link>
+<description>一次程序缺陷，让我发现了对 ftp 中 put 指令的一些误解(vsftpd 2.2.2,其他fpt服务软件是不是这样每试验过)：
+
+FTP 中的 put 指令分两种格式，一种是 =put 源文件=, 一种是 =put 源文件 目标文件地址=.
+其中 =put 源文件 目标文件地址= 的意义很明确，就是把 =本地的源文件= 发送到 =远程主机的目标文件地址=.
+误解在于 =put 源文件= 这种格式上，我曾经天真的以为这种格式就是把 =本地的源文件= 发送到 =远程主机的当前目录下=,但是这件事情没有想象中那么简单。
+事实上，若 =源文件= 中不带目录，那么结果确实是把 =本地的源文件= 发送到 =远程主机的当前目录下=,
+但是若 =源文件= 中带目录，那么结果是把 =本地的源文件= 发送到 =远程主机的相应目录下=.
+
+总结起来如下表所示：
+
+| 指令                             | 意义                                                                                          |
+|----------------------------------+-----------------------------------------------------------------------------------------------|
+| put file                         | 把 file 上传到远程主机的当前目录下                                                            |
+| put srcDir/file                  | 把 srcDir/file 上传为远程主机的 srcDir/file ,若 srcDir 不存在会提示 533 Could not create file |
+| put file destDir                 | 不会成功，因为 destDir 无法替换成 file                                                        |
+| put srcDir/file destDir          | 不会成功，因为 destDir 无法替换成 file                                                        |
+| put file destDir/destFile        | 把 file 上传为远程主机的 srcDir/destFile                                                      |
+| put srcDir/file destDir/destFile | 把 srcDir/file 上传为远程主机的 srcDir/destFile                                               |
+</description>
+<pubDate>2021-06-18</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/06/17/ftp中的put命令/index.html</guid>
+</item>
 <item>
 <title>eva-after-load与mode-hook的区别</title>
 <link>https://lujun9972.github.io/blog/2021/06/15/eva-after-load与mode-hook的区别/index.html</link>
@@ -210,261 +402,6 @@ curl -so /dev/null -w &quot;dnslookup: %{time_namelookup} | connect: %{time_conn
 </description>
 <pubDate>2021-06-08</pubDate>
 <guid>https://lujun9972.github.io/blog/2021/06/08/使用curl进行网站测速/index.html</guid>
-</item>
-<item>
-<title>Anki卡片共享CSS的方法</title>
-<link>https://lujun9972.github.io/blog/2021/05/24/anki卡片共享css的方法/index.html</link>
-<description>Anki 允许为不同的卡片类型设置不同的CSS样式，但有时我们会希望在多个卡片类型之间共享同一份样式以保证卡片展示的一致性。
-由于 =collection.media= 目录中的文件所有卡片都能访问，因此可以将该目录作为中转中心实现卡片间共享CSS的目的。
-
-1. 将 CSS 文件放在 =collection.media= 目录中
-
-   Windows下该目录所在路径为 =%appdata%\Anki2\用户\collection.media\=
-
-   Linux下该目录所在路径为 =~/.local/share/Anki2/用户/collection.media=
-
-   MAC下该目录路径为 =~/Library/Application Support/Anki2/用户/collection.media=
-
-2. 为了防止 CSS 文件在 =检查媒体= 时被作为无用媒体文件删除，CSS 文件需以下划线(=_=)开头。
-
-   #+begin_src shell
-     cat _anki_base.css
-   #+end_src
-
-   #+begin_src css
-     .extra{
-         margin-top:15px;
-         font-size:16px;
-         color: black;
-         text-align:left;
-     }
-   #+end_src
-
-3. 编辑卡片样式，在样式中通过 =@import url(&quot;_anki_base.css&quot;);= 引入共享的CSS文件。
-[[file:images/share_css_in_anki.png]]   
-</description>
-<pubDate>2021-05-24</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/05/24/anki卡片共享css的方法/index.html</guid>
-</item>
-<item>
-<title>bash中的&#39;&#39;与$&#39;&#39;</title>
-<link>https://lujun9972.github.io/blog/2021/05/17/bash中的&#39;&#39;与$&#39;&#39;/index.html</link>
-<description>之前我一直以为bash中的单引号字符串中是可以通过反斜线(\)来转义单引号的，但是通过查阅 =bash manual= 发现这是我的错觉。
-
-bash中的单引号字符串(&#39;xxxx&#39;)会 *完全* 保留字符的字面意义，单引号是无法包含在其中,反斜杠在单引号字符串中表示的就是反斜杠，而不是转义符号。
-
-如果想要引用单引号(&#39;)需要使用 =$&#39;xxxx&#39;= 这种格式，它会尽可能保留字符字面意义的情况下支持通过反斜杠(\)进行转义。
-</description>
-<pubDate>2021-05-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/05/17/bash中的&#39;&#39;与$&#39;&#39;/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Birds and bees</title>
-<link>https://lujun9972.github.io/blog/2021/05/17/笑话理解之birds-and-bees/index.html</link>
-<description>* birds and bees
-#+begin_example
-  A father asked his son, Little Johnny, if he knew about the birds and the bees.
-
-  &quot;I don&#39;t want to know!&quot; Little Johnny said, exploding and bursting into tears. Confused, his father asked Little Johnny what was wrong.
-
-  &quot;Oh Pop,&quot; Johnny sobbed, &quot;for me there was no Santa Claus at age six, no Easter Bunny at seven, and no Tooth Fairy at eight. And if you&#39;re telling me now that grown ups don&#39;t really have sex, I&#39;ve got nothing left to believe in!&quot;[2021-05-13 周四 06:30]
-#+end_example
-
-=birds and bees= 是 =性事= 的委婉说法
-</description>
-<pubDate>2021-05-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/05/17/笑话理解之birds-and-bees/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Pull out</title>
-<link>https://lujun9972.github.io/blog/2021/05/17/笑话理解之pull-out/index.html</link>
-<description>* why don&#39;t big planes have baby planes?&quot;
-#+begin_example
-  A mother and her son were flying Southwest Airlines from Kansas City to Chicago. The son (who had been looking out the window) turned to his mother and asked, &quot;If big dogs have baby dogs and big cats have baby cats, why don&#39;t big planes have baby planes?&quot;
-
-  The mother (who couldn&#39;t think of an answer) told her son to ask the stewardess. So the boy asked the stewardess, &quot;If big dogs have baby dogs and big cats have baby cats, why don&#39;t big planes have baby planes?&quot;
-
-  The stewardess responded, &quot;Did your mother tell you to ask me?&quot; The boy admitted that this was the case. &quot;Well, then, tell your mother that there are no baby planes because Southwest always pulls out on time. Your mother can explain that to you.&quot;
-#+end_example
-
-=pull out= 有 =起飞= 的意思，也有 =拔出= 的意思。
-</description>
-<pubDate>2021-05-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/05/17/笑话理解之pull-out/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Change</title>
-<link>https://lujun9972.github.io/blog/2021/05/07/笑话理解之change/index.html</link>
-<description>* no change
-#+begin_example
-  A man was rushed in to hospital yesterday because he swallowed a five pound note.
-
-  They are keeping him in for observation on his condition - but so far there has been no change!
-#+end_example
-
-=change= 有 =改变= 的意思，也有 =零钱= 的意思。
-</description>
-<pubDate>2021-05-07</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/05/07/笑话理解之change/index.html</guid>
-</item>
-<item>
-<title>为ping命令增加时间信息的正确方法</title>
-<link>https://lujun9972.github.io/blog/2021/04/26/为ping命令增加时间信息的正确方法/index.html</link>
-<description>不知道为什么，在网上搜索为 ping 命令增加时间信息方法时，给出来得解决方案都是将 ping 命令的结果传递给一个循环，然后在循环内生成时间。
-
-这个循环可能是一个流式处理命令，比如 awk:
-#+begin_src shell :results org
-  ping www.baidu.com -c 5 | awk &#39;{ print strftime(&quot;%Y-%m-%d %H:%M:%S&quot;,systime())&quot;\t&quot;$0 }&#39;
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-2021-04-26 11:26:24	PING www.a.shifen.com (14.215.177.38) 56(84) bytes of data.
-2021-04-26 11:26:24	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=1 ttl=52 time=12.1 ms
-2021-04-26 11:26:24	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=2 ttl=52 time=9.51 ms
-2021-04-26 11:26:25	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=3 ttl=52 time=18.4 ms
-2021-04-26 11:26:26	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=4 ttl=52 time=15.4 ms
-2021-04-26 11:26:27	64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=5 ttl=52 time=9.81 ms
-2021-04-26 11:26:27	
-2021-04-26 11:26:27	--- www.a.shifen.com ping statistics ---
-2021-04-26 11:26:27	5 packets transmitted, 5 received, 0% packet loss, time 10077ms
-2021-04-26 11:26:27	rtt min/avg/max/mdev = 9.519/13.089/18.481/3.432 ms
-#+end_src
-
-也可能是一个 while 循环语句：
-#+begin_src shell :results org
-  ping www.baidu.com -c 5 |while read result
-  do
-      echo &quot;$(date) ${result}&quot;
-  done
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-2021年 04月 26日 星期一 11:25:09 CST PING www.a.shifen.com (14.215.177.38) 56(84) bytes of data.
-2021年 04月 26日 星期一 11:25:09 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=1 ttl=52 time=8.73 ms
-2021年 04月 26日 星期一 11:25:09 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=2 ttl=52 time=16.4 ms
-2021年 04月 26日 星期一 11:25:10 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=3 ttl=52 time=9.98 ms
-2021年 04月 26日 星期一 11:25:11 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=4 ttl=52 time=10.8 ms
-2021年 04月 26日 星期一 11:25:12 CST 64 bytes from 14.215.177.38 (14.215.177.38): icmp_seq=5 ttl=52 time=17.3 ms
-2021年 04月 26日 星期一 11:25:12 CST 
-2021年 04月 26日 星期一 11:25:12 CST --- www.a.shifen.com ping statistics ---
-2021年 04月 26日 星期一 11:25:12 CST 5 packets transmitted, 5 received, 0% packet loss, time 7043ms
-2021年 04月 26日 星期一 11:25:12 CST rtt min/avg/max/mdev = 8.731/12.684/17.392/3.548 ms
-#+end_src
-
-但是这有个问题，那就是时间戳不是由 =ping= 命令生成的，而是在循环体内生成的。这就导致若我们在时间戳生成之前用 =sed= 和 =awk= 之类的命令对 =ping= 结果加工后，由于它们的缓存机制会使得输出到循环的时间比实际 ping 命令产生结果的时间产生较大差别。
-
-例如下面命令的输出中，生成的时间是同一秒，这明显是不对的。
-#+begin_src shell :results org
-  ping www.baidu.com -c 5|awk &#39;1&#39; | awk &#39;{ print strftime(&quot;%Y-%m-%d %H:%M:%S&quot;,systime())&quot;\t&quot;$0 }&#39;
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-2021-04-26 11:27:01	PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
-2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=13.2 ms
-2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=8.32 ms
-2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=18.1 ms
-2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=8.61 ms
-2021-04-26 11:27:01	64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=9.09 ms
-2021-04-26 11:27:01	
-2021-04-26 11:27:01	--- www.a.shifen.com ping statistics ---
-2021-04-26 11:27:01	5 packets transmitted, 5 received, 0% packet loss, time 4052ms
-2021-04-26 11:27:01	rtt min/avg/max/mdev = 8.322/11.492/18.191/3.794 ms
-#+end_src
-
-
-事实上，通过查看 =ping= 命令的 manual, 我们可以发现 ping 命令的 =-D= 选项本身就会为每一行输出生成时间戳：
-#+begin_example
-   -D     Print timestamp (unix time + microseconds as in gettimeofday) before each line.
-#+end_example
-
-#+begin_src shell :results org
-  ping -c 5 www.baidu.com -D
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
-[1619407749.478198] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=8.86 ms
-[1619407749.492436] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=13.8 ms
-[1619407750.493666] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=13.4 ms
-[1619407751.492797] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=10.5 ms
-[1619407752.501662] 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=17.1 ms
-
---- www.a.shifen.com ping statistics ---
-5 packets transmitted, 5 received, 0% packet loss, time 4042ms
-rtt min/avg/max/mdev = 8.861/12.776/17.120/2.861 ms
-#+end_src
-
-唯一的问题就是这个时间戳采取的是是从1970年1月1日（UTC/GMT的午夜）开始所经过的秒数，不方便理解，但是没关系，我们可以用 =date= 进行一下转换：
-#+begin_src shell :results org
-  ping -c 5 www.baidu.com -D |awk &#39;1&#39; |while read result
-  do
-      if [[ &quot;${result}&quot; =~ &quot;[&quot; ]] # 以 [ 开头的行带时间戳
-      then
-         read timestamp rest &lt; &lt;(echo ${result}|tr -d &#39;[]&#39;)
-         echo $(date -d @${timestamp}) &quot;${rest}&quot;
-         else
-             echo &quot;${result}&quot;
-      fi
-  done
-#+end_src
-
-#+RESULTS:
-#+begin_src org
-PING www.a.shifen.com (14.215.177.39) 56(84) bytes of data.
-2021年 04月 26日 星期一 11:41:25 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=1 ttl=52 time=8.97 ms
-2021年 04月 26日 星期一 11:41:25 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=2 ttl=52 time=7.89 ms
-2021年 04月 26日 星期一 11:41:26 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=3 ttl=52 time=27.3 ms
-2021年 04月 26日 星期一 11:41:27 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=4 ttl=52 time=20.6 ms
-2021年 04月 26日 星期一 11:41:28 CST 64 bytes from 14.215.177.39 (14.215.177.39): icmp_seq=5 ttl=52 time=22.2 ms
-
---- www.a.shifen.com ping statistics ---
-5 packets transmitted, 5 received, 0% packet loss, time 4069ms
-rtt min/avg/max/mdev = 7.897/17.425/27.343/7.671 ms
-#+end_src
-</description>
-<pubDate>2021-04-26</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/04/26/为ping命令增加时间信息的正确方法/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Cunt</title>
-<link>https://lujun9972.github.io/blog/2021/04/26/笑话理解之cunt/index.html</link>
-<description>
-* sad life of a penis
-#+begin_example
-  The sad life a penis: &quot;I only have one eye, my hair is a mess, my skin is wrinkly, and my relatives are nuts, my neighbor is an asshole and my best friend’s a cunt!&quot;
-#+end_example
-
-=nuts= 既有 =怪人= 的意思，也有 =睾丸= 的意思,
-=asshole= 既有 =肛门= 的意思，也有 =混蛋= 的意思，
-=cunt= 既有 =阴道= 的意思，也有 =笨蛋= 的意思。
-</description>
-<pubDate>2021-04-26</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/04/26/笑话理解之cunt/index.html</guid>
-</item>
-<item>
-<title>笑话理解之Devil</title>
-<link>https://lujun9972.github.io/blog/2021/04/26/笑话理解之devil/index.html</link>
-<description>* scared devil out of people
-#+begin_example
-  Some ecclesiastical gentlemen -- a cardinal, a couple of bishops and some others -- were waiting outside the Pearly Gates for St. Peter to open up.
-
-  He finally arrived, but just they were about to enter heaven St. Peter asked them to wait a moment and let a new arrival through first.
-
-  A sweet young thing in a mini-skirt arrived and was ushered through.
-
-  The cardinal was a bit upset about this and demanded an explanation from St. Peter. After all, they had been waiting outside for quite some time and were pillars of the church. How could a girl in a mini-skirt deserve better treatment?
-
-  St. Peter smiled and told him, &quot;While she was alive, that young lady drove a little yellow sports car. She regularly jumped red lights, overtook on blind corners, and generally scared the devil out of more people than all of you combined.&quot;
-#+end_example
-
-=scared devil out of people= 是把人吓得魂飞破散的意思，但字面意思可以理解为 =把魔鬼从人身体里吓出来=
-</description>
-<pubDate>2021-04-26</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/04/26/笑话理解之devil/index.html</guid>
 </item>
 </channel>
 </rss>
