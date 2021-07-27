@@ -1,0 +1,46 @@
+#+TITLE: AIX中的timeout脚本
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2021-07-27 二 11:12]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+AIX 下没有现成的 =timeout= 命令来限时运行命令，于是就想着自己实现一个类似的脚本。本来以为挺简单的一件事情，结果埋者一堆坑。
+
+最后的结果如下：
+#+begin_src shell 
+  #! /usr/bin/ksh
+  waitfor=$1
+  shift
+  command=$*
+  $command &
+  commandpid=$!
+  (sleep $waitfor;kill $commandpid) & # 坑1
+  watchdogpid=$!
+  wait $commandpid
+  kill $watchdogpid               # 坑2
+#+end_src
+
+这里有两个需要关注的地方：
+1. =(sleep $waitof;kill $commandpid) &= 在超时杀掉工作命令后就退出了，工作命令被杀掉之后 =wait $commandpid= 执行完成，主进程继续执行 =kill $watchdogpid=.
+   然而由于监控进程早已退出，在忙碌的系统中，可能出现 =$watchdogpid= 被其他进程重复使用，导致误杀其他进程的风险。
+   要解决这一风险，可以让监控进程在杀掉工作进程后再等待一段时间，以便让主进程杀掉监控进程。
+2. =kill $watchdogpid= 在 =ksh= 中并不会把子进程一起杀掉，也就是说 =sleep $waitfor= 这个进程依然在运行，只不过父进程从 =$watchdogpid= 变成了 =1=.
+   不仅如此 =AIX= 上的 =kill= 居然不支持 =PID= 为负数的情况，这使得妄想通过 =kill -$watchdogpid= 杀掉整个进程组变得不可能。
+
+
+最后经过尝试，发现在ksh交互模式下，用 =kill %jobID= 的方式是能够将整个 =JOB= 杀干净的，因此最后的结果如下：
+#+begin_src shell 
+  #! /usr/bin/ksh -i
+  waitfor=$1
+  shift
+  command=$*
+  $command &
+  commandpid=$!
+  (sleep $waitfor;kill $commandpid;sleep 1) &
+  wait $commandpid
+  kill %2 >/dev/null 2>&1
+#+end_src
+
+不过这种实现有个比较大的缺点就是由于整个实现实在交互式ksh环境中执行的，因此会污染 ksh 的 history 命令历史。
