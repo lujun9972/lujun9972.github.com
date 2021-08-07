@@ -44,3 +44,21 @@ AIX 下没有现成的 =timeout= 命令来限时运行命令，于是就想着�
 #+end_src
 
 不过这种实现有个比较大的缺点就是由于整个实现实在交互式ksh环境中执行的，因此会污染 ksh 的 history 命令历史。
+
+
+* UPDATE:
+教新的 AIX 上搭载的 kill 命令是支持通过将 =PID= 设置为负值来杀掉整个进程组的，这样一来 =timeout= 的实现就简单很多了：
+#+begin_src shell 
+  timeout()
+  {
+      waitfor=$1
+      shift
+      command=$*
+      $command &
+      commandpid=$!
+      (sleep $waitfor;kill $commandpid;sleep 1) &
+      watchdogpid=$!
+      wait $commandpid
+      kill -$watchdogpid               # 杀掉整个进程组
+  }
+#+end_src
