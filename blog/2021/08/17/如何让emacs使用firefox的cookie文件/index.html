@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>如何让Emacs使用Firefox的Cookie文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">如何让Emacs使用Firefox的Cookie文件</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgbcb556e">Firefox cookie 文件的位置与格式</a></li>
+<li><a href="#orgb7f8345">Cookie 文件格式</a></li>
+<li><a href="#org9ae9e7f">导出 Cookie 文件</a></li>
+<li><a href="#orgb8d2aac">Emacs 中使用 Cookie 文件</a>
+<ul>
+<li><a href="#org77e3948">url package</a></li>
+<li><a href="#orgcbe5772">request package</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgbcb556e" class="outline-2">
+<h2 id="orgbcb556e">Firefox cookie 文件的位置与格式</h2>
+<div class="outline-text-2" id="text-orgbcb556e">
+<ul class="org-ul">
+<li>在 Windows 系统中， Firefox cookie 文件为 <code>%APPDATA%\Mozilla\Firefox\Profiles\&lt;profile name&gt;\cookies.sqlite</code></li>
+<li>在 Linux 系统中， Firefox cookie 文件为 <code>~/.mozilla/firefox/&lt;profile name&gt;/cookies.sqlite</code></li>
+</ul>
+
+<p>
+Firefox cookie 文件是一个 SQLite3 的数据库，可以通过 <code>sqlite3</code> 打开，其中有一个名为 <code>moz_cookies</code> 的表存储着 cookie 的每条记录。
+该表的阿结构如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-sqlite">PRAGMA table_info(moz_cookies);
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-right">cid</td>
+<td class="org-left">name</td>
+<td class="org-left">type</td>
+<td class="org-right">notnull</td>
+<td class="org-left">dflt_value</td>
+<td class="org-right">pk</td>
+</tr>
+
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">id</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">1</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">originAttributes</td>
+<td class="org-left">TEXT</td>
+<td class="org-right">1</td>
+<td class="org-left">''</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">name</td>
+<td class="org-left">TEXT</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">3</td>
+<td class="org-left">value</td>
+<td class="org-left">TEXT</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">host</td>
+<td class="org-left">TEXT</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">5</td>
+<td class="org-left">path</td>
+<td class="org-left">TEXT</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">6</td>
+<td class="org-left">expiry</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">7</td>
+<td class="org-left">lastAccessed</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">8</td>
+<td class="org-left">creationTime</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">9</td>
+<td class="org-left">isSecure</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">10</td>
+<td class="org-left">isHttpOnly</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">&#xa0;</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">11</td>
+<td class="org-left">inBrowserElement</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">12</td>
+<td class="org-left">sameSite</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">13</td>
+<td class="org-left">rawSameSite</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+</tr>
+
+<tr>
+<td class="org-right">14</td>
+<td class="org-left">schemeMap</td>
+<td class="org-left">INTEGER</td>
+<td class="org-right">0</td>
+<td class="org-left">0</td>
+<td class="org-right">0</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-orgb7f8345" class="outline-2">
+<h2 id="orgb7f8345">Cookie 文件格式</h2>
+<div class="outline-text-2" id="text-orgb7f8345">
+<p>
+Cookie 文件其实就是一个文本文件，每行存储着一个 cookie 记录（＃ 开头的行除外，这是注释）。每条 cookie 记录由7个字段组成，通过 <code>TAB</code> 进行分隔。
+</p>
+
+<p>
+这些字段分别为：
+</p>
+
+<ul class="org-ul">
+<li>domain - cookie 所适用的域名</li>
+<li>flag - TRUE/FALSE 值，表示是否适用于所有 <code>domain</code> 下的子域名。</li>
+<li>path - 该cookie 适用的域名路径， <code>/</code> 表示任意路径都适用</li>
+<li>secure - TRUE/FALSE 值，表示是否只能通过 HTTPS 协议传递该 cookie 值。</li>
+<li>expiration - cookie 过期时间，它是从1970年1月1日起开始的秒数，或者0表示永不过期</li>
+<li>name - cookie 名</li>
+<li>value - cookie 值</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9ae9e7f" class="outline-2">
+<h2 id="org9ae9e7f">导出 Cookie 文件</h2>
+<div class="outline-text-2" id="text-org9ae9e7f">
+<p>
+由于 Emacs 不支持直接读写 <code>sqlite</code> 数据库，因此需要通过 <code>sqlite3</code> 命令将 <code>cookies.sqlite</code> 转换为标准的 Cookie 文件。
+</p>
+
+<p>
+脚本如下：
+</p>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> <span class="org-string">"# Netscape HTTP Cookie File"</span> &gt; $<span class="org-variable-name">COOKIEFILE</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">url package &#22312;&#21152;&#36733;&#22806;&#37096; Cookie &#25991;&#20214;&#26102;&#20250;&#26816;&#26597;&#36825;&#19968;&#34892;Cookie&#26631;&#24535;&#65292;&#22240;&#27492;&#36825;&#34892;&#27880;&#37322;&#19981;&#21487;&#32570;&#23569;&#12290;</span>
+sqlite3 -separator <span class="org-string">"\t"</span> $<span class="org-variable-name">COOKIEDB</span> &gt;&gt; $<span class="org-variable-name">COOKIEFILE</span> &lt;&lt;- EOF
+<span class="org-sh-heredoc">.mode tabs</span>
+<span class="org-sh-heredoc">.header off</span>
+<span class="org-sh-heredoc">select host,</span>
+<span class="org-sh-heredoc">case substr(host,1,1)='.' when 0 then 'FALSE' else 'TRUE' end,</span>
+<span class="org-sh-heredoc">path,</span>
+<span class="org-sh-heredoc">case isSecure when 0 then 'FALSE' else 'TRUE' end,</span>
+<span class="org-sh-heredoc">expiry,</span>
+<span class="org-sh-heredoc">name,</span>
+<span class="org-sh-heredoc">value</span>
+<span class="org-sh-heredoc">from moz_cookies;</span>
+<span class="org-sh-heredoc">EOF</span>
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-orgb8d2aac" class="outline-2">
+<h2 id="orgb8d2aac">Emacs 中使用 Cookie 文件</h2>
+<div class="outline-text-2" id="text-orgb8d2aac">
+</div>
+<div id="outline-container-org77e3948" class="outline-3">
+<h3 id="org77e3948">url package</h3>
+<div class="outline-text-3" id="text-org77e3948">
+<p>
+<code>url</code> 是 Emacs 自带的网络访问package,它将 Cookie 内容以 <code>elisp form</code> 的形式存储在了 <code>url-cookie-file</code> 所指代的文件中。不过它同时也提供了函数 <code>url-cookie-parse-file-netscape</code> 来加载外部的 Cookie 文件。
+</p>
+
+<pre class="example">
+(url-cookie-parse-file-netscape FILENAME &amp;optional LONG-SESSION)
+
+Load cookies from FILENAME in Netscape/Mozilla format.
+When LONG-SESSION is non-nil, session cookies (expiring at t=0
+i.e. 1970-1-1) are loaded as expiring one year from now instead.
+</pre>
+
+<p>
+例如：
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(url-cookie-parse-file-netscape COOKIEFILE)
+</pre>
+</div>
+
+<pre class="example">
+added 1073 cookies from file /tmp/cookie.txt
+
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgcbe5772" class="outline-3">
+<h3 id="orgcbe5772">request package</h3>
+<div class="outline-text-3" id="text-orgcbe5772">
+<p>
+request 有两个后端，一个是 <code>url</code> package 一个 <code>curl</code> 命令，当使用 <code>url</code> package 时使用 Cookie 文件的方式跟上面一样的。
+</p>
+
+<p>
+当使用 <code>curl</code> 命令是，它会从从 <code>request-storage-directory</code> 所指目录下的 <code>curl-cookie-jar</code> 中读取 Cookie 记录。
+因此，只需要将外部 Cookie 文件的内容添加到这个文件中就行了：
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-temp-file</span> (request--curl-cookie-jar)
+  (insert-file-contents (request--curl-cookie-jar))
+  (goto-char (point-max))
+  (insert-file-contents COOKIEFILE))
+</pre>
+</div>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<tbody>
+<tr>
+<td class="org-left">/tmp/cookie.txt</td>
+<td class="org-right">109313</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2021-08-17</span>
+    <span title="last modification date" class="post-info">2021-08-17</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-dfdcd139-e0f0-4694-a705-fa777f84bd31">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

@@ -4,10 +4,115 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 07 Aug 2021 10:42:16 UTC</pubDate>
-    <lastBuildDate>Sat, 07 Aug 2021 10:42:16 UTC</lastBuildDate>
+    <pubDate>Tue, 17 Aug 2021 12:45:41 UTC</pubDate>
+    <lastBuildDate>Tue, 17 Aug 2021 12:45:41 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>如何让Emacs使用Firefox的Cookie文件</title>
+<link>https://lujun9972.github.io/blog/2021/08/17/如何让emacs使用firefox的cookie文件/index.html</link>
+<description>* Firefox cookie 文件的位置与格式
++ 在 Windows 系统中， Firefox cookie 文件为 =%APPDATA%\Mozilla\Firefox\Profiles\&lt;profile name&gt;\cookies.sqlite=
++ 在 Linux 系统中， Firefox cookie 文件为 =~/.mozilla/firefox/&lt;profile name&gt;/cookies.sqlite=
+
+Firefox cookie 文件是一个 SQLite3 的数据库，可以通过 =sqlite3= 打开，其中有一个名为 =moz_cookies= 的表存储着 cookie 的每条记录。
+该表的阿结构如下：
+#+begin_src sqlite :db ~/work/cookies.sqlite :header
+PRAGMA table_info(moz_cookies);
+#+end_src
+
+#+RESULTS:
+| cid | name             | type    | notnull | dflt_value | pk |
+|   0 | id               | INTEGER |       0 |            |  1 |
+|   1 | originAttributes | TEXT    |       1 |         &#39;&#39; |  0 |
+|   2 | name             | TEXT    |       0 |            |  0 |
+|   3 | value            | TEXT    |       0 |            |  0 |
+|   4 | host             | TEXT    |       0 |            |  0 |
+|   5 | path             | TEXT    |       0 |            |  0 |
+|   6 | expiry           | INTEGER |       0 |            |  0 |
+|   7 | lastAccessed     | INTEGER |       0 |            |  0 |
+|   8 | creationTime     | INTEGER |       0 |            |  0 |
+|   9 | isSecure         | INTEGER |       0 |            |  0 |
+|  10 | isHttpOnly       | INTEGER |       0 |            |  0 |
+|  11 | inBrowserElement | INTEGER |       0 |          0 |  0 |
+|  12 | sameSite         | INTEGER |       0 |          0 |  0 |
+|  13 | rawSameSite      | INTEGER |       0 |          0 |  0 |
+|  14 | schemeMap        | INTEGER |       0 |          0 |  0 |
+
+* Cookie 文件格式
+Cookie 文件其实就是一个文本文件，每行存储着一个 cookie 记录（＃ 开头的行除外，这是注释）。每条 cookie 记录由7个字段组成，通过 =TAB= 进行分隔。
+
+这些字段分别为：
+
++ domain - cookie 所适用的域名
++ flag - TRUE/FALSE 值，表示是否适用于所有 =domain= 下的子域名。
++ path - 该cookie 适用的域名路径， =/= 表示任意路径都适用
++ secure - TRUE/FALSE 值，表示是否只能通过 HTTPS 协议传递该 cookie 值。
++ expiration - cookie 过期时间，它是从1970年1月1日起开始的秒数，或者0表示永不过期
++ name - cookie 名
++ value - cookie 值
+
+* 导出 Cookie 文件
+由于 Emacs 不支持直接读写 =sqlite= 数据库，因此需要通过 =sqlite3= 命令将 =cookies.sqlite= 转换为标准的 Cookie 文件。
+
+脚本如下：
+#+begin_src shell :var COOKIEDB=&quot;/home/lujun9972/work/cookies.sqlite&quot; :var COOKIEFILE=&quot;/tmp/cookie.txt&quot; :results org
+  echo &quot;# Netscape HTTP Cookie File&quot; &gt; $COOKIEFILE  # url package 在加载外部 Cookie 文件时会检查这一行Cookie标志，因此这行注释不可缺少。
+  sqlite3 -separator &quot;\t&quot; $COOKIEDB &gt;&gt; $COOKIEFILE &lt;&lt;- EOF
+  .mode tabs
+  .header off
+  select host,
+  case substr(host,1,1)=&#39;.&#39; when 0 then &#39;FALSE&#39; else &#39;TRUE&#39; end,
+  path,
+  case isSecure when 0 then &#39;FALSE&#39; else &#39;TRUE&#39; end,
+  expiry,
+  name,
+  value
+  from moz_cookies;
+  EOF
+#+end_src
+
+
+* Emacs 中使用 Cookie 文件
+
+** url package
+=url= 是 Emacs 自带的网络访问package,它将 Cookie 内容以 =elisp form= 的形式存储在了 =url-cookie-file= 所指代的文件中。不过它同时也提供了函数 =url-cookie-parse-file-netscape= 来加载外部的 Cookie 文件。
+
+#+begin_example
+  (url-cookie-parse-file-netscape FILENAME &amp;optional LONG-SESSION)
+
+  Load cookies from FILENAME in Netscape/Mozilla format.
+  When LONG-SESSION is non-nil, session cookies (expiring at t=0
+  i.e. 1970-1-1) are loaded as expiring one year from now instead.
+#+end_example
+
+例如：
+#+begin_src emacs-lisp :var COOKIEFILE=&quot;/tmp/cookie.txt&quot;
+  (url-cookie-parse-file-netscape COOKIEFILE)
+#+end_src
+
+#+RESULTS:
+: added 1073 cookies from file /tmp/cookie.txt
+
+** request package
+request 有两个后端，一个是 =url= package 一个 =curl= 命令，当使用 =url= package 时使用 Cookie 文件的方式跟上面一样的。
+
+当使用 =curl= 命令是，它会从从 =request-storage-directory= 所指目录下的 =curl-cookie-jar= 中读取 Cookie 记录。
+因此，只需要将外部 Cookie 文件的内容添加到这个文件中就行了：
+#+begin_src emacs-lisp :var COOKIEFILE=&quot;/tmp/cookie.txt&quot;
+  (with-temp-file (request--curl-cookie-jar)
+    (insert-file-contents (request--curl-cookie-jar))
+    (goto-char (point-max))
+    (insert-file-contents COOKIEFILE))
+#+end_src
+
+#+RESULTS:
+| /tmp/cookie.txt | 109313 |
+
+</description>
+<pubDate>2021-08-17</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/08/17/如何让emacs使用firefox的cookie文件/index.html</guid>
+</item>
 <item>
 <title>AIX中的timeout脚本</title>
 <link>https://lujun9972.github.io/blog/2021/07/27/aix中的timeout脚本/index.html</link>
@@ -305,21 +410,6 @@ FTP 中的 put 指令分两种格式，一种是 =put 源文件=, 一种是 =put
 </description>
 <pubDate>2021-06-18</pubDate>
 <guid>https://lujun9972.github.io/blog/2021/06/17/ftp中的put命令/index.html</guid>
-</item>
-<item>
-<title>eva-after-load与mode-hook的区别</title>
-<link>https://lujun9972.github.io/blog/2021/06/15/eva-after-load与mode-hook的区别/index.html</link>
-<description>从 [[https://stackoverflow.com/questions/2736087/eval-after-load-vs-mode-hook#:~:text=Code%20wrapped%20in%20eval-after-load%20will%20be%20executed%20only,code%2C%20there%27s%20no%20notion%20of%20the%20%22current%20buffer%22.][eval-after-load vs. mode hook]] 中看到的，记录一下。
-
-=eva-after-load= 与 =mode-hook= 都能用来对某个特点的 =mode= 进行设置，但是他们之间还是有一些区别的：
-
-+ eval-after-load 只会执行一次，因此通常用来对全局变量的默认值进行一次性的设置，而不会对 buffer-local 之类的变量进行设置
-+ eval-after-load 执行时， =current buffer= 为 =null=
-+ mode-hook 在每次有 buffer 进入指定 mode 时执行，因此它通常用来对某个具体的 buffer 进行设置
-+ mode-hook 执行的时间要晚于 =eval-after-load=
-</description>
-<pubDate>2021-06-15</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/06/15/eva-after-load与mode-hook的区别/index.html</guid>
 </item>
 </channel>
 </rss>
