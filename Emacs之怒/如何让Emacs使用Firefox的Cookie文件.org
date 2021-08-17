@@ -1,0 +1,106 @@
+#+TITLE: 如何让Emacs使用Firefox的Cookie文件
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2021-08-17 二 17:30]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* Firefox cookie 文件的位置与格式
++ 在 Windows 系统中， Firefox cookie 文件为 =%APPDATA%\Mozilla\Firefox\Profiles\<profile name>\cookies.sqlite=
++ 在 Linux 系统中， Firefox cookie 文件为 =~/.mozilla/firefox/<profile name>/cookies.sqlite=
+
+Firefox cookie 文件是一个 SQLite3 的数据库，可以通过 =sqlite3= 打开，其中有一个名为 =moz_cookies= 的表存储着 cookie 的每条记录。
+该表的阿结构如下：
+#+begin_src sqlite :db ~/work/cookies.sqlite :header
+PRAGMA table_info(moz_cookies);
+#+end_src
+
+#+RESULTS:
+| cid | name             | type    | notnull | dflt_value | pk |
+|   0 | id               | INTEGER |       0 |            |  1 |
+|   1 | originAttributes | TEXT    |       1 |         '' |  0 |
+|   2 | name             | TEXT    |       0 |            |  0 |
+|   3 | value            | TEXT    |       0 |            |  0 |
+|   4 | host             | TEXT    |       0 |            |  0 |
+|   5 | path             | TEXT    |       0 |            |  0 |
+|   6 | expiry           | INTEGER |       0 |            |  0 |
+|   7 | lastAccessed     | INTEGER |       0 |            |  0 |
+|   8 | creationTime     | INTEGER |       0 |            |  0 |
+|   9 | isSecure         | INTEGER |       0 |            |  0 |
+|  10 | isHttpOnly       | INTEGER |       0 |            |  0 |
+|  11 | inBrowserElement | INTEGER |       0 |          0 |  0 |
+|  12 | sameSite         | INTEGER |       0 |          0 |  0 |
+|  13 | rawSameSite      | INTEGER |       0 |          0 |  0 |
+|  14 | schemeMap        | INTEGER |       0 |          0 |  0 |
+
+* Cookie 文件格式
+Cookie 文件其实就是一个文本文件，每行存储着一个 cookie 记录（＃ 开头的行除外，这是注释）。每条 cookie 记录由7个字段组成，通过 =TAB= 进行分隔。
+
+这些字段分别为：
+
++ domain - cookie 所适用的域名
++ flag - TRUE/FALSE 值，表示是否适用于所有 =domain= 下的子域名。
++ path - 该cookie 适用的域名路径， =/= 表示任意路径都适用
++ secure - TRUE/FALSE 值，表示是否只能通过 HTTPS 协议传递该 cookie 值。
++ expiration - cookie 过期时间，它是从1970年1月1日起开始的秒数，或者0表示永不过期
++ name - cookie 名
++ value - cookie 值
+
+* 导出 Cookie 文件
+由于 Emacs 不支持直接读写 =sqlite= 数据库，因此需要通过 =sqlite3= 命令将 =cookies.sqlite= 转换为标准的 Cookie 文件。
+
+脚本如下：
+#+begin_src shell :var COOKIEDB="/home/lujun9972/work/cookies.sqlite" :var COOKIEFILE="/tmp/cookie.txt" :results org
+  echo "# Netscape HTTP Cookie File" > $COOKIEFILE  # url package 在加载外部 Cookie 文件时会检查这一行Cookie标志，因此这行注释不可缺少。
+  sqlite3 -separator "\t" $COOKIEDB >> $COOKIEFILE <<- EOF
+  .mode tabs
+  .header off
+  select host,
+  case substr(host,1,1)='.' when 0 then 'FALSE' else 'TRUE' end,
+  path,
+  case isSecure when 0 then 'FALSE' else 'TRUE' end,
+  expiry,
+  name,
+  value
+  from moz_cookies;
+  EOF
+#+end_src
+
+
+* Emacs 中使用 Cookie 文件
+
+** url package
+=url= 是 Emacs 自带的网络访问package,它将 Cookie 内容以 =elisp form= 的形式存储在了 =url-cookie-file= 所指代的文件中。不过它同时也提供了函数 =url-cookie-parse-file-netscape= 来加载外部的 Cookie 文件。
+
+#+begin_example
+  (url-cookie-parse-file-netscape FILENAME &optional LONG-SESSION)
+
+  Load cookies from FILENAME in Netscape/Mozilla format.
+  When LONG-SESSION is non-nil, session cookies (expiring at t=0
+  i.e. 1970-1-1) are loaded as expiring one year from now instead.
+#+end_example
+
+例如：
+#+begin_src emacs-lisp :var COOKIEFILE="/tmp/cookie.txt"
+  (url-cookie-parse-file-netscape COOKIEFILE)
+#+end_src
+
+#+RESULTS:
+: added 1073 cookies from file /tmp/cookie.txt
+
+** request package
+request 有两个后端，一个是 =url= package 一个 =curl= 命令，当使用 =url= package 时使用 Cookie 文件的方式跟上面一样的。
+
+当使用 =curl= 命令是，它会从从 =request-storage-directory= 所指目录下的 =curl-cookie-jar= 中读取 Cookie 记录。
+因此，只需要将外部 Cookie 文件的内容添加到这个文件中就行了：
+#+begin_src emacs-lisp :var COOKIEFILE="/tmp/cookie.txt"
+  (with-temp-file (request--curl-cookie-jar)
+    (insert-file-contents (request--curl-cookie-jar))
+    (goto-char (point-max))
+    (insert-file-contents COOKIEFILE))
+#+end_src
+
+#+RESULTS:
+| /tmp/cookie.txt | 109313 |
+
