@@ -4,10 +4,68 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 17 Aug 2021 12:45:41 UTC</pubDate>
-    <lastBuildDate>Tue, 17 Aug 2021 12:45:41 UTC</lastBuildDate>
+    <pubDate>Fri, 24 Sep 2021 02:28:15 UTC</pubDate>
+    <lastBuildDate>Fri, 24 Sep 2021 02:28:15 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>如何更改url package访问HTTP时的user-agent header</title>
+<link>https://lujun9972.github.io/blog/2021/09/24/如何更改url-package访问http时的user-agent-header/index.html</link>
+<description>有些网站会根据 http request 中的 user-agent header 的值返回不同的response，例如 http://wttr.in 会根据就会根据 user-agent 是否为 curl 来决定是返回带图片的HTML，还是字符拼接图案的文本。
+
+一开始我以为修改 =url package= 中的 =user-agent= 就是直接把相应的 header 内容加到 =url-request-extra-headers= 中就行了，事实证明我还是太天真了，这样做的后果是会产生两个 =user-agent= header...
+#+begin_src emacs-lisp :results org
+  (let ((url-debug t)
+        (url-request-extra-headers &#39;((&quot;User-Agent&quot; . &quot;curl/7.78.0&quot;))))
+    (kill-buffer (url-retrieve-synchronously &quot;http://wttr.in&quot;))
+    (with-current-buffer &quot;*URL-DEBUG*&quot;
+      (keep-lines &quot;^User-Agent&quot; (point-min) (point-max))
+      (buffer-substring-no-properties (point-min) (point-max))))
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+User-Agent: URL/Emacs Emacs/28.0.50 (X11; x86_64-pc-linux-gnu)
+User-Agent: curl/7.78.0
+#+end_src
+
+在翻阅了 [[https://www.gnu.org/software/emacs/manual/html_mono/url.html][url manual]] 之后才知道，原来 =url= 专门有个变量用来控制 user-agent:
+#+begin_example
+  url-user-agent is a variable defined in ‘url-vars.el’.
+
+  Its value is ‘default’
+
+    You can customize this variable.
+    This variable was introduced, or its default value was changed, in
+    version 26.1 of Emacs.
+    Probably introduced at or before Emacs version 25.1.
+
+  User Agent used by the URL package for HTTP/HTTPS requests.
+  Should be one of:
+  ,* A string (not including the &quot;User-Agent:&quot; prefix)
+  ,* A function of no arguments, returning a string
+  ,* ‘default’ (to compute a value according to ‘url-privacy-level’)
+  ,* nil (to omit the User-Agent header entirely)
+#+end_example
+
+所以修改 =user-agent= header 的正确方法是修改 =url-user-agent= 这个变量的值:
+#+begin_src emacs-lisp :results org
+  (let ((url-debug t)
+        (url-user-agent &quot;curl/7.78.0&quot;))
+    (kill-buffer (url-retrieve-synchronously &quot;http://wttr.in&quot;))
+    (with-current-buffer &quot;*URL-DEBUG*&quot;
+      (keep-lines &quot;^User-Agent&quot; (point-min) (point-max))
+      (buffer-substring-no-properties (point-min) (point-max))))
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+User-Agent: curl/7.78.0
+#+end_src
+</description>
+<pubDate>2021-09-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2021/09/24/如何更改url-package访问http时的user-agent-header/index.html</guid>
+</item>
 <item>
 <title>如何让Emacs使用Firefox的Cookie文件</title>
 <link>https://lujun9972.github.io/blog/2021/08/17/如何让emacs使用firefox的cookie文件/index.html</link>
@@ -385,31 +443,6 @@ Certificate will not expire
 </description>
 <pubDate>2021-06-24</pubDate>
 <guid>https://lujun9972.github.io/blog/2021/06/24/笑话理解之solution/index.html</guid>
-</item>
-<item>
-<title>ftp中的put命令</title>
-<link>https://lujun9972.github.io/blog/2021/06/17/ftp中的put命令/index.html</link>
-<description>一次程序缺陷，让我发现了对 ftp 中 put 指令的一些误解(vsftpd 2.2.2,其他fpt服务软件是不是这样每试验过)：
-
-FTP 中的 put 指令分两种格式，一种是 =put 源文件=, 一种是 =put 源文件 目标文件地址=.
-其中 =put 源文件 目标文件地址= 的意义很明确，就是把 =本地的源文件= 发送到 =远程主机的目标文件地址=.
-误解在于 =put 源文件= 这种格式上，我曾经天真的以为这种格式就是把 =本地的源文件= 发送到 =远程主机的当前目录下=,但是这件事情没有想象中那么简单。
-事实上，若 =源文件= 中不带目录，那么结果确实是把 =本地的源文件= 发送到 =远程主机的当前目录下=,
-但是若 =源文件= 中带目录，那么结果是把 =本地的源文件= 发送到 =远程主机的相应目录下=.
-
-总结起来如下表所示：
-
-| 指令                             | 意义                                                                                          |
-|----------------------------------+-----------------------------------------------------------------------------------------------|
-| put file                         | 把 file 上传到远程主机的当前目录下                                                            |
-| put srcDir/file                  | 把 srcDir/file 上传为远程主机的 srcDir/file ,若 srcDir 不存在会提示 533 Could not create file |
-| put file destDir                 | 不会成功，因为 destDir 无法替换成 file                                                        |
-| put srcDir/file destDir          | 不会成功，因为 destDir 无法替换成 file                                                        |
-| put file destDir/destFile        | 把 file 上传为远程主机的 srcDir/destFile                                                      |
-| put srcDir/file destDir/destFile | 把 srcDir/file 上传为远程主机的 srcDir/destFile                                               |
-</description>
-<pubDate>2021-06-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2021/06/17/ftp中的put命令/index.html</guid>
 </item>
 </channel>
 </rss>
