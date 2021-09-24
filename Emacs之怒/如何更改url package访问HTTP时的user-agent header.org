@@ -1,0 +1,59 @@
+#+TITLE: 如何更改url package访问HTTP时的user-agent header
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2021-09-24 五 09:51]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有些网站会根据 http request 中的 user-agent header 的值返回不同的response，例如 http://wttr.in 会根据就会根据 user-agent 是否为 curl 来决定是返回带图片的HTML，还是字符拼接图案的文本。
+
+一开始我以为修改 =url package= 中的 =user-agent= 就是直接把相应的 header 内容加到 =url-request-extra-headers= 中就行了，事实证明我还是太天真了，这样做的后果是会产生两个 =user-agent= header...
+#+begin_src emacs-lisp :results org
+  (let ((url-debug t)
+        (url-request-extra-headers '(("User-Agent" . "curl/7.78.0"))))
+    (kill-buffer (url-retrieve-synchronously "http://wttr.in"))
+    (with-current-buffer "*URL-DEBUG*"
+      (keep-lines "^User-Agent" (point-min) (point-max))
+      (buffer-substring-no-properties (point-min) (point-max))))
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+User-Agent: URL/Emacs Emacs/28.0.50 (X11; x86_64-pc-linux-gnu)
+User-Agent: curl/7.78.0
+#+end_src
+
+在翻阅了 [[https://www.gnu.org/software/emacs/manual/html_mono/url.html][url manual]] 之后才知道，原来 =url= 专门有个变量用来控制 user-agent:
+#+begin_example
+  url-user-agent is a variable defined in ‘url-vars.el’.
+
+  Its value is ‘default’
+
+    You can customize this variable.
+    This variable was introduced, or its default value was changed, in
+    version 26.1 of Emacs.
+    Probably introduced at or before Emacs version 25.1.
+
+  User Agent used by the URL package for HTTP/HTTPS requests.
+  Should be one of:
+  ,* A string (not including the "User-Agent:" prefix)
+  ,* A function of no arguments, returning a string
+  ,* ‘default’ (to compute a value according to ‘url-privacy-level’)
+  ,* nil (to omit the User-Agent header entirely)
+#+end_example
+
+所以修改 =user-agent= header 的正确方法是修改 =url-user-agent= 这个变量的值:
+#+begin_src emacs-lisp :results org
+  (let ((url-debug t)
+        (url-user-agent "curl/7.78.0"))
+    (kill-buffer (url-retrieve-synchronously "http://wttr.in"))
+    (with-current-buffer "*URL-DEBUG*"
+      (keep-lines "^User-Agent" (point-min) (point-max))
+      (buffer-substring-no-properties (point-min) (point-max))))
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+User-Agent: curl/7.78.0
+#+end_src
