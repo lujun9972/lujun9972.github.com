@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>使用 org-depend 自动化任务流程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Reading" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="git@github.com:lujun9972/lujun9972.github.com.git">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">使用 org-depend 自动化任务流程</h1>
+<div id="table-of-contents">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents">
+<ul>
+<li><a href="#orgbcfecdd">org-depend 使用方法简介</a>
+<ul>
+<li><a href="#org7bc79e7">BLOCKER 检查任务是否允许开始</a></li>
+<li><a href="#org224f470">TRIGGER 自动开始任务</a></li>
+</ul>
+</li>
+<li><a href="#orgc77f0b8">定义自己的规则</a></li>
+</ul>
+</div>
+</div>
+<p>
+:ID:       si54zgn0wgj0
+:ROAM_REFS: <a href="https://karl-voit.at/2016/12/18/org-depend/">https://karl-voit.at/2016/12/18/org-depend/</a>
+</p>
+<p>
+当项目涉及多项任务时，任务之间往往有先后的依赖关系，例如一个信息系统建设可能需要经过 <code>可行性分析</code> 后才能进入 <code>立项申请</code> 阶段，再然后才是 <code>项目启动</code>, <code>需求</code>, <code>设计</code>, <code>开发</code>, <code>测试</code>, <code>上线</code>.
+下一个步骤的开始依赖于上一个步骤的结束。
+</p>
+
+
+<p>
+这就产生了两个需求：
+</p>
+<ol class="org-ol">
+<li>如何在上一个步骤未完成的时候，禁止下一个步骤开始</li>
+<li>上一个步骤完成后，自动开始下一个步骤</li>
+</ol>
+
+<p>
+<a href="https://karl-voit.at">Karl Voit</a> 给出的解决方法是 <code>org-depend</code>,原理其实非常简单，通过 <a href="org-blocker-hook">org-blocker-hook</a> 可以检查是否允许进行状态变化，而 <a href="org-trigger-hook">org-trigger-hook</a> 可以指定状态变化时要触发的函数。
+</p>
+
+<div id="outline-container-orgbcfecdd" class="outline-2">
+<h2 id="orgbcfecdd">org-depend 使用方法简介</h2>
+<div class="outline-text-2" id="text-orgbcfecdd">
+<p>
+org-depend 通过 <code>BLOCKER</code> 属性来指定当前任务开始所依赖的任务，使用 <code>TRIGGER</code> 属性来设置当前任务结束后自动开始的任务
+</p>
+</div>
+
+<div id="outline-container-org7bc79e7" class="outline-3">
+<h3 id="org7bc79e7">BLOCKER 检查任务是否允许开始</h3>
+<div class="outline-text-3" id="text-org7bc79e7">
+<p>
+<code>BLOCKER</code> 属性是一些 <code>空格</code> 分隔的任务ID列表,这些ID所代表的任务存在未完成的，则该任务不能开始(<b>不过由于org-mode 的状态不能区分待开始和进行中，因此实际上只能约束其不允许结束</b>)
+</p>
+
+<p>
+考虑到很多时候上下游任务本身会按照兄弟关系从上倒下进行排列的，因此 <code>org-depend</code> 提供了一个关键字 <code>previous-sibling</code> 来表示上一个同级的任务。例如
+</p>
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* &#39033;&#30446;</span>
+<span class="org-org-level-2">** </span><span class="org-org-todo">TODO</span><span class="org-org-level-2"> &#21487;&#34892;&#24615;&#20998;&#26512;</span>
+<span class="org-org-level-2">** &#31435;&#39033;&#30003;&#35831;</span>
+<span class="org-org-special-keyword">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:BLOCKER:</span>  <span class="org-org-property-value">previous-sibling</span>
+<span class="org-org-special-keyword">:END:</span>
+
+<span class="org-org-level-2">** &#39033;&#30446;&#21551;&#21160;</span>
+<span class="org-org-level-2">** &#38656;&#27714;</span>
+<span class="org-org-level-2">** &#35774;&#35745;</span>
+<span class="org-org-level-2">** &#24320;&#21457;</span>
+<span class="org-org-level-2">** &#27979;&#35797;</span>
+<span class="org-org-level-2">** &#19978;&#32447;</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org224f470" class="outline-3">
+<h3 id="org224f470">TRIGGER 自动开始任务</h3>
+<div class="outline-text-3" id="text-org224f470">
+<p>
+<code>TRIGGER</code> 属性稍微复杂一些，是一些 <code>空格</code> 分隔的 <code>任务ID(状态)</code> 列表。当本任务完成后，则会将这些ID所代表的任务设置为括号能的状态。
+</p>
+
+<p>
+类似的， <code>org-depend</code> 也提供了一个关键字 <code>chain-siblings</code> 来表示下一个同级的任务。例如
+</p>
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* &#39033;&#30446;</span>
+<span class="org-org-level-2">** </span><span class="org-org-todo">TODO</span><span class="org-org-level-2"> &#21487;&#34892;&#24615;&#20998;&#26512;</span>
+<span class="org-org-special-keyword">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:TRIGGER:</span>  <span class="org-org-property-value">chain-siblings(TODAY)</span>
+<span class="org-org-special-keyword">:END:</span>
+<span class="org-org-level-2">** &#31435;&#39033;&#30003;&#35831;</span>
+
+<span class="org-org-level-2">** &#39033;&#30446;&#21551;&#21160;</span>
+<span class="org-org-level-2">** &#38656;&#27714;</span>
+<span class="org-org-level-2">** &#35774;&#35745;</span>
+<span class="org-org-level-2">** &#24320;&#21457;</span>
+<span class="org-org-level-2">** &#27979;&#35797;</span>
+<span class="org-org-level-2">** &#19978;&#32447;</span>
+</pre>
+</div>
+
+<p>
+事实上关于 <code>TRIGGER</code> 的语法支持多种形式，比如 <code>chain-siblings-scheduled</code> 可以传递计划时间， <code>chain-find-next(状态[,选项])</code> 可以灵活定义下一个任务的搜索方式。
+详情可以参见 <code>org-depend.el</code> 中的注释部分。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc77f0b8" class="outline-2">
+<h2 id="orgc77f0b8">定义自己的规则</h2>
+<div class="outline-text-2" id="text-orgc77f0b8">
+<p>
+前面说的由于 org-mode 的状态关键字不能区分 <code>待开始</code> 和 <code>进行中</code> 这两种状态，因此 <code>org-depend</code> 只能限制依赖任务在被依赖任务未完成之前无法切换到完成状态。不过只要指导了原理，我们也可以实现自己的检查条件：
+</p>
+
+<p>
+例如，假设我们以 <code>PROG</code> 状态来表示 <code>进行中</code>, 那么以下设置可以实现当 task 属性中包含 <code>:DEPEND_ID</code> 时，表示该属性值对应的 task 必须先完成，否则不能进入PROG状态。
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-check-depend-task-state</span> (args)
+  <span class="org-doc">"&#26816;&#26597;&#20381;&#36182;&#20219;&#21153;&#26159;&#21542;&#23436;&#25104;"</span>
+  (message <span class="org-string">"%s"</span> args)
+  (<span class="org-keyword">let*</span> ((to (plist-get args <span class="org-builtin">:to</span>))
+         (depend-id (org-element-property <span class="org-builtin">:DEPEND_ID</span> (org-element-at-point)))
+         (depend-task-state (<span class="org-keyword">when</span> (<span class="org-keyword">and</span> depend-id
+                                       (not (string= depend-id <span class="org-string">""</span>)))
+                              (<span class="org-keyword">save-excursion</span>
+                                (goto-char (org-find-entry-with-id depend-id))
+                                (nth 2 (org-heading-components))))))
+    (<span class="org-keyword">or</span> (not (member to '(<span class="org-string">"PROG"</span>)))
+        (not depend-task-state)
+        (member depend-task-state org-done-keywords))))
+
+(add-hook 'org-blocker-hook #'my-check-depend-task-state)
+</pre>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2022-05-27</span>
+    <span title="last modification date" class="post-info">2022-05-29</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/reading">Reading</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 27.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:travis &lt;at&gt; travis-job-728d7f64-6758-45b3-9f06-0d1107a733a7">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
