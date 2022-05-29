@@ -1,0 +1,90 @@
+:PROPERTIES:
+:ID:       si54zgn0wgj0
+:ROAM_REFS: https://karl-voit.at/2016/12/18/org-depend/
+:END:
+#+TITLE: 使用 org-depend 自动化任务流程
+#+filetags: :项目管理:技巧:GTD:Org-mode:Emacs:
+#+AUTHOR: lujun9972
+#+TAGS: Reading
+#+DATE: [2022-05-27 Fri 14:59]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+当项目涉及多项任务时，任务之间往往有先后的依赖关系，例如一个信息系统建设可能需要经过 =可行性分析= 后才能进入 =立项申请= 阶段，再然后才是 =项目启动=, =需求=, =设计=, =开发=, =测试=, =上线=.
+下一个步骤的开始依赖于上一个步骤的结束。
+
+
+这就产生了两个需求：
+1. 如何在上一个步骤未完成的时候，禁止下一个步骤开始
+2. 上一个步骤完成后，自动开始下一个步骤
+
+[[https://karl-voit.at][Karl Voit]] 给出的解决方法是 =org-depend=,原理其实非常简单，通过 [[help:org-blocker-hook][org-blocker-hook]] 可以检查是否允许进行状态变化，而 [[help:org-trigger-hook][org-trigger-hook]] 可以指定状态变化时要触发的函数。
+
+* org-depend 使用方法简介
+org-depend 通过 =BLOCKER= 属性来指定当前任务开始所依赖的任务，使用 =TRIGGER= 属性来设置当前任务结束后自动开始的任务
+
+** BLOCKER 检查任务是否允许开始
+=BLOCKER= 属性是一些 =空格= 分隔的任务ID列表,这些ID所代表的任务存在未完成的，则该任务不能开始(*不过由于org-mode 的状态不能区分待开始和进行中，因此实际上只能约束其不允许结束*)
+
+考虑到很多时候上下游任务本身会按照兄弟关系从上倒下进行排列的，因此 =org-depend= 提供了一个关键字 =previous-sibling= 来表示上一个同级的任务。例如
+#+begin_src org
+  ,* 项目
+  ,** TODO 可行性分析
+  ,** 立项申请
+  :PROPERTIES:
+  :BLOCKER:  previous-sibling
+  :END:
+
+  ,** 项目启动
+  ,** 需求
+  ,** 设计
+  ,** 开发
+  ,** 测试
+  ,** 上线
+#+end_src
+** TRIGGER 自动开始任务
+=TRIGGER= 属性稍微复杂一些，是一些 =空格= 分隔的 =任务ID(状态)= 列表。当本任务完成后，则会将这些ID所代表的任务设置为括号能的状态。
+
+类似的， =org-depend= 也提供了一个关键字 =chain-siblings= 来表示下一个同级的任务。例如
+#+begin_src org
+  ,* 项目
+  ,** TODO 可行性分析
+  :PROPERTIES:
+  :TRIGGER:  chain-siblings(TODAY)
+  :END:
+  ,** 立项申请
+
+  ,** 项目启动
+  ,** 需求
+  ,** 设计
+  ,** 开发
+  ,** 测试
+  ,** 上线
+#+end_src
+
+事实上关于 =TRIGGER= 的语法支持多种形式，比如 =chain-siblings-scheduled= 可以传递计划时间， =chain-find-next(状态[,选项])= 可以灵活定义下一个任务的搜索方式。
+详情可以参见 =org-depend.el= 中的注释部分。
+
+* 定义自己的规则
+
+前面说的由于 org-mode 的状态关键字不能区分 =待开始= 和 =进行中= 这两种状态，因此 =org-depend= 只能限制依赖任务在被依赖任务未完成之前无法切换到完成状态。不过只要指导了原理，我们也可以实现自己的检查条件：
+
+例如，假设我们以 =PROG= 状态来表示 =进行中=, 那么以下设置可以实现当 task 属性中包含 =:DEPEND_ID= 时，表示该属性值对应的 task 必须先完成，否则不能进入PROG状态。
+#+begin_src emacs-lisp
+  (defun my-check-depend-task-state (args)
+    "检查依赖任务是否完成"
+    (message "%s" args)
+    (let* ((to (plist-get args :to))
+           (depend-id (org-element-property :DEPEND_ID (org-element-at-point)))
+           (depend-task-state (when (and depend-id
+                                         (not (string= depend-id "")))
+                                (save-excursion
+                                  (goto-char (org-find-entry-with-id depend-id))
+                                  (nth 2 (org-heading-components))))))
+      (or (not (member to '("PROG")))
+          (not depend-task-state)
+          (member depend-task-state org-done-keywords))))
+
+  (add-hook 'org-blocker-hook #'my-check-depend-task-state)
+#+end_src
