@@ -4,10 +4,66 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 01 Jun 2022 07:05:40 UTC</pubDate>
-    <lastBuildDate>Wed, 01 Jun 2022 07:05:40 UTC</lastBuildDate>
+    <pubDate>Wed, 01 Jun 2022 07:17:56 UTC</pubDate>
+    <lastBuildDate>Wed, 01 Jun 2022 07:17:56 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>如何合理的导出help link 成HTML</title>
+<link>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</link>
+<description>Org 文件在导出为 html 是会将 =help= link 导出为一个HTTP链接，例如一个
+#+begin_example
+  这是一个 [[help:lazy-helm/describe-char][Help]] link
+#+end_example
+
+导出成HTML时会变成
+#+begin_src html
+  这是一个 &lt;a href=&quot;lazy-helm/describe-char&quot;&gt;Help&lt;/a&gt; link
+#+end_src
+
+这个操作很迷，因为实际上并没有这个链接对应的页面。
+
+一个比较合理的方法是导出时保留原文字，但当光标移动到这段文字上去时弹出相关说明。
+
+通过 [[help:org-link-set-parameters][org-link-set-parameters]] 可以注册自己定义的链接导出函数，相关配置如下：
+#+begin_src emacs-lisp
+  (defun org-link--export-help (path desc backend _)
+    &quot;Export a \&quot;help\&quot; type link.
+  PATH is a symbol name, as a string.&quot;
+    (let ((info (pcase (intern path)
+                  ((and (pred fboundp) function) (describe-function function))
+                  ((and (pred boundp) variable) (describe-variable variable))
+                  (name (user-error &quot;Unknown function or variable: %s&quot; name)))))
+      (quit-window)                       ;关闭新开的 help window
+      (pcase backend
+        (&#39;html (format &quot;&lt;label title=&#39;%s&#39;&gt;%s&lt;/label&gt;&quot; info desc))
+        (_ desc))))
+  ;; 注册 help 的导出函数
+  (org-link-set-parameters &quot;help&quot;
+                           :export #&#39;org-link--export-help)
+#+end_src
+
+就可以导出为
+
+#+begin_src html
+  这是一个 &lt;label title=&#39;lazy-helm/describe-char is an interactive Lisp function.
+
+  It is bound to SPC h d c, M-m h d c.
+
+  (lazy-helm/describe-char)
+
+  Wrapper to ensure that ‘helm’ is loaded before calling describe-char.
+
+  &#39;&gt;Help&lt;/label&gt; link
+#+end_src
+
+效果如下所示：
+
+[[file:./images/export-help-link.png]]
+</description>
+<pubDate>2022-06-01</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</guid>
+</item>
 <item>
 <title>使用 org-depend 自动化任务流程</title>
 <link>https://lujun9972.github.io/blog/2022/05/27/使用-org-depend-自动化任务流程/index.html</link>
@@ -95,65 +151,6 @@ org-depend 通过 =BLOCKER= 属性来指定当前任务开始所依赖的任务�
 </description>
 <pubDate>2022-05-31</pubDate>
 <guid>https://lujun9972.github.io/blog/2022/05/27/使用-org-depend-自动化任务流程/index.html</guid>
-</item>
-<item>
-<title>如何合理的导出help link 成HTML</title>
-<link>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</link>
-<description>Org 文件在导出为 html 是会将 =help= link 导出为一个HTTP链接，例如一个
-#+begin_src org
-  这是一个 [[help:lazy-helm/describe-char][Help]] link
-#+end_src
-
-导出成HTML时会变成
-#+begin_src html
-  这是一个 &lt;a href=&quot;lazy-helm/describe-char&quot;&gt;Help&lt;/a&gt; link
-#+end_src
-
-这个操作很迷，因为实际上并没有这个链接对应的页面。
-
-一个比较合理的方法是导出时保留原文字，但当光标移动到这段文字上去时弹出相关说明。
-
-通过 [[help:org-link-set-parameters][org-link-set-parameters]] 可以注册自己定义的链接导出函数，相关配置如下：
-#+begin_src emacs-lisp
-  (defun org-link--export-help (path desc backend _)
-    &quot;Export a \&quot;help\&quot; type link.
-  PATH is a symbol name, as a string.&quot;
-    (let ((info (pcase (intern path)
-                  ((and (pred fboundp) function) (describe-function function))
-                  ((and (pred boundp) variable) (describe-variable variable))
-                  (name (user-error &quot;Unknown function or variable: %s&quot; name)))))
-      (quit-window)                       ;关闭新开的 help window
-      (pcase backend
-        (&#39;html (format &quot;&lt;label title=&#39;%s&#39;&gt;%s&lt;/label&gt;&quot; info desc))
-        (t desc))))
-  ;; 注册 help 的导出函数
-  (org-link-set-parameters &quot;help&quot;
-                           :export #&#39;org-link--export-help)
-#+end_src
-
-#+RESULTS:
-| :follow | org-link--open-help | :store | org-link--store-help | :export | org-link--export-help |
-
-就可以导出为
-
-#+begin_src html
-  这是一个 &lt;label title=&#39;lazy-helm/describe-char is an interactive Lisp function.
-
-  It is bound to SPC h d c, M-m h d c.
-
-  (lazy-helm/describe-char)
-
-  Wrapper to ensure that ‘helm’ is loaded before calling describe-char.
-
-  &#39;&gt;Help&lt;/label&gt; link
-#+end_src
-
-效果如下所示：
-
-[[file:./images/export-help-link.png]]
-</description>
-<pubDate>2022-05-31</pubDate>
-<guid>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</guid>
 </item>
 <item>
 <title>让 Org-mode 为你规划任务安排</title>
