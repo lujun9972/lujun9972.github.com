@@ -44,6 +44,7 @@ There are two things you can do about this warning:
     :personal-disqus-shortname "lujun9972" :personal-google-analytics-id "7bac4fd0247f69c27887e0d4e3aee41e" :ignore-file-name-regexp "README.org" :store-dir "~/web")))
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)
+(setq org-export-with-broken-links t)
 (setq debug-on-error t)
 (setq org-src-fontify-natively t)
 (setq org-html-htmlize-output-type 'css)
