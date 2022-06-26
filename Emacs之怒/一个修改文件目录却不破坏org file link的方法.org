@@ -1,0 +1,35 @@
+#+TITLE: 移动文件路径却不破坏org file link的方法
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒
+#+DATE: [2022-06-01 三 22:26]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+我习惯在Org file中记录电子书的文件路径、阅读耗时、笔记等信息。 电子书放在统一的目录中，按照分类分子目录进行存放。
+
+但这会带来一个问题，就是我在整理电子书时经常会在不同分类之间移动电子书，这就会破坏Org file中电子书的文件路径。
+
+如果每次都需要手工修改文件中的链接地址的话，那就太麻烦了。好在通过自定义link，我们可以自定义搜索函数来动态搜索电子书路径，而不是写死电子书的存放路径。
+
+方法如下：
+
+#+begin_src emacs-lisp
+  (defvar MY-EBOOK "~/ebooks")
+  (defun my-search-ebook (pattern &optional _)
+    (let* ((files (directory-files-recursively MY-EBOOK pattern))
+           (count (length files)))
+      (cond ((= count 0)
+             (message "Can't found file mathcing %s" pattern))
+            ((= count 1)
+             (find-file (car files)))
+            ((> count 1)
+             (find-file (completing-read "Please pick a file: " files nil t))))))
+
+  (org-link-set-parameters "ebook"
+                           :follow #'my-search-ebook
+                           :help-echo (format "Open the file in %s" MY-EBOOK)
+                           :face '(underline t))
+#+end_src
+
+这就自定义了一个 =ebook= 的link，访问这个 link 会自动从 =MY-EBOOK= 定义的目录(~/ebooks)中搜索匹配的文件并打开。
