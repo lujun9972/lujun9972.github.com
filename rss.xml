@@ -4,10 +4,191 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 29 Jun 2022 06:13:30 UTC</pubDate>
-    <lastBuildDate>Wed, 29 Jun 2022 06:13:30 UTC</lastBuildDate>
+    <pubDate>Wed, 10 Aug 2022 14:22:05 UTC</pubDate>
+    <lastBuildDate>Wed, 10 Aug 2022 14:22:05 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>使用 calc 计算保险实际收益率</title>
+<link>https://lujun9972.github.io/blog/2022/08/10/使用-calc-计算保险实际收益率/index.html</link>
+<description>今天某银行的客户经理来推销一个“增额终身寿险”，号称是能锁定3.5%的收益率。
+具体来说，就是前5年每年投入一笔钱但是不计息，第6年开始按3.5%的收益率进行计息，听起来似乎很不错，毕竟长期来看利率是下行趋势。
+而且现在理财的收益也不高了，能锁定3.5的利率似乎还不错，虽然前5年没算利息，但直觉上似乎利率下降不会太多。
+
+然而在仔细计算一下，我发现情况完全不是那么一回事。
+假设利率是x那么根据等比数列求和公式可以知道第5年的金额应该变成 =(1-x^5)/1-x=, 因此可以得到等式 ~(1-x^5)*x/(1-x) = 5*1.035~.
+对于我这种数学渣来说，这种公式完全不会计算，不过好在我有 Emacs [[help:calc][calc]] 啊
+
+那么，让我们运行 =M-x calc=,输入 =&#39;fsolve((1-x^5)*x/(1-x) = 5*1.035,x)= 就可以得到结果如下：
+#+begin_src calc :export both :results org
+fsolve((1-x^5)*x/(1-x) = 5*1.035,x)
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+x = [0.999999999998, 1.01148914259, (-1.29523147819, 0.862841415432), (0.289486906893, -1.42424965717), (-1.29523147819, -0.862841415432), (0.289486906893, 1.42424965717)]_n4
+#+end_src
+
+可以看出，x的求值为 =1.01148914259=,也就是说实际收益率只有不到 =1.15%= 而已，跟直观感觉真的差别巨大啊。
+</description>
+<pubDate>2022-08-10</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/08/10/使用-calc-计算保险实际收益率/index.html</guid>
+</item>
+<item>
+<title>使用 org-mode columnview 生成任务列表</title>
+<link>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</link>
+<description>org-mode的columnview[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]能够帮你把树形的代办事项归整为表格，方便查看
+
+在org-mode中可以通过两个命令来插入colmnviewa动态块:
+
++ 一个是通过 =M-x org-dynamic-block-insert-dblock= 插入一个动态块，默认情况下 org-mode 自带了两类动态块 =columnview= 和 =clocktable= ，然后我们选择 =columnview= 即可
++ 另一个是通过 =M-x org-columns-insert-dblock= 直接插入columnviewa动态块
+
+  
+一个 columnview 动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: columnview :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =columnview= 标识动态块的类型，该名字决定了org-mode会调用哪个函数来生成动态块的内容，比如这里调用的函数就是 =org-dblock-write:columnview=. 
+后面的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+我们可以通过查看 =org-dblock-write:columnview= 的docstring来找出 =columnwive= 动态块支持的参数:
+#+begin_example
+  (org-dblock-write:columnview PARAMS)
+
+  Write the column view table.
+
+  PARAMS is a property list of parameters:
+
+  ‘:id’ (mandatory)
+
+      The ID property of the entry where the columns view should be
+      built.  When the symbol ‘local’, call locally.  When ‘global’
+      call column view with the cursor at the beginning of the
+      buffer (usually this means that the whole buffer switches to
+      column view).  When &quot;file:path/to/file.org&quot;, invoke column
+      view at the start of that file.  Otherwise, the ID is located
+      using ‘org-id-find’.
+
+  ‘:exclude-tags’
+
+      List of tags to exclude from column view table.
+
+  ‘:format’
+
+      When non-nil, specify the column view format to use.
+
+  ‘:hlines’
+
+      When non-nil, insert a hline before each item.  When
+      a number, insert a hline before each level inferior or equal
+      to that number.
+
+  ‘:indent’
+
+      When non-nil, indent each ITEM field according to its level.
+
+  ‘:match’
+
+      When set to a string, use this as a tags/property match filter.
+
+  ‘:maxlevel’
+
+      When set to a number, don’t capture headlines below this level.
+
+  ‘:skip-empty-rows’
+
+      When non-nil, skip rows where all specifiers other than ITEM
+      are empty.
+
+  ‘:vlines’
+
+      When non-nil, make each column a column group to enforce
+      vertical lines.
+#+end_example
+
+这里比较重要的参数有
+
++ :id :: 这是最重要的参数. 它指定了column视图的数据来源。
++ :maxlevel :: 若设置为数字N,表示不捕捉层级在N级以下的条目
++ :skip-empty-rows :: 若设置为`t`,则会跳过那些除了`ITEM`属性列外,其他属性列都是空值的行
++ :format :: 设置column视图的格式。
+
+其中 =:format= 是一个以多个列定义式组成的字符串，各定义式之间使用空格进行分隔。
+column的定义式中可以包含有列的属性. 一般来说列的定义式看起来是这样做的
+#+BEGIN_SRC org
+  ,%[width]property[(title)][{summary-type}]
+#+END_SRC
+除了百分号和属性名之外,所有的都是可选的. 各部分的意思如下所示
+#+BEGIN_EXAMPLE
+  width           整型,代表了列的宽度,如果忽略则由org自动决定
+
+  property        该列所表示的属性,可以是上文提到的哪些特殊属性
+
+  title           列的标题,如果忽略,则会使用属性名代替
+
+  {summary-type}  总和的类型,如果指定了,那么父节点的列值由其下子节点的值计算得到
+                  支持的总和类型包括:
+                  {+}       该列的累加值
+                  {+;%.1f}  指定了格式的列累加值
+                  {$}       货币格式，其实就是 ‘+;%.2f’.
+                  {:}       把列中的值作为时间进行累加，格式为HH[:MM]
+                  {X}       Checkbox 的状态, 若所有子checkboxd都标记为‘[X]’ 则显示‘[X]’.
+                  {X/}      Checkbox 的状态, 显示格式为‘[n/m]’.
+                  {X%}      Checkbox 的状态, 显示格式为‘[n%]’.
+                  {min}     列中的最小值
+                  {max}     列中的最大值
+                  {mean}    列的算术平均值
+                  {:min}    列中的最小值（以时间为单位）
+                  {:max}    列中的最大值（以时间为单位）
+                  {:mean}   列中的算术平均值（以时间为单位）
+                  {@min}    列中的最小值（以时间区间为单位）
+                  {@max}    列中的最大值（以时间区间为单位）
+                  {@mean}   列中的算术平均值（以时间区间为单位）
+                  {est+}    耗时的范围
+
+#+END_EXAMPLE
+
+我一般使用 columnview 来生成任务列表方便我对任务进度进行追踪。下面是一个例子
+#+begin_src org
+  ,* 任务分派
+
+  ,#+BEGIN: columnview :hlines 1 :id local :format &quot;%ITEM(任务) %CHARGER(负责人) %DEADLINE(死线) %TODO(状态)&quot; :skip-empty-rows t
+  | 任务   | 负责人    | 死线            | 状态  |
+  |--------+-----------+-----------------+-------|
+  | 任务一 | 甲xx      |                 | NEXT  |
+  | 任务二 | 乙xx      | &lt;2020-05-12 二&gt; | TODAY |
+  | 任务三 | 甲xx 乙xx |                 | TODO  |
+  ,#+END:
+
+  ,** NEXT 任务一
+     :PROPERTIES:
+     :CHARGER:  甲xx
+     :END:
+  + [ ] xxxx
+  + [ ] yyyy
+  + [ ] zzzz
+  + [X] abcd
+  ,** TODAY [#A] 任务二
+     DEADLINE: &lt;2020-05-12 二&gt;
+     :PROPERTIES:
+     :CHARGER:  乙xx
+     :END:
+  + [ ] 111111
+  + [ ] 222222
+  ,** TODO [#C] 任务三
+     :PROPERTIES:
+     :CHARGER:  甲xx 乙xx
+     :END:
+#+end_src
+</description>
+<pubDate>2022-07-05</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</guid>
+</item>
 <item>
 <title>Emacs 作为 MPD 客户端</title>
 <link>https://lujun9972.github.io/blog/2022/06/26/emacs-作为-mpd-客户端/index.html</link>
@@ -287,777 +468,6 @@ org-depend 通过 =BLOCKER= 属性来指定当前任务开始所依赖的任务�
 </description>
 <pubDate>2022-05-29</pubDate>
 <guid>https://lujun9972.github.io/blog/2022/05/29/让-org-mode-为你规划任务安排/index.html</guid>
-</item>
-<item>
-<title>《监控运维实践：原则与策略》读书笔记</title>
-<link>https://lujun9972.github.io/blog/2022/03/17/《监控运维实践：原则与策略》读书笔记/index.html</link>
-<description> 书本信息
-
-作者: [美]迈克•朱利安
-
-出版社: 人民邮电出版社
-
-[[file:images/s33760738.jpg][图书封面]]
-
-豆瓣地址:[[https://book.douban.com/subject/35258085/][监控运维实践：原则与策略]]
-* 监控实施的原则
-** 反模式
-*** 以工具为中心而不是任务为中心
-+ 监控不是一个单一问题，无法通过某一个工具来解决
-
-  #+begin_example
-    + 如果想在代码级别分析并监控应用程序，你可能需要 APM 工具，或者自行测量应用程序（例如，通过 StatsD）。
-    + 如果需要监控云基础设施的性能，你需要寻找现代化的服务器监控解决方案。
-    + 如果需要监控生成树拓扑结构的变化或路由变更，你需要寻找专注于网络的工具。
-  #+end_example
-
-  1. 合并提供相同信息的工具
-
-  2. 不要害怕引入专用工具
-
-     团队希望使用能够解决问题的工具，而不是以“整合工具”之名被迫使用不能满足其需求的工具 
-
-+ 盲目崇拜更成功的团队以及公司的工具和程序
-
-  团队需要花很多时间去理解为什么一个工具或程序是有效的。工具是工作方式、假设、文化和社会规范的表现。这些规范不太可能直接适用于你的团队。
-
-*** 监控岗位化
-监控本身与被监控对象息息相关，不了解被监控对象就无法为其创建监控体系，
-因此监控不是一份工作，而是一项技能，并且是团队中每位成员都需要在一定程度上掌握的技能
-
-#+begin_example
-  在监控过程中，请坚持让每个人都对监控负责。DevOps 运动的一个核心宗旨就是让所有人而不只是运营团队对产品负责。
-  网络工程师最了解应该监控网络中的哪个部分以及热点的分布。
-  软件工程师比任何人都了解应用程序，所以应该将他们放在最合适的位置上，以便为应用程序设计最好的监控。
-#+end_example
-
-+ 确保监控的首要地位，只有部署好监控的产品才具备上线条件
-
-+ 可以有专人创建监控工具，但监控本身不由其负责。
-  
-*** 监控系统无效、嘈杂且不值得信
-#+begin_example
-  如何判断自己是否已经成为这种反模式的受害者呢？可以通过以下几种迹象来判断。
-
-  + 虽然你记录系统负载、CPU 使用率和内存利用率这样的指标，但是服务还是在你不知道原因的情况下停止运行。
-  + 你习惯性地忽略告警信息，因为它们多数时候是误报。
-  + 你每隔 5 分钟或者更短的时间就要检查系统的指标。
-  + 你没有存储历史指标数据（说的就是你，Nagios）。
-#+end_example
-这个反模式通常和上一个反模式（监控岗位化）一同出现。因为配置监控的人员没有完全理解系统的工作原理，所以他们经常只配置最简单和最容易的检查项
-
-+ 弄清正常运行的真正含义
-
-+ 系统资源类的告警不是很有用
-  #+begin_example
-    如果 MySQL 总是使用全部的 CPU，但是响 应时间在可接受范围内，那其实没有问题。
-    这就是为什么与 CPU 和内存使用率这样的低级别指标相比，了解“正常运行”的含义要有用得多。
-
-    当然，并不是说这些指标没有用。操作系统指标对于诊断和性能分析至关重要，因为它们能让你在可能影响性能的底层系统行为中发现波动和趋势。
-    但在大多数情况下，它们并不意味着真正有问题
-  #+end_example
-
-+ 增加收集指标数据的频率
-  #+begin_example
-    在一个复杂的系统（比如现在运行的这个）中，几分钟甚至几秒钟内就能发生很多事。
-    考虑这样一个例子：假设不管什么原因，两个服务之间每 30 秒出现一次延迟高峰。
-    如果每 5 分钟收集一次指标数据的话，你就会错过这个事件。
-    收集指标的频率至少应是每 60 秒一次。如果系统的流量高，就应该选择更高的频率，例如每 30 秒甚至每 10 秒收集一次。
-  #+end_example
-  
-*** 依赖监控规避故障
-#+begin_example
-  在我曾经任职过的一个团队中，运行着一个遗留的 PHP 应用程序。这个应用程序有一大堆写得糟糕
-  又难以理解的代码。当程序总是出故障时，团队通常的反应就是添加更多的监控，而不管故障是什
-  么。不幸的是，虽然这个响应乍一看似乎是正确的，但几乎对解决真正的问题没有任何帮助。这是一
-  个糟糕的程序。
-
-  避免把监控当作拐杖。虽然监视对于提醒你注意问题非常有用，但是别忘了重要的是解决问题。如果
-  发现自己面对的是一个问题层出的服务，而你总是往服务中添加更多的监控，那么你应该停下来，把
-  精力用于提升服务的稳定性和弹性。更多的监控无法修复有故障的系统，也不会改善现有情形。
-#+end_example
-
-*** 自动化程度不足
-#+begin_example
-  操作手册常常是自动化程度不足的一个表现。
-  如果操作手册仅仅是一个执行步骤列表（“运行这条命令，检查那个信息，运行另一条命令”）， 那么你需要更多的自动化。
-  如果操作手册中引用的告警可以通过简单地执行一系列步骤来解决，那么考虑自动化那些步骤，并让监控工具在给你发出告警之前执行它们。
-#+end_example
-
-** 好的设计模式
-
-*** 可组合监控
-#+begin_example
-  可组合监控是现代监控设计的第一种模式。原则很简单：使用多个专门的工具并且将它们松散地组合
-  在一起以形成一个监控“平台”。这种模式和你熟悉的很多一体化工具（特别是其中的代表 Nagios）
-  正好相反。可组合监控可以视为 UNIX 理念的一种实践。
-
-   编写专注于一件事并能将其做好的程序；编写互相协作的程序。
-
-   ——Doug McIlroy
-#+end_example
-
-可组合监控的一个好处是可以灵活替换某个部分，而不用改造整个平台。
-
-*一个监控服务有以下 5 个基本方面* ： 
-
-+ 数据采集
-+ 数据存储
-+ 可视化
-+ 分析和报告
-+ 告警
-
-*这5个方面可以作为评估一套监控的指标体系。*
-  
-**** 数据采集组件
-采集的数据一般有两种类型：指标和日志。
-
-指标又有两种表现方式： =累计值= 与 =瞬时值=
-
-日志有两种类型： =结构化日志（Json/XML）= 和 =非结构化日志（文本流）=
-
-#+begin_example
-  如果日志量很小，语义直观可读，而且不需要任何比 grep 以及 tail 更复杂的工具，建议保持日志非结构化，因为没必要增加事情的复杂度。
-
-  但大多数日志应该进行结构化并发送到一个能够解析它们的系统中。
-#+end_example
-
-**** 数据存储组件
-=瞬时值= 通常存储在时间序列数据库中。
-
-=日志= 一般存储在搜索引擎中。
-
-**** 可视化组件
-
-**** 分析和报告
-
-+ 分析服务可用性是否满足SLA
-
-+ 关于可用性容易被忽略的一点是，当应用程序有依赖的组件时，服务只有在它所构建的底层组件可用时才有用
-  #+begin_example
-    如果底层网络不可靠，那栈的中上层服务器和应用程序也无法提供比网络更高的可靠性。
-  #+end_example
-  
-**** 告警
-
-*** 从用户角度监控
-有太多的地方需要部署监控，但是有一个最适合开始的地方：用户。
-添加监控的最佳地点首先是用户和应用程序交互的点。
-
-+ 服务是否正常
-+ 延时是否正常
-  
-*** 不要自己构建监控
-+ 机会成本并不低
-+ 不专业
-  
-*** 持续改善
-+ 监控需要时间来逐步完善
-+ 随着需求的变化以及行业的演进，一般每隔两三年就要重构一次监控。
-
-** 告警，值班与事件管理
-
-*** 如何创建好的告警
-+ 告警分两种，一种需要立即行动（事件），一种仅供参考（信息）。
-
-作者总结了6 条实践：
-
-+ 不同的告警通知渠道；
-+ 撰写运行手册；
-+ 慎用静态的阀值
-+ 精简告警；
-+ 设定维护周期；
-+ 尝试故障自愈。
-  
-**** 不同的告警通知渠道
-+ 需要立即采取行动的 :: 发送到随身设备
-+ 需要知晓，但无需立即采取行动的 :: 发送到内部聊天室或邮箱以便进行回顾
-+ 无需行动的  :: 记录在日志中方便回顾、诊断
-
-**** *撰写运行手册*
-运行手册不是 =监控系统操作手册=, 他是为一个特定的服务而撰写的，同时回答了以下几个问题：
-
-+ 这是什么服务，做什么用的？
-+ 谁负责这个服务？
-+ 这个服务有什么依赖关系？
-+ 它的基础设施什么样？
-+ 它会产生什么样的指标以及日志，这些指标和日志的含义是什么？
-+ 应该为它设置哪些告警，为什么要设置这些告警？
-
-*在告警中需要包含一条志向该服务运行手册的链接，以方便人员响应该告警。*
-
-#+begin_example
-  运行手册容易被滥用。如果告警的恢复步骤就像复制粘贴命令那样简单，那么你就会开始滥用运行手册了。
-  你应该把那种修复操作自动化，或剖析出真正的问题，然后完全删除这个告警。
-  只有当需要人类的判断和诊断能力来解决某些问题时，才需要运行手册。
-#+end_example
-
-**** *慎用静态的阀值*
-
-百分比变化率，移动平均数，置信区间和标准差这类反映变化程度的指标可能比静态阀值要更有用。
-
-**** 精简告警
-
-高密度的告警会引起告警疲劳从而不信任监控。
-
-*下面有几种减少接收告警数量的方法。*
-
-1. 只发送需要人工响应的告警
-2. 回顾过去为期一个月的告警历史。
-   #+begin_example
-     它们是什么？
-     响应是什么？
-     每个告警的影响是什么？
-     有没有可以直接删除的告警？
-     可否修改阈值？
-     可否修改底层的检查以使告警更加精确？
-   #+end_example
-3. 创建自动化以彻底弃用某个告警
-
-**** 设定维护周期
-计划维护触发的告警，可以设置到维护周期中进行屏蔽。
-
-**** 尝试故障自愈
-优先尝试故障自愈，如果尝试自动修复没有解决问题，才发送一个告警。
-
-*** 值班待命
-+ 修正假警报
-+ 提高系统弹性和稳定性
-  #+begin_example
-    1 在人们待命值班期间，只要不是在救火，就尝试把提高系统的弹性和稳定性作为他们的职责。
-    2 根据在上一周待命值班工作中收集的信息，在接下来的每周迭代计划会/小组会议上制定关于提高系统弹性和稳定性的明确计划。
-  #+end_example
-+ 强烈建议让软件工程师也加入待命轮值
-  #+begin_example
-    1. 如果软件工程师意识到了待命值班带来的烦恼，并且他们自己也是轮值的一员，就会激励他们开发出更好的软件。
-    2. 把软件工程师和运维工程师放在一起会在某种程度上产生共鸣，而且他们也不愿意让真正理解和喜欢的人失望。
-  #+end_example
-+ 待命值班补偿
-  #+begin_example
-    对于待命值班人员，我还会考虑以下两件与补偿相关的事情。
-
-    1 在待命轮值结束时立即给予员工一天的带薪假期。待命值班非常伤脑筋，一天的恢复时间是员工应得的。
-    2 对于团队的待命轮值工作要给予额外的薪水。在医疗行业待命轮值会收到额外的薪水是标准惯例，金额范围从护士每小时额外两美元到神经外科医生每天额外2000美元不等。
-
-    待命值班会对生活产生很多消极影响，包括睡眠质量变差、陪伴家人的时间减少，等等。 对行业中最糟糕的部分给予额外的补偿是基本的公平。
-  #+end_example
-  
-*** 事件管理
-+ 技术界最受欢迎的事件管理框架是 ITIL
-
-  #+begin_example
-    关于事件管理的角色，一个常见的反模式是遵照公司或团队的日常层级架构来组织。
-    例如，团队经理经常充当事件指挥官。但是，事件管理的角色其实没有必要按照日常的团队角色 来分配，
-    相对于让团队经理充当事件指挥官，我更鼓励让他充当通信联络人，而让团队中的一名工程师扮演事件指挥官。
-    这样做往往更合适，因为经理可以保护团队不受外界干扰，并将决定权交给最适合评估风险和权衡利弊的人。
-  #+end_example
-  
-*** 事后分析
-+ 警惕责备文化
-  #+begin_example
-    我注意到事后分析过程中有一个很不好的习惯：责备文化。如果你曾经工作过的团队，人们因为失误
-    受到惩罚或感觉自己被迫对问题域负责，那么你可能处于一种责备文化中。
-  
-    如果人们害怕因犯错误而受到惩罚或羞辱，他们就会把失误隐藏起来或低调处理。如果事件发生后你
-    所做的就是责怪某个人，那你永远也无法修复深层次的根本问题。
-  #+end_example
-
-  
-* 统计入门
-
-+ 现代监控栈的核心原则之一是不要丢弃监控服务获得的指标数值。
-  #+begin_example
-    过去，Nagios 不会记录它从检查中获取的值，所以你不知道趋势是什么。
-  #+end_example
-+ 移动平均法可以让图形变得平滑
-+ 注意周期效应
-  
-** 监控中常用的监控指标包括
-+ 算术平均数
-+ 移动平均数
-+ 中位数
-+ 分位数
-+ 标准差（仅对正态分布数据集有用）
-  
-** 回顾数据的几个问题
-#+begin_example
-  + 它在两个方向上都有很大的偏态吗？也就是说，数据点是否聚集在图的两端 ?
-  + 极端异常的值常见吗？
-  + 数据点有上界和下界吗？例如，理论上延迟的衡量在正方向上实际是可以无限大的（低端到 0 即 为界限），而 CPU 利用率的百分比在两端都有界限（0% 和 100%）。
-
-  通过对数据提出这些问题，你会开始了解哪些统计方法可能有效、哪些可能无效。
-#+end_example
-
-* 监控策略
-
-** 业务监控
-
-*** 业务KPI
-从高管或创始人的角度来看，我们可以很轻松地总结他们的关注点。
-
-+ 客户能不能正常使用应用程序/服务？
-+ 公司是在盈利么？
-+ 公司是在壮大、萎缩还是停滞不前？
-+ 利润有多少？是在提高、降低还是维持现状？
-+ 客户满意吗？
-
-以下是企业主用来回答这些问题的常用指标。
-
-+ 月度经常性收入 :: 衡量来自客户的月度经常性收入。
-
-+ 每位客户收入 :: 衡量每位客户的总收入，通常以年度为基础。
-
-+ 付费客户数 :: 
-
-+ 净推荐值 :: 衡量用户/客户满意度。
-  #+begin_example
-    净推荐值（NPS）要求用户从 1 到 10 打分，10 分是最好的（也称为李克特量表），说明他们向其他人推荐服务/应用程序的可能性有多大。
-    有了足够多的回复，就可以知道用户对服务/应用程序的满意程度。
-    净推荐值还可以在更细粒度的级别上使用，例如，在含有最近解析的服务台票据的跟进电子邮件中。
-  #+end_example
-
-+ 客户终生价值（LTV） :: 衡量客户在整个生命周期内的总价值。
-
-+ 每位客户成本 :: 衡量服务客户的成本。
-
-+ 客户撷取成本（CAC） :: 衡量获得一位客户/用户的成本。
-
-+ 客户流失 :: 衡量有多少用户离开了应用程序/服务。
-  #+begin_example
-    一定程度的用户流失是不可避免的，这是做生意的自然规律，但是高用户流失率可能表明应用程序出现了问题，无论是从产品角度（应用程序不是很好）、 性能角度（应用程序太慢）还是成本角度（应用程序太贵）来考虑。
-    流失率很大程度上取决于业务性质，所以最好是和自己过去的服务比较，而不是和其他公司的服务比较。
-
-  #+end_example
-
-+ 活跃用户数 :: 衡量应用程序/服务的活跃用户。
-  #+begin_example
-     活跃用户可能很难定义，而且这种衡量在很大程度上取决于业务性质。
-     此指标通常是对多个指标，比如日活跃用户（DAU）、周活跃用户（WAU）和月活跃用户（MAU），进行跟踪。
-
-  #+end_example
-
-+ 资金消耗率 :: 一个衡量公司整体开销的标准。
-
-+ 运转率 :: 运转率通常与资金消耗率联系在一起，用于衡量一家公司在当前支出水平下资金耗尽的时间，通常按月计算。
-
-+ 总体有效市场（TAM） :: 衡量一个特定市场有多大。
-  #+begin_example
-    它基本上是一个估计值，通过确定将某个产品卖给市场上的所有人所能产生的总价值（以美元计）来得出。这取决于公司如何定义其市场。
-
-  #+end_example
-
-+ 毛利率 :: 去除销售成本（COGS）后利润的衡量方法。
-
-*** 将业务KPI与技术指标绑定
-
-+ 通过与产品经理和工程师团队沟通来进行指标关联。
-+ 画出程序模块的功能，从模块功能出发确定要检测的指标。
-
-#+: Reddit业务KPI与技术指标绑定
-| 业务KPI        | 技术指标               |
-|----------------+------------------------|
-| 当前在线的用户 | 当前在线的用户         |
-| 用户登录       | 用户登录失败，登录延迟 |
-| 提交的评论     | 提交评论失败，提交延迟 |
-| 提交的帖子     | 提交帖子失败，提交延迟 |
-| 发起的投票     | 投票失败，投票延迟     |
-| 发送的私信     | 私信发送失败，发送延迟 |
-| 已购Gold账号   | 购买失败，购买延迟     |
-| 已购广告       | 购买失败，购买延迟     |
-
-*** 应用程序中增加对应指标
-
-** 前端监控
-
-+ 随着单页面应用程序（SPA）的大量出现，JavaScript 错误激增而 HTTP 错误没有相应变化的情况并不少见。传统的基于HTTP返回码的监控方法不再适用。
-
-+ 监控前端性能的目标不是保持运行状态，而是快速加载（这是因为加载速度与用户体验息息相关）。
-
-*** 前端性能指标
-浏览器本身获取了大量的指标数据。
-
-**** Navigation Timing API
-
-浏览器通过 Navigation Timing API 公开页面性能指标，Navigation Timing API 是 W3C 推荐的规范。
-
-此 API 的完整指标列表如下所示。
-
-+ navigationStart :: 浏览器发出页面请求的事件
-+ unloadEventStart
-+ unloadEventEnd  
-+ redirectStart
-+ redirectEnd
-+ fetchStart  
-+ domainLookupStart
-+ domainLookupEnd
-+ connectStart  
-+ connectEnd
-+ secureConnectionStart
-+ requestStart  
-+ responseStart
-+ responseEnd
-+ domLoading  :: DOM 已经编译并开始加载的时间
-+ domInteractive :: 页面可用（但不一定完成加载）的时间
-+ domContentLoadedEventStart
-+ domContentLoadedEventEnd  
-+ domContentLoaded :: 所有脚本都已经被执行的时间
-+ domComplete :: 页面加载完所有内容的时间
-+ loadEventStart
-+ loadEventEnd  
-
-
-因此我们可以计算下面两个数字
-+ domComplete – navigationStart = 页面的总加载时间
-+ domInteractive – navigationStart = 直到用户认为页面已经加载完的时间
-
-**** Speed Index
-#+begin_example
-   WebpageTest 是事实上的前端性能测试工具，它有很多有趣和有用的指标，其中最主要的是你
-   可能已经很熟悉的 Speed Index（速度指数）。
-
-   Navigation Timing 指标依赖于浏览器的准确报告，而 Speed Index 使用每秒 10 帧的视频捕
-   获来从视觉角度确定页面何时完成加载。在确定用户感知的完整性方面，它比浏览器报告的指标
-   要准确得多。然后其根据 Speed Index 算法计算测试结果，该结果用一个数值表示，这个数值越
-   低越好。对于大致了解性能的情况，Speed Index 是一个很好的数字，但是我要提醒你不要过于
-   依赖它，因为它不会像浏览器报告的指标那样提供很多细节。
-#+end_example
-
-**** 日志
-通过 JavaScript 收集异常和日志语句，到将其发送到托管服务上
-
-** 应用程序监控 
-
-记录数据库查询的耗时怎么样？一些外部供应商 API 的响应时间有多长？全天登录的次数有多少
-
-*** 关于应用程序性能监控（APM）工具的题外话
-#+begin_example
-  市面上有很多工具打着 APM 工具的旗号，其思路是在应用程序中添加一个 agent 程序或者类
-  库，从而允许它们获得关于应用程序的性能、慢查询以及瀑布图等各种信息。这是一个令人信
-  服的说辞，而且也没有错，因为这些工具会做以上所有事情而且常常会超出这些范围。
-
-  问题就在于这些工具的背后并没有关于应用程序的任何上下文信息或业务逻辑。尽管你看到漂
-  亮的瀑布图上显示了在特定的查询上花费的时间，但它实际上并没有告诉你关于这一关键工作
-  流路径的延迟信息，或者关于这个应用程序是做什么的所需的任何上下文信息。
-#+end_example
-
-*** 监控构建和发布的指标
-+ 部署开始时间
-+ 部署结束时间
-+ 部署了什么版本的构建
-+ 谁触发了部署
-
-参见 [[https://codeascraft.com/2011/02/15/measure-anything-measure-everything/]]
-
-例如， *通过叠加部署事件和错误率，可以发现部署与错误之间的关系。*
-
-*** /health 检测
-#+begin_example
-  应用程序中的一个 HTTP 端点会显示该应用程序的健康状态，有时候还会包含一些关于应用程序的基本信息（例如部署版本、依赖关系的状态等）。
-  通过端点可以获取应用程序健康情况和状态信息。
-#+end_example
-
-*** 应用程序日志
-日志能比指标包含更多的上下文语境
-
-+ 设置什么日志级别？
-+ 写入磁盘还是网络？
-+ 对于每一个进来的请求，使用一个唯一的请求 ID
-
-** 服务器监控
-
-*** 标准操作系统指标
-#+begin_example
-  对于如何使用这些指标，我的建议是为你拥有的每个系统自动记录它们，但是不要在它们上面设置告警（除非你有充分的理由）
-#+end_example
-
-+ CPU :: 指标数据源于 =/proc/stat=
-+ 内存（去除buffer 和 Cache 的值） :: 指标数据来源于 =/proc/meminfo=
-+ swap :: 对较低空闲内存和不断提升的 swap 使用率的告警是内存压力升高的一个很好的标志。
-+ OOMKiller 日志 :: 在 syslog 中查找 &quot;killed process&quot;
-+ 网络 :: 通过 ifconfig 和 ip 查看，网卡收取、发送、错误和丢弃的字节数
-+ 磁盘 :: 通过 iostat 查看，iowait, await, %util, tpss
-  + iowait :: 代表因为等待磁盘完成操作而造成的 CPU 空闲时间
-  + await :: 是指从发出请求到获取磁盘服务响应所需的平均时间（以毫秒计）。这个数值既包括花费在队列中的时间也包括执行请求的时间。
-  + %util :: 最容易被视为磁盘的使用饱和度。
-  + tps :: 每秒传输量
-+ 负载 :: 通过 uptime 查看，表示多少进程在等待CPU. *负载指标并不对应系统性能。服务器的负载指标很高，但性能良好，这种现象很常见*
-
-*** SSL证书
-只需要知道证书还有多久会过期，能提前通知即可。
-
-*** SNMP
-不建议在服务器上使用 SNMP。
-
-+ 难以增加功能
-+ 协议本身不安全
-+ 通过轮训收集指标，难以扩展和管理
-+ 有更好的替代品，例如基于推送模式的 collectd, Telegraf, Diamond
-
-*** Web服务器 / 负载均衡器
-+ 每秒请求数 :: 黄金指标
-+ HTTP响应码 :: 5XX 表示服务器端错误
-+ 连接数
-+ 请求时间
-  
-*** 数据库服务器
-+ 连接数
-+ 每秒查询数 :: 对服务器繁忙程度的直接衡量
-+ 慢查询
-+ 主副本复制延迟
-+ IOPS
-  
-*** 消息队列
-+ 消息队列长度 :: 队列上等待的消息数
-+ 消费率 :: 从队列中消费信息的速率
-  
-*** 缓存
-+ 逐出项数量 :: 高逐出率是缓存过小的信号
-+ 命中率
-  
-*** DNS
-+ 区域传输率 :: 节点通过区域传输和主节点保持同，可能引发同步问题。
-+ 每秒查询数 :: 负载情况
-  
-*** NTP
-+ 客户端与服务端之间的时间偏移量
-+ 客户端是否同步时间成功 :: ntpstat 返回码不为0
-  
-*** DHCP
-+ DHCP 服务器已发放的租赁
-+ DHCP 池是否有足够的租赁容量
-
-*** SMTP
-+ 出站邮件队列 :: 有多少邮件正在等待被发送出去
-+ 发送和接收邮件的总量 :: 有助于发现异常行为
-+ 邮箱容量与使用率
-
-*** 定时任务
-难点在于定时任务中要在失败时记录错误日志，例如
-#+begin_src shell
-  run-backup.sh 2&gt;&amp;1 backup.log || echo &quot;Job failed&quot; &gt; backup.log
-#+end_src
-
-*** 日志
-+ HTTP 响应
-+ sudo 使用
-+ SSH 登录
-+ cron 作业结果
-
-** 网络监控
-
-*** 网络性能
-+ 带宽
-+ 吞吐率
-+ 延迟
-+ 错误 :: 包括诸如 Rx/Tx 错误、丢弃、CRC 错误、溢出、载波错误、重置和冲突等指标
-+ 抖动 :: 一个指标与其通常测量值的偏差。最常应用于延迟测量
-  
-*** 接口
-+ trunk 端口的变更
-+ 因错误被禁用的端口
-+ 链接聚合接口变成绑定或非绑定状态
-
-*** 配置
-网络的配置变更需要被存储起来并通知他人
-
-*** 路由
-#+begin_example
-  这里最有用的监控是针对动态路由协议（主要是 OSPF 和 BGP）的。要监控静态路由，最好是通过
-  监控底层链接和在路由上传递流量的能力（例如使用 iperf2）来实现，而不是监控路由是否存在。
-
-  当谈及 BGP 时，有很多你能够也应该监控的地方。
-
-  + TCAM 表的大小与机架的内存有关。将这个表最大化可能是糟糕的一天的开始。早在 2014 年，一些 Cisco 设备的 TCAM 耗尽就印证了这一点，那次事件导致了很多大企业的服务中断。
-  + BGP 对等更改。
-  + BGP AS 路径更改（这对于某些对延迟非常敏感的公司尤其重要）。
-  + BGP community 更改（由对等方发送和接收的前缀数量）。
-#+end_example
-
-*** 机架
-+ CPU
-+ 内存
-+ 开关栈、线路卡、管理卡和电源
-+ syslog 中的冷启动信息
-  
-*** 流监控
-#+begin_example
-  由 Cisco 定义的网络流（flow）是一个共享 7 个通用值的单向数据包序列。
-
-  1 入口界面（SNMP ifIndex）。
-  2 源 IP 地址。
-  3 目标 IP 地址。
-  4 IP 协议。
-  5 UDP 或 TCP 的源端口，其他协议是 0。
-  6 UDP 或 TCP 的目标端口，对于 ICMP 是类型和代码，其他协议是 0。
-  7 服务的 IP 类型。
-
-  流监控非常适合跟踪高带宽活动或节点，或者在每个 IP、协议、应用程序或服务的基础上分析带宽利用率。
-#+end_example
-
-** 安全监控
-
-#+begin_example
-  任何属于特定规则范围内的东西都应该有一个内置的监控组件。
-  为了满足合规的共性需求，你还需要证明控制正在按照你认为的方式工作，监控就是证明这一点的最好方法。
-#+end_example
-
-+ 用户，命令与文件系统审计 :: auditd
-  #+begin_example
-    可以使用 =auditd= 来跟踪用户操作和其他事件。它可以报告以下几种类型的事件。
-
-    + 所有 sudo 的执行、执行的命令以及由谁执行。
-    + 特定文件的访问或变更、什么时候以及由谁访问或变更。
-    + 用户身份验证的尝试和失败。
-  #+end_example
-
-+ 主机入侵检测系统 :: rkhunter
-  #+begin_example
-    rootkit 可以是任何东西，从大量安装的基于 PHP 的网页后门，到隐秘的、重新编译的系统二进制文件，以及介于两者之间的一切。
-    由于其隐秘的特性，检测 rootkit 可能相当困难，因此需要依赖许多策略：用户/进程行为分析、日志分析、文件系统和进程审计，以及文件散列比较等。
-  #+end_example
-
-+ 网络入侵检测系统 :: snort
-
-  
-* 运行手册示例
-#+begin_example
-  A.1　演示应用程序
-
-  Rails 演示应用程序是一个简单的 Rails 博客应用程序，展示了一个基本的 Rails 应用程序是什么样
-  的。主要组件是一个数据库支持的用户管理系统和一个发布/评论系统。
-
-  A.2　元数据
-
-  代码库位于内部源代码系统中，名为 demo-app。服务所有者是 John Doe。
-
-  A.3　升级程序
-
-  如果需要帮助以解决此服务的问题，服务所有者已请求成为下一个升级点。联系方式见公司联系表。
-
-  A.4　外部依赖关系
-
-  无外部依赖关系。
-
-  A.5　内部依赖关系
-
-  PostgreSQL 数据库，运行在位于 rds-123.foo.com 的一个 RDS 实例上。
-
-  A.6　技术栈
-
-  + Rails 4.x
-  + PostgreSQL (AWS RDS)
-
-  A.7　指标和日志
-
-  该应用程序发出以下指标：
-
-  + 用户登录（计数）
-  + 用户登出（计数）
-  + 文章创建（计数）
-  + 文章删除（计数）
-  + 评论创建（计数）
-  + 评论删除（计数）
-  + 文章创建时间（计时）
-  + 文章删除时间（计时）
-  + 用户注册时间（计时）
-  + 用户登录时间（计时）
-  + 用户登出时间（计时）
-
-  该应用程序发出以下日志：
-
-  + 用户通过用户 ID 登录、状态（成功/失败），以及 IP 地址
-  + 通过用户 ID 创建帖子、状态（成功/失败），以及 IP 地址
-  + 通过用户 ID 创建评论、状态（成功/失败），以及 IP 地址
-
-  A.8　告警
-
-   用户登录失败率
-
-  　　当用户登录失败率在 5 分钟内超过 5% 时，将触发此告警。潜在的原因是错误的部署（检查最
-  近的部署）或暴力攻击（检查用户登录日志以查看攻击的迹象）。
-
-   用户登录时间过长
-
-  　　当用户登录所需时间超过 1 秒时，将触发此告警。检查最近的错误部署或 Postgres 性能问题。
-
-   文章创建时间过长
-
-  　　当用户创建一篇文章的时间超过 1 秒时，将触发此告警。检查最近的错误部署或 Postgres 性能
-  问题。
-
-   评论创建时间过长
-
-  　　当用户创建评论的时间超过 1 秒时，将触发此告警。检查最近的错误部署或 Postgres 性能问
-  题。
-#+end_example
-
-</description>
-<pubDate>2022-03-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2022/03/17/《监控运维实践：原则与策略》读书笔记/index.html</guid>
-</item>
-<item>
-<title>emacs-lisp中如何创建整数列表</title>
-<link>https://lujun9972.github.io/blog/2022/02/17/emacs-lisp中如何创建整数列表/index.html</link>
-<description>emacs-lisp中提供了一堆 =seq-*= 函数对序列进行操作，但却缺少类似 Python 中的 =range= 函数那样的生成序列的函数。
-
-在网上搜索了一下才知道 emacs-lisp 中是可以使用 =number-sequence= 来实现类似的功能的。
-
-#+begin_example
-  number-sequence is a compiled Lisp function in ‘subr.el’.
-
-  (number-sequence FROM &amp;optional TO INC)
-
-    Probably introduced at or before Emacs version 22.1.
-
-  Return a sequence of numbers from FROM to TO (both inclusive) as a list.
-  INC is the increment used between numbers in the sequence and defaults to 1.
-  So, the Nth element of the list is (+ FROM (* N INC)) where N counts from
-  zero.  TO is included only if there is an N for which TO = FROM + N * INC.
-  If TO is nil or numerically equal to FROM, return (FROM).
-  If INC is positive and TO is less than FROM, or INC is negative
-  and TO is larger than FROM, return nil.
-  If INC is zero and TO is neither nil nor numerically equal to
-  FROM, signal an error.
-
-  This function is primarily designed for integer arguments.
-  Nevertheless, FROM, TO and INC can be integer or float.  However,
-  floating point arithmetic is inexact.  For instance, depending on
-  the machine, it may quite well happen that
-  (number-sequence 0.4 0.6 0.2) returns the one element list (0.4),
-  whereas (number-sequence 0.4 0.8 0.2) returns a list with three
-  elements.  Thus, if some of the arguments are floats and one wants
-  to make sure that TO is included, one may have to explicitly write
-  TO as (+ FROM (* N INC)) or use a variable whose value was
-  computed with this exact expression.  Alternatively, you can,
-  of course, also replace TO with a slightly larger value
-  (or a slightly more negative value if INC is negative).
-#+end_example
-
-而且 =number-sequence= 函数还支持小数，这个就比较牛逼了。
-#+begin_src emacs-lisp
-  (number-sequence 0.1 1 0.1)
-#+end_src
-
-#+RESULTS:
-| 0.1 | 0.2 | 0.30000000000000004 | 0.4 | 0.5 | 0.6 | 0.7000000000000001 | 0.8 | 0.9 | 1.0 |
-
-当然了，小数的表示不是那个准确的。
-
-另外，我们还可以借助它实现其他生成序列的函数，比如
-#+begin_src emacs-lisp
-  (defun my/repeat (x c)
-    (mapcar (lambda (_)
-              c)
-            (number-sequence 1 x)))
-
-  (my/repeat 5 1)
-#+end_src
-
-#+RESULTS:
-| 1 | 1 | 1 | 1 | 1 |
-</description>
-<pubDate>2022-02-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2022/02/17/emacs-lisp中如何创建整数列表/index.html</guid>
 </item>
 </channel>
 </rss>
