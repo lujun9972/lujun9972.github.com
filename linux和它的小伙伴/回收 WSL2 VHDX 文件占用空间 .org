@@ -1,0 +1,42 @@
+#+TITLE: 回收 WSL2 VHDX 文件占用空间
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,wsl
+#+DATE: [2023-02-10 Fri 14:25]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在 WSL2 中删除文件并不会自动回收主机空间（参见 [[https://github.com/microsoft/WSL/issues/4699][WSL 2 should automatically release disk space back to the host OS]]）。
+可以通过以下几个步骤回收 WSL2 VHDX 文件占用空间：
+
+1. 在 WSL2 中将 ext4 文件系统内不用的块填0
+   #+begin_src shell
+     # 切换 root 用户
+     sudo -s
+     # 找出 / 的挂载设备，默认为 /dev/sdc
+     sd=$(mount|awk '$2=="on" && $3=="/" {print $1}')
+     # 设置文件系统标签
+     e2label ${sd} cloudimg-rootfs
+     # 重新挂载 / 为只读
+     mount -o ro,remount ${sd}
+     # 用 zerofree 将 ext4 文件系统中不用的块填零
+     zerofree ${sd}
+   #+end_src
+
+2. 在宿主机中关闭 wsl
+   #+begin_src shell
+     wsl --shutdown
+   #+end_src
+
+3. 在宿主机中用 diskpart 回收空间
+   #+begin_src bat
+     diskpart
+     diskpart> select vdisk file="C:\Users\<Username>\AppData\Local\Packages\<Linux-Distribution-AppPackageName>\LocalState\ext4.vhdx"
+     diskpart> compact vdisk
+   #+end_src
+
+
+* 参考资料
++ [[https://github.com/microsoft/WSL/issues/4699][WSL 2 should automatically release disk space back to the host OS]]
++ [[https://segmentfault.com/a/1190000040999582][缩小 WSL2 VHDX 文件的大小]]
++ [[https://github.com/microsoft/WSL/issues/5738][WSL disk cannot be mounted read-write]]
