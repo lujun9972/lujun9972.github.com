@@ -1,16 +1,70 @@
-name: 提交 habitica 任务
-on: [push]
+name: 提交 habitica 任务 + 构建博客
+on:
+  push:
+    branches: [source]
+
+permissions:
+  contents: write
+
 jobs:
   Finish-Habitica-Tasks:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out bahash code
-        uses: actions/checkout@v2
+      - name: Check out habash code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           repository: nasfarley88/habash
+      - name: 确保 habash 可执行
+        run: chmod +x ./habash
       - name: 提交 habitica 任务
-        run: ./habash up "写博客"
+        run: |
+          set -x
+          ./habash up "写博客"
         env:
           HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
           HABITICA_UUID: ${{ secrets.HABITICA_UUID }}
+
+  Build-Blog:
+    runs-on: ubuntu-latest
+    env:
+      CI: true
+      EGO_DIR: /tmp/EGO
+      REPO_DIR: ${{ github.workspace }}
+      STORE_DIR: /tmp/web
+      REPO: https://github.com/lujun9972/${{ github.event.repository.name }}
+    steps:
+      - name: Checkout 博客源文件
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: source
+
+      - name: Checkout EGO
+        run: git clone https://github.com/lujun9972/EGO.git "$EGO_DIR"
+
+      - name: Checkout master 分支到 store-dir
+        run: |
+          git clone --branch master --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            "$STORE_DIR"
+          cd "$STORE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 安装 Emacs 和系统依赖
+        run: sudo apt-get update && sudo apt-get install -y emacs-nox
+
+      - name: 执行 auto_publish.el 构建博客
+        run: |
+          git config core.quotePath false
+          emacs --batch -l auto_publish.el
+
+      - name: 推送 HTML 到 master 分支
+        run: |
+          cd "$STORE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin master

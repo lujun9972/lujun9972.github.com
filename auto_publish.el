@@ -13,9 +13,12 @@ There are two things you can do about this warning:
   ;;(add-to-list 'package-archives (cons "melpa-stable" (concat proto "://stable.melpa.org/packages/")) t)
   (when (< emacs-major-version 24)
     ;; For important compatibility libraries like cl-lib
-    (add-to-list 'package-archives (cons "gnu" (concat proto "://elpa.gnu.org/packages/")))))
+    (add-to-list 'package-archives (cons "gnu" (concat proto "://elpa.gnu.org/packages/"))))
+
 (package-initialize)
 (package-refresh-contents)
+(package-install 'ht)
+(package-install 'dash)
 (package-install 'mustache)
 (package-install 'htmlize)
 (package-install 'yaml-mode)
@@ -23,17 +26,13 @@ There are two things you can do about this warning:
 (package-install 'dockerfile-mode)
 (package-install 'docker-compose-mode)
 (package-install 'ox-gfm)
-(package-install 'request)
 
-(setq load-path (cons  "~/EGO/" load-path))
-(setq load-path (cons  "~/csdn-publish/" load-path))
-(setq load-path (cons  "~/toutiao/" load-path))
+(setq load-path (cons  (or (getenv "EGO_DIR") "~/EGO/") load-path))
 (require 'log-edit)
 (require 'htmlize)
 (require 'ego)
-(require 'toutiao)
 (setq ego-project-config-alist
- `(("blog" :repository-directory "~/source" :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>DarkSun的个人博客" :theme
+ `(("blog" :repository-directory ,(or (getenv "REPO_DIR") "~/source") :site-domain "https://lujun9972.github.io/" :site-main-title "暗无天日" :site-sub-title "=============>DarkSun的个人博客" :theme
     (DarkSun)
     :summary
     (("years" :year :updates 15)
@@ -41,7 +40,7 @@ There are two things you can do about this warning:
     :source-browse-url
     ("Github" ,(getenv "REPO"))
     ;; :personal-avatar "https://avatar.csdnimg.cn/6/2/4/1_lujun9972.jpg"
-    :personal-disqus-shortname "lujun9972" :personal-google-analytics-id "7bac4fd0247f69c27887e0d4e3aee41e" :ignore-file-name-regexp "README.org" :store-dir "~/web")))
+    :personal-disqus-shortname "lujun9972" :personal-google-analytics-id "7bac4fd0247f69c27887e0d4e3aee41e" :ignore-file-name-regexp "README.org" :store-dir ,(or (getenv "STORE_DIR") "~/web"))))
 (message "BEGIN TO AUTO PUBLIC")
 (setq org-export-use-babel nil)
 (setq org-export-with-broken-links t)
@@ -52,57 +51,11 @@ There are two things you can do about this warning:
 (require 'ob-shell)
 (require 'ox-gfm)
 (require 'cl-lib)
-(require 'request)
-;; publish CSDN
-(require 'csdn-publish)
-(setq csdn-publish-open-url nil)
 
-(defun get-origin-link (filename)
-  (let* ((vc-root (file-name-as-directory (file-truename (vc-git-root filename))))
-         (project (cl-find-if (lambda (project)
-                                (let* ((properties (cdr project))
-                                       (repository-directory (plist-get properties :repository-directory))
-                                       (abs-path (file-name-as-directory (file-truename repository-directory))))
-                                  (string= vc-root abs-path)))
-                              ego-project-config-alist)))
-    (if project
-        (let* ((site-domain  "https://www.lujun9972.win")
-               (ego-current-project-name (car project))
-               (options (car (ego--get-org-file-options filename vc-root nil)))
-               (uri (plist-get options :uri)))
-          (concat (replace-regexp-in-string "/?$" ""  site-domain) uri))
-      (csdn-publish-convert-link filename))))
-
-
-(setq csdn-publish-original-link-getter #'get-origin-link)
-
-(let* ((ego-current-project-name "blog")
-       (repo-dir (ego--get-repository-directory))
-       (base-git-commit (or (ego--get-first-commit-before-publish)
-                            "HEAD~1"))
-       (changed-files (ego-git-get-changed-files repo-dir base-git-commit))
-       (updated-files (plist-get changed-files :update))
-       (deleted-files (plist-get changed-files :delete))
-       (updated-org-files (cl-delete-if-not (lambda (file)
-                                              (string-suffix-p ".org" file)) updated-files))
-       (publish-org-files (cl-delete-if (lambda (file)
-                                          (string= (file-name-nondirectory file) "README.org"))
-                                        updated-org-files)))
-  (when publish-org-files
-    (csdn-publish-articles publish-org-files)))
-;; 设置发布到toutiao
-(defun post-to-toutiao (attr-plist)
-  (let ((uri (concat "https://www.lujun9972.win" (plist-get attr-plist :uri)))
-        (title (plist-get attr-plist :title))
-        (category  "杂说乱炖")
-        (toutiao-request-sync t))
-    (when (string= (plist-get attr-plist :category) "Emacs之怒")
-      (setq category "Emacs之怒"))
-    (when (string= (plist-get attr-plist :category)  "英文必须死")
-      (setq category "有趣即是正义"))
-    (message "toutiao DEBUG[%s][%s][%s]" uri title category)
-    (toutiao-post uri title category)))
-(add-hook 'ego-post-publish-hooks #'post-to-toutiao)
-
-;; publish ego log
-(ego-do-publication "blog" nil nil nil)
+(condition-case err
+    (ego-do-publication "blog" nil nil nil)
+  (error
+   (message "EGO ERROR: %s" (error-message-string err))
+   (message "EGO ERROR backtrace:")
+   (backtrace)))
+)

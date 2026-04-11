@@ -1,0 +1,91 @@
+#+TITLE: 从Linux ISO文件启动计算机
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2020-01-04 六 12:55]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+* 查看ISO文件中Linux内核文件的路径
+
+1. 挂载ISO文件
+
+   #+begin_src shell :dir /sudo::
+     sudo mount -t iso9660 -o ro /home/lujun9972/Downloads/KNOPPIX_V7.2.iso /mnt
+   #+end_src
+
+   #+RESULTS:
+
+2. 查看ISO文件内容
+   #+begin_src shell :results org
+   ls /mnt/boot/isolinux
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   balder.img
+   boot.cat
+   boot.msg
+   f2
+   f3
+   german.kbd
+   grub.exe
+   isolinux.bin
+   isolinux.cfg
+   linux
+   logo.16
+   memdisk
+   memtest
+   minirt.gz
+   #+end_src
+
+   其中linux文件就是Linux内核，minirt.gz文件是initrd镜像。
+   
+* GRUB中的磁盘命名方式
+GRUB的磁盘命名方式类似 =(hd0,1)= 这样的，这里的0表示是第一块磁盘，后面的1表示第一个分区，它相当于Linux中的/dev/sda1
+
+* 配置GRUB2启动项
+
+不同发行版的启动参数差异较大，下面分别以 Ubuntu 和 KNOPPIX 为例说明。
+
+** Ubuntu 示例
+
+Ubuntu 使用 casper 组件来支持从 ISO 启动，内核和 initrd 文件位于 ISO 的 =/casper/= 目录下。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry "Ubuntu ISO" {
+  set isofile="/home/lujun9972/Downloads/ubuntu-20.04.iso"
+  loopback loop (hd0,1)$isofile
+  linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${isofile} quiet splash
+  initrd (loop)/casper/initrd
+  }
+#+end_example
+
+** KNOPPIX 示例
+
+KNOPPIX 的内核和 initrd 文件位于 ISO 的 =/boot/isolinux/= 目录下，使用 =bootfrom= 参数指定 ISO 所在的设备和路径。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry "KNOPPIX V7.2 ISO" {
+  set isofile="/home/lujun9972/Downloads/KNOPPIX_V7.2.iso"
+  loopback loop (hd0,1)$isofile
+  linux (loop)/boot/isolinux/linux bootfrom=/dev/sda1${isofile}
+  initrd (loop)/boot/isolinux/minirt.gz
+  }
+#+end_example
+
+注意 =bootfrom=/dev/sda1= 中的设备名需要根据实际情况修改，比如 NVMe 磁盘会是 =/dev/nvme0n1p1= 。
+
+最后运行
+#+begin_src shell :dir /sudo::
+  sudo grub-mkconfig -o /boot/grub/grub.cfg
+#+end_src
+
+#+RESULTS:
+
+更新GRUB配置

@@ -1,0 +1,207 @@
+#+TITLE: 用GitHub Actions自动构建EGO博客
+#+AUTHOR: lujun9972
+#+CATEGORY: Emacs之怒
+#+DATE: [2026-04-11 周五]
+#+OPTIONS: ^:{}
+
+* 背景
+
+我的博客 [[https://lujun9972.github.io/][暗无天日]] 使用 [[https://github.com/lujun9972/EGO][EGO]]（Emacs + Git + Org-mode）作为静态站点生成器。源文件是 ~.org~ 格式，存放在 ~source~ 分支；生成的 HTML 存放在 ~master~ 分支，通过 GitHub Pages 托管。
+
+一直以来，我都是在本机执行 ~auto_publish.el~ 来发布博客。但既然用了 GitHub，为什么不把构建过程也自动化呢？于是我开始折腾用 GitHub Actions 来自动构建博客。
+
+* 最终效果
+
+每次 ~push~ 到 ~source~ 分支时，GitHub Actions 会自动：
+1. 用 EGO 将 ~.org~ 文件转换为 HTML
+2. 将生成的 HTML 推送到 ~master~ 分支
+3. GitHub Pages 自动部署
+
+顺带还会在 Habitica 上完成"写博客"任务打个卡（游戏化激励）。
+
+* 实现过程
+
+** 第一步：改造 auto_publish.el
+
+原来 ~auto_publish.el~ 里的路径都是硬编码的：
+
+#+begin_src emacs-lisp
+(setq load-path (cons "~/EGO/" load-path))
+(setq load-path (cons "~/csdn-publish/" load-path))
+(setq load-path (cons "~/toutiao/" load-path))
+#+end_src
+
+这在本地没问题，但在 CI 环境里路径完全不同。所以我把所有硬编码路径改为从环境变量读取，保留默认值确保本地兼容：
+
+#+begin_src emacs-lisp
+(setq load-path (cons (or (getenv "EGO_DIR") "~/EGO/") load-path))
+(setq load-path (cons (or (getenv "CSDN_DIR") "~/csdn-publish/") load-path))
+(setq load-path (cons (or (getenv "TOUTIAO_DIR") "~/toutiao/") load-path))
+#+end_src
+
+~ego-project-config-alist~ 中的 ~:repository-directory~ 和 ~:store-dir~ 也做了类似处理：
+
+#+begin_src emacs-lisp
+`(("blog" :repository-directory ,(or (getenv "REPO_DIR") "~/source")
+   ...
+   :store-dir ,(or (getenv "STORE_DIR") "~/web")))
+#+end_src
+
+
+** 第二步：编写 GitHub Actions Workflow
+
+最终的 workflow 文件 ~.github/workflows/github-action.yml~ ：#+begin_src yaml
+name: 提交 habitica 任务 + 构建博客
+on:
+  push:
+    branches: [source]
+
+permissions:
+  contents: write
+
+jobs:
+  Finish-Habitica-Tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out habash code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: nasfarley88/habash
+      - name: 确保 habash 可执行
+        run: chmod +x ./habash
+      - name: 提交 habitica 任务
+        run: |
+          set -x
+          ./habash up "写博客"
+        env:
+          HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
+          HABITICA_UUID: ${{ secrets.HABITICA_UUID }}
+
+  Build-Blog:
+    runs-on: ubuntu-latest
+    env:
+      EGO_DIR: /tmp/EGO
+      REPO_DIR: ${{ github.workspace }}
+      STORE_DIR: /tmp/web
+      REPO: https://github.com/lujun9972/${{ github.event.repository.name }}
+    steps:
+      - name: Checkout 博客源文件
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: source
+
+      - name: Checkout EGO
+        run: git clone https://github.com/lujun9972/EGO.git "$EGO_DIR"
+
+      - name: Checkout master 分支到 store-dir
+        run: |
+          git clone --branch master --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            "$STORE_DIR"
+          cd "$STORE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: 安装 Emacs 和系统依赖
+        run: sudo apt-get update && sudo apt-get install -y emacs-nox
+
+      - name: 执行 auto_publish.el 构建博客
+        run: emacs --batch -l auto_publish.el
+
+      - name: 推送 HTML 到 master 分支
+        run: |
+          cd "$STORE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin master
+#+end_src
+
+两个 Job 并行运行，互不影响。注意 ~EGO_DIR~ 和 ~STORE_DIR~ 都指向 ~/tmp~ 下的路径，而不是 ~github.workspace~ 下的子目录，这是踩坑后的经验（详见下文）。
+
+** 第三步：踩过的坑
+
+*** 坑1：EGO 缺少依赖
+
+~auto_publish.el~ 在本地运行时，~ht~ 和 ~dash~ 两个包早就安装过了。但 CI 是全新环境，~package-install~ 列表里没有它们，导致 EGO 加载失败：
+
+#+begin_quote
+Cannot open load file: No such file or directory, ht
+#+end_quote
+
+解决：在 ~package-install~ 列表中加上 ~ht~ 和 ~dash~。
+
+*** 坑2：EGO 内部 git commit 缺少身份
+
+EGO 构建完后会用 ~vc-git-commit~ 提交 store-dir 的变更，但 store-dir 里没配 git user：
+
+#+begin_quote
+Failed (status 128): git --no-pager commit -m Update published html files...
+#+end_quote
+
+解决：clone master 分支后立即配置 ~git config user.name/email~。
+
+*** 坑3：EGO 的 stash/pop 在 CI 中失败
+
+这是最有意思的一个坑。
+
+EGO 在发布博客前，会通过 ~ego-git-repo-up2date-p~ 检查 repo 是否干净：
+
+#+begin_src emacs-lisp
+(defun ego-git-repo-up2date-p (repo-dir)
+  (let* ((default-directory (file-name-as-directory repo-dir))
+         (state (vc-git-state "")))
+    (equal state 'up-to-date)))
+#+end_src
+
+如果检测到 ~state~ 不是 ~up-to-date~，EGO 会先 ~git stash~ 保护变更，构建完成后再 ~git stash pop~ 恢复。但在 CI 中 stash pop 总是失败：
+
+#+begin_quote
+Failed (status 1): git --no-pager stash pop -q 0 .
+#+end_quote
+
+我一开始以为是 CI 环境 git 版本的问题，试了 ~git clean -fd~、~git checkout -- .~ 确保构建前 repo 干净，都没用。试了全量构建模式 ~(ego-do-publication "blog" t nil "CI auto publish")~ 绕过 stash，虽然能工作但丢失了增量构建的优势。
+
+后来仔细看 CI 日志，发现了真正的原因：
+
+#+begin_quote
+repo /home/runner/work/lujun9972.github.com/lujun9972.github.com/ state is edited
+#+end_quote
+
+**repo 是 ~edited~ 而不是 ~up-to-date~！** 明明是从空白环境 checkout 出来的，怎么会有未提交的变更？
+
+答案是：我最初把 EGO 和 master 分支都 checkout 到了 ~github.workspace~ 的子目录下：
+
+#+begin_src yaml
+EGO_DIR: ${{ github.workspace }}/EGO      # ❌ 在 workspace 内
+STORE_DIR: ${{ github.workspace }}/web     # ❌ 在 workspace 内
+#+end_src
+
+这样 ~github.workspace~（即 source 分支的 git repo）下面多了 ~EGO/~ 和 ~web/~ 两个未跟踪目录，~vc-git-state~ 自然返回 ~edited~。
+
+解决：把 EGO 和 master 分支 checkout 到 ~/tmp~ 下，与 source repo 完全隔离：
+
+#+begin_src yaml
+EGO_DIR: /tmp/EGO      # ✅ 在 workspace 外
+STORE_DIR: /tmp/web    # ✅ 在 workspace 外
+#+end_src
+
+改完后日志变为：
+
+#+begin_quote
+repo /home/runner/.../lujun9972.github.com/ state is up-to-date
+#+end_quote
+
+EGO 不再触发 stash，增量构建也正常工作了。
+
+* 总结
+
+整个折腾过程有两个关键收获：
+
+1. **路径可配置化**：用 ~(or (getenv "VAR") "default")~ 模式让 ~auto_publish.el~ 同时兼容本地和 CI 环境
+2. **checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态
+
+虽然中间踩了不少坑，但最终效果还是很满意的——以后 push 博客源文件就能自动构建发布，再也不用手动跑 ~auto_publish.el~ 了。
