@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>repeated task执行(org-todo &quot;DONE&quot;)不会记录状态变更日志之谜 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">repeated task执行(org-todo &quot;DONE&quot;)不会记录状态变更日志之谜</h1>
+<p>
+今天遇到一个很奇怪的情况，我们都知道当repeated task的state变成DONE时，是会自动将state变回原state， 同时会记录一条状态变更的日志。
+</p>
+
+<p>
+比如，下面这个 <code>t.org</code>,
+<img src="../../../../../assets/blog/2019/06/27/repeated-task执行(org-todo-"done")不会记录状态变更日志之谜/screenshot-24.png" alt="screenshot-24.png" />
+当执行了 <code>(org-todo "DONE")</code> 之后变成了
+<img src="../../../../../assets/blog/2019/06/27/repeated-task执行(org-todo-"done")不会记录状态变更日志之谜/screenshot-25.png" alt="screenshot-25.png" />
+其中的
+</p>
+<div class="org-src-container">
+<pre class="src src-org">- State "DONE"       from ""           <span class="org-org-date">[2019-06-27 &#22235; 20:49]</span>
+</pre>
+</div>
+<p>
+就是org自动生成的状态日志变更记录。
+</p>
+
+<p>
+但是，若你以 <a href="https://www.lujun9972.win/blog/2016/11/28/%25E5%25A6%2582%25E4%25BD%2595%25E7%25BC%2596%25E5%2586%2599emacsscript/">EmacsScript</a> 的形式执行 <code>(org-todo "DONE")</code> 时却发现状态变更日志不见了。
+</p>
+
+<p>
+比如,我们创建一个测试文件 <code>t.el</code>,内容为
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(find-file <span class="org-string">"t.org"</span>)
+(org-todo <span class="org-string">"DONE"</span>)
+(save-some-buffers t)
+(save-buffers-kill-terminal)
+</pre>
+</div>
+
+<p>
+然后执行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat t.org
+emacs --batch -l t.el
+<span class="org-builtin">echo</span> =======================================
+sleep 60
+cat t.org
+emacs -q -l t.el
+<span class="org-builtin">echo</span> =======================================
+cat t.org
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-06-27 &#22235; +1d&gt;</span>
+<span class="org-org-verbatim">=======================================</span>
+<span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-06-28 &#20116; +1d&gt;</span>
+  <span class="org-org-drawer">:PROPERTIES:</span>
+  <span class="org-org-special-keyword">:LAST_REPEAT:</span> <span class="org-org-date">[2019-06-27 &#22235; 21:07]</span>
+  <span class="org-org-drawer">:END:</span>
+<span class="org-org-verbatim">=======================================</span>
+<span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-06-29 &#20845; +1d&gt;</span>
+  <span class="org-org-drawer">:PROPERTIES:</span>
+  <span class="org-org-special-keyword">:LAST_REPEAT:</span> <span class="org-org-date">[2019-06-27 &#22235; 21:08]</span>
+  <span class="org-org-drawer">:END:</span>
+</pre>
+</div>
+
+<p>
+你会发现 <code>SCHEDULED</code> 和 <code>LAST_REPEAT</code> 都改变了，但是 <code>- State "DONE"       from ""           [2019-06-27 四 20:49]</code> 这样的状态变更日志不见了 
+</p>
+
+<p>
+经过查看 <code>org.el</code> 中的源代码，终于找到原因了。 org 插入状态变更记录的流程为:
+</p>
+
+<ol class="org-ol">
+<li><code>org-todo</code> 调用 <code>org-auto-repeat-maybe</code> 函数</li>
+
+<li><code>org-auto-repeat-maybe</code> 函数中通过 <code>org-add-log-setup</code> 在 <code>post-command-hook</code> 中设置 <code>org-add-log-note</code> 函数</li>
+
+<li><code>org-add-log-note</code> 根据 <code>org-log-note-how</code> 的值(若为'time或'state)来调用 <code>org-store-log-note</code></li>
+
+<li><code>org-store-log-note</code> 中根据 <code>org-log-note-headings</code> 变量中定义的模板组装状态变更的日志(note变量)并插入repeated task中</li>
+</ol>
+
+<p>
+这里主要的问题在于 <code>org-add-log-note</code> 是通过 <code>post-command-hook</code> 来触发的。而 <code>post-command-hook</code> 只有在 <code>Command Loop</code> 中才会被执行，
+而在上面的例子中，我们在执行完elisp后直接通过 <code>(save-buffers-kill-terminal)</code> 退出了Emacs，根本没有时机触发 <code>post-command-hook</code> 
+</p>
+
+<p>
+解决方法是，手工通过 <code>run-hooks</code> 来运行 <code>post-command-hook</code>,比如将 <code>t.el</code> 改成
+</p>
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(find-file <span class="org-string">"t.org"</span>)
+(org-todo <span class="org-string">"DONE"</span>)
+(run-hooks 'post-command-hook)
+(save-some-buffers t)
+(save-buffers-kill-terminal)
+</pre>
+</div>
+
+<p>
+再执行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">cat t.org
+emacs --batch -l t.el
+<span class="org-builtin">echo</span> =======================================
+sleep 60
+cat t.org
+emacs -q -l t.el
+<span class="org-builtin">echo</span> =======================================
+cat t.org
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-06-29 &#20845; +1d&gt;</span>
+  <span class="org-org-drawer">:PROPERTIES:</span>
+  <span class="org-org-special-keyword">:LAST_REPEAT:</span> <span class="org-org-date">[2019-06-27 &#22235; 21:08]</span>
+  <span class="org-org-drawer">:END:</span>
+<span class="org-org-verbatim">=======================================</span>
+<span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-06-30 &#26085; +1d&gt;</span>
+  <span class="org-org-drawer">:PROPERTIES:</span>
+  <span class="org-org-special-keyword">:LAST_REPEAT:</span> <span class="org-org-date">[2019-06-27 &#22235; 21:36]</span>
+  <span class="org-org-drawer">:END:</span>
+  - State "DONE"       from ""           <span class="org-org-date">[2019-06-27 &#22235; 21:36]</span>
+<span class="org-org-verbatim">=======================================</span>
+<span class="org-org-level-1">* test</span>
+  <span class="org-org-special-keyword">SCHEDULED:</span> <span class="org-org-date">&lt;2019-07-01 &#19968; +1d&gt;</span>
+  <span class="org-org-drawer">:PROPERTIES:</span>
+  <span class="org-org-special-keyword">:LAST_REPEAT:</span> <span class="org-org-date">[2019-06-27 &#22235; 21:37]</span>
+  <span class="org-org-drawer">:END:</span>
+  - State "DONE"       from ""           <span class="org-org-date">[2019-06-27 &#22235; 21:37]</span>
+  - State "DONE"       from ""           <span class="org-org-date">[2019-06-27 &#22235; 21:36]</span>
+</pre>
+</div>
+
+<p>
+你会发现，状态变更记录现在正常出现了
+</p>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2019-06-27</span>
+    <span title="last modification date" class="post-info">2026-04-11</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/emacs之怒">Emacs之怒</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; 530sfc1j1x4exldi14v4jjn2ng &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
