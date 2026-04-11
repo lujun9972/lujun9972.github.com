@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>用GitHub Actions自动构建EGO博客 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">用GitHub Actions自动构建EGO博客</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org87a4d47">1. 背景</a></li>
+<li><a href="#org2dd5ee5">2. 最终效果</a></li>
+<li><a href="#org5c94963">3. 实现过程</a>
+<ul>
+<li><a href="#orgf3f8dfb">3.1. 第一步：改造 auto_publish.el</a></li>
+<li><a href="#org7471a0c">3.2. 第二步：编写 GitHub Actions Workflow</a></li>
+<li><a href="#org6ca1fa5">3.3. 第三步：踩过的坑</a>
+<ul>
+<li><a href="#org79b56f5">3.3.1. 坑1：EGO 缺少依赖</a></li>
+<li><a href="#org76caa65">3.3.2. 坑2：EGO 内部 git commit 缺少身份</a></li>
+<li><a href="#org9bbb2ba">3.3.3. 坑3：EGO 的 stash/pop 在 CI 中失败</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#orgb856e01">4. 总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org87a4d47" class="outline-2">
+<h2 id="org87a4d47"><span class="section-number-2">1.</span> 背景</h2>
+<div class="outline-text-2" id="text-1">
+<p>
+我的博客 <a href="https://lujun9972.github.io/">暗无天日</a> 使用 <a href="https://github.com/lujun9972/EGO">EGO</a>（Emacs + Git + Org-mode）作为静态站点生成器。源文件是 <code>.org</code> 格式，存放在 <code>source</code> 分支；生成的 HTML 存放在 <code>master</code> 分支，通过 GitHub Pages 托管。
+</p>
+
+<p>
+一直以来，我都是在本机执行 <code>auto_publish.el</code> 来发布博客。但既然用了 GitHub，为什么不把构建过程也自动化呢？于是我开始折腾用 GitHub Actions 来自动构建博客。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2dd5ee5" class="outline-2">
+<h2 id="org2dd5ee5"><span class="section-number-2">2.</span> 最终效果</h2>
+<div class="outline-text-2" id="text-2">
+<p>
+每次 <code>push</code> 到 <code>source</code> 分支时，GitHub Actions 会自动：
+</p>
+<ol class="org-ol">
+<li>用 EGO 将 <code>.org</code> 文件转换为 HTML</li>
+<li>将生成的 HTML 推送到 <code>master</code> 分支</li>
+<li>GitHub Pages 自动部署</li>
+</ol>
+
+<p>
+顺带还会在 Habitica 上完成"写博客"任务打个卡（游戏化激励）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5c94963" class="outline-2">
+<h2 id="org5c94963"><span class="section-number-2">3.</span> 实现过程</h2>
+<div class="outline-text-2" id="text-3">
+</div>
+<div id="outline-container-orgf3f8dfb" class="outline-3">
+<h3 id="orgf3f8dfb"><span class="section-number-3">3.1.</span> 第一步：改造 auto_publish.el</h3>
+<div class="outline-text-3" id="text-3-1">
+<p>
+原来 <code>auto_publish.el</code> 里的路径都是硬编码的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/EGO/"</span> load-path))
+(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/csdn-publish/"</span> load-path))
+(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/toutiao/"</span> load-path))
+</pre>
+</div>
+
+<p>
+这在本地没问题，但在 CI 环境里路径完全不同。所以我把所有硬编码路径改为从环境变量读取，保留默认值确保本地兼容：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"EGO_DIR"</span>) <span class="org-string">"~/EGO/"</span>) load-path))
+(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"CSDN_DIR"</span>) <span class="org-string">"~/csdn-publish/"</span>) load-path))
+(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"TOUTIAO_DIR"</span>) <span class="org-string">"~/toutiao/"</span>) load-path))
+</pre>
+</div>
+
+<p>
+<code>ego-project-config-alist</code> 中的 <code>:repository-directory</code> 和 <code>:store-dir</code> 也做了类似处理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">`((<span class="org-string">"blog"</span> <span class="org-builtin">:repository-directory</span> ,(<span class="org-keyword">or</span> (getenv <span class="org-string">"REPO_DIR"</span>) <span class="org-string">"~/source"</span>)
+   ...
+   <span class="org-builtin">:store-dir</span> ,(<span class="org-keyword">or</span> (getenv <span class="org-string">"STORE_DIR"</span>) <span class="org-string">"~/web"</span>)))
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org7471a0c" class="outline-3">
+<h3 id="org7471a0c"><span class="section-number-3">3.2.</span> 第二步：编写 GitHub Actions Workflow</h3>
+<div class="outline-text-3" id="text-3-2">
+<p>
+最终的 workflow 文件 <code>.github/workflows/github-action.yml</code> ：#+begin_src yaml
+name: 提交 habitica 任务 + 构建博客
+on:
+  push:
+    branches: [source]
+</p>
+
+<p>
+permissions:
+  contents: write
+</p>
+
+<p>
+jobs:
+  Finish-Habitica-Tasks:
+    runs-on: ubuntu-latest
+    steps:
+</p>
+<ul class="org-ul">
+<li>name: Check out habash code
+uses: actions/checkout@v4
+with:
+  fetch-depth: 0
+  repository: nasfarley88/habash</li>
+<li>name: 确保 habash 可执行
+run: chmod +x ./habash</li>
+<li>name: 提交 habitica 任务
+run: |
+  set -x
+  ./habash up "写博客"
+env:
+  HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
+  HABITICA_UUID: ${{ secrets.HABITICA_UUID }}</li>
+</ul>
+
+<p>
+Build-Blog:
+  runs-on: ubuntu-latest
+  env:
+    EGO_DIR: /tmp/EGO
+    REPO_DIR: \({{ github.workspace }}
+      STORE_DIR: /tmp/web
+      REPO: https://github.com/lujun9972/\){{ github.event.repository.name }}
+  steps:
+</p>
+<ul class="org-ul">
+<li>name: Checkout 博客源文件
+uses: actions/checkout@v4
+with:
+  fetch-depth: 0
+  ref: source</li>
+
+<li>name: Checkout EGO
+run: git clone <a href="https://github.com/lujun9972/EGO.git">https://github.com/lujun9972/EGO.git</a> "$EGO_DIR"</li>
+
+<li>name: Checkout master 分支到 store-dir
+run: |
+  git clone &#x2013;branch master &#x2013;single-branch \
+    <a href="https://x-access-token">https://x-access-token</a>:\({{ secrets.GITHUB_TOKEN }}@github.com/\){{ github.repository }}.git \
+    "$STORE_DIR"
+  cd "$STORE_DIR"
+  git config user.name "github-actions[bot]"
+  git config user.email "github-actions[bot]@users.noreply.github.com"</li>
+
+<li>name: 安装 Emacs 和系统依赖
+run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox</li>
+
+<li>name: 执行 auto_publish.el 构建博客
+run: emacs &#x2013;batch -l auto_publish.el</li>
+
+<li>name: 推送 HTML 到 master 分支
+run: |
+  cd "$STORE_DIR"
+  git config user.name "github-actions[bot]"
+  git config user.email "github-actions[bot]@users.noreply.github.com"
+  git add -A
+  git diff &#x2013;staged &#x2013;quiet || git commit -m "auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  git push origin master</li>
+</ul>
+<p>
+#+end_src
+</p>
+
+<p>
+两个 Job 并行运行，互不影响。注意 <code>EGO_DIR</code> 和 <code>STORE_DIR</code> 都指向 <code>/tmp</code> 下的路径，而不是 <code>github.workspace</code> 下的子目录，这是踩坑后的经验（详见下文）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6ca1fa5" class="outline-3">
+<h3 id="org6ca1fa5"><span class="section-number-3">3.3.</span> 第三步：踩过的坑</h3>
+<div class="outline-text-3" id="text-3-3">
+</div>
+<div id="outline-container-org79b56f5" class="outline-4">
+<h4 id="org79b56f5"><span class="section-number-4">3.3.1.</span> 坑1：EGO 缺少依赖</h4>
+<div class="outline-text-4" id="text-3-3-1">
+<p>
+<code>auto_publish.el</code> 在本地运行时，~ht~ 和 <code>dash</code> 两个包早就安装过了。但 CI 是全新环境，~package-install~ 列表里没有它们，导致 EGO 加载失败：
+</p>
+
+<blockquote>
+<p>
+Cannot open load file: No such file or directory, ht
+</p>
+</blockquote>
+
+<p>
+解决：在 <code>package-install</code> 列表中加上 <code>ht</code> 和 ~dash~。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org76caa65" class="outline-4">
+<h4 id="org76caa65"><span class="section-number-4">3.3.2.</span> 坑2：EGO 内部 git commit 缺少身份</h4>
+<div class="outline-text-4" id="text-3-3-2">
+<p>
+EGO 构建完后会用 <code>vc-git-commit</code> 提交 store-dir 的变更，但 store-dir 里没配 git user：
+</p>
+
+<blockquote>
+<p>
+Failed (status 128): git &#x2013;no-pager commit -m Update published html files&#x2026;
+</p>
+</blockquote>
+
+<p>
+解决：clone master 分支后立即配置 ~git config user.name/email~。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9bbb2ba" class="outline-4">
+<h4 id="org9bbb2ba"><span class="section-number-4">3.3.3.</span> 坑3：EGO 的 stash/pop 在 CI 中失败</h4>
+<div class="outline-text-4" id="text-3-3-3">
+<p>
+这是最有意思的一个坑。
+</p>
+
+<p>
+EGO 在发布博客前，会通过 <code>ego-git-repo-up2date-p</code> 检查 repo 是否干净：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">ego-git-repo-up2date-p</span> (repo-dir)
+  (<span class="org-keyword">let*</span> ((default-directory (file-name-as-directory repo-dir))
+         (state (vc-git-state <span class="org-string">""</span>)))
+    (equal state 'up-to-date)))
+</pre>
+</div>
+
+<p>
+如果检测到 <code>state</code> 不是 <code>up-to-date~，EGO 会先 ~git stash</code> 保护变更，构建完成后再 <code>git stash pop</code> 恢复。但在 CI 中 stash pop 总是失败：
+</p>
+
+<blockquote>
+<p>
+Failed (status 1): git &#x2013;no-pager stash pop -q 0 .
+</p>
+</blockquote>
+
+<p>
+我一开始以为是 CI 环境 git 版本的问题，试了 <code>git clean -fd~、~git checkout -- .</code> 确保构建前 repo 干净，都没用。试了全量构建模式 <code>(ego-do-publication "blog" t nil "CI auto publish")</code> 绕过 stash，虽然能工作但丢失了增量构建的优势。
+</p>
+
+<p>
+后来仔细看 CI 日志，发现了真正的原因：
+</p>
+
+<blockquote>
+<p>
+repo <i>home/runner/work/lujun9972.github.com/lujun9972.github.com</i> state is edited
+</p>
+</blockquote>
+
+<p>
+<b><b>repo 是 <code>edited</code> 而不是 ~up-to-date~！</b></b> 明明是从空白环境 checkout 出来的，怎么会有未提交的变更？
+</p>
+
+<p>
+答案是：我最初把 EGO 和 master 分支都 checkout 到了 <code>github.workspace</code> 的子目录下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-variable-name">EGO_DIR</span>: ${{ github.workspace }}/EGO      <span class="org-comment-delimiter"># </span><span class="org-comment">&#10060; &#22312; workspace &#20869;
+</span><span class="org-variable-name">STORE_DIR</span>: ${{ github.workspace }}/web     <span class="org-comment-delimiter"># </span><span class="org-comment">&#10060; &#22312; workspace &#20869;</span>
+</pre>
+</div>
+
+<p>
+这样 <code>github.workspace~（即 source 分支的 git repo）下面多了 ~EGO/</code> 和 <code>web/</code> 两个未跟踪目录，~vc-git-state~ 自然返回 ~edited~。
+</p>
+
+<p>
+解决：把 EGO 和 master 分支 checkout 到 <code>/tmp</code> 下，与 source repo 完全隔离：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-variable-name">EGO_DIR</span>: /tmp/EGO      <span class="org-comment-delimiter"># </span><span class="org-comment">&#9989; &#22312; workspace &#22806;
+</span><span class="org-variable-name">STORE_DIR</span>: /tmp/web    <span class="org-comment-delimiter"># </span><span class="org-comment">&#9989; &#22312; workspace &#22806;</span>
+</pre>
+</div>
+
+<p>
+改完后日志变为：
+</p>
+
+<blockquote>
+<p>
+repo <i>home/runner</i>&#x2026;/lujun9972.github.com/ state is up-to-date
+</p>
+</blockquote>
+
+<p>
+EGO 不再触发 stash，增量构建也正常工作了。
+</p>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb856e01" class="outline-2">
+<h2 id="orgb856e01"><span class="section-number-2">4.</span> 总结</h2>
+<div class="outline-text-2" id="text-4">
+<p>
+整个折腾过程有两个关键收获：
+</p>
+
+<ol class="org-ol">
+<li>**路径可配置化**：用 <code>(or (getenv "VAR") "default")</code> 模式让 <code>auto_publish.el</code> 同时兼容本地和 CI 环境</li>
+<li>**checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态</li>
+</ol>
+
+<p>
+虽然中间踩了不少坑，但最终效果还是很满意的——以后 push 博客源文件就能自动构建发布，再也不用手动跑 <code>auto_publish.el</code> 了。
+</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2026-04-11</span>
+    <span title="last modification date" class="post-info">2026-04-11</span>
+    <span title="tags" class="post-info">N/A</span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; r3144es4y5cetkslrcqndxo1cf &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>

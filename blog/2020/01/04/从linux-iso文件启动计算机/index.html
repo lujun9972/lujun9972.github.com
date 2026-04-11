@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>从Linux ISO文件启动计算机 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">从Linux ISO文件启动计算机</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org94f83fb">查看ISO文件中Linux内核文件的路径</a></li>
+<li><a href="#org94ab49c">GRUB中的磁盘命名方式</a></li>
+<li><a href="#org44869af">配置GRUB2启动项</a>
+<ul>
+<li><a href="#orgf816166">Ubuntu 示例</a></li>
+<li><a href="#org8441ed4">KNOPPIX 示例</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+
+<div id="outline-container-org94f83fb" class="outline-2">
+<h2 id="org94f83fb">查看ISO文件中Linux内核文件的路径</h2>
+<div class="outline-text-2" id="text-org94f83fb">
+<ol class="org-ol">
+<li><p>
+挂载ISO文件
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo mount -t iso9660 -o ro /home/lujun9972/Downloads/KNOPPIX_V7.2.iso /mnt
+</pre>
+</div></li>
+
+<li><p>
+查看ISO文件内容
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">ls /mnt/boot/isolinux
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">balder.img
+boot.cat
+boot.msg
+f2
+f3
+german.kbd
+grub.exe
+isolinux.bin
+isolinux.cfg
+linux
+logo.16
+memdisk
+memtest
+minirt.gz
+</pre>
+</div>
+
+<p>
+其中linux文件就是Linux内核，minirt.gz文件是initrd镜像。
+</p></li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org94ab49c" class="outline-2">
+<h2 id="org94ab49c">GRUB中的磁盘命名方式</h2>
+<div class="outline-text-2" id="text-org94ab49c">
+<p>
+GRUB的磁盘命名方式类似 <code>(hd0,1)</code> 这样的，这里的0表示是第一块磁盘，后面的1表示第一个分区，它相当于Linux中的/dev/sda1
+</p>
+</div>
+</div>
+
+<div id="outline-container-org44869af" class="outline-2">
+<h2 id="org44869af">配置GRUB2启动项</h2>
+<div class="outline-text-2" id="text-org44869af">
+<p>
+不同发行版的启动参数差异较大，下面分别以 Ubuntu 和 KNOPPIX 为例说明。
+</p>
+</div>
+
+<div id="outline-container-orgf816166" class="outline-3">
+<h3 id="orgf816166">Ubuntu 示例</h3>
+<div class="outline-text-3" id="text-orgf816166">
+<p>
+Ubuntu 使用 casper 组件来支持从 ISO 启动，内核和 initrd 文件位于 ISO 的 <code>/casper/</code> 目录下。
+</p>
+
+<p>
+编辑 <code>/etc/grub.d/40_custom</code>,加入下面内容
+</p>
+
+<pre class="example" id="org22dc8d6">
+menuentry "Ubuntu ISO" {
+set isofile="/home/lujun9972/Downloads/ubuntu-20.04.iso"
+loopback loop (hd0,1)$isofile
+linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${isofile} quiet splash
+initrd (loop)/casper/initrd
+}
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org8441ed4" class="outline-3">
+<h3 id="org8441ed4">KNOPPIX 示例</h3>
+<div class="outline-text-3" id="text-org8441ed4">
+<p>
+KNOPPIX 的内核和 initrd 文件位于 ISO 的 <code>/boot/isolinux/</code> 目录下，使用 <code>bootfrom</code> 参数指定 ISO 所在的设备和路径。
+</p>
+
+<p>
+编辑 <code>/etc/grub.d/40_custom</code>,加入下面内容
+</p>
+
+<pre class="example" id="org7602e5d">
+menuentry "KNOPPIX V7.2 ISO" {
+set isofile="/home/lujun9972/Downloads/KNOPPIX_V7.2.iso"
+loopback loop (hd0,1)$isofile
+linux (loop)/boot/isolinux/linux bootfrom=/dev/sda1${isofile}
+initrd (loop)/boot/isolinux/minirt.gz
+}
+</pre>
+
+<p>
+注意 <code>bootfrom=/dev/sda1</code> 中的设备名需要根据实际情况修改，比如 NVMe 磁盘会是 <code>/dev/nvme0n1p1</code> 。
+</p>
+
+<p>
+最后运行
+</p>
+<div class="org-src-container">
+<pre class="src src-shell">sudo grub-mkconfig -o /boot/grub/grub.cfg
+</pre>
+</div>
+
+<p>
+更新GRUB配置
+</p>
+</div>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2020-01-04</span>
+    <span title="last modification date" class="post-info">2026-04-11</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; r3144es4y5cetkslrcqndxo1cf &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
