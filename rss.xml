@@ -4,9 +4,813 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 11 Apr 2026 05:52:28 UTC</pubDate>
-    <lastBuildDate>Sat, 11 Apr 2026 05:52:28 UTC</lastBuildDate>
+    <pubDate>Sat, 11 Apr 2026 10:23:04 UTC</pubDate>
+    <lastBuildDate>Sat, 11 Apr 2026 10:23:04 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>repeated task执行(org-todo &quot;DONE&quot;)不会记录状态变更日志之谜</title>
+<link>https://lujun9972.github.io/blog/2019/06/27/repeated-task执行(org-todo-&quot;done&quot;)不会记录状态变更日志之谜/index.html</link>
+<description>今天遇到一个很奇怪的情况，我们都知道当repeated task的state变成DONE时，是会自动将state变回原state， 同时会记录一条状态变更的日志。
+
+比如，下面这个 =t.org=,
+[[file:./images/screenshot-24.png]]
+当执行了 =(org-todo &quot;DONE&quot;)= 之后变成了
+[[file:./images/screenshot-25.png]]
+其中的
+#+begin_src org
+   - State &quot;DONE&quot;       from &quot;&quot;           [2019-06-27 四 20:49]
+#+end_src
+就是org自动生成的状态日志变更记录。
+
+但是，若你以 [[https://www.lujun9972.win/blog/2016/11/28/%25E5%25A6%2582%25E4%25BD%2595%25E7%25BC%2596%25E5%2586%2599emacsscript/][EmacsScript]] 的形式执行 =(org-todo &quot;DONE&quot;)= 时却发现状态变更日志不见了。
+
+比如,我们创建一个测试文件 =t.el=,内容为
+#+begin_src emacs-lisp
+  (find-file &quot;t.org&quot;)
+  (org-todo &quot;DONE&quot;)
+  (save-some-buffers t)
+  (save-buffers-kill-terminal)
+#+end_src
+
+然后执行
+#+begin_src shell :dir /tmp :results org
+  cat t.org
+  emacs --batch -l t.el
+  echo =======================================
+  sleep 60
+  cat t.org
+  emacs -q -l t.el
+  echo =======================================
+  cat t.org
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+,* test
+  SCHEDULED: &lt;2019-06-27 四 +1d&gt;
+=======================================
+,* test
+  SCHEDULED: &lt;2019-06-28 五 +1d&gt;
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:07]
+  :END:
+=======================================
+,* test
+  SCHEDULED: &lt;2019-06-29 六 +1d&gt;
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:08]
+  :END:
+#+end_src
+
+你会发现 =SCHEDULED= 和 =LAST_REPEAT= 都改变了，但是 =- State &quot;DONE&quot;       from &quot;&quot;           [2019-06-27 四 20:49]= 这样的状态变更日志不见了 
+
+经过查看 =org.el= 中的源代码，终于找到原因了。 org 插入状态变更记录的流程为:
+
+1. =org-todo= 调用 =org-auto-repeat-maybe= 函数
+
+2. =org-auto-repeat-maybe= 函数中通过 =org-add-log-setup= 在 =post-command-hook= 中设置 =org-add-log-note= 函数
+
+3. =org-add-log-note= 根据 =org-log-note-how= 的值(若为&#39;time或&#39;state)来调用 =org-store-log-note=
+
+4. =org-store-log-note= 中根据 =org-log-note-headings= 变量中定义的模板组装状态变更的日志(note变量)并插入repeated task中
+
+这里主要的问题在于 =org-add-log-note= 是通过 =post-command-hook= 来触发的。而 =post-command-hook= 只有在 =Command Loop= 中才会被执行，
+而在上面的例子中，我们在执行完elisp后直接通过 =(save-buffers-kill-terminal)= 退出了Emacs，根本没有时机触发 =post-command-hook= 
+
+解决方法是，手工通过 =run-hooks= 来运行 =post-command-hook=,比如将 =t.el= 改成
+#+begin_src emacs-lisp
+  (find-file &quot;t.org&quot;)
+  (org-todo &quot;DONE&quot;)
+  (run-hooks &#39;post-command-hook)
+  (save-some-buffers t)
+  (save-buffers-kill-terminal)
+#+end_src
+
+再执行
+#+begin_src shell :dir /tmp :results org
+  cat t.org
+  emacs --batch -l t.el
+  echo =======================================
+  sleep 60
+  cat t.org
+  emacs -q -l t.el
+  echo =======================================
+  cat t.org
+#+end_src
+
+#+RESULTS:
+#+begin_src org
+,* test
+  SCHEDULED: &lt;2019-06-29 六 +1d&gt;
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:08]
+  :END:
+=======================================
+,* test
+  SCHEDULED: &lt;2019-06-30 日 +1d&gt;
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:36]
+  :END:
+  - State &quot;DONE&quot;       from &quot;&quot;           [2019-06-27 四 21:36]
+=======================================
+,* test
+  SCHEDULED: &lt;2019-07-01 一 +1d&gt;
+  :PROPERTIES:
+  :LAST_REPEAT: [2019-06-27 四 21:37]
+  :END:
+  - State &quot;DONE&quot;       from &quot;&quot;           [2019-06-27 四 21:37]
+  - State &quot;DONE&quot;       from &quot;&quot;           [2019-06-27 四 21:36]
+#+end_src
+
+你会发现，状态变更记录现在正常出现了
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2019/06/27/repeated-task执行(org-todo-&quot;done&quot;)不会记录状态变更日志之谜/index.html</guid>
+</item>
+<item>
+<title>用GitHub Actions自动构建EGO博客</title>
+<link>https://lujun9972.github.io/blog/2026/04/11/用github-actions自动构建ego博客/index.html</link>
+<description>* 背景
+
+我的博客 [[https://lujun9972.github.io/][暗无天日]] 使用 [[https://github.com/lujun9972/EGO][EGO]]（Emacs + Git + Org-mode）作为静态站点生成器。源文件是 ~.org~ 格式，存放在 ~source~ 分支；生成的 HTML 存放在 ~master~ 分支，通过 GitHub Pages 托管。
+
+一直以来，我都是在本机执行 ~auto_publish.el~ 来发布博客。但既然用了 GitHub，为什么不把构建过程也自动化呢？于是我开始折腾用 GitHub Actions 来自动构建博客。
+
+* 最终效果
+
+每次 ~push~ 到 ~source~ 分支时，GitHub Actions 会自动：
+1. 用 EGO 将 ~.org~ 文件转换为 HTML
+2. 将生成的 HTML 推送到 ~master~ 分支
+3. GitHub Pages 自动部署
+
+顺带还会在 Habitica 上完成&quot;写博客&quot;任务打个卡（游戏化激励）。
+
+* 实现过程
+
+** 第一步：改造 auto_publish.el
+
+原来 ~auto_publish.el~ 里的路径都是硬编码的：
+
+#+begin_src emacs-lisp
+(setq load-path (cons &quot;~/EGO/&quot; load-path))
+(setq load-path (cons &quot;~/csdn-publish/&quot; load-path))
+(setq load-path (cons &quot;~/toutiao/&quot; load-path))
+#+end_src
+
+这在本地没问题，但在 CI 环境里路径完全不同。所以我把所有硬编码路径改为从环境变量读取，保留默认值确保本地兼容：
+
+#+begin_src emacs-lisp
+(setq load-path (cons (or (getenv &quot;EGO_DIR&quot;) &quot;~/EGO/&quot;) load-path))
+(setq load-path (cons (or (getenv &quot;CSDN_DIR&quot;) &quot;~/csdn-publish/&quot;) load-path))
+(setq load-path (cons (or (getenv &quot;TOUTIAO_DIR&quot;) &quot;~/toutiao/&quot;) load-path))
+#+end_src
+
+~ego-project-config-alist~ 中的 ~:repository-directory~ 和 ~:store-dir~ 也做了类似处理：
+
+#+begin_src emacs-lisp
+`((&quot;blog&quot; :repository-directory ,(or (getenv &quot;REPO_DIR&quot;) &quot;~/source&quot;)
+   ...
+   :store-dir ,(or (getenv &quot;STORE_DIR&quot;) &quot;~/web&quot;)))
+#+end_src
+
+
+** 第二步：编写 GitHub Actions Workflow
+
+最终的 workflow 文件 ~.github/workflows/github-action.yml~ ：#+begin_src yaml
+name: 提交 habitica 任务 + 构建博客
+on:
+  push:
+    branches: [source]
+
+permissions:
+  contents: write
+
+jobs:
+  Finish-Habitica-Tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out habash code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: nasfarley88/habash
+      - name: 确保 habash 可执行
+        run: chmod +x ./habash
+      - name: 提交 habitica 任务
+        run: |
+          set -x
+          ./habash up &quot;写博客&quot;
+        env:
+          HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
+          HABITICA_UUID: ${{ secrets.HABITICA_UUID }}
+
+  Build-Blog:
+    runs-on: ubuntu-latest
+    env:
+      EGO_DIR: /tmp/EGO
+      REPO_DIR: ${{ github.workspace }}
+      STORE_DIR: /tmp/web
+      REPO: https://github.com/lujun9972/${{ github.event.repository.name }}
+    steps:
+      - name: Checkout 博客源文件
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: source
+
+      - name: Checkout EGO
+        run: git clone https://github.com/lujun9972/EGO.git &quot;$EGO_DIR&quot;
+
+      - name: Checkout master 分支到 store-dir
+        run: |
+          git clone --branch master --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            &quot;$STORE_DIR&quot;
+          cd &quot;$STORE_DIR&quot;
+          git config user.name &quot;github-actions[bot]&quot;
+          git config user.email &quot;github-actions[bot]@users.noreply.github.com&quot;
+
+      - name: 安装 Emacs 和系统依赖
+        run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
+
+      - name: 执行 auto_publish.el 构建博客
+        run: emacs --batch -l auto_publish.el
+
+      - name: 推送 HTML 到 master 分支
+        run: |
+          cd &quot;$STORE_DIR&quot;
+          git config user.name &quot;github-actions[bot]&quot;
+          git config user.email &quot;github-actions[bot]@users.noreply.github.com&quot;
+          git add -A
+          git diff --staged --quiet || git commit -m &quot;auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)&quot;
+          git push origin master
+#+end_src
+
+两个 Job 并行运行，互不影响。注意 ~EGO_DIR~ 和 ~STORE_DIR~ 都指向 ~/tmp~ 下的路径，而不是 ~github.workspace~ 下的子目录，这是踩坑后的经验（详见下文）。
+
+** 第三步：踩过的坑
+
+*** 坑1：EGO 缺少依赖
+
+~auto_publish.el~ 在本地运行时，~ht~ 和 ~dash~ 两个包早就安装过了。但 CI 是全新环境，~package-install~ 列表里没有它们，导致 EGO 加载失败：
+
+#+begin_quote
+Cannot open load file: No such file or directory, ht
+#+end_quote
+
+解决：在 ~package-install~ 列表中加上 ~ht~ 和 ~dash~。
+
+*** 坑2：EGO 内部 git commit 缺少身份
+
+EGO 构建完后会用 ~vc-git-commit~ 提交 store-dir 的变更，但 store-dir 里没配 git user：
+
+#+begin_quote
+Failed (status 128): git --no-pager commit -m Update published html files...
+#+end_quote
+
+解决：clone master 分支后立即配置 ~git config user.name/email~。
+
+*** 坑3：EGO 的 stash/pop 在 CI 中失败
+
+这是最有意思的一个坑。
+
+EGO 在发布博客前，会通过 ~ego-git-repo-up2date-p~ 检查 repo 是否干净：
+
+#+begin_src emacs-lisp
+(defun ego-git-repo-up2date-p (repo-dir)
+  (let* ((default-directory (file-name-as-directory repo-dir))
+         (state (vc-git-state &quot;&quot;)))
+    (equal state &#39;up-to-date)))
+#+end_src
+
+如果检测到 ~state~ 不是 ~up-to-date~，EGO 会先 ~git stash~ 保护变更，构建完成后再 ~git stash pop~ 恢复。但在 CI 中 stash pop 总是失败：
+
+#+begin_quote
+Failed (status 1): git --no-pager stash pop -q 0 .
+#+end_quote
+
+我一开始以为是 CI 环境 git 版本的问题，试了 ~git clean -fd~、~git checkout -- .~ 确保构建前 repo 干净，都没用。试了全量构建模式 ~(ego-do-publication &quot;blog&quot; t nil &quot;CI auto publish&quot;)~ 绕过 stash，虽然能工作但丢失了增量构建的优势。
+
+后来仔细看 CI 日志，发现了真正的原因：
+
+#+begin_quote
+repo /home/runner/work/lujun9972.github.com/lujun9972.github.com/ state is edited
+#+end_quote
+
+**repo 是 ~edited~ 而不是 ~up-to-date~！** 明明是从空白环境 checkout 出来的，怎么会有未提交的变更？
+
+答案是：我最初把 EGO 和 master 分支都 checkout 到了 ~github.workspace~ 的子目录下：
+
+#+begin_src yaml
+EGO_DIR: ${{ github.workspace }}/EGO      # ❌ 在 workspace 内
+STORE_DIR: ${{ github.workspace }}/web     # ❌ 在 workspace 内
+#+end_src
+
+这样 ~github.workspace~（即 source 分支的 git repo）下面多了 ~EGO/~ 和 ~web/~ 两个未跟踪目录，~vc-git-state~ 自然返回 ~edited~。
+
+解决：把 EGO 和 master 分支 checkout 到 ~/tmp~ 下，与 source repo 完全隔离：
+
+#+begin_src yaml
+EGO_DIR: /tmp/EGO      # ✅ 在 workspace 外
+STORE_DIR: /tmp/web    # ✅ 在 workspace 外
+#+end_src
+
+改完后日志变为：
+
+#+begin_quote
+repo /home/runner/.../lujun9972.github.com/ state is up-to-date
+#+end_quote
+
+EGO 不再触发 stash，增量构建也正常工作了。
+
+* 总结
+
+整个折腾过程有两个关键收获：
+
+1. **路径可配置化**：用 ~(or (getenv &quot;VAR&quot;) &quot;default&quot;)~ 模式让 ~auto_publish.el~ 同时兼容本地和 CI 环境
+2. **checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态
+
+虽然中间踩了不少坑，但最终效果还是很满意的——以后 push 博客源文件就能自动构建发布，再也不用手动跑 ~auto_publish.el~ 了。
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/11/用github-actions自动构建ego博客/index.html</guid>
+</item>
+<item>
+<title>AIX行vi打开大文件时提示&quot;Out of memory saving lines for undo&quot;的解决方法</title>
+<link>https://lujun9972.github.io/blog/2017/08/08/aix行vi打开大文件时提示&quot;out-of-memory-saving-lines-for-undo&quot;的解决方法/index.html</link>
+<description>在AIX上，使用vi打开很多行的文件时，会提示&quot;ex: 0602-101 Out of memory saving lines for undo.&quot;
+
+解决方法是使用vi的 =-y= 参数。
+
+使用 =man vi= 查看vi帮助可以发现关于 =-y= 参数的说明为：
++ -yNumber :: Overrides the maximum line setting of 1,048,560 with any value greater than 1024. You should request twice the number of lines that you require because the vi editor uses the extra lines for buffer manipulation.
+              
+也就是说，默认用vi打开超过524280行的文件时就会提示这个错误，但是可以用 =vi -y $((2*$(wc -l $file))) file= 来打开。
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2017/08/08/aix行vi打开大文件时提示&quot;out-of-memory-saving-lines-for-undo&quot;的解决方法/index.html</guid>
+</item>
+<item>
+<title>从Linux ISO文件启动计算机</title>
+<link>https://lujun9972.github.io/blog/2020/01/04/从linux-iso文件启动计算机/index.html</link>
+<description>
+* 查看ISO文件中Linux内核文件的路径
+
+1. 挂载ISO文件
+
+   #+begin_src shell :dir /sudo::
+     sudo mount -t iso9660 -o ro /home/lujun9972/Downloads/KNOPPIX_V7.2.iso /mnt
+   #+end_src
+
+   #+RESULTS:
+
+2. 查看ISO文件内容
+   #+begin_src shell :results org
+   ls /mnt/boot/isolinux
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   balder.img
+   boot.cat
+   boot.msg
+   f2
+   f3
+   german.kbd
+   grub.exe
+   isolinux.bin
+   isolinux.cfg
+   linux
+   logo.16
+   memdisk
+   memtest
+   minirt.gz
+   #+end_src
+
+   其中linux文件就是Linux内核，minirt.gz文件是initrd镜像。
+   
+* GRUB中的磁盘命名方式
+GRUB的磁盘命名方式类似 =(hd0,1)= 这样的，这里的0表示是第一块磁盘，后面的1表示第一个分区，它相当于Linux中的/dev/sda1
+
+* 配置GRUB2启动项
+
+不同发行版的启动参数差异较大，下面分别以 Ubuntu 和 KNOPPIX 为例说明。
+
+** Ubuntu 示例
+
+Ubuntu 使用 casper 组件来支持从 ISO 启动，内核和 initrd 文件位于 ISO 的 =/casper/= 目录下。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry &quot;Ubuntu ISO&quot; {
+  set isofile=&quot;/home/lujun9972/Downloads/ubuntu-20.04.iso&quot;
+  loopback loop (hd0,1)$isofile
+  linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${isofile} quiet splash
+  initrd (loop)/casper/initrd
+  }
+#+end_example
+
+** KNOPPIX 示例
+
+KNOPPIX 的内核和 initrd 文件位于 ISO 的 =/boot/isolinux/= 目录下，使用 =bootfrom= 参数指定 ISO 所在的设备和路径。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry &quot;KNOPPIX V7.2 ISO&quot; {
+  set isofile=&quot;/home/lujun9972/Downloads/KNOPPIX_V7.2.iso&quot;
+  loopback loop (hd0,1)$isofile
+  linux (loop)/boot/isolinux/linux bootfrom=/dev/sda1${isofile}
+  initrd (loop)/boot/isolinux/minirt.gz
+  }
+#+end_example
+
+注意 =bootfrom=/dev/sda1= 中的设备名需要根据实际情况修改，比如 NVMe 磁盘会是 =/dev/nvme0n1p1= 。
+
+最后运行
+#+begin_src shell :dir /sudo::
+  sudo grub-mkconfig -o /boot/grub/grub.cfg
+#+end_src
+
+#+RESULTS:
+
+更新GRUB配置
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/01/04/从linux-iso文件启动计算机/index.html</guid>
+</item>
+<item>
+<title>用 Bash 打造一个Screen Locker</title>
+<link>https://lujun9972.github.io/blog/2026/04/11/用-bash-打造一个screen-locker/index.html</link>
+<description>#+BEGIN_EXPORT html
+&lt;p class=&quot;date&quot;&gt;发布于 2026-04-11&lt;/p&gt;
+#+END_EXPORT
+
+我有个习惯——离开电脑就锁屏关显示器，省电嘛。一行 =xset dpms force off= 就能搞定，挺好用的。
+
+直到有一天我发现，屏幕经常莫名其妙又亮了。后来才搞明白，桌上的鼠标太敏感了，擦个桌子、挪个东西，甚至走过去带起一点震动，鼠标就动了那么一像素。对 X11 来说，这就够了——它认为有用户活动，于是乖乖把显示器叫醒。
+
+[[https://www.linuxjournal.com/content/cat-proofing-your-screen-locker][Mitch Frazier 在 Linux Journal 上写过一篇]]思路差不多的文章，核心想法是锁屏后把鼠标设备禁用掉。不过他那个脚本锁屏命令写死了 =qdbus= （KDE 专用），我用的 awesomeWM，压根没这玩意儿。而且他也没有恢复鼠标的机制——禁了就禁了，你得手动恢复。
+
+* 最简单的版本
+
+锁屏脚本的本质就这几行：
+
+#+BEGIN_SRC bash
+qdbus org.kde.screensaver /ScreenSaver Lock
+sleep 2
+xset +dpms
+xset dpms force off
+#+END_SRC
+
+第一行锁屏，后面几行开启 DPMS 然后强制关显示器。简单粗暴，能用。
+
+但三个问题摆在那：
+
+1. =qdbus= 只有 KDE 有，awesomeWM 下跑不通
+2. 鼠标没禁，随便碰一下显示器就复活了
+3. 就算你加上禁用鼠标的逻辑……恢复的时候怎么办？用户还得记着鼠标叫什么名字？
+
+得想个更靠谱的方案。
+
+* 让脚本自己找锁屏工具
+
+不同桌面环境的锁屏方式五花八门——KDE 用 =qdbus= ，GNOME 用 =dbus-send= ，awesomeWM 用户大概率装了 =i3lock= ，还有人用 =betterlockscreen= 。让用户自己配？太不友好了。
+
+我的做法是写一条检测链，挨个试，哪个能用就用哪个：
+
+#+BEGIN_SRC bash
+lock_screen_x11() {
+    if has_cmd qdbus &amp;&amp; qdbus org.kde.screensaver /ScreenSaver &amp;&gt;/dev/null; then
+        qdbus org.kde.screensaver /ScreenSaver Lock
+    elif has_cmd dbus-send; then
+        dbus-send --type=method_call \
+            --dest=org.gnome.ScreenSaver \
+            /org/gnome/ScreenSaver \
+            org.gnome.ScreenSaver.Lock 2&gt;/dev/null || \
+        dbus-send --type=method_call \
+            --dest=org.freedesktop.ScreenSaver \
+            /org/freedesktop/ScreenSaver \
+            org.freedesktop.ScreenSaver.Lock 2&gt;/dev/null || true
+        loginctl lock-session 2&gt;/dev/null || true
+    elif has_cmd loginctl; then
+        loginctl lock-session
+    elif has_cmd i3lock; then
+        i3lock &amp;
+    elif has_cmd betterlockscreen; then
+        betterlockscreen --lock &amp;
+    elif has_cmd xlockmore; then
+        xlockmore &amp;
+    else
+        die &quot;No screen lock tool found.&quot;
+    fi
+}
+#+END_SRC
+
+=has_cmd= 就是个简单包装，用 =command -v= 检查命令在不在：
+
+#+BEGIN_SRC bash
+has_cmd() {
+    command -v &quot;$1&quot; &amp;&gt;/dev/null
+}
+#+END_SRC
+
+KDE、GNOME、awesomeWM + i3lock，随便你怎么折腾，脚本总能找到一个能用的。
+
+* 鼠标的问题
+
+这才是重点——怎么让鼠标在锁屏期间老老实实不捣乱。
+
+X11 下 =xinput= 可以禁用鼠标：
+
+#+BEGIN_SRC bash
+xinput --set-prop &quot;USB Mouse&quot; &quot;Device Enabled&quot; &quot;0&quot;
+#+END_SRC
+
+但坑来了：鼠标的名字不固定。我这里是&quot;USB Mouse&quot;，换个罗技的鼠标就变成&quot;Logitech USB Laser Mouse&quot;了。硬编码肯定不行。
+
+Mitch Frazier 那篇文章里有个挺巧妙的方法： =xinput list --name-only= 列出所有设备，然后 =grep -B 1 &#39;Virtual core keyboard&#39;= ，取匹配行前面那一行——八九不离十就是鼠标。我直接拿来用了：
+
+#+BEGIN_SRC bash
+detect_mouse_name() {
+    local mn
+    mn=$(xinput list --name-only | grep -B 1 &#39;Virtual core keyboard&#39; | head -n 1)
+    if [[ -z &quot;$mn&quot; ]]; then
+        warn &quot;Could not detect mouse device name.&quot;
+        echo &quot;&quot;
+        return 1
+    fi
+    echo &quot;$mn&quot;
+}
+#+END_SRC
+
+举个实际的例子， =xinput list= 的输出大概长这样：
+
+#+begin_src shell
+xinput list --name-only
+#+end_src
+#+BEGIN_EXAMPLE
+$ xinput list --name-only
+Virtual core XTEST pointer
+HOLTEK USB-HID Keyboard Mouse
+USB Mouse
+Virtual core keyboard
+Power Button
+#+END_EXAMPLE
+
+=grep -B 1 &#39;Virtual core keyboard&#39;= 同时匹配&quot;USB Mouse&quot;和&quot;Virtual core keyboard&quot;两行， =head -n 1= 取前面那行——搞定。
+
+说实话这个方法有点取巧，依赖&quot;鼠标设备恰好在键盘前面&quot;这个假设。但实际用下来，至少在我的几台机器上还没翻过车。
+
+* 记录状态，省却记忆
+
+Mitch Frazier 的方案有个让我不太舒服的地方：禁用鼠标之后，恢复的时候你得自己记住鼠标名字。这谁记得住啊？
+
+我的做法是用一个状态文件把锁定时的信息存下来：
+
+#+BEGIN_SRC bash
+STATE_FILE=&quot;${STATE_FILE:-/tmp/screen-locker-state}&quot;
+
+save_state() {
+    local st=&quot;$1&quot;
+    local mn=&quot;${2:-}&quot;
+    local br=&quot;${3:-}&quot;
+    cat &gt; &quot;$STATE_FILE&quot; &lt;&lt;EOF
+SESSION_TYPE=&quot;$st&quot;
+MOUSE_NAME=&quot;$mn&quot;
+BRIGHTNESS=&quot;$br&quot;
+EOF
+}
+
+load_state() {
+    if [[ ! -f &quot;$STATE_FILE&quot; ]]; then
+        die &quot;No lock state found. Is the screen locked?&quot;
+    fi
+    source &quot;$STATE_FILE&quot;
+}
+#+END_SRC
+
+其实就是往 =/tmp= 下面写了个 shell 变量赋值文件， =source= 一下就读回来了。里面记了会话类型、鼠标名字、还有 Wayland 下的亮度值。
+
+解锁的时候读状态文件，恢复鼠标，删掉文件。用户什么都不用管：
+
+#+BEGIN_SRC bash
+cmd_unlock() {
+    if ! is_locked; then
+        die &quot;Screen is not locked.&quot;
+    fi
+    load_state
+    if [[ &quot;$SESSION_TYPE&quot; == &quot;x11&quot; &amp;&amp; -n &quot;${MOUSE_NAME:-}&quot; ]]; then
+        enable_mouse &quot;$MOUSE_NAME&quot;
+        echo &quot;Mouse re-enabled: $MOUSE_NAME&quot;
+    fi
+    clear_state
+    echo &quot;Screen unlocked.&quot;
+}
+#+END_SRC
+
+* Wayland 怎么办
+
+现在越来越多的发行版默认用 Wayland 了。=xset= 和 =xinput= 都是 X11 专属，Wayland 下压根不存在。
+
+不过 Wayland 下情况不一样：
+- 关显示器：用 =brightnessctl=，先 =-s= 存亮度，再 =set 0= 关掉
+- 锁屏： =swaylock= 或者 =loginctl lock-session=
+- 鼠标禁用？不用管。Wayland 合成器锁屏时对输入设备有隔离，鼠标动一下不会把屏幕搞亮——这本来就是 Wayland 比 X11 做得好的地方
+
+判断 X11 还是 Wayland 看一眼 =$XDG_SESSION_TYPE= 就行：
+
+#+BEGIN_SRC bash
+detect_session_type() {
+    if [[ &quot;${XDG_SESSION_TYPE:-}&quot; == &quot;wayland&quot; ]]; then
+        echo &quot;wayland&quot;
+    elif [[ -n &quot;${DISPLAY:-}&quot; ]]; then
+        echo &quot;x11&quot;
+    else
+        die &quot;No display server detected.&quot;
+    fi
+}
+#+END_SRC
+
+* 拼到一起
+
+最终用法就三个命令：
+
+#+BEGIN_EXAMPLE
+screen-locker lock      # 锁屏 + 关显示器 + 禁用鼠标
+screen-locker unlock    # 恢复鼠标（解锁让屏保处理）
+screen-locker status    # 看看当前什么状态
+#+END_EXAMPLE
+
+=lock= 干的事情按顺序来：检测环境 → 检测鼠标名 → 存状态 → 锁屏 → 等 2 秒（等锁屏生效）→ 关显示器 → 禁用鼠标。=unlock= 反过来：读状态 → 恢复鼠标/亮度 → 删状态文件。
+
+还有个小细节——脚本底部用了 =BASH_SOURCE= 做了个守卫：
+
+#+BEGIN_SRC bash
+if [[ &quot;${BASH_SOURCE[0]}&quot; == &quot;${0}&quot; ]]; then
+    main &quot;$@&quot;
+fi
+#+END_SRC
+
+这样直接运行时走 =main()=，被 =source= 时只加载函数定义。后面写测试的时候会用到这个。
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/11/用-bash-打造一个screen-locker/index.html</guid>
+</item>
+<item>
+<title>64位系统执32位程序时提示&quot;No such file or directory&quot;</title>
+<link>https://lujun9972.github.io/blog/2019/01/17/64位系统执32位程序时提示&quot;no-such-file-or-directory&quot;/index.html</link>
+<description>* 症状
+在64位系统下执行32位程序，明明文件存在，但依然提示&quot;No such file or directory&quot;,如下图所示
+[[file:./images/screenshot-04.png]]
+
+* 原因
+当shell提示&quot;No such file or directory&quot; 时，一般是出现下面几种情况所致:
+
+1. 文件确实不存在
+2. 所要执行的文件是一个指向不存在文件的软链接
+3. 要执行的文件是一个script脚本，而其头部 =shebang= 行指定的解释器路径指定错误
+4. 要执行的文件是一个动态链接的可执行文件，但其所需的动态库不存在
+
+我这次遇到的这个问题就是因为没有安装32位的支持库导致的。
+
+* 解决方案
+只要为它安装好32位依赖库就好了
+#+BEGIN_SRC shell
+  sudo dpkg --add-architecture i386
+  sudo apt update
+  sudo apt install lib32ncurses5 lib32z1
+#+END_SRC
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2019/01/17/64位系统执32位程序时提示&quot;no-such-file-or-directory&quot;/index.html</guid>
+</item>
+<item>
+<title>AIX上停止进程后更新程序提示&quot;Cannot open or remove a file containing a running program&quot;</title>
+<link>https://lujun9972.github.io/blog/2019/12/04/aix上停止进程后更新程序提示&quot;cannot-open-or-remove-a-file-containing-a-running-program&quot;/index.html</link>
+<description>* 现象
+在AIX上明明进程已经停止了，但是更新.so文件时依然提示&quot;Cannot open or remove a file containing a running program&quot;.
+
+* 原因
+进程停止后，共享库还保留在内存的cache中
+
+* 解决方案
+用root用户执行slibclean命令，该命令会清除cache中无用的内核模块和共享库
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2019/12/04/aix上停止进程后更新程序提示&quot;cannot-open-or-remove-a-file-containing-a-running-program&quot;/index.html</guid>
+</item>
+<item>
+<title>docker容器中使用apt安装应用时提示&quot;dpkg创建备份文件失败:Invalid cross-device link&quot;</title>
+<link>https://lujun9972.github.io/blog/2018/12/13/docker容器中使用apt安装应用时提示&quot;dpkg创建备份文件失败-invalid-cross-device-link&quot;/index.html</link>
+<description>* 症状
+在ubuntu docker容器中尝试用apt安装应用时报错，提示“Invalid cross-device link”
+
+#+BEGIN_EXAMPLE
+  root@a7a2e07594ca:/# apt update &amp;&amp; apt install boxes -y
+  Hit:1 http://archive.ubuntu.com/ubuntu bionic InRelease
+  Hit:2 http://security.ubuntu.com/ubuntu bionic-security InRelease       
+  Hit:3 http://archive.ubuntu.com/ubuntu bionic-updates InRelease         
+  Hit:4 http://archive.ubuntu.com/ubuntu bionic-backports InRelease
+  Reading package lists... Done
+  Building dependency tree       
+  Reading state information... Done
+  4 packages can be upgraded. Run &#39;apt list --upgradable&#39; to see them.
+  Reading package lists... Done
+  Building dependency tree       
+  Reading state information... Done
+  The following NEW packages will be installed:
+    boxes
+  0 upgraded, 1 newly installed, 0 to remove and 4 not upgraded.
+  Need to get 66.6 kB of archives.
+  After this operation, 194 kB of additional disk space will be used.
+  Get:1 http://archive.ubuntu.com/ubuntu bionic/universe amd64 boxes amd64 1.2-2 [66.6 kB]
+  Fetched 66.6 kB in 1s (49.8 kB/s)
+  debconf: delaying package configuration, since apt-utils is not installed
+  Selecting previously unselected package boxes.
+  (Reading database ... 4038 files and directories currently installed.)
+  Preparing to unpack .../archives/boxes_1.2-2_amd64.deb ...
+  Unpacking boxes (1.2-2) ...
+  dpkg: error: error creating new backup file &#39;/var/lib/dpkg/status-old&#39;: Invalid cross-device link
+  E: Sub-process /usr/bin/dpkg returned an error code (2)
+  root@a7a2e07594ca:/# 
+#+END_EXAMPLE
+
+* 解决方案
+根据 https://github.com/docker/for-linux/issues/480 的说法，这是由于docker与Linux Kernel中新加的overlayfs metacopy 特性不兼容导致的。
+
+解决方法是:
+#+BEGIN_SRC shell
+  echo N | sudo tee /sys/module/overlay/parameters/metacopy
+#+END_SRC
+然后重启容器
+
+当然这种方法每次重启都要重新设置，你也可以在grub中添加内核参数 ~overlay.metacopy=N~ 来让系统每次启动时自动设置该参数。
+或者更极端一点，给你的内核打个[[https://www.spinics.net/lists/linux-unionfs/msg06316.html][这个补丁]]
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2018/12/13/docker容器中使用apt安装应用时提示&quot;dpkg创建备份文件失败-invalid-cross-device-link&quot;/index.html</guid>
+</item>
+<item>
+<title>locale提示&quot;Cannot set LC_CTYPE to default locale: No such file or directory&quot;的解决方案</title>
+<link>https://lujun9972.github.io/blog/2018/10/07/locale提示&quot;cannot-set-lc_ctype-to-default-locale-no-such-file-or-directory&quot;的解决方案/index.html</link>
+<description>* 症状
+运行 =locale= 命令时提示 =locale=
+#+BEGIN_EXAMPLE
+  [lctt@65fd43118c26 ~]$ locale
+  locale: Cannot set LC_CTYPE to default locale: No such file or directory
+  locale: Cannot set LC_MESSAGES to default locale: No such file or directory
+  locale: Cannot set LC_ALL to default locale: No such file or directory
+  LANG=en_US.UTF-8
+  LC_CTYPE=&quot;en_US.UTF-8&quot;
+  LC_NUMERIC=&quot;en_US.UTF-8&quot;
+  LC_TIME=&quot;en_US.UTF-8&quot;
+  LC_COLLATE=&quot;en_US.UTF-8&quot;
+  LC_MONETARY=&quot;en_US.UTF-8&quot;
+  LC_MESSAGES=&quot;en_US.UTF-8&quot;
+  LC_PAPER=&quot;en_US.UTF-8&quot;
+  LC_NAME=&quot;en_US.UTF-8&quot;
+  LC_ADDRESS=&quot;en_US.UTF-8&quot;
+  LC_TELEPHONE=&quot;en_US.UTF-8&quot;
+  LC_MEASUREMENT=&quot;en_US.UTF-8&quot;
+  LC_IDENTIFICATION=&quot;en_US.UTF-8&quot;
+  LC_ALL=
+#+END_EXAMPLE
+
+* 解决方案
+需要重新生成locale文件
+
+#+BEGIN_SRC shell
+  sudo sed &#39;s/#en_US.UTF-8/en_US.UTF-8/&#39; /etc/locale.gen 
+  sudo locale-gen
+#+END_SRC
+
+
+
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2018/10/07/locale提示&quot;cannot-set-lc_ctype-to-default-locale-no-such-file-or-directory&quot;的解决方案/index.html</guid>
+</item>
+<item>
+<title>mail命令提示&quot;Cannot find a usable character set to encode message: No such entry, file or directory&quot;的解决方法</title>
+<link>https://lujun9972.github.io/blog/2018/10/07/mail命令提示&quot;cannot-find-a-usable-character-set-to-encode-message-no-such-entry,-file-or-directory&quot;的解决方法/index.html</link>
+<description>* 症状
+使用mail命令发送邮件时提示 
+#+BEGIN_EXAMPLE
+mail: Cannot find a usable character set to encode message: No such entry, file or directory
+#+END_EXAMPLE
+
+* 解决方法
+错误信息里提到 =character set=, 因此推测是 =locale= 配置有问题。
+
+查看 =locale= 发现为 =POSIX=, 而邮件内容中包含中文，因此提示字符集错误。
+
+将locale改为 =zh_CN.UTF-8= 后正常发送
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2018/10/07/mail命令提示&quot;cannot-find-a-usable-character-set-to-encode-message-no-such-entry,-file-or-directory&quot;的解决方法/index.html</guid>
+</item>
 </channel>
 </rss>
