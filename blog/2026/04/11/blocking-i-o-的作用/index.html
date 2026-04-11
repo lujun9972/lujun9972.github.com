@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>blocking I/O 的作用 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <style>
+   #ds-thread #ds-reset .ds-comment-body p {color: #ffffff;}
+   #disqus_thread a {color: #00ffff;}
+  </style>
+  <link rel="stylesheet" media="screen" href="../../../../../media/css/font.css" rel="stylesheet" type="text/css"/>
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <script type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<div>
+  <header class="masthead">
+    <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+    <p>=============&gt;DarkSun的个人博客</p>
+    <nav class="site-nav">
+      <div class="menu-icon">
+      </div>
+      <ul class="trigger">
+              <li><a href="../../../../../years/">Years</a></li>
+              <li><a href="../../../../../tags/">Tags</a></li>
+              <li><a href="../../../../../about/">About</a></li>
+              <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+              <li><a href="../../../../../rss.xml">RSS</a></li>
+      </ul>
+    </nav>
+    <form method="get" id="searchform" action="http://www.google.com/search">
+        <input type="text" class="field" name="q" id="s" placeholder="Search">
+        <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+    </form>
+  </header>
+</div>
+
+<div>
+<div class="post">
+<h1 class="title">blocking I/O 的作用</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd53b08f">在终端里执行 yes 会发生什么？</a></li>
+<li><a href="#org9c21842">操作系统做了什么？</a></li>
+<li><a href="#orgbf4e012">亲自看看阻塞过程</a>
+<ul>
+<li><a href="#orgcf05d6c">实验步骤</a></li>
+</ul>
+</li>
+<li><a href="#orgb18e0b7">不只是伪终端</a></li>
+<li><a href="#org93917d5">缓冲区没满也能阻塞？</a></li>
+<li><a href="#org2ca4c9a">还有一种"暂停"</a></li>
+<li><a href="#orge5a9cd3">UNIX 设计哲学的缩影</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd53b08f" class="outline-2">
+<h2 id="orgd53b08f">在终端里执行 yes 会发生什么？</h2>
+<div class="outline-text-2" id="text-orgd53b08f">
+<p>
+打开一个 xterm 终端，输入 <code>yes</code> 然后回车，你会看到满屏的 <code>y</code> 疯狂刷过。
+</p>
+
+<p>
+<code>yes</code> 是一个很简单的程序，它做的事情就是不断地输出 <code>y</code> 加换行。但是你有没有想过一个问题：=yes= 生成数据的速度远远快于 xterm 能处理的速度。
+</p>
+
+<p>
+xterm 可不只是一个"显示文字的窗口"。每收到一行输出，xterm 需要：
+</p>
+
+<ol class="org-ol">
+<li>解析这些文字（可能包含颜色、光标移动等控制序列）</li>
+<li>更新自己的帧缓冲区（frame buffer）</li>
+<li>与 X server 通信来滚动窗口内容</li>
+<li>最终把像素画到屏幕上</li>
+</ol>
+
+<p>
+这是一大堆工作！而 <code>yes</code> 只需要不停地调用 <code>write(2)</code> 往外吐数据就行了。
+</p>
+
+<p>
+那问题来了：一个跑得飞快，一个处理得慢，为什么系统没有崩溃？为什么数据没有丢失？这两个程序是怎么"配合"起来的？
+</p>
+
+<p>
+答案就藏在一个叫 =blocking I/O=（阻塞式 I/O）的机制里。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9c21842" class="outline-2">
+<h2 id="org9c21842">操作系统做了什么？</h2>
+<div class="outline-text-2" id="text-org9c21842">
+<p>
+秘密在于：=yes= 和 <code>xterm</code> 之间并不是直接通信的。它们之间隔着一个"伪终端"（PTY，Pseudo Terminal），而伪终端在操作系统内核中维护着一个*固定大小的缓冲区*。
+</p>
+
+<p>
+你可以把它想象成一个水池：=yes= 从一头往里灌水，=xterm= 从另一头放水。水池的容量是有限的。
+</p>
+
+<pre class="example" id="orgaa63c5a">
+yes ──写入──▶ [ 内核缓冲区 (固定大小) ] ──读取──▶ xterm
+</pre>
+
+<p>
+关键来了：当这个缓冲区*满了*的时候，=yes= 再试图往里写数据会发生什么？
+</p>
+
+<p>
+答案是：不报错，不丢数据，而是*阻塞*（block）。
+</p>
+
+<p>
+具体来说，=yes= 程序通过 <code>write(2)</code> 这个*系统调用*（system call，即程序向内核请求服务的接口）来写入数据。当缓冲区满时，=write(2)= 不会立刻返回，而是让 <code>yes</code> 进程进入一种叫"可中断睡眠"（interruptible sleep）的状态。=yes= 就这样"睡着了"，直到 <code>xterm</code> 从缓冲区中读走了一些数据，腾出了空间，内核才会把 <code>yes</code> 唤醒，让它继续写入。
+</p>
+
+<p>
+整个过程对 <code>yes</code> 来说是完全透明的——它根本不知道自己曾经"睡"过。它只知道：我调用了 =write(2)=，数据写出去了，仅此而已。
+</p>
+
+<p>
+这就是 <code>blocking I/O</code> 的核心思想：**当消费者来不及处理时，让生产者自动"等一等"，而不需要任何一方写额外的协调代码。**
+</p>
+
+<p>
+顺便提一句，如果一个程序在打开文件时特别指定了"非阻塞模式"（non-blocking I/O），那么缓冲区满时 <code>write(2)</code> 不会阻塞，而是立即返回一个 <code>EAGAIN</code> 错误码，告诉程序"现在写不进去，你等会儿再来吧"。但这需要程序自己处理重试逻辑，显然没有阻塞模式来得省心。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbf4e012" class="outline-2">
+<h2 id="orgbf4e012">亲自看看阻塞过程</h2>
+<div class="outline-text-2" id="text-orgbf4e012">
+<p>
+光说不练假把式。我们可以做一个简单的实验，亲眼观察 blocking I/O 是怎么工作的。
+</p>
+</div>
+
+<div id="outline-container-orgcf05d6c" class="outline-3">
+<h3 id="orgcf05d6c">实验步骤</h3>
+<div class="outline-text-3" id="text-orgcf05d6c">
+<ol class="org-ol">
+<li>打开两个终端窗口。在第一个终端中运行 =yes=：</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-shell">yes
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>找到 <code>yes</code> 进程的 PID（进程 ID）：</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-shell">pgrep yes
+</pre>
+</div>
+
+<ol class="org-ol">
+<li>在第二个终端中，用 <code>strace</code> 观察 <code>yes</code> 进程在做什么：</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-shell">strace -p $(<span class="org-sh-quoted-exec">pgrep yes</span>) -e write
+</pre>
+</div>
+
+<p>
+你会看到 <code>yes</code> 不断地调用 <code>write(2)</code> 写入数据。
+</p>
+
+<ol class="org-ol">
+<li>现在回到第一个终端，按下 <code>Ctrl+S=（注意不是 =Ctrl+C=）。你会发现终端里的 =y</code> 不再刷屏了——好像"卡住"了一样。</li>
+
+<li>切回第二个终端看 <code>strace</code> 的输出。你会发现 <code>yes</code> 的 <code>write(2)</code> 调用停住了——它被阻塞了！</li>
+
+<li>回到第一个终端，按下 =Ctrl+Q=，一切恢复如初。</li>
+</ol>
+
+<p>
+你也可以用另一种方式来观察：在 <code>yes</code> 运行时，用 <code>top</code> 或 <code>htop</code> 查看 <code>yes</code> 进程的状态。正常情况下它占用大量 CPU；但当你按下 <code>Ctrl+S</code> 后，它的 CPU 占用会降到接近 0——因为它被阻塞了，在"睡觉"呢。
+</p>
+
+<p>
+或者直接查看进程状态文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/$(<span class="org-sh-quoted-exec">pgrep yes</span>)/status | grep State
+</pre>
+</div>
+
+<p>
+你会看到 <code>State: S (sleeping)=，其中 =S</code> 就表示进程正处于睡眠状态。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb18e0b7" class="outline-2">
+<h2 id="orgb18e0b7">不只是伪终端</h2>
+<div class="outline-text-2" id="text-orgb18e0b7">
+<p>
+上面说的虽然是伪终端（PTY）的例子，但同样的机制也适用于真实的硬件终端。
+</p>
+
+<p>
+假设我们通过串口连接了一台老式终端。串口的传输速度由*波特率*（baud rate）决定——波特率表示每秒传输的位数。比如 9600 baud 大约相当于每秒传输 960 个字节。
+</p>
+
+<p>
+而 <code>yes</code> 生成数据的速度轻松就能达到每秒几万甚至几十万字节，远远超过 9600 baud。
+</p>
+
+<p>
+怎么办？还是老办法：内核的串口驱动也有缓冲区。当缓冲区满了，=yes= 的 <code>write(2)</code> 就会阻塞，等待数据慢慢通过串口发送出去后，再继续写入。
+</p>
+
+<p>
+所以你看，无论是伪终端还是串口，blocking I/O 都在做同一件事：**让快速的生产者自动适配慢速的消费者，而不需要应用程序自己实现任何限速逻辑。**
+</p>
+
+<p>
+<code>yes</code> 程序的代码里没有任何关于"我该跑多快"的逻辑。它就是傻乎乎地不停 =write(2)=，剩下的全交给了操作系统。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org93917d5" class="outline-2">
+<h2 id="org93917d5">缓冲区没满也能阻塞？</h2>
+<div class="outline-text-2" id="text-org93917d5">
+<p>
+到目前为止，我们看到的阻塞都是因为缓冲区满了。但要是告诉你，即使缓冲区还有空间，也能主动让 TTY 进入阻塞状态呢？
+</p>
+
+<p>
+听起来有点奇怪？但确实有这个需求。
+</p>
+
+<p>
+想象一台老式的 VT-100 终端。我们刚刚通过串口给它发送了一个复杂的控制序列，让它执行滚屏操作。这时候终端忙于滚屏，根本来不及处理新到的数据。虽然串口物理上还在以 9600 baud 的速率传输，但终端内部的缓冲区快满了。
+</p>
+
+<p>
+这种时候，终端需要告诉操作系统："停一停，我处理不过来了。"
+</p>
+
+<p>
+怎么告诉？通过发送一个特殊的字节。
+</p>
+
+<p>
+我们已经知道，TTY 可以对某些特殊字节做特殊处理。比如按 <code>Ctrl+C</code> 时，终端不会把 <code>^C</code> 这个字符传给应用程序，而是向应用程序发送一个 <code>SIGINT</code> 信号（也就是中断信号）。
+</p>
+
+<p>
+类似的，TTY 也可以配置两个特殊字节来控制数据流：
+</p>
+
+<ul class="org-ul">
+<li>=^S=（ASCII 码 19）— 表示"停止发送"（stop）</li>
+<li>=^Q=（ASCII 码 17）— 表示"恢复发送"（start）</li>
+</ul>
+
+<p>
+当终端发送 <code>^S</code> 时，操作系统会暂停向该 TTY 的写入操作——即使内核缓冲区还没满，任何试图 <code>write(2)</code> 的进程都会被阻塞。直到终端发送 =^Q=，数据流才会恢复。
+</p>
+
+<p>
+这个机制叫做*流控*（flow control）。
+</p>
+
+<p>
+这就是为什么你有时在终端里不小心按了 <code>Ctrl+S=，终端就像"死"了一样——它不是真的死了，只是 flow control 生效了，所有输出都被暂停了。这时候只要按 =Ctrl+Q</code> 就能恢复正常。这也是新手常遇到的困惑之一。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2ca4c9a" class="outline-2">
+<h2 id="org2ca4c9a">还有一种"暂停"</h2>
+<div class="outline-text-2" id="text-org2ca4c9a">
+<p>
+到目前为止，我们认识了两种让写入操作暂停的情况：
+</p>
+
+<ol class="org-ol">
+<li><b>缓冲区满了</b> — <code>write(2)</code> 阻塞，进程进入睡眠状态，等缓冲区有空间后自动恢复</li>
+<li><b>Flow control</b> — 终端发送 <code>^S=，=write(2)</code> 同样阻塞，等终端发送 <code>^Q</code> 后自动恢复</li>
+</ol>
+
+<p>
+这两种情况都是*阻塞*（blocking）：进程只是"睡了一觉"，条件满足后自动醒来继续工作，整个过程对程序是透明的。
+</p>
+
+<p>
+但还有一种不同的"暂停"方式：当你把一个程序放到后台运行，它如果试图向终端写入数据，收到的不是阻塞，而是一个叫 <code>SIGTTOU</code> 的信号。这个信号会把*整个进程组*都挂起（suspend），而不仅仅是让当前进程睡一觉。你需要用 <code>fg</code> 命令把它拉回前台，它才能继续运行。
+</p>
+
+<p>
+类似地，后台进程试图从终端*读取*数据时，会收到 <code>SIGTTIN</code> 信号，同样导致整个进程组被挂起。
+</p>
+
+<p>
+为什么 UNIX 的设计者要发明 <code>SIGTTOU</code> 和 =SIGTTIN=，而不是简单地用阻塞 I/O 来处理呢？我的猜测是：TTY 驱动作为负责作业控制（job control）的组件，它的设计目标是管理*整个作业*（job），而不是作业中的单个进程。所以当一个后台作业不该读写终端时，TTY 驱动选择把整个作业挂起来，而不是只阻塞其中一个进程。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge5a9cd3" class="outline-2">
+<h2 id="orge5a9cd3">UNIX 设计哲学的缩影</h2>
+<div class="outline-text-2" id="text-orge5a9cd3">
+<p>
+回顾我们讨论的内容，你会发现这些机制都体现了 UNIX 的设计哲学：
+</p>
+
+<ol class="org-ol">
+<li><b>让简单的事情保持简单</b> — <code>blocking I/O</code> 让程序不需要自己处理速率匹配的问题。=yes= 的代码里没有任何限速逻辑，但它在任何速度的终端上都能正常工作。</li>
+
+<li><b>做一件事做好</b> — TTY 驱动专注于管理终端的输入输出和作业控制，而不关心具体是什么程序在使用它。</li>
+
+<li><b>关注点分离</b> — <code>yes</code> 不需要知道自己在跟 xterm 通信还是跟串口终端通信。它只管调用 =write(2)=，剩下的交给操作系统处理。这种分层设计让每一层都保持简单。</li>
+</ol>
+
+<p>
+所以下次你在终端里运行一个命令时，不妨想一想：在那些看似理所当然的输入输出背后，操作系统默默地做了多少协调工作。</p>
+</div>
+</div>
+
+</div>
+</div>
+<div>
+  <div class="post-meta">
+    <span title="post date" class="post-info">2026-04-11</span>
+    <span title="last modification date" class="post-info">2026-04-11</span>
+    <span title="tags" class="post-info"><a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a></span>
+    <span title="author" class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <!-- 添加一叶 -->
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js" ></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),      // Ensure uniqueness and length less than 50
+           distractionFreeMode: false  // Facebook-like distraction free mode
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0]; 
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <div class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; ilqebtjoo3redgtn5bhhrwy0we &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &nbsp;&nbsp;-&nbsp;&nbsp;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+        <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+      <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+    </p>
+  </div>
+    </div>
+
+  </body>
+</html>
