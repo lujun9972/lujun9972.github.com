@@ -52,28 +52,30 @@
 <h2>Table of Contents</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org87a4d47">1. 背景</a></li>
-<li><a href="#org2dd5ee5">2. 最终效果</a></li>
-<li><a href="#org5c94963">3. 实现过程</a>
+<li><a href="#org7129ed5">1. 背景</a></li>
+<li><a href="#org468f75a">2. 最终效果</a></li>
+<li><a href="#orgfc99f73">3. 实现过程</a>
 <ul>
-<li><a href="#orgf3f8dfb">3.1. 第一步：改造 auto_publish.el</a></li>
-<li><a href="#org7471a0c">3.2. 第二步：编写 GitHub Actions Workflow</a></li>
-<li><a href="#org6ca1fa5">3.3. 第三步：踩过的坑</a>
+<li><a href="#org99eb6a5">3.1. 第一步：改造 auto_publish.el</a></li>
+<li><a href="#org60ef236">3.2. 第二步：编写 GitHub Actions Workflow</a></li>
+<li><a href="#orgc209b19">3.3. 第三步：踩过的坑</a>
 <ul>
-<li><a href="#org79b56f5">3.3.1. 坑1：EGO 缺少依赖</a></li>
-<li><a href="#org76caa65">3.3.2. 坑2：EGO 内部 git commit 缺少身份</a></li>
-<li><a href="#org9bbb2ba">3.3.3. 坑3：EGO 的 stash/pop 在 CI 中失败</a></li>
+<li><a href="#org18b692f">3.3.1. 坑1：EGO 缺少依赖</a></li>
+<li><a href="#orgebb8c3e">3.3.2. 坑2：EGO 内部 git commit 缺少身份</a></li>
+<li><a href="#orgf5c854a">3.3.3. 坑3：EGO 的 stash/pop 在 CI 中失败</a></li>
+<li><a href="#orge866a80">3.3.4. 坑4：中文路径导致 git ls-tree 无法识别 .org 文件</a></li>
+<li><a href="#org101ea80">3.3.5. 坑5：force-all 模式的静默失败</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li><a href="#orgb856e01">4. 总结</a></li>
+<li><a href="#org42ca2b2">4. 总结</a></li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org87a4d47" class="outline-2">
-<h2 id="org87a4d47"><span class="section-number-2">1.</span> 背景</h2>
+<div id="outline-container-org7129ed5" class="outline-2">
+<h2 id="org7129ed5"><span class="section-number-2">1.</span> 背景</h2>
 <div class="outline-text-2" id="text-1">
 <p>
 我的博客 <a href="https://lujun9972.github.io/">暗无天日</a> 使用 <a href="https://github.com/lujun9972/EGO">EGO</a>（Emacs + Git + Org-mode）作为静态站点生成器。源文件是 <code>.org</code> 格式，存放在 <code>source</code> 分支；生成的 HTML 存放在 <code>master</code> 分支，通过 GitHub Pages 托管。
@@ -85,14 +87,14 @@
 </div>
 </div>
 
-<div id="outline-container-org2dd5ee5" class="outline-2">
-<h2 id="org2dd5ee5"><span class="section-number-2">2.</span> 最终效果</h2>
+<div id="outline-container-org468f75a" class="outline-2">
+<h2 id="org468f75a"><span class="section-number-2">2.</span> 最终效果</h2>
 <div class="outline-text-2" id="text-2">
 <p>
 每次 <code>push</code> 到 <code>source</code> 分支时，GitHub Actions 会自动：
 </p>
 <ol class="org-ol">
-<li>用 EGO 将 <code>.org</code> 文件转换为 HTML</li>
+<li>用 EGO 将 <code>.org</code> 文件转换为 HTML（增量构建）</li>
 <li>将生成的 HTML 推送到 <code>master</code> 分支</li>
 <li>GitHub Pages 自动部署</li>
 </ol>
@@ -103,12 +105,12 @@
 </div>
 </div>
 
-<div id="outline-container-org5c94963" class="outline-2">
-<h2 id="org5c94963"><span class="section-number-2">3.</span> 实现过程</h2>
+<div id="outline-container-orgfc99f73" class="outline-2">
+<h2 id="orgfc99f73"><span class="section-number-2">3.</span> 实现过程</h2>
 <div class="outline-text-2" id="text-3">
 </div>
-<div id="outline-container-orgf3f8dfb" class="outline-3">
-<h3 id="orgf3f8dfb"><span class="section-number-3">3.1.</span> 第一步：改造 auto_publish.el</h3>
+<div id="outline-container-org99eb6a5" class="outline-3">
+<h3 id="org99eb6a5"><span class="section-number-3">3.1.</span> 第一步：改造 auto_publish.el</h3>
 <div class="outline-text-3" id="text-3-1">
 <p>
 原来 <code>auto_publish.el</code> 里的路径都是硬编码的：
@@ -116,8 +118,6 @@
 
 <div class="org-src-container">
 <pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/EGO/"</span> load-path))
-(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/csdn-publish/"</span> load-path))
-(<span class="org-keyword">setq</span> load-path (cons <span class="org-string">"~/toutiao/"</span> load-path))
 </pre>
 </div>
 
@@ -127,8 +127,6 @@
 
 <div class="org-src-container">
 <pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"EGO_DIR"</span>) <span class="org-string">"~/EGO/"</span>) load-path))
-(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"CSDN_DIR"</span>) <span class="org-string">"~/csdn-publish/"</span>) load-path))
-(<span class="org-keyword">setq</span> load-path (cons (<span class="org-keyword">or</span> (getenv <span class="org-string">"TOUTIAO_DIR"</span>) <span class="org-string">"~/toutiao/"</span>) load-path))
 </pre>
 </div>
 
@@ -142,109 +140,121 @@
    <span class="org-builtin">:store-dir</span> ,(<span class="org-keyword">or</span> (getenv <span class="org-string">"STORE_DIR"</span>) <span class="org-string">"~/web"</span>)))
 </pre>
 </div>
+
+<p>
+最后，用 <code>condition-case</code> 包裹 <code>ego-do-publication</code> 调用，确保 EGO 出错时不会静默失败：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">condition-case</span> err
+    (ego-do-publication <span class="org-string">"blog"</span> nil nil nil)
+  (<span class="org-warning">error</span>
+   (message <span class="org-string">"EGO ERROR: %s"</span> (error-message-string err))
+   (message <span class="org-string">"EGO ERROR backtrace:"</span>)
+   (backtrace)))
+</pre>
+</div>
 </div>
 </div>
 
-
-<div id="outline-container-org7471a0c" class="outline-3">
-<h3 id="org7471a0c"><span class="section-number-3">3.2.</span> 第二步：编写 GitHub Actions Workflow</h3>
+<div id="outline-container-org60ef236" class="outline-3">
+<h3 id="org60ef236"><span class="section-number-3">3.2.</span> 第二步：编写 GitHub Actions Workflow</h3>
 <div class="outline-text-3" id="text-3-2">
 <p>
-最终的 workflow 文件 <code>.github/workflows/github-action.yml</code> ：#+begin_src yaml
-name: 提交 habitica 任务 + 构建博客
-on:
-  push:
-    branches: [source]
+最终的 workflow 文件 <code>.github/workflows/github-action.yml</code> ：
 </p>
 
-<p>
-permissions:
-  contents: write
-</p>
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-variable-name">name</span>: &#25552;&#20132; habitica &#20219;&#21153; + &#26500;&#24314;&#21338;&#23458;
+<span class="org-constant">on</span>:
+  <span class="org-variable-name">push</span>:
+    <span class="org-variable-name">branches</span>: [source]
+
+<span class="org-variable-name">permissions</span>:
+  <span class="org-variable-name">contents</span>: write
+
+<span class="org-variable-name">jobs</span>:
+  <span class="org-variable-name">Finish-Habitica-Tasks</span>:
+    <span class="org-variable-name">runs-on</span>: ubuntu-latest
+    <span class="org-variable-name">steps</span>:
+      - <span class="org-variable-name">name</span>: Check out habash code
+        <span class="org-variable-name">uses</span>: actions/checkout@v4
+        <span class="org-variable-name">with</span>:
+          <span class="org-variable-name">fetch-depth</span>: 0
+          <span class="org-variable-name">repository</span>: nasfarley88/habash
+      - <span class="org-variable-name">name</span>: &#30830;&#20445; habash &#21487;&#25191;&#34892;
+        <span class="org-variable-name">run</span>: chmod +x ./habash
+      - <span class="org-variable-name">name</span>: &#25552;&#20132; habitica &#20219;&#21153;
+        <span class="org-variable-name">run</span>: |
+          <span class="org-string">set -x</span>
+<span class="org-string">          ./habash up "&#20889;&#21338;&#23458;"
+</span>        <span class="org-variable-name">env</span>:
+          <span class="org-variable-name">HABITICA_TOKEN</span>: ${{ secrets.HABITICA_TOKEN }}
+          <span class="org-variable-name">HABITICA_UUID</span>: ${{ secrets.HABITICA_UUID }}
+
+  <span class="org-variable-name">Build-Blog</span>:
+    <span class="org-variable-name">runs-on</span>: ubuntu-latest
+    <span class="org-variable-name">env</span>:
+      <span class="org-variable-name">CI</span>: <span class="org-constant">true</span>
+      <span class="org-variable-name">EGO_DIR</span>: /tmp/EGO
+      <span class="org-variable-name">REPO_DIR</span>: ${{ github.workspace }}
+      <span class="org-variable-name">STORE_DIR</span>: /tmp/web
+      <span class="org-variable-name">REPO</span>: https://github.com/lujun9972/${{ github.event.repository.name }}
+    <span class="org-variable-name">steps</span>:
+      - <span class="org-variable-name">name</span>: Checkout &#21338;&#23458;&#28304;&#25991;&#20214;
+        <span class="org-variable-name">uses</span>: actions/checkout@v4
+        <span class="org-variable-name">with</span>:
+          <span class="org-variable-name">fetch-depth</span>: 0
+          <span class="org-variable-name">ref</span>: source
+
+      - <span class="org-variable-name">name</span>: Checkout EGO
+        <span class="org-variable-name">run</span>: git clone https://github.com/lujun9972/EGO.git <span class="org-string">"$EGO_DIR"</span>
+
+      - <span class="org-variable-name">name</span>: Checkout master &#20998;&#25903;&#21040; store-dir
+        <span class="org-variable-name">run</span>: |
+          <span class="org-string">git clone --branch master --single-branch \</span>
+<span class="org-string">            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            "$STORE_DIR"
+          cd "$STORE_DIR"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+</span>
+      - <span class="org-variable-name">name</span>: &#23433;&#35013; Emacs &#21644;&#31995;&#32479;&#20381;&#36182;
+        <span class="org-variable-name">run</span>: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
+
+      - <span class="org-variable-name">name</span>: &#25191;&#34892; auto_publish.el &#26500;&#24314;&#21338;&#23458;
+        <span class="org-variable-name">run</span>: |
+          <span class="org-string">git config core.quotePath false</span>
+<span class="org-string">          emacs --batch -l auto_publish.el
+</span>
+      - <span class="org-variable-name">name</span>: &#25512;&#36865; HTML &#21040; master &#20998;&#25903;
+        <span class="org-variable-name">run</span>: |
+          <span class="org-string">cd "$STORE_DIR"</span>
+<span class="org-string">          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --staged --quiet || git commit -m "auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin master</span>
+</pre>
+</div>
 
 <p>
-jobs:
-  Finish-Habitica-Tasks:
-    runs-on: ubuntu-latest
-    steps:
+两个 Job 并行运行，互不影响。关键设计决策：
 </p>
 <ul class="org-ul">
-<li>name: Check out habash code
-uses: actions/checkout@v4
-with:
-  fetch-depth: 0
-  repository: nasfarley88/habash</li>
-<li>name: 确保 habash 可执行
-run: chmod +x ./habash</li>
-<li>name: 提交 habitica 任务
-run: |
-  set -x
-  ./habash up "写博客"
-env:
-  HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
-  HABITICA_UUID: ${{ secrets.HABITICA_UUID }}</li>
+<li>**EGO_DIR 和 STORE_DIR 指向 /tmp**：不在 <code>github.workspace</code> 内，避免污染 source 仓库的 git 状态（详见坑3）</li>
+<li>**~git config core.quotePath false~**：解决 EGO 无法识别中文路径的问题（详见坑4）</li>
+<li>**增量构建**：~ego-do-publication~ 第二个参数为 ~nil~，只重建变更文件</li>
 </ul>
-
-<p>
-Build-Blog:
-  runs-on: ubuntu-latest
-  env:
-    EGO_DIR: /tmp/EGO
-    REPO_DIR: \({{ github.workspace }}
-      STORE_DIR: /tmp/web
-      REPO: https://github.com/lujun9972/\){{ github.event.repository.name }}
-  steps:
-</p>
-<ul class="org-ul">
-<li>name: Checkout 博客源文件
-uses: actions/checkout@v4
-with:
-  fetch-depth: 0
-  ref: source</li>
-
-<li>name: Checkout EGO
-run: git clone <a href="https://github.com/lujun9972/EGO.git">https://github.com/lujun9972/EGO.git</a> "$EGO_DIR"</li>
-
-<li>name: Checkout master 分支到 store-dir
-run: |
-  git clone &#x2013;branch master &#x2013;single-branch \
-    <a href="https://x-access-token">https://x-access-token</a>:\({{ secrets.GITHUB_TOKEN }}@github.com/\){{ github.repository }}.git \
-    "$STORE_DIR"
-  cd "$STORE_DIR"
-  git config user.name "github-actions[bot]"
-  git config user.email "github-actions[bot]@users.noreply.github.com"</li>
-
-<li>name: 安装 Emacs 和系统依赖
-run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox</li>
-
-<li>name: 执行 auto_publish.el 构建博客
-run: emacs &#x2013;batch -l auto_publish.el</li>
-
-<li>name: 推送 HTML 到 master 分支
-run: |
-  cd "$STORE_DIR"
-  git config user.name "github-actions[bot]"
-  git config user.email "github-actions[bot]@users.noreply.github.com"
-  git add -A
-  git diff &#x2013;staged &#x2013;quiet || git commit -m "auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  git push origin master</li>
-</ul>
-<p>
-#+end_src
-</p>
-
-<p>
-两个 Job 并行运行，互不影响。注意 <code>EGO_DIR</code> 和 <code>STORE_DIR</code> 都指向 <code>/tmp</code> 下的路径，而不是 <code>github.workspace</code> 下的子目录，这是踩坑后的经验（详见下文）。
-</p>
 </div>
 </div>
 
-<div id="outline-container-org6ca1fa5" class="outline-3">
-<h3 id="org6ca1fa5"><span class="section-number-3">3.3.</span> 第三步：踩过的坑</h3>
+<div id="outline-container-orgc209b19" class="outline-3">
+<h3 id="orgc209b19"><span class="section-number-3">3.3.</span> 第三步：踩过的坑</h3>
 <div class="outline-text-3" id="text-3-3">
 </div>
-<div id="outline-container-org79b56f5" class="outline-4">
-<h4 id="org79b56f5"><span class="section-number-4">3.3.1.</span> 坑1：EGO 缺少依赖</h4>
+<div id="outline-container-org18b692f" class="outline-4">
+<h4 id="org18b692f"><span class="section-number-4">3.3.1.</span> 坑1：EGO 缺少依赖</h4>
 <div class="outline-text-4" id="text-3-3-1">
 <p>
 <code>auto_publish.el</code> 在本地运行时，~ht~ 和 <code>dash</code> 两个包早就安装过了。但 CI 是全新环境，~package-install~ 列表里没有它们，导致 EGO 加载失败：
@@ -262,8 +272,8 @@ Cannot open load file: No such file or directory, ht
 </div>
 </div>
 
-<div id="outline-container-org76caa65" class="outline-4">
-<h4 id="org76caa65"><span class="section-number-4">3.3.2.</span> 坑2：EGO 内部 git commit 缺少身份</h4>
+<div id="outline-container-orgebb8c3e" class="outline-4">
+<h4 id="orgebb8c3e"><span class="section-number-4">3.3.2.</span> 坑2：EGO 内部 git commit 缺少身份</h4>
 <div class="outline-text-4" id="text-3-3-2">
 <p>
 EGO 构建完后会用 <code>vc-git-commit</code> 提交 store-dir 的变更，但 store-dir 里没配 git user：
@@ -281,8 +291,8 @@ Failed (status 128): git &#x2013;no-pager commit -m Update published html files&
 </div>
 </div>
 
-<div id="outline-container-org9bbb2ba" class="outline-4">
-<h4 id="org9bbb2ba"><span class="section-number-4">3.3.3.</span> 坑3：EGO 的 stash/pop 在 CI 中失败</h4>
+<div id="outline-container-orgf5c854a" class="outline-4">
+<h4 id="orgf5c854a"><span class="section-number-4">3.3.3.</span> 坑3：EGO 的 stash/pop 在 CI 中失败</h4>
 <div class="outline-text-4" id="text-3-3-3">
 <p>
 这是最有意思的一个坑。
@@ -367,19 +377,121 @@ EGO 不再触发 stash，增量构建也正常工作了。
 </p>
 </div>
 </div>
+
+<div id="outline-container-orge866a80" class="outline-4">
+<h4 id="orge866a80"><span class="section-number-4">3.3.4.</span> 坑4：中文路径导致 git ls-tree 无法识别 .org 文件</h4>
+<div class="outline-text-4" id="text-3-3-4">
+<p>
+这个坑藏得最深，折腾了我很久。
+</p>
+
+<p>
+EGO 的 <code>ego-git-get-all-files</code> 函数用 <code>git ls-tree -r --name-only HEAD</code> 获取所有 org 文件，然后用 <code>string-suffix-p ".org"</code> 过滤：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">ego-git-get-all-files</span> (repo-dir <span class="org-type">&amp;optional</span> branch)
+  (<span class="org-keyword">let</span> ((output (ego--shell-command
+                 repo-dir
+                 (concat <span class="org-string">"env LC_ALL=C git ls-tree -r --name-only "</span>
+                         (<span class="org-keyword">or</span> branch <span class="org-string">"HEAD"</span>))
+                 t)))
+    (delq nil (mapcar #'(<span class="org-keyword">lambda</span> (line)
+                          (<span class="org-keyword">when</span> (string-suffix-p <span class="org-string">".org"</span> line t)
+                            (expand-file-name line repo-dir)))
+                      (split-string output <span class="org-string">"\n"</span>)))))
+</pre>
+</div>
+
+<p>
+看起来没问题对吧？但 <code>git ls-tree</code> 默认会对非 ASCII 路径进行八进制转义：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-example">"Emacs\344\271\213\346\200\222/Connection Local Variable.org"
+</pre>
+</div>
+
+<p>
+注意路径被双引号包裹，中文变成了 <code>\344\271\213\346\200\222~。这样一来，每行的实际结尾是 ~.org"~（带引号），而不是 ~.org~，导致 ~string-suffix-p ".org"</code> 匹配失败。
+</p>
+
+<p>
+结果就是只有纯 ASCII 路径的 <code>about.org</code> 和 <code>README.org</code> 能被匹配到，整个博客 663 个 org 文件中只有这 2 个被 EGO 识别。首页也只显示了 about 一个分类。
+</p>
+
+<p>
+解决：在运行 EGO 前设置 ~git config core.quotePath false~，让 git 输出原始 UTF-8 路径：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml">- <span class="org-variable-name">name</span>: &#25191;&#34892; auto_publish.el &#26500;&#24314;&#21338;&#23458;
+  <span class="org-variable-name">run</span>: |
+    <span class="org-string">git config core.quotePath false</span>
+<span class="org-string">    emacs --batch -l auto_publish.el</span>
+</pre>
+</div>
+
+<p>
+改完后 EGO 正确识别了所有 662 个 org 文件，首页也恢复了完整的 10 个分类。
+</p>
 </div>
 </div>
 
-<div id="outline-container-orgb856e01" class="outline-2">
-<h2 id="orgb856e01"><span class="section-number-2">4.</span> 总结</h2>
+<div id="outline-container-org101ea80" class="outline-4">
+<h4 id="org101ea80"><span class="section-number-4">3.3.5.</span> 坑5：force-all 模式的静默失败</h4>
+<div class="outline-text-4" id="text-3-3-5">
+<p>
+在调试坑4 的过程中，我尝试用 ~force-all=t~（全量构建）来绕过问题：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ego-do-publication <span class="org-string">"blog"</span> t nil nil)  <span class="org-comment-delimiter">; </span><span class="org-comment">&#31532;&#20108;&#20010;&#21442;&#25968; t = force-all</span>
+</pre>
+</div>
+
+<p>
+但 EGO 静默失败了——没有任何错误输出，构建日志在 "current-branch is already source" 之后就断了。
+</p>
+
+<p>
+查看 EGO 源码发现，~force-all=t~ 时 <code>base-git-commit</code> 会被设为 ~nil~：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(base-git-commit (<span class="org-keyword">unless</span> force-all    <span class="org-comment-delimiter">; </span><span class="org-comment">force-all=t &#8594; nil!
+</span>                    (<span class="org-keyword">or</span> (ego--get-first-commit-before-publish ...)
+                        <span class="org-string">"HEAD~1"</span>)))
+</pre>
+</div>
+
+<p>
+而 <code>base-git-commit</code> 为 <code>nil</code> 时，EGO 的 <code>changed-files</code> 会变成 ~(:update 全部文件 :delete 全部文件)~，即同时删除并重建所有文件。这个逻辑矛盾导致了静默失败。
+</p>
+
+<p>
+解决：使用增量构建模式 ~force-all=nil~，让 EGO 自动根据 master 分支的上次发布时间计算变更：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(ego-do-publication <span class="org-string">"blog"</span> nil nil nil)  <span class="org-comment-delimiter">; </span><span class="org-comment">&#22686;&#37327;&#26500;&#24314;</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org42ca2b2" class="outline-2">
+<h2 id="org42ca2b2"><span class="section-number-2">4.</span> 总结</h2>
 <div class="outline-text-2" id="text-4">
 <p>
-整个折腾过程有两个关键收获：
+整个折腾过程有个关键收获：
 </p>
 
 <ol class="org-ol">
-<li>**路径可配置化**：用 <code>(or (getenv "VAR") "default")</code> 模式让 <code>auto_publish.el</code> 同时兼容本地和 CI 环境</li>
 <li>**checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态</li>
+<li>**中文路径注意 ~core.quotePath~**：git 默认转义非 ASCII 路径，在需要解析路径的场景下记得关闭</li>
 </ol>
 
 <p>
@@ -430,7 +542,7 @@ EGO 不再触发 stash，增量构建也正常工作了。
   <div class="footer">
     <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; r3144es4y5cetkslrcqndxo1cf &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; icicddbjmfvephrpzukohovmhb &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
       &nbsp;&nbsp;-&nbsp;&nbsp;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a><br/>
       Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
