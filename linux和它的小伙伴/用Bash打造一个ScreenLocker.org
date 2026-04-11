@@ -1,0 +1,217 @@
+#+TITLE: 用 Bash 打造一个Screen Locker
+#+AUTHOR: lujun9972
+#+DATE: 2026-04-11
+#+LANGUAGE: zh-CN
+#+OPTIONS: toc:2
+
+#+BEGIN_EXPORT html
+<p class="date">发布于 2026-04-11</p>
+#+END_EXPORT
+
+我有个习惯——离开电脑就锁屏关显示器，省电嘛。一行 =xset dpms force off= 就能搞定，挺好用的。
+
+直到有一天我发现，屏幕经常莫名其妙又亮了。后来才搞明白，桌上的鼠标太敏感了，擦个桌子、挪个东西，甚至走过去带起一点震动，鼠标就动了那么一像素。对 X11 来说，这就够了——它认为有用户活动，于是乖乖把显示器叫醒。
+
+[[https://www.linuxjournal.com/content/cat-proofing-your-screen-locker][Mitch Frazier 在 Linux Journal 上写过一篇]]思路差不多的文章，核心想法是锁屏后把鼠标设备禁用掉。不过他那个脚本锁屏命令写死了 =qdbus= （KDE 专用），我用的 awesomeWM，压根没这玩意儿。而且他也没有恢复鼠标的机制——禁了就禁了，你得手动恢复。
+
+* 最简单的版本
+
+锁屏脚本的本质就这几行：
+
+#+BEGIN_SRC bash
+qdbus org.kde.screensaver /ScreenSaver Lock
+sleep 2
+xset +dpms
+xset dpms force off
+#+END_SRC
+
+第一行锁屏，后面几行开启 DPMS 然后强制关显示器。简单粗暴，能用。
+
+但三个问题摆在那：
+
+1. =qdbus= 只有 KDE 有，awesomeWM 下跑不通
+2. 鼠标没禁，随便碰一下显示器就复活了
+3. 就算你加上禁用鼠标的逻辑……恢复的时候怎么办？用户还得记着鼠标叫什么名字？
+
+得想个更靠谱的方案。
+
+* 让脚本自己找锁屏工具
+
+不同桌面环境的锁屏方式五花八门——KDE 用 =qdbus= ，GNOME 用 =dbus-send= ，awesomeWM 用户大概率装了 =i3lock= ，还有人用 =betterlockscreen= 。让用户自己配？太不友好了。
+
+我的做法是写一条检测链，挨个试，哪个能用就用哪个：
+
+#+BEGIN_SRC bash
+lock_screen_x11() {
+    if has_cmd qdbus && qdbus org.kde.screensaver /ScreenSaver &>/dev/null; then
+        qdbus org.kde.screensaver /ScreenSaver Lock
+    elif has_cmd dbus-send; then
+        dbus-send --type=method_call \
+            --dest=org.gnome.ScreenSaver \
+            /org/gnome/ScreenSaver \
+            org.gnome.ScreenSaver.Lock 2>/dev/null || \
+        dbus-send --type=method_call \
+            --dest=org.freedesktop.ScreenSaver \
+            /org/freedesktop/ScreenSaver \
+            org.freedesktop.ScreenSaver.Lock 2>/dev/null || true
+        loginctl lock-session 2>/dev/null || true
+    elif has_cmd loginctl; then
+        loginctl lock-session
+    elif has_cmd i3lock; then
+        i3lock &
+    elif has_cmd betterlockscreen; then
+        betterlockscreen --lock &
+    elif has_cmd xlockmore; then
+        xlockmore &
+    else
+        die "No screen lock tool found."
+    fi
+}
+#+END_SRC
+
+=has_cmd= 就是个简单包装，用 =command -v= 检查命令在不在：
+
+#+BEGIN_SRC bash
+has_cmd() {
+    command -v "$1" &>/dev/null
+}
+#+END_SRC
+
+KDE、GNOME、awesomeWM + i3lock，随便你怎么折腾，脚本总能找到一个能用的。
+
+* 鼠标的问题
+
+这才是重点——怎么让鼠标在锁屏期间老老实实不捣乱。
+
+X11 下 =xinput= 可以禁用鼠标：
+
+#+BEGIN_SRC bash
+xinput --set-prop "USB Mouse" "Device Enabled" "0"
+#+END_SRC
+
+但坑来了：鼠标的名字不固定。我这里是"USB Mouse"，换个罗技的鼠标就变成"Logitech USB Laser Mouse"了。硬编码肯定不行。
+
+Mitch Frazier 那篇文章里有个挺巧妙的方法： =xinput list --name-only= 列出所有设备，然后 =grep -B 1 'Virtual core keyboard'= ，取匹配行前面那一行——八九不离十就是鼠标。我直接拿来用了：
+
+#+BEGIN_SRC bash
+detect_mouse_name() {
+    local mn
+    mn=$(xinput list --name-only | grep -B 1 'Virtual core keyboard' | head -n 1)
+    if [[ -z "$mn" ]]; then
+        warn "Could not detect mouse device name."
+        echo ""
+        return 1
+    fi
+    echo "$mn"
+}
+#+END_SRC
+
+举个实际的例子， =xinput list= 的输出大概长这样：
+
+#+begin_src shell
+xinput list --name-only
+#+end_src
+#+BEGIN_EXAMPLE
+$ xinput list --name-only
+Virtual core XTEST pointer
+HOLTEK USB-HID Keyboard Mouse
+USB Mouse
+Virtual core keyboard
+Power Button
+#+END_EXAMPLE
+
+=grep -B 1 'Virtual core keyboard'= 同时匹配"USB Mouse"和"Virtual core keyboard"两行， =head -n 1= 取前面那行——搞定。
+
+说实话这个方法有点取巧，依赖"鼠标设备恰好在键盘前面"这个假设。但实际用下来，至少在我的几台机器上还没翻过车。
+
+* 记录状态，省却记忆
+
+Mitch Frazier 的方案有个让我不太舒服的地方：禁用鼠标之后，恢复的时候你得自己记住鼠标名字。这谁记得住啊？
+
+我的做法是用一个状态文件把锁定时的信息存下来：
+
+#+BEGIN_SRC bash
+STATE_FILE="${STATE_FILE:-/tmp/screen-locker-state}"
+
+save_state() {
+    local st="$1"
+    local mn="${2:-}"
+    local br="${3:-}"
+    cat > "$STATE_FILE" <<EOF
+SESSION_TYPE="$st"
+MOUSE_NAME="$mn"
+BRIGHTNESS="$br"
+EOF
+}
+
+load_state() {
+    if [[ ! -f "$STATE_FILE" ]]; then
+        die "No lock state found. Is the screen locked?"
+    fi
+    source "$STATE_FILE"
+}
+#+END_SRC
+
+其实就是往 =/tmp= 下面写了个 shell 变量赋值文件， =source= 一下就读回来了。里面记了会话类型、鼠标名字、还有 Wayland 下的亮度值。
+
+解锁的时候读状态文件，恢复鼠标，删掉文件。用户什么都不用管：
+
+#+BEGIN_SRC bash
+cmd_unlock() {
+    if ! is_locked; then
+        die "Screen is not locked."
+    fi
+    load_state
+    if [[ "$SESSION_TYPE" == "x11" && -n "${MOUSE_NAME:-}" ]]; then
+        enable_mouse "$MOUSE_NAME"
+        echo "Mouse re-enabled: $MOUSE_NAME"
+    fi
+    clear_state
+    echo "Screen unlocked."
+}
+#+END_SRC
+
+* Wayland 怎么办
+
+现在越来越多的发行版默认用 Wayland 了。=xset= 和 =xinput= 都是 X11 专属，Wayland 下压根不存在。
+
+不过 Wayland 下情况不一样：
+- 关显示器：用 =brightnessctl=，先 =-s= 存亮度，再 =set 0= 关掉
+- 锁屏： =swaylock= 或者 =loginctl lock-session=
+- 鼠标禁用？不用管。Wayland 合成器锁屏时对输入设备有隔离，鼠标动一下不会把屏幕搞亮——这本来就是 Wayland 比 X11 做得好的地方
+
+判断 X11 还是 Wayland 看一眼 =$XDG_SESSION_TYPE= 就行：
+
+#+BEGIN_SRC bash
+detect_session_type() {
+    if [[ "${XDG_SESSION_TYPE:-}" == "wayland" ]]; then
+        echo "wayland"
+    elif [[ -n "${DISPLAY:-}" ]]; then
+        echo "x11"
+    else
+        die "No display server detected."
+    fi
+}
+#+END_SRC
+
+* 拼到一起
+
+最终用法就三个命令：
+
+#+BEGIN_EXAMPLE
+screen-locker lock      # 锁屏 + 关显示器 + 禁用鼠标
+screen-locker unlock    # 恢复鼠标（解锁让屏保处理）
+screen-locker status    # 看看当前什么状态
+#+END_EXAMPLE
+
+=lock= 干的事情按顺序来：检测环境 → 检测鼠标名 → 存状态 → 锁屏 → 等 2 秒（等锁屏生效）→ 关显示器 → 禁用鼠标。=unlock= 反过来：读状态 → 恢复鼠标/亮度 → 删状态文件。
+
+还有个小细节——脚本底部用了 =BASH_SOURCE= 做了个守卫：
+
+#+BEGIN_SRC bash
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
+#+END_SRC
+
+这样直接运行时走 =main()=，被 =source= 时只加载函数定义。后面写测试的时候会用到这个。
