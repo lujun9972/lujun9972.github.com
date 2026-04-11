@@ -13,7 +13,7 @@
 * 最终效果
 
 每次 ~push~ 到 ~source~ 分支时，GitHub Actions 会自动：
-1. 用 EGO 将 ~.org~ 文件转换为 HTML
+1. 用 EGO 将 ~.org~ 文件转换为 HTML（增量构建）
 2. 将生成的 HTML 推送到 ~master~ 分支
 3. GitHub Pages 自动部署
 
@@ -27,16 +27,12 @@
 
 #+begin_src emacs-lisp
 (setq load-path (cons "~/EGO/" load-path))
-(setq load-path (cons "~/csdn-publish/" load-path))
-(setq load-path (cons "~/toutiao/" load-path))
 #+end_src
 
 这在本地没问题，但在 CI 环境里路径完全不同。所以我把所有硬编码路径改为从环境变量读取，保留默认值确保本地兼容：
 
 #+begin_src emacs-lisp
 (setq load-path (cons (or (getenv "EGO_DIR") "~/EGO/") load-path))
-(setq load-path (cons (or (getenv "CSDN_DIR") "~/csdn-publish/") load-path))
-(setq load-path (cons (or (getenv "TOUTIAO_DIR") "~/toutiao/") load-path))
 #+end_src
 
 ~ego-project-config-alist~ 中的 ~:repository-directory~ 和 ~:store-dir~ 也做了类似处理：
@@ -47,10 +43,22 @@
    :store-dir ,(or (getenv "STORE_DIR") "~/web")))
 #+end_src
 
+最后，用 ~condition-case~ 包裹 ~ego-do-publication~ 调用，确保 EGO 出错时不会静默失败：
+
+#+begin_src emacs-lisp
+(condition-case err
+    (ego-do-publication "blog" nil nil nil)
+  (error
+   (message "EGO ERROR: %s" (error-message-string err))
+   (message "EGO ERROR backtrace:")
+   (backtrace)))
+#+end_src
 
 ** 第二步：编写 GitHub Actions Workflow
 
-最终的 workflow 文件 ~.github/workflows/github-action.yml~ ：#+begin_src yaml
+最终的 workflow 文件 ~.github/workflows/github-action.yml~ ：
+
+#+begin_src yaml
 name: 提交 habitica 任务 + 构建博客
 on:
   push:
@@ -81,6 +89,7 @@ jobs:
   Build-Blog:
     runs-on: ubuntu-latest
     env:
+      CI: true
       EGO_DIR: /tmp/EGO
       REPO_DIR: ${{ github.workspace }}
       STORE_DIR: /tmp/web
@@ -108,7 +117,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y emacs-nox
 
       - name: 执行 auto_publish.el 构建博客
-        run: emacs --batch -l auto_publish.el
+        run: |
+          git config core.quotePath false
+          emacs --batch -l auto_publish.el
 
       - name: 推送 HTML 到 master 分支
         run: |
@@ -120,7 +131,10 @@ jobs:
           git push origin master
 #+end_src
 
-两个 Job 并行运行，互不影响。注意 ~EGO_DIR~ 和 ~STORE_DIR~ 都指向 ~/tmp~ 下的路径，而不是 ~github.workspace~ 下的子目录，这是踩坑后的经验（详见下文）。
+两个 Job 并行运行，互不影响。关键设计决策：
+- **EGO_DIR 和 STORE_DIR 指向 /tmp**：不在 ~github.workspace~ 内，避免污染 source 仓库的 git 状态（详见坑3）
+- **~git config core.quotePath false~**：解决 EGO 无法识别中文路径的问题（详见坑4）
+- **增量构建**：~ego-do-publication~ 第二个参数为 ~nil~，只重建变更文件
 
 ** 第三步：踩过的坑
 
@@ -197,11 +211,77 @@ repo /home/runner/.../lujun9972.github.com/ state is up-to-date
 
 EGO 不再触发 stash，增量构建也正常工作了。
 
+*** 坑4：中文路径导致 git ls-tree 无法识别 .org 文件
+
+这个坑藏得最深，折腾了我很久。
+
+EGO 的 ~ego-git-get-all-files~ 函数用 ~git ls-tree -r --name-only HEAD~ 获取所有 org 文件，然后用 ~string-suffix-p ".org"~ 过滤：
+
+#+begin_src emacs-lisp
+(defun ego-git-get-all-files (repo-dir &optional branch)
+  (let ((output (ego--shell-command
+                 repo-dir
+                 (concat "env LC_ALL=C git ls-tree -r --name-only "
+                         (or branch "HEAD"))
+                 t)))
+    (delq nil (mapcar #'(lambda (line)
+                          (when (string-suffix-p ".org" line t)
+                            (expand-file-name line repo-dir)))
+                      (split-string output "\n")))))
+#+end_src
+
+看起来没问题对吧？但 ~git ls-tree~ 默认会对非 ASCII 路径进行八进制转义：
+
+#+begin_src example
+"Emacs\344\271\213\346\200\222/Connection Local Variable.org"
+#+end_src
+
+注意路径被双引号包裹，中文变成了 ~\344\271\213\346\200\222~。这样一来，每行的实际结尾是 ~.org"~（带引号），而不是 ~.org~，导致 ~string-suffix-p ".org"~ 匹配失败。
+
+结果就是只有纯 ASCII 路径的 ~about.org~ 和 ~README.org~ 能被匹配到，整个博客 663 个 org 文件中只有这 2 个被 EGO 识别。首页也只显示了 about 一个分类。
+
+解决：在运行 EGO 前设置 ~git config core.quotePath false~，让 git 输出原始 UTF-8 路径：
+
+#+begin_src yaml
+- name: 执行 auto_publish.el 构建博客
+  run: |
+    git config core.quotePath false
+    emacs --batch -l auto_publish.el
+#+end_src
+
+改完后 EGO 正确识别了所有 662 个 org 文件，首页也恢复了完整的 10 个分类。
+
+*** 坑5：force-all 模式的静默失败
+
+在调试坑4 的过程中，我尝试用 ~force-all=t~（全量构建）来绕过问题：
+
+#+begin_src emacs-lisp
+(ego-do-publication "blog" t nil nil)  ; 第二个参数 t = force-all
+#+end_src
+
+但 EGO 静默失败了——没有任何错误输出，构建日志在 "current-branch is already source" 之后就断了。
+
+查看 EGO 源码发现，~force-all=t~ 时 ~base-git-commit~ 会被设为 ~nil~：
+
+#+begin_src emacs-lisp
+(base-git-commit (unless force-all    ; force-all=t → nil!
+                    (or (ego--get-first-commit-before-publish ...)
+                        "HEAD~1")))
+#+end_src
+
+而 ~base-git-commit~ 为 ~nil~ 时，EGO 的 ~changed-files~ 会变成 ~(:update 全部文件 :delete 全部文件)~，即同时删除并重建所有文件。这个逻辑矛盾导致了静默失败。
+
+解决：使用增量构建模式 ~force-all=nil~，让 EGO 自动根据 master 分支的上次发布时间计算变更：
+
+#+begin_src emacs-lisp
+(ego-do-publication "blog" nil nil nil)  ; 增量构建
+#+end_src
+
 * 总结
 
-整个折腾过程有两个关键收获：
+整个折腾过程有个关键收获：
 
-1. **路径可配置化**：用 ~(or (getenv "VAR") "default")~ 模式让 ~auto_publish.el~ 同时兼容本地和 CI 环境
-2. **checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态
+1. **checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态
+2. **中文路径注意 ~core.quotePath~**：git 默认转义非 ASCII 路径，在需要解析路径的场景下记得关闭
 
 虽然中间踩了不少坑，但最终效果还是很满意的——以后 push 博客源文件就能自动构建发布，再也不用手动跑 ~auto_publish.el~ 了。
