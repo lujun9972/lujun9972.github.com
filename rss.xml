@@ -4,9 +4,882 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 11 Apr 2026 10:26:51 UTC</pubDate>
-    <lastBuildDate>Sat, 11 Apr 2026 10:26:51 UTC</lastBuildDate>
+    <pubDate>Sat, 11 Apr 2026 10:30:43 UTC</pubDate>
+    <lastBuildDate>Sat, 11 Apr 2026 10:30:43 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>用GitHub Actions自动构建EGO博客</title>
+<link>https://lujun9972.github.io/blog/2026/04/11/用github-actions自动构建ego博客/index.html</link>
+<description>* 背景
+
+我的博客 [[https://lujun9972.github.io/][暗无天日]] 使用 [[https://github.com/lujun9972/EGO][EGO]]（Emacs + Git + Org-mode）作为静态站点生成器。源文件是 ~.org~ 格式，存放在 ~source~ 分支；生成的 HTML 存放在 ~master~ 分支，通过 GitHub Pages 托管。
+
+一直以来，我都是在本机执行 ~auto_publish.el~ 来发布博客。但既然用了 GitHub，为什么不把构建过程也自动化呢？于是我开始折腾用 GitHub Actions 来自动构建博客。
+
+* 最终效果
+
+每次 ~push~ 到 ~source~ 分支时，GitHub Actions 会自动：
+1. 用 EGO 将 ~.org~ 文件转换为 HTML
+2. 将生成的 HTML 推送到 ~master~ 分支
+3. GitHub Pages 自动部署
+
+顺带还会在 Habitica 上完成&quot;写博客&quot;任务打个卡（游戏化激励）。
+
+* 实现过程
+
+** 第一步：改造 auto_publish.el
+
+原来 ~auto_publish.el~ 里的路径都是硬编码的：
+
+#+begin_src emacs-lisp
+(setq load-path (cons &quot;~/EGO/&quot; load-path))
+(setq load-path (cons &quot;~/csdn-publish/&quot; load-path))
+(setq load-path (cons &quot;~/toutiao/&quot; load-path))
+#+end_src
+
+这在本地没问题，但在 CI 环境里路径完全不同。所以我把所有硬编码路径改为从环境变量读取，保留默认值确保本地兼容：
+
+#+begin_src emacs-lisp
+(setq load-path (cons (or (getenv &quot;EGO_DIR&quot;) &quot;~/EGO/&quot;) load-path))
+(setq load-path (cons (or (getenv &quot;CSDN_DIR&quot;) &quot;~/csdn-publish/&quot;) load-path))
+(setq load-path (cons (or (getenv &quot;TOUTIAO_DIR&quot;) &quot;~/toutiao/&quot;) load-path))
+#+end_src
+
+~ego-project-config-alist~ 中的 ~:repository-directory~ 和 ~:store-dir~ 也做了类似处理：
+
+#+begin_src emacs-lisp
+`((&quot;blog&quot; :repository-directory ,(or (getenv &quot;REPO_DIR&quot;) &quot;~/source&quot;)
+   ...
+   :store-dir ,(or (getenv &quot;STORE_DIR&quot;) &quot;~/web&quot;)))
+#+end_src
+
+
+** 第二步：编写 GitHub Actions Workflow
+
+最终的 workflow 文件 ~.github/workflows/github-action.yml~ ：#+begin_src yaml
+name: 提交 habitica 任务 + 构建博客
+on:
+  push:
+    branches: [source]
+
+permissions:
+  contents: write
+
+jobs:
+  Finish-Habitica-Tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out habash code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: nasfarley88/habash
+      - name: 确保 habash 可执行
+        run: chmod +x ./habash
+      - name: 提交 habitica 任务
+        run: |
+          set -x
+          ./habash up &quot;写博客&quot;
+        env:
+          HABITICA_TOKEN: ${{ secrets.HABITICA_TOKEN }}
+          HABITICA_UUID: ${{ secrets.HABITICA_UUID }}
+
+  Build-Blog:
+    runs-on: ubuntu-latest
+    env:
+      EGO_DIR: /tmp/EGO
+      REPO_DIR: ${{ github.workspace }}
+      STORE_DIR: /tmp/web
+      REPO: https://github.com/lujun9972/${{ github.event.repository.name }}
+    steps:
+      - name: Checkout 博客源文件
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: source
+
+      - name: Checkout EGO
+        run: git clone https://github.com/lujun9972/EGO.git &quot;$EGO_DIR&quot;
+
+      - name: Checkout master 分支到 store-dir
+        run: |
+          git clone --branch master --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            &quot;$STORE_DIR&quot;
+          cd &quot;$STORE_DIR&quot;
+          git config user.name &quot;github-actions[bot]&quot;
+          git config user.email &quot;github-actions[bot]@users.noreply.github.com&quot;
+
+      - name: 安装 Emacs 和系统依赖
+        run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
+
+      - name: 执行 auto_publish.el 构建博客
+        run: emacs --batch -l auto_publish.el
+
+      - name: 推送 HTML 到 master 分支
+        run: |
+          cd &quot;$STORE_DIR&quot;
+          git config user.name &quot;github-actions[bot]&quot;
+          git config user.email &quot;github-actions[bot]@users.noreply.github.com&quot;
+          git add -A
+          git diff --staged --quiet || git commit -m &quot;auto publish: $(date -u +%Y-%m-%dT%H:%M:%SZ)&quot;
+          git push origin master
+#+end_src
+
+两个 Job 并行运行，互不影响。注意 ~EGO_DIR~ 和 ~STORE_DIR~ 都指向 ~/tmp~ 下的路径，而不是 ~github.workspace~ 下的子目录，这是踩坑后的经验（详见下文）。
+
+** 第三步：踩过的坑
+
+*** 坑1：EGO 缺少依赖
+
+~auto_publish.el~ 在本地运行时，~ht~ 和 ~dash~ 两个包早就安装过了。但 CI 是全新环境，~package-install~ 列表里没有它们，导致 EGO 加载失败：
+
+#+begin_quote
+Cannot open load file: No such file or directory, ht
+#+end_quote
+
+解决：在 ~package-install~ 列表中加上 ~ht~ 和 ~dash~。
+
+*** 坑2：EGO 内部 git commit 缺少身份
+
+EGO 构建完后会用 ~vc-git-commit~ 提交 store-dir 的变更，但 store-dir 里没配 git user：
+
+#+begin_quote
+Failed (status 128): git --no-pager commit -m Update published html files...
+#+end_quote
+
+解决：clone master 分支后立即配置 ~git config user.name/email~。
+
+*** 坑3：EGO 的 stash/pop 在 CI 中失败
+
+这是最有意思的一个坑。
+
+EGO 在发布博客前，会通过 ~ego-git-repo-up2date-p~ 检查 repo 是否干净：
+
+#+begin_src emacs-lisp
+(defun ego-git-repo-up2date-p (repo-dir)
+  (let* ((default-directory (file-name-as-directory repo-dir))
+         (state (vc-git-state &quot;&quot;)))
+    (equal state &#39;up-to-date)))
+#+end_src
+
+如果检测到 ~state~ 不是 ~up-to-date~，EGO 会先 ~git stash~ 保护变更，构建完成后再 ~git stash pop~ 恢复。但在 CI 中 stash pop 总是失败：
+
+#+begin_quote
+Failed (status 1): git --no-pager stash pop -q 0 .
+#+end_quote
+
+我一开始以为是 CI 环境 git 版本的问题，试了 ~git clean -fd~、~git checkout -- .~ 确保构建前 repo 干净，都没用。试了全量构建模式 ~(ego-do-publication &quot;blog&quot; t nil &quot;CI auto publish&quot;)~ 绕过 stash，虽然能工作但丢失了增量构建的优势。
+
+后来仔细看 CI 日志，发现了真正的原因：
+
+#+begin_quote
+repo /home/runner/work/lujun9972.github.com/lujun9972.github.com/ state is edited
+#+end_quote
+
+**repo 是 ~edited~ 而不是 ~up-to-date~！** 明明是从空白环境 checkout 出来的，怎么会有未提交的变更？
+
+答案是：我最初把 EGO 和 master 分支都 checkout 到了 ~github.workspace~ 的子目录下：
+
+#+begin_src yaml
+EGO_DIR: ${{ github.workspace }}/EGO      # ❌ 在 workspace 内
+STORE_DIR: ${{ github.workspace }}/web     # ❌ 在 workspace 内
+#+end_src
+
+这样 ~github.workspace~（即 source 分支的 git repo）下面多了 ~EGO/~ 和 ~web/~ 两个未跟踪目录，~vc-git-state~ 自然返回 ~edited~。
+
+解决：把 EGO 和 master 分支 checkout 到 ~/tmp~ 下，与 source repo 完全隔离：
+
+#+begin_src yaml
+EGO_DIR: /tmp/EGO      # ✅ 在 workspace 外
+STORE_DIR: /tmp/web    # ✅ 在 workspace 外
+#+end_src
+
+改完后日志变为：
+
+#+begin_quote
+repo /home/runner/.../lujun9972.github.com/ state is up-to-date
+#+end_quote
+
+EGO 不再触发 stash，增量构建也正常工作了。
+
+* 总结
+
+整个折腾过程有两个关键收获：
+
+1. **路径可配置化**：用 ~(or (getenv &quot;VAR&quot;) &quot;default&quot;)~ 模式让 ~auto_publish.el~ 同时兼容本地和 CI 环境
+2. **checkout 路径隔离**：GitHub Actions 中多个仓库的 checkout 不要互相嵌套，否则会污染父仓库的 git 状态
+
+虽然中间踩了不少坑，但最终效果还是很满意的——以后 push 博客源文件就能自动构建发布，再也不用手动跑 ~auto_publish.el~ 了。
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/11/用github-actions自动构建ego博客/index.html</guid>
+</item>
+<item>
+<title>从Linux ISO文件启动计算机</title>
+<link>https://lujun9972.github.io/blog/2020/01/04/从linux-iso文件启动计算机/index.html</link>
+<description>
+* 查看ISO文件中Linux内核文件的路径
+
+1. 挂载ISO文件
+
+   #+begin_src shell :dir /sudo::
+     sudo mount -t iso9660 -o ro /home/lujun9972/Downloads/KNOPPIX_V7.2.iso /mnt
+   #+end_src
+
+   #+RESULTS:
+
+2. 查看ISO文件内容
+   #+begin_src shell :results org
+   ls /mnt/boot/isolinux
+   #+end_src
+
+   #+RESULTS:
+   #+begin_src org
+   balder.img
+   boot.cat
+   boot.msg
+   f2
+   f3
+   german.kbd
+   grub.exe
+   isolinux.bin
+   isolinux.cfg
+   linux
+   logo.16
+   memdisk
+   memtest
+   minirt.gz
+   #+end_src
+
+   其中linux文件就是Linux内核，minirt.gz文件是initrd镜像。
+   
+* GRUB中的磁盘命名方式
+GRUB的磁盘命名方式类似 =(hd0,1)= 这样的，这里的0表示是第一块磁盘，后面的1表示第一个分区，它相当于Linux中的/dev/sda1
+
+* 配置GRUB2启动项
+
+不同发行版的启动参数差异较大，下面分别以 Ubuntu 和 KNOPPIX 为例说明。
+
+** Ubuntu 示例
+
+Ubuntu 使用 casper 组件来支持从 ISO 启动，内核和 initrd 文件位于 ISO 的 =/casper/= 目录下。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry &quot;Ubuntu ISO&quot; {
+  set isofile=&quot;/home/lujun9972/Downloads/ubuntu-20.04.iso&quot;
+  loopback loop (hd0,1)$isofile
+  linux (loop)/casper/vmlinuz boot=casper iso-scan/filename=${isofile} quiet splash
+  initrd (loop)/casper/initrd
+  }
+#+end_example
+
+** KNOPPIX 示例
+
+KNOPPIX 的内核和 initrd 文件位于 ISO 的 =/boot/isolinux/= 目录下，使用 =bootfrom= 参数指定 ISO 所在的设备和路径。
+
+编辑 =/etc/grub.d/40_custom=,加入下面内容
+
+#+begin_example
+  menuentry &quot;KNOPPIX V7.2 ISO&quot; {
+  set isofile=&quot;/home/lujun9972/Downloads/KNOPPIX_V7.2.iso&quot;
+  loopback loop (hd0,1)$isofile
+  linux (loop)/boot/isolinux/linux bootfrom=/dev/sda1${isofile}
+  initrd (loop)/boot/isolinux/minirt.gz
+  }
+#+end_example
+
+注意 =bootfrom=/dev/sda1= 中的设备名需要根据实际情况修改，比如 NVMe 磁盘会是 =/dev/nvme0n1p1= 。
+
+最后运行
+#+begin_src shell :dir /sudo::
+  sudo grub-mkconfig -o /boot/grub/grub.cfg
+#+end_src
+
+#+RESULTS:
+
+更新GRUB配置
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/01/04/从linux-iso文件启动计算机/index.html</guid>
+</item>
+<item>
+<title>用 Bash 打造一个Screen Locker</title>
+<link>https://lujun9972.github.io/blog/2026/04/11/用-bash-打造一个screen-locker/index.html</link>
+<description>#+BEGIN_EXPORT html
+&lt;p class=&quot;date&quot;&gt;发布于 2026-04-11&lt;/p&gt;
+#+END_EXPORT
+
+我有个习惯——离开电脑就锁屏关显示器，省电嘛。一行 =xset dpms force off= 就能搞定，挺好用的。
+
+直到有一天我发现，屏幕经常莫名其妙又亮了。后来才搞明白，桌上的鼠标太敏感了，擦个桌子、挪个东西，甚至走过去带起一点震动，鼠标就动了那么一像素。对 X11 来说，这就够了——它认为有用户活动，于是乖乖把显示器叫醒。
+
+[[https://www.linuxjournal.com/content/cat-proofing-your-screen-locker][Mitch Frazier 在 Linux Journal 上写过一篇]]思路差不多的文章，核心想法是锁屏后把鼠标设备禁用掉。不过他那个脚本锁屏命令写死了 =qdbus= （KDE 专用），我用的 awesomeWM，压根没这玩意儿。而且他也没有恢复鼠标的机制——禁了就禁了，你得手动恢复。
+
+* 最简单的版本
+
+锁屏脚本的本质就这几行：
+
+#+BEGIN_SRC bash
+qdbus org.kde.screensaver /ScreenSaver Lock
+sleep 2
+xset +dpms
+xset dpms force off
+#+END_SRC
+
+第一行锁屏，后面几行开启 DPMS 然后强制关显示器。简单粗暴，能用。
+
+但三个问题摆在那：
+
+1. =qdbus= 只有 KDE 有，awesomeWM 下跑不通
+2. 鼠标没禁，随便碰一下显示器就复活了
+3. 就算你加上禁用鼠标的逻辑……恢复的时候怎么办？用户还得记着鼠标叫什么名字？
+
+得想个更靠谱的方案。
+
+* 让脚本自己找锁屏工具
+
+不同桌面环境的锁屏方式五花八门——KDE 用 =qdbus= ，GNOME 用 =dbus-send= ，awesomeWM 用户大概率装了 =i3lock= ，还有人用 =betterlockscreen= 。让用户自己配？太不友好了。
+
+我的做法是写一条检测链，挨个试，哪个能用就用哪个：
+
+#+BEGIN_SRC bash
+lock_screen_x11() {
+    if has_cmd qdbus &amp;&amp; qdbus org.kde.screensaver /ScreenSaver &amp;&gt;/dev/null; then
+        qdbus org.kde.screensaver /ScreenSaver Lock
+    elif has_cmd dbus-send; then
+        dbus-send --type=method_call \
+            --dest=org.gnome.ScreenSaver \
+            /org/gnome/ScreenSaver \
+            org.gnome.ScreenSaver.Lock 2&gt;/dev/null || \
+        dbus-send --type=method_call \
+            --dest=org.freedesktop.ScreenSaver \
+            /org/freedesktop/ScreenSaver \
+            org.freedesktop.ScreenSaver.Lock 2&gt;/dev/null || true
+        loginctl lock-session 2&gt;/dev/null || true
+    elif has_cmd loginctl; then
+        loginctl lock-session
+    elif has_cmd i3lock; then
+        i3lock &amp;
+    elif has_cmd betterlockscreen; then
+        betterlockscreen --lock &amp;
+    elif has_cmd xlockmore; then
+        xlockmore &amp;
+    else
+        die &quot;No screen lock tool found.&quot;
+    fi
+}
+#+END_SRC
+
+=has_cmd= 就是个简单包装，用 =command -v= 检查命令在不在：
+
+#+BEGIN_SRC bash
+has_cmd() {
+    command -v &quot;$1&quot; &amp;&gt;/dev/null
+}
+#+END_SRC
+
+KDE、GNOME、awesomeWM + i3lock，随便你怎么折腾，脚本总能找到一个能用的。
+
+* 鼠标的问题
+
+这才是重点——怎么让鼠标在锁屏期间老老实实不捣乱。
+
+X11 下 =xinput= 可以禁用鼠标：
+
+#+BEGIN_SRC bash
+xinput --set-prop &quot;USB Mouse&quot; &quot;Device Enabled&quot; &quot;0&quot;
+#+END_SRC
+
+但坑来了：鼠标的名字不固定。我这里是&quot;USB Mouse&quot;，换个罗技的鼠标就变成&quot;Logitech USB Laser Mouse&quot;了。硬编码肯定不行。
+
+Mitch Frazier 那篇文章里有个挺巧妙的方法： =xinput list --name-only= 列出所有设备，然后 =grep -B 1 &#39;Virtual core keyboard&#39;= ，取匹配行前面那一行——八九不离十就是鼠标。我直接拿来用了：
+
+#+BEGIN_SRC bash
+detect_mouse_name() {
+    local mn
+    mn=$(xinput list --name-only | grep -B 1 &#39;Virtual core keyboard&#39; | head -n 1)
+    if [[ -z &quot;$mn&quot; ]]; then
+        warn &quot;Could not detect mouse device name.&quot;
+        echo &quot;&quot;
+        return 1
+    fi
+    echo &quot;$mn&quot;
+}
+#+END_SRC
+
+举个实际的例子， =xinput list= 的输出大概长这样：
+
+#+begin_src shell
+xinput list --name-only
+#+end_src
+#+BEGIN_EXAMPLE
+$ xinput list --name-only
+Virtual core XTEST pointer
+HOLTEK USB-HID Keyboard Mouse
+USB Mouse
+Virtual core keyboard
+Power Button
+#+END_EXAMPLE
+
+=grep -B 1 &#39;Virtual core keyboard&#39;= 同时匹配&quot;USB Mouse&quot;和&quot;Virtual core keyboard&quot;两行， =head -n 1= 取前面那行——搞定。
+
+说实话这个方法有点取巧，依赖&quot;鼠标设备恰好在键盘前面&quot;这个假设。但实际用下来，至少在我的几台机器上还没翻过车。
+
+* 记录状态，省却记忆
+
+Mitch Frazier 的方案有个让我不太舒服的地方：禁用鼠标之后，恢复的时候你得自己记住鼠标名字。这谁记得住啊？
+
+我的做法是用一个状态文件把锁定时的信息存下来：
+
+#+BEGIN_SRC bash
+STATE_FILE=&quot;${STATE_FILE:-/tmp/screen-locker-state}&quot;
+
+save_state() {
+    local st=&quot;$1&quot;
+    local mn=&quot;${2:-}&quot;
+    local br=&quot;${3:-}&quot;
+    cat &gt; &quot;$STATE_FILE&quot; &lt;&lt;EOF
+SESSION_TYPE=&quot;$st&quot;
+MOUSE_NAME=&quot;$mn&quot;
+BRIGHTNESS=&quot;$br&quot;
+EOF
+}
+
+load_state() {
+    if [[ ! -f &quot;$STATE_FILE&quot; ]]; then
+        die &quot;No lock state found. Is the screen locked?&quot;
+    fi
+    source &quot;$STATE_FILE&quot;
+}
+#+END_SRC
+
+其实就是往 =/tmp= 下面写了个 shell 变量赋值文件， =source= 一下就读回来了。里面记了会话类型、鼠标名字、还有 Wayland 下的亮度值。
+
+解锁的时候读状态文件，恢复鼠标，删掉文件。用户什么都不用管：
+
+#+BEGIN_SRC bash
+cmd_unlock() {
+    if ! is_locked; then
+        die &quot;Screen is not locked.&quot;
+    fi
+    load_state
+    if [[ &quot;$SESSION_TYPE&quot; == &quot;x11&quot; &amp;&amp; -n &quot;${MOUSE_NAME:-}&quot; ]]; then
+        enable_mouse &quot;$MOUSE_NAME&quot;
+        echo &quot;Mouse re-enabled: $MOUSE_NAME&quot;
+    fi
+    clear_state
+    echo &quot;Screen unlocked.&quot;
+}
+#+END_SRC
+
+* Wayland 怎么办
+
+现在越来越多的发行版默认用 Wayland 了。=xset= 和 =xinput= 都是 X11 专属，Wayland 下压根不存在。
+
+不过 Wayland 下情况不一样：
+- 关显示器：用 =brightnessctl=，先 =-s= 存亮度，再 =set 0= 关掉
+- 锁屏： =swaylock= 或者 =loginctl lock-session=
+- 鼠标禁用？不用管。Wayland 合成器锁屏时对输入设备有隔离，鼠标动一下不会把屏幕搞亮——这本来就是 Wayland 比 X11 做得好的地方
+
+判断 X11 还是 Wayland 看一眼 =$XDG_SESSION_TYPE= 就行：
+
+#+BEGIN_SRC bash
+detect_session_type() {
+    if [[ &quot;${XDG_SESSION_TYPE:-}&quot; == &quot;wayland&quot; ]]; then
+        echo &quot;wayland&quot;
+    elif [[ -n &quot;${DISPLAY:-}&quot; ]]; then
+        echo &quot;x11&quot;
+    else
+        die &quot;No display server detected.&quot;
+    fi
+}
+#+END_SRC
+
+* 拼到一起
+
+最终用法就三个命令：
+
+#+BEGIN_EXAMPLE
+screen-locker lock      # 锁屏 + 关显示器 + 禁用鼠标
+screen-locker unlock    # 恢复鼠标（解锁让屏保处理）
+screen-locker status    # 看看当前什么状态
+#+END_EXAMPLE
+
+=lock= 干的事情按顺序来：检测环境 → 检测鼠标名 → 存状态 → 锁屏 → 等 2 秒（等锁屏生效）→ 关显示器 → 禁用鼠标。=unlock= 反过来：读状态 → 恢复鼠标/亮度 → 删状态文件。
+
+还有个小细节——脚本底部用了 =BASH_SOURCE= 做了个守卫：
+
+#+BEGIN_SRC bash
+if [[ &quot;${BASH_SOURCE[0]}&quot; == &quot;${0}&quot; ]]; then
+    main &quot;$@&quot;
+fi
+#+END_SRC
+
+这样直接运行时走 =main()=，被 =source= 时只加载函数定义。后面写测试的时候会用到这个。
+</description>
+<pubDate>2026-04-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/11/用-bash-打造一个screen-locker/index.html</guid>
+</item>
+<item>
+<title>mobileog 手机端同步提示Error:2 No such file 的解决方法</title>
+<link>https://lujun9972.github.io/blog/2023/11/24/mobileog-手机端同步提示error-2-no-such-file-的解决方法/index.html</link>
+<description>* 现象
+在 mobileorg 手机端同步时，报错 &quot;Error:2 No such file&quot;. 但是服务器端的 index.org 文件明明是存在的。
+且在 &quot;Setup Wizard&quot; 中 &quot;检查 SSH 登陆&quot; 是成功的。
+
+* 解决方案
+
+在 &quot;Setup Wizard&quot; 中 &quot;检查 SSH 登陆&quot; 成功则能说明 index.org 的路径配置正确且文件确实存在。
+如果还是提示 &quot;Error:2 No such file&quot; 那么说明是文件格式有问题
+
+根据  [[https://mobileorg.github.io/documentation/][MobileOrg Documentation]] 中“What files are transferred?”的描述：
+1. mobileorg 除了会下载 index.org 之外，还会解析该文件并将其他相关的 org 文件一同下载下来。
+2. 为了防止重复下载，mobileorg 通过在 checksums.dat 中存储各个 org 文件的 hash 值的方式来决定哪些 org 文件需要被下载下来。
+   即只有 hash 值发生改变的 org 文件才会被下载。
+
+这里，比较常见的问题是手工生成空的 index.org, 结果导致由于无法正常解析 index.org 中的内容而提示同步失败。正确的做法是通过运行 Emacs 的 [[help:org-mobile-push][org-mobile-push]] 函数来生成 index.org 文件（需要提前配置好 [[help:org-mobile-directory][org-mobile-directory]] 和 [[help:org-mobile-inbox-for-pull][org-mobile-inbox-for-pull]] 变量）。
+
+另一个比较常见的问题就是 org 文件名中带空格（比如当将 mobileorg 与 orgzly 联用时 orgzly 自带的帮助文档就带有空格），mobileorg 手机端应用似乎对带空格的文件名没有处理好。
+解决方法就是去掉文件名中的空格，然后重新运行 [[help:org-mobile-push][org-mobile-push]] 函数来生成新的 index.org 与 checksums.dat 文件 
+
+* 参考
++ [[https://superuser.com/questions/645079/mobileorg-not-finding-emacs-org-file-with-ssh-server][MobileOrg not finding Emacs org file with ssh server]]
++ [[https://mobileorg.github.io/documentation/][MobileOrg Documentation]]
+</description>
+<pubDate>2023-11-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2023/11/24/mobileog-手机端同步提示error-2-no-such-file-的解决方法/index.html</guid>
+</item>
+<item>
+<title>回收 WSL2 VHDX 文件占用空间</title>
+<link>https://lujun9972.github.io/blog/2023/02/10/回收-wsl2-vhdx-文件占用空间/index.html</link>
+<description>在 WSL2 中删除文件并不会自动回收主机空间（参见 [[https://github.com/microsoft/WSL/issues/4699][WSL 2 should automatically release disk space back to the host OS]]）。
+可以通过以下几个步骤回收 WSL2 VHDX 文件占用空间：
+
+1. 在 WSL2 中将 ext4 文件系统内不用的块填0
+   #+begin_src shell
+     # 切换 root 用户
+     sudo -s
+     # 找出 / 的挂载设备，默认为 /dev/sdc
+     sd=$(mount|awk &#39;$2==&quot;on&quot; &amp;&amp; $3==&quot;/&quot; {print $1}&#39;)
+     # 设置文件系统标签
+     e2label ${sd} cloudimg-rootfs
+     # 重新挂载 / 为只读
+     mount -o ro,remount ${sd}
+     # 用 zerofree 将 ext4 文件系统中不用的块填零
+     zerofree ${sd}
+   #+end_src
+
+2. 在宿主机中关闭 wsl
+   #+begin_src shell
+     wsl --shutdown
+   #+end_src
+
+3. 在宿主机中用 diskpart 回收空间
+   #+begin_src bat
+     diskpart
+     diskpart&gt; select vdisk file=&quot;C:\Users\&lt;Username&gt;\AppData\Local\Packages\&lt;Linux-Distribution-AppPackageName&gt;\LocalState\ext4.vhdx&quot;
+     diskpart&gt; compact vdisk
+   #+end_src
+
+
+* 参考资料
++ [[https://github.com/microsoft/WSL/issues/4699][WSL 2 should automatically release disk space back to the host OS]]
++ [[https://segmentfault.com/a/1190000040999582][缩小 WSL2 VHDX 文件的大小]]
++ [[https://github.com/microsoft/WSL/issues/5738][WSL disk cannot be mounted read-write]]
+</description>
+<pubDate>2023-02-10</pubDate>
+<guid>https://lujun9972.github.io/blog/2023/02/10/回收-wsl2-vhdx-文件占用空间/index.html</guid>
+</item>
+<item>
+<title>使用 org-mode columnview 生成任务列表</title>
+<link>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</link>
+<description>org-mode的columnview[[https://orgmode.org/manual/Dynamic-Blocks.html#Dynamic-Blocks][动态块]]能够帮你把树形的代办事项归整为表格，方便查看
+
+在org-mode中可以通过两个命令来插入colmnviewa动态块:
+
++ 一个是通过 =M-x org-dynamic-block-insert-dblock= 插入一个动态块，默认情况下 org-mode 自带了两类动态块 =columnview= 和 =clocktable= ，然后我们选择 =columnview= 即可
++ 另一个是通过 =M-x org-columns-insert-dblock= 直接插入columnviewa动态块
+
+  
+一个 columnview 动态块大概长这个样子的:
+#+begin_src org
+  ,#+BEGIN: columnview :参数1 参数值 :参数N h参数值
+
+  ,#+END:
+
+#+end_src
+
+其中 =columnview= 标识动态块的类型，该名字决定了org-mode会调用哪个函数来生成动态块的内容，比如这里调用的函数就是 =org-dblock-write:columnview=. 
+后面的 =:参数1 参数值 :参数N h参数值= 参数则会组装成一个plist传递给函数作为唯一的参数，并将函数的返回值作为动态块的内容
+
+我们可以通过查看 =org-dblock-write:columnview= 的docstring来找出 =columnwive= 动态块支持的参数:
+#+begin_example
+  (org-dblock-write:columnview PARAMS)
+
+  Write the column view table.
+
+  PARAMS is a property list of parameters:
+
+  ‘:id’ (mandatory)
+
+      The ID property of the entry where the columns view should be
+      built.  When the symbol ‘local’, call locally.  When ‘global’
+      call column view with the cursor at the beginning of the
+      buffer (usually this means that the whole buffer switches to
+      column view).  When &quot;file:path/to/file.org&quot;, invoke column
+      view at the start of that file.  Otherwise, the ID is located
+      using ‘org-id-find’.
+
+  ‘:exclude-tags’
+
+      List of tags to exclude from column view table.
+
+  ‘:format’
+
+      When non-nil, specify the column view format to use.
+
+  ‘:hlines’
+
+      When non-nil, insert a hline before each item.  When
+      a number, insert a hline before each level inferior or equal
+      to that number.
+
+  ‘:indent’
+
+      When non-nil, indent each ITEM field according to its level.
+
+  ‘:match’
+
+      When set to a string, use this as a tags/property match filter.
+
+  ‘:maxlevel’
+
+      When set to a number, don’t capture headlines below this level.
+
+  ‘:skip-empty-rows’
+
+      When non-nil, skip rows where all specifiers other than ITEM
+      are empty.
+
+  ‘:vlines’
+
+      When non-nil, make each column a column group to enforce
+      vertical lines.
+#+end_example
+
+这里比较重要的参数有
+
++ :id :: 这是最重要的参数. 它指定了column视图的数据来源。
++ :maxlevel :: 若设置为数字N,表示不捕捉层级在N级以下的条目
++ :skip-empty-rows :: 若设置为`t`,则会跳过那些除了`ITEM`属性列外,其他属性列都是空值的行
++ :format :: 设置column视图的格式。
+
+其中 =:format= 是一个以多个列定义式组成的字符串，各定义式之间使用空格进行分隔。
+column的定义式中可以包含有列的属性. 一般来说列的定义式看起来是这样做的
+#+BEGIN_SRC org
+  ,%[width]property[(title)][{summary-type}]
+#+END_SRC
+除了百分号和属性名之外,所有的都是可选的. 各部分的意思如下所示
+#+BEGIN_EXAMPLE
+  width           整型,代表了列的宽度,如果忽略则由org自动决定
+
+  property        该列所表示的属性,可以是上文提到的哪些特殊属性
+
+  title           列的标题,如果忽略,则会使用属性名代替
+
+  {summary-type}  总和的类型,如果指定了,那么父节点的列值由其下子节点的值计算得到
+                  支持的总和类型包括:
+                  {+}       该列的累加值
+                  {+;%.1f}  指定了格式的列累加值
+                  {$}       货币格式，其实就是 ‘+;%.2f’.
+                  {:}       把列中的值作为时间进行累加，格式为HH[:MM]
+                  {X}       Checkbox 的状态, 若所有子checkboxd都标记为‘[X]’ 则显示‘[X]’.
+                  {X/}      Checkbox 的状态, 显示格式为‘[n/m]’.
+                  {X%}      Checkbox 的状态, 显示格式为‘[n%]’.
+                  {min}     列中的最小值
+                  {max}     列中的最大值
+                  {mean}    列的算术平均值
+                  {:min}    列中的最小值（以时间为单位）
+                  {:max}    列中的最大值（以时间为单位）
+                  {:mean}   列中的算术平均值（以时间为单位）
+                  {@min}    列中的最小值（以时间区间为单位）
+                  {@max}    列中的最大值（以时间区间为单位）
+                  {@mean}   列中的算术平均值（以时间区间为单位）
+                  {est+}    耗时的范围
+
+#+END_EXAMPLE
+
+我一般使用 columnview 来生成任务列表方便我对任务进度进行追踪。下面是一个例子
+#+begin_src org
+  ,* 任务分派
+
+  ,#+BEGIN: columnview :hlines 1 :id local :format &quot;%ITEM(任务) %CHARGER(负责人) %DEADLINE(死线) %TODO(状态)&quot; :skip-empty-rows t
+  | 任务   | 负责人    | 死线            | 状态  |
+  |--------+-----------+-----------------+-------|
+  | 任务一 | 甲xx      |                 | NEXT  |
+  | 任务二 | 乙xx      | &lt;2020-05-12 二&gt; | TODAY |
+  | 任务三 | 甲xx 乙xx |                 | TODO  |
+  ,#+END:
+
+  ,** NEXT 任务一
+     :PROPERTIES:
+     :CHARGER:  甲xx
+     :END:
+  + [ ] xxxx
+  + [ ] yyyy
+  + [ ] zzzz
+  + [X] abcd
+  ,** TODAY [#A] 任务二
+     DEADLINE: &lt;2020-05-12 二&gt;
+     :PROPERTIES:
+     :CHARGER:  乙xx
+     :END:
+  + [ ] 111111
+  + [ ] 222222
+  ,** TODO [#C] 任务三
+     :PROPERTIES:
+     :CHARGER:  甲xx 乙xx
+     :END:
+#+end_src
+</description>
+<pubDate>2022-07-05</pubDate>
+<guid>https://lujun9972.github.io/blog/2020/05/08/使用-org-mode-columnview-生成任务列表/index.html</guid>
+</item>
+<item>
+<title>Emacs 作为 MPD 客户端</title>
+<link>https://lujun9972.github.io/blog/2022/06/26/emacs-作为-mpd-客户端/index.html</link>
+<description>今天才知道，Emacs居然内置了一个 mpc.el 可以将 Emacs 转换为 [[https://wiki.archlinux.org/title/Music_Player_Daemon][MPD]]([[https://musicpd.org/][Music Player Daemon]])客户端。
+
+1. 设置 [[help:mpc-host][mpc-host]]
+   #+begin_src emacs-lisp
+     (setq mpc-host &quot;192.168.31.9:6600&quot;)
+   #+end_src
+
+   #+RESULTS:
+   : 192.168.31.9:6600
+
+2. 执行 [[help:mpc][mpc]] 命令,进入 mpc 控制界面
+
+   [[file:images/mpc01.png]]
+
+3. 快捷键
+   + &lt; (mpc-next) :: 上一首歌
+   + &gt; (mpc-previous) :: 下一首歌
+   + g (mpc-seek-current) :: 设置当前歌曲的播放进度
+   + s (mpc-toggle-play) :: 播放/暂停
+   + g (mpc-seek-current) :: 设置当前歌曲的播放进度
+   + mpc-toggle-{consume,repeat,single,shuffle} :: 设置播放模式
+   + q (mpc-quit) :: 退出
+</description>
+<pubDate>2022-06-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/06/26/emacs-作为-mpd-客户端/index.html</guid>
+</item>
+<item>
+<title>移动文件路径却不破坏org file link的方法</title>
+<link>https://lujun9972.github.io/blog/2022/06/01/移动文件路径却不破坏org-file-link的方法/index.html</link>
+<description>我习惯在Org file中记录电子书的文件路径、阅读耗时、笔记等信息。 电子书放在统一的目录中，按照分类分子目录进行存放。
+
+但这会带来一个问题，就是我在整理电子书时经常会在不同分类之间移动电子书，这就会破坏Org file中电子书的文件路径。
+
+如果每次都需要手工修改文件中的链接地址的话，那就太麻烦了。好在通过自定义link，我们可以自定义搜索函数来动态搜索电子书路径，而不是写死电子书的存放路径。
+
+方法如下：
+
+#+begin_src emacs-lisp
+  (defvar MY-EBOOK &quot;~/ebooks&quot;)
+  (defun my-search-ebook (pattern &amp;optional _)
+    (let* ((files (directory-files-recursively MY-EBOOK pattern))
+           (count (length files)))
+      (cond ((= count 0)
+             (message &quot;Can&#39;t found file mathcing %s&quot; pattern))
+            ((= count 1)
+             (find-file (car files)))
+            ((&gt; count 1)
+             (find-file (completing-read &quot;Please pick a file: &quot; files nil t))))))
+
+  (org-link-set-parameters &quot;ebook&quot;
+                           :follow #&#39;my-search-ebook
+                           :help-echo (format &quot;Open the file in %s&quot; MY-EBOOK)
+                           :face &#39;(underline t))
+#+end_src
+
+这就自定义了一个 =ebook= 的link，访问这个 link 会自动从 =MY-EBOOK= 定义的目录(~/ebooks)中搜索匹配的文件并打开。
+</description>
+<pubDate>2022-06-26</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/06/01/移动文件路径却不破坏org-file-link的方法/index.html</guid>
+</item>
+<item>
+<title>如何合理的导出help link 成HTML</title>
+<link>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</link>
+<description>Org 文件在导出为 html 是会将 =help= link 导出为一个HTTP链接，例如一个
+#+begin_example
+  这是一个 [[help:lazy-helm/describe-char][Help]] link
+#+end_example
+
+导出成HTML时会变成
+#+begin_src html
+  这是一个 &lt;a href=&quot;lazy-helm/describe-char&quot;&gt;Help&lt;/a&gt; link
+#+end_src
+
+这个操作很迷，因为实际上并没有这个链接对应的页面。
+
+一个比较合理的方法是导出时保留原文字，但当光标移动到这段文字上去时弹出相关说明。
+
+通过 [[help:org-link-set-parameters][org-link-set-parameters]] 可以注册自己定义的链接导出函数，相关配置如下：
+#+begin_src emacs-lisp
+  (defun org-link--export-help (path desc backend &amp;optional _)
+    &quot;Export a \&quot;help\&quot; type link.
+  PATH is a symbol name, as a string.&quot;
+    (let ((info (pcase (intern path)
+                  ((and (pred fboundp) function) (describe-function function))
+                  ((and (pred boundp) variable) (describe-variable variable))
+                  (name (user-error &quot;Unknown function or variable: %s&quot; name)))))
+      (quit-window)                       ;关闭新开的 help window
+      (pcase backend
+        (&#39;html (format &quot;&lt;label title=&#39;%s&#39;&gt;%s&lt;/label&gt;&quot; info desc))
+        (_ desc))))
+  ;; 注册 help 的导出函数
+  (org-link-set-parameters &quot;help&quot;
+                           :export #&#39;org-link--export-help)
+#+end_src
+
+就可以导出为
+
+#+begin_src html
+  这是一个 &lt;label title=&#39;lazy-helm/describe-char is an interactive Lisp function.
+
+  It is bound to SPC h d c, M-m h d c.
+
+  (lazy-helm/describe-char)
+
+  Wrapper to ensure that ‘helm’ is loaded before calling describe-char.
+
+  &#39;&gt;Help&lt;/label&gt; link
+#+end_src
+
+效果如下所示：
+
+[[file:./images/export-help-link.png]]
+</description>
+<pubDate>2022-06-26</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</guid>
+</item>
+<item>
+<title>笑话理解之Biology</title>
+<link>https://lujun9972.github.io/blog/2022/06/20/笑话理解之biology/index.html</link>
+<description>1. Buy-ologist
+   #+begin_example
+     How do you call a member of the finacial staff of the faculty of Biology?
+
+     A Buy-ologist.
+   #+end_example
+</description>
+<pubDate>2022-06-20</pubDate>
+<guid>https://lujun9972.github.io/blog/2022/06/20/笑话理解之biology/index.html</guid>
+</item>
 </channel>
 </rss>
