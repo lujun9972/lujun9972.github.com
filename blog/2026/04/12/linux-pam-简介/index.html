@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Linux PAM 简介 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Linux PAM 简介</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga1c92d2">什么是 PAM</a></li>
+<li><a href="#org8cc1431">检查程序是否支持 PAM</a></li>
+<li><a href="#org288532e">配置文件结构</a></li>
+<li><a href="#org8f54169">四大管理组</a></li>
+<li><a href="#org2d1cf66">控制标志详解</a>
+<ul>
+<li><a href="#org9008c88">简单关键字</a></li>
+<li><a href="#org6b9a0ea">高级语法 <code>[value1=action1 value2=action3 ...]</code></a></li>
+</ul>
+</li>
+<li><a href="#org54b3663">实战案例</a>
+<ul>
+<li><a href="#orge67b1ad">限制指定用户 SSH 登录</a></li>
+<li><a href="#orgcf975c3">限制 root 通过控制台登录</a></li>
+<li><a href="#org1b3bcd5">限制儿童用户的登录时间</a></li>
+</ul>
+</li>
+<li><a href="#org59e5542">安全提醒</a></li>
+<li><a href="#org04f2374">参考</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orga1c92d2" class="outline-2">
+<h2 id="orga1c92d2">什么是 PAM</h2>
+<div class="outline-text-2" id="text-orga1c92d2">
+<p>
+PAM（Pluggable Authentication Modules，可插拔认证模块）是 Linux 中一套用于 <b>动态认证用户身份</b> 的共享库框架。
+</p>
+
+<p>
+它的设计理念是将 <b>认证逻辑与应用程序解耦</b> 。应用程序不需要自己实现用户名密码验证、 LDAP 认证、生物识别等功能，而是调用 PAM 提供的统一 API，由 PAM 根据配置文件决定调用哪些认证模块。
+</p>
+
+<pre class="example" id="org426f14d">
+应用程序 (sshd, login, sudo ...)
+     │
+     ▼
+   PAM API
+     │
+  ┌──┼──┐
+  ▼  ▼  ▼
+ 模块 模块 模块        ← 可插拔，按需加载
+(密码 LDAP 生物识别 ...)
+</pre>
+
+<p>
+这样做的好处是：改变认证策略时（比如从本地密码验证切换到 LDAP），只需要修改 PAM 配置文件， <b>不需要修改应用程序本身</b> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8cc1431" class="outline-2">
+<h2 id="org8cc1431">检查程序是否支持 PAM</h2>
+<div class="outline-text-2" id="text-org8cc1431">
+<p>
+一个程序要使用 PAM，必须在编译时链接 PAM 库。你可以用 <code>ldd</code> 命令检查：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ldd /usr/bin/login | grep libpam
+</pre>
+</div>
+
+<pre class="example" id="org6cab473">
+libpam.so.0 =&gt; /usr/lib/libpam.so.0 (0x00007f6165286000)
+libpam_misc.so.0 =&gt; /usr/lib/libpam_misc.so.0 (0x00007f6165281000)
+</pre>
+
+<p>
+如果输出中出现了 <code>libpam</code> ，说明这个程序是"PAM-aware"的，它支持通过 PAM 进行认证。
+</p>
+
+<p>
+需要注意的是，并非所有程序都编译了 PAM 支持。例如在 Arch Linux 上， <code>sshd</code> 默认不链接 PAM 库；而在 Debian/Ubuntu 等发行版上， <code>sshd</code> 通常带有 PAM 支持。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org288532e" class="outline-2">
+<h2 id="org288532e">配置文件结构</h2>
+<div class="outline-text-2" id="text-org288532e">
+<p>
+PAM 的配置主要有两种形式：
+</p>
+
+<ul class="org-ul">
+<li><code>/etc/pam.conf</code> — 全局配置文件（旧式）</li>
+<li><code>/etc/pam.d/</code> — 按服务分目录配置（新式，优先使用）</li>
+</ul>
+
+<p>
+现代 Linux 发行版几乎都使用 <code>/etc/pam.d/</code> 方式，每个 PAM-aware 的服务对应一个文件，比如 <code>/etc/pam.d/sshd</code> 、 <code>/etc/pam.d/login</code> 、 <code>/etc/pam.d/sudo</code> 等。当 <code>/etc/pam.d/</code> 目录存在时， <code>/etc/pam.conf</code> 会被忽略。
+</p>
+
+<p>
+每条配置规则的格式如下：
+</p>
+
+<pre class="example" id="org5b07f49">
+type  control-flag  module  [module-arguments]
+</pre>
+
+<p>
+四个字段用空格分隔：
+</p>
+
+<ul class="org-ul">
+<li><b>type</b> — 管理组类型（account、auth、password、session）</li>
+<li><b>control-flag</b> — 控制标志，决定模块失败时的行为</li>
+<li><b>module</b> — PAM 模块的路径或名称，如 <code>pam_unix.so</code></li>
+<li><b>module-arguments</b> — 传递给模块的参数（可选）</li>
+</ul>
+
+<p>
+来看一个真实例子，来自 <code>/etc/pam.d/sshd</code> ：
+</p>
+
+<pre class="example" id="org58f9045">
+account    required     pam_nologin.so
+</pre>
+
+<p>
+这条规则的意思是：在 account 阶段，调用 <code>pam_nologin.so</code> 模块，且该模块 <b>必须</b> 成功（ <code>required</code> ），否则整个认证失败。这个模块的作用是：当 <code>/etc/nologin</code> 文件存在时，拒绝非 root 用户登录。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8f54169" class="outline-2">
+<h2 id="org8f54169">四大管理组</h2>
+<div class="outline-text-2" id="text-org8f54169">
+<p>
+PAM 将认证任务分为四个独立的管理组（management group），每个模块属于其中一种类型：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类型</th>
+<th scope="col" class="org-left">作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>auth</code></td>
+<td class="org-left">验证用户身份（如检查密码），建立用户凭证</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>account</code></td>
+<td class="org-left">检查账户是否被允许访问（如密码是否过期、是否在允许时间段内）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>password</code></td>
+<td class="org-left">更新用户密码（如 <code>passwd</code> 命令）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>session</code></td>
+<td class="org-left">管理会话的打开和关闭（如记录日志、挂载目录）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+PAM 按顺序依次处理同一类型的所有规则。比如处理 <code>auth</code> 类型时，会依次调用该类型下所有配置的模块。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2d1cf66" class="outline-2">
+<h2 id="org2d1cf66">控制标志详解</h2>
+<div class="outline-text-2" id="text-org2d1cf66">
+<p>
+控制标志决定了当一个模块成功或失败时，PAM 如何继续处理后续模块。
+</p>
+</div>
+
+<div id="outline-container-org9008c88" class="outline-3">
+<h3 id="org9008c88">简单关键字</h3>
+<div class="outline-text-3" id="text-org9008c88">
+<p>
+最常用的四个关键字：
+</p>
+
+<ul class="org-ul">
+<li><b>required</b> — 模块 <b>必须</b> 成功。如果失败，不立即返回错误，而是继续执行后续同类型模块，但最终结果为失败。这样设计是为了避免攻击者探测系统配置。</li>
+<li><b>requisite</b> — 类似 <code>required</code> ，但模块失败时 <b>立即</b> 返回失败，不再执行后续模块。</li>
+<li><b>sufficient</b> — 如果此模块成功，且之前所有 <code>required</code> 模块也都成功，则 <b>立即</b> 返回成功，跳过后续模块。如果此模块失败，不影响最终结果（忽略失败）。</li>
+<li><b>optional</b> — 模块的成功或失败通常不影响最终结果，只有在它是该类型下唯一模块时才有决定权。</li>
+</ul>
+
+<pre class="example" id="org333b524">
+required:  失败 → 继续执行 → 最终返回失败
+requisite: 失败 → 立即返回失败
+sufficient: 成功 → 立即返回成功（前提：之前的 required 都成功了）
+optional:  无论成败 → 不影响结果
+</pre>
+
+<p>
+还有两个特殊关键字 <code>include</code> 和 <code>substack</code> ，用于引入其他配置文件中的同类型规则。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6b9a0ea" class="outline-3">
+<h3 id="org6b9a0ea">高级语法 <code>[value1=action1 value2=action3 ...]</code></h3>
+<div class="outline-text-3" id="text-org6b9a0ea">
+<p>
+除了上面的关键字，还可以用方括号语法更精细地控制行为：
+</p>
+
+<pre class="example" id="org50d2381">
+session  [success=1 default=ignore]  pam_succeed_if.so service !~ gdm* quiet
+</pre>
+
+<p>
+方括号内的含义是：
+</p>
+
+<ul class="org-ul">
+<li><code>success=1</code> — 如果模块成功，跳过接下来 1 条规则</li>
+<li><code>default=ignore</code> — 对于其他所有返回值，忽略该模块的结果</li>
+</ul>
+
+<p>
+常用的 action 有：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">action</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>ignore</code></td>
+<td class="org-left">忽略该模块的结果</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>bad</code></td>
+<td class="org-left">本次认证失败，继续执行后续模块</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>die</code></td>
+<td class="org-left">本次认证失败，立即返回</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ok</code></td>
+<td class="org-left">标记为成功，继续执行</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>done</code></td>
+<td class="org-left">标记为成功，立即返回</td>
+</tr>
+
+<tr>
+<td class="org-left">=N=（数字）</td>
+<td class="org-left">跳过接下来 N 条规则</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+简单关键字可以用方括号语法等价表达：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">关键字</th>
+<th scope="col" class="org-left">等价表达式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>required</code></td>
+<td class="org-left"><code>[success=ok new_authtok_reqd=ok ignore=ignore default=bad]</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>requisite</code></td>
+<td class="org-left"><code>[success=ok new_authtok_reqd=ok ignore=ignore default=die]</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>sufficient</code></td>
+<td class="org-left"><code>[success=done new_authtok_reqd=done default=ignore]</code></td>
+</tr>
+
+<tr>
+<td class="org-left"><code>optional</code></td>
+<td class="org-left"><code>[success=ok new_authtok_reqd=ok default=ignore]</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org54b3663" class="outline-2">
+<h2 id="org54b3663">实战案例</h2>
+<div class="outline-text-2" id="text-org54b3663">
+</div>
+<div id="outline-container-orge67b1ad" class="outline-3">
+<h3 id="orge67b1ad">限制指定用户 SSH 登录</h3>
+<div class="outline-text-3" id="text-orge67b1ad">
+<p>
+假设你想禁止某些用户通过 SSH 登录系统。可以使用 <code>pam_listfile.so</code> 模块，它可以根据一个文件中的列表来允许或拒绝用户。
+</p>
+
+<p>
+编辑 <code>/etc/pam.d/sshd</code> ，在文件开头（其他 auth 规则之前）添加：
+</p>
+
+<pre class="example" id="orgecfa88e">
+auth  required  pam_listfile.so \
+      onerr=succeed  item=user  sense=deny  file=/etc/ssh/deniedusers
+</pre>
+
+<p>
+参数说明：
+</p>
+
+<ul class="org-ul">
+<li><code>onerr=succeed</code> — 如果文件不存在或读取出错，允许登录（安全兜底）</li>
+<li><code>item=user</code> — 检查用户名</li>
+<li><code>sense=deny</code> — 如果用户名在文件中，则 <b>拒绝</b></li>
+<li><code>file=/etc/ssh/deniedusers</code> — 指定黑名单文件路径</li>
+</ul>
+
+<p>
+然后创建黑名单文件，每行一个用户名：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo tee /etc/ssh/deniedusers &lt;&lt;EOF<span class="org-sh-heredoc">
+baduser
+hacker
+EOF
+</span>sudo chmod 600 /etc/ssh/deniedusers
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcf975c3" class="outline-3">
+<h3 id="orgcf975c3">限制 root 通过控制台登录</h3>
+<div class="outline-text-3" id="text-orgcf975c3">
+<p>
+<code>pam_nologin.so</code> 模块可以在系统维护期间阻止非 root 用户登录。当 <code>/etc/nologin</code> 文件存在时，只有 root 能登录，其他用户会看到文件内容作为提示信息。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21019;&#24314; nologin &#25991;&#20214;&#65292;&#38459;&#27490;&#38750; root &#29992;&#25143;&#30331;&#24405;
+</span><span class="org-builtin">echo</span> <span class="org-string">"&#31995;&#32479;&#32500;&#25252;&#20013;&#65292;&#39044;&#35745; 18:00 &#24674;&#22797;"</span> | sudo tee /etc/nologin
+</pre>
+</div>
+
+<p>
+这个模块通常已经在 <code>/etc/pam.d/login</code> 中配置好了：
+</p>
+
+<pre class="example" id="orga7ccf39">
+account  required  pam_nologin.so
+</pre>
+
+<p>
+如果想彻底禁止 root 通过控制台登录，可以用 <code>pam_securetty.so</code> 模块。它只允许 root 从 <code>/etc/securetty</code> 中列出的终端登录：
+</p>
+
+<pre class="example" id="org36ffc7f">
+auth  required  pam_securetty.so
+</pre>
+
+<p>
+编辑 <code>/etc/securetty</code> ，只保留允许 root 登录的终端即可。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1b3bcd5" class="outline-3">
+<h3 id="org1b3bcd5">限制儿童用户的登录时间</h3>
+<div class="outline-text-3" id="text-org1b3bcd5">
+<p>
+<code>pam_time.so</code> 模块可以根据时间、日期、用户和服务来限制登录。非常适合用来控制儿童使用电脑的时间。
+</p>
+
+<p>
+首先，在需要限制的服务配置中添加 <code>pam_time.so</code> 。以 <code>login</code> 为例，编辑 <code>/etc/pam.d/login</code> ，在 account 规则区域添加：
+</p>
+
+<pre class="example" id="org80e72ec">
+account  required  pam_time.so
+</pre>
+
+<p>
+然后编辑 <code>/etc/security/time.conf</code> ，添加时间规则。规则的语法是：
+</p>
+
+<pre class="example" id="orgf0c4db5">
+services;ttys;users;times
+</pre>
+
+<p>
+四个字段用分号分隔，含义分别是：服务名、终端、用户、时间段。
+</p>
+
+<p>
+时间段中的日期用两个字母表示： <code>Mo</code> （周一）、 <code>Tu</code> （周二）、 <code>We</code> （周三）、 <code>Th</code> （周四）、 <code>Fr</code> （周五）、 <code>Sa</code> （周六）、 <code>Su</code> （周日）、 <code>Wk</code> （工作日）、 <code>Wd</code> （周末）、 <code>Al</code> （每天）。时间格式为 24 小时制的 <code>HHMM-HHMM</code> 。
+</p>
+
+<p>
+假设用户 <code>child</code> 只能在工作日的 18:00-21:00 和周末的 08:00-21:00 登录：
+</p>
+
+<pre class="example" id="org2cb9869">
+login ; * ; child ; Wk1800-2100 | Wd0800-2100
+</pre>
+
+<p>
+解释：
+</p>
+
+<ul class="org-ul">
+<li><code>login</code> — 作用于 login 服务</li>
+<li><code>*</code> — 所有终端</li>
+<li><code>child</code> — 仅限制用户 <code>child</code></li>
+<li><code>Wk1800-2100 | Wd0800-2100</code> — 工作日 18:00-21:00，或周末 08:00-21:00</li>
+</ul>
+
+<p>
+如果还想限制 SSH 登录，可以再加一条：
+</p>
+
+<pre class="example" id="orgc5147de">
+sshd ; * ; child ; Wk1800-2100 | Wd0800-2100
+</pre>
+
+<p>
+注意： <code>pam_time.so</code> 只控制 <b>登录时刻</b> ，不会在时间到期后强制结束已有会话。如果需要强制下线，还需要配合其他手段（如 <code>timeout</code> 命令或 cron 任务）。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org59e5542" class="outline-2">
+<h2 id="org59e5542">安全提醒</h2>
+<div class="outline-text-2" id="text-org59e5542">
+<p>
+PAM 配置错误可能导致 <b>完全无法登录系统</b> 。修改 PAM 配置时请注意：
+</p>
+
+<ol class="org-ol">
+<li><b>始终保留一个已登录的 root 会话</b> — 在另一个终端中保持 <code>sudo -i</code> 或 root 登录，这样即使配置出错也能恢复</li>
+<li><b>修改前先备份</b> — <code>sudo cp /etc/pam.d/sshd /etc/pam.d/sshd.bak</code></li>
+<li><b>不要删除 <code>/etc/pam.d/</code> 下的配置文件</b> — 这会锁死对应的登录方式</li>
+<li><b>修改后立即测试</b> — 在另一个终端中尝试登录，确认配置正确后再关闭备份会话</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org04f2374" class="outline-2">
+<h2 id="org04f2374">参考</h2>
+<div class="outline-text-2" id="text-org04f2374">
+<ul class="org-ul">
+<li><a href="https://www.tecmint.com/configure-pam-in-centos-ubuntu-linux/">How to Configure PAM in CentOS/Ubuntu Linux - Tecmint</a></li>
+<li><code>man pam.d</code> — PAM 配置文件语法</li>
+<li><code>man pam</code> — PAM 框架概述</li>
+<li><code>man pam_time</code> 和 <code>man time.conf</code> — 时间限制模块</li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-12</span>
+    <span class="post-info">2026-04-12</span>
+    <a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; x2310omwxaoufa14tpb3rrhhha &lt;dot&gt; gx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

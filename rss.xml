@@ -4,10 +4,261 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 12 Apr 2026 01:50:44 UTC</pubDate>
-    <lastBuildDate>Sun, 12 Apr 2026 01:50:44 UTC</lastBuildDate>
+    <pubDate>Sun, 12 Apr 2026 03:19:35 UTC</pubDate>
+    <lastBuildDate>Sun, 12 Apr 2026 03:19:35 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>Linux PAM 简介</title>
+<link>https://lujun9972.github.io/blog/2026/04/12/linux-pam-简介/index.html</link>
+<description>* 什么是 PAM
+
+PAM（Pluggable Authentication Modules，可插拔认证模块）是 Linux 中一套用于 *动态认证用户身份* 的共享库框架。
+
+它的设计理念是将 *认证逻辑与应用程序解耦* 。应用程序不需要自己实现用户名密码验证、 LDAP 认证、生物识别等功能，而是调用 PAM 提供的统一 API，由 PAM 根据配置文件决定调用哪些认证模块。
+
+#+BEGIN_EXAMPLE
+  应用程序 (sshd, login, sudo ...)
+       │
+       ▼
+     PAM API
+       │
+    ┌──┼──┐
+    ▼  ▼  ▼
+   模块 模块 模块        ← 可插拔，按需加载
+  (密码 LDAP 生物识别 ...)
+#+END_EXAMPLE
+
+这样做的好处是：改变认证策略时（比如从本地密码验证切换到 LDAP），只需要修改 PAM 配置文件， *不需要修改应用程序本身* 。
+
+* 检查程序是否支持 PAM
+
+一个程序要使用 PAM，必须在编译时链接 PAM 库。你可以用 =ldd= 命令检查：
+
+#+BEGIN_SRC shell
+  ldd /usr/bin/login | grep libpam
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  libpam.so.0 =&gt; /usr/lib/libpam.so.0 (0x00007f6165286000)
+  libpam_misc.so.0 =&gt; /usr/lib/libpam_misc.so.0 (0x00007f6165281000)
+#+END_EXAMPLE
+
+如果输出中出现了 =libpam= ，说明这个程序是&quot;PAM-aware&quot;的，它支持通过 PAM 进行认证。
+
+需要注意的是，并非所有程序都编译了 PAM 支持。例如在 Arch Linux 上， =sshd= 默认不链接 PAM 库；而在 Debian/Ubuntu 等发行版上， =sshd= 通常带有 PAM 支持。
+
+* 配置文件结构
+
+PAM 的配置主要有两种形式：
+
+- =/etc/pam.conf= — 全局配置文件（旧式）
+- =/etc/pam.d/= — 按服务分目录配置（新式，优先使用）
+
+现代 Linux 发行版几乎都使用 =/etc/pam.d/= 方式，每个 PAM-aware 的服务对应一个文件，比如 =/etc/pam.d/sshd= 、 =/etc/pam.d/login= 、 =/etc/pam.d/sudo= 等。当 =/etc/pam.d/= 目录存在时， =/etc/pam.conf= 会被忽略。
+
+每条配置规则的格式如下：
+
+#+BEGIN_EXAMPLE
+  type  control-flag  module  [module-arguments]
+#+END_EXAMPLE
+
+四个字段用空格分隔：
+
+- *type* — 管理组类型（account、auth、password、session）
+- *control-flag* — 控制标志，决定模块失败时的行为
+- *module* — PAM 模块的路径或名称，如 =pam_unix.so=
+- *module-arguments* — 传递给模块的参数（可选）
+
+来看一个真实例子，来自 =/etc/pam.d/sshd= ：
+
+#+BEGIN_EXAMPLE
+  account    required     pam_nologin.so
+#+END_EXAMPLE
+
+这条规则的意思是：在 account 阶段，调用 =pam_nologin.so= 模块，且该模块 *必须* 成功（ =required= ），否则整个认证失败。这个模块的作用是：当 =/etc/nologin= 文件存在时，拒绝非 root 用户登录。
+
+* 四大管理组
+
+PAM 将认证任务分为四个独立的管理组（management group），每个模块属于其中一种类型：
+
+| 类型         | 作用                                       |
+|--------------+--------------------------------------------|
+| =auth=         | 验证用户身份（如检查密码），建立用户凭证   |
+| =account=      | 检查账户是否被允许访问（如密码是否过期、是否在允许时间段内） |
+| =password=     | 更新用户密码（如 =passwd= 命令）           |
+| =session=      | 管理会话的打开和关闭（如记录日志、挂载目录） |
+
+PAM 按顺序依次处理同一类型的所有规则。比如处理 =auth= 类型时，会依次调用该类型下所有配置的模块。
+
+* 控制标志详解
+
+控制标志决定了当一个模块成功或失败时，PAM 如何继续处理后续模块。
+
+** 简单关键字
+
+最常用的四个关键字：
+
+- *required* — 模块 *必须* 成功。如果失败，不立即返回错误，而是继续执行后续同类型模块，但最终结果为失败。这样设计是为了避免攻击者探测系统配置。
+- *requisite* — 类似 =required= ，但模块失败时 *立即* 返回失败，不再执行后续模块。
+- *sufficient* — 如果此模块成功，且之前所有 =required= 模块也都成功，则 *立即* 返回成功，跳过后续模块。如果此模块失败，不影响最终结果（忽略失败）。
+- *optional* — 模块的成功或失败通常不影响最终结果，只有在它是该类型下唯一模块时才有决定权。
+
+#+BEGIN_EXAMPLE
+  required:  失败 → 继续执行 → 最终返回失败
+  requisite: 失败 → 立即返回失败
+  sufficient: 成功 → 立即返回成功（前提：之前的 required 都成功了）
+  optional:  无论成败 → 不影响结果
+#+END_EXAMPLE
+
+还有两个特殊关键字 =include= 和 =substack= ，用于引入其他配置文件中的同类型规则。
+
+** 高级语法 =[value1=action1 value2=action3 ...]=
+
+除了上面的关键字，还可以用方括号语法更精细地控制行为：
+
+#+BEGIN_EXAMPLE
+  session  [success=1 default=ignore]  pam_succeed_if.so service !~ gdm* quiet
+#+END_EXAMPLE
+
+方括号内的含义是：
+
+- =success=1= — 如果模块成功，跳过接下来 1 条规则
+- =default=ignore= — 对于其他所有返回值，忽略该模块的结果
+
+常用的 action 有：
+
+| action    | 含义                           |
+|-----------+--------------------------------|
+| =ignore=    | 忽略该模块的结果               |
+| =bad=       | 本次认证失败，继续执行后续模块 |
+| =die=       | 本次认证失败，立即返回         |
+| =ok=        | 标记为成功，继续执行           |
+| =done=      | 标记为成功，立即返回           |
+| =N=（数字） | 跳过接下来 N 条规则            |
+
+简单关键字可以用方括号语法等价表达：
+
+| 关键字      | 等价表达式                                                |
+|-------------+-----------------------------------------------------------|
+| =required=    | =[success=ok new_authtok_reqd=ok ignore=ignore default=bad]= |
+| =requisite=   | =[success=ok new_authtok_reqd=ok ignore=ignore default=die]= |
+| =sufficient=  | =[success=done new_authtok_reqd=done default=ignore]=       |
+| =optional=    | =[success=ok new_authtok_reqd=ok default=ignore]=           |
+
+* 实战案例
+
+** 限制指定用户 SSH 登录
+
+假设你想禁止某些用户通过 SSH 登录系统。可以使用 =pam_listfile.so= 模块，它可以根据一个文件中的列表来允许或拒绝用户。
+
+编辑 =/etc/pam.d/sshd= ，在文件开头（其他 auth 规则之前）添加：
+
+#+BEGIN_EXAMPLE
+  auth  required  pam_listfile.so \
+        onerr=succeed  item=user  sense=deny  file=/etc/ssh/deniedusers
+#+END_EXAMPLE
+
+参数说明：
+
+- =onerr=succeed= — 如果文件不存在或读取出错，允许登录（安全兜底）
+- =item=user= — 检查用户名
+- =sense=deny= — 如果用户名在文件中，则 *拒绝*
+- =file=/etc/ssh/deniedusers= — 指定黑名单文件路径
+
+然后创建黑名单文件，每行一个用户名：
+
+#+BEGIN_SRC shell
+  sudo tee /etc/ssh/deniedusers &lt;&lt;EOF
+  baduser
+  hacker
+  EOF
+  sudo chmod 600 /etc/ssh/deniedusers
+#+END_SRC
+
+** 限制 root 通过控制台登录
+
+=pam_nologin.so= 模块可以在系统维护期间阻止非 root 用户登录。当 =/etc/nologin= 文件存在时，只有 root 能登录，其他用户会看到文件内容作为提示信息。
+
+#+BEGIN_SRC shell
+  # 创建 nologin 文件，阻止非 root 用户登录
+  echo &quot;系统维护中，预计 18:00 恢复&quot; | sudo tee /etc/nologin
+#+END_SRC
+
+这个模块通常已经在 =/etc/pam.d/login= 中配置好了：
+
+#+BEGIN_EXAMPLE
+  account  required  pam_nologin.so
+#+END_EXAMPLE
+
+如果想彻底禁止 root 通过控制台登录，可以用 =pam_securetty.so= 模块。它只允许 root 从 =/etc/securetty= 中列出的终端登录：
+
+#+BEGIN_EXAMPLE
+  auth  required  pam_securetty.so
+#+END_EXAMPLE
+
+编辑 =/etc/securetty= ，只保留允许 root 登录的终端即可。
+
+** 限制儿童用户的登录时间
+
+=pam_time.so= 模块可以根据时间、日期、用户和服务来限制登录。非常适合用来控制儿童使用电脑的时间。
+
+首先，在需要限制的服务配置中添加 =pam_time.so= 。以 =login= 为例，编辑 =/etc/pam.d/login= ，在 account 规则区域添加：
+
+#+BEGIN_EXAMPLE
+  account  required  pam_time.so
+#+END_EXAMPLE
+
+然后编辑 =/etc/security/time.conf= ，添加时间规则。规则的语法是：
+
+#+BEGIN_EXAMPLE
+  services;ttys;users;times
+#+END_EXAMPLE
+
+四个字段用分号分隔，含义分别是：服务名、终端、用户、时间段。
+
+时间段中的日期用两个字母表示： =Mo= （周一）、 =Tu= （周二）、 =We= （周三）、 =Th= （周四）、 =Fr= （周五）、 =Sa= （周六）、 =Su= （周日）、 =Wk= （工作日）、 =Wd= （周末）、 =Al= （每天）。时间格式为 24 小时制的 =HHMM-HHMM= 。
+
+假设用户 =child= 只能在工作日的 18:00-21:00 和周末的 08:00-21:00 登录：
+
+#+BEGIN_EXAMPLE
+  login ; * ; child ; Wk1800-2100 | Wd0800-2100
+#+END_EXAMPLE
+
+解释：
+
+- =login= — 作用于 login 服务
+- =*= — 所有终端
+- =child= — 仅限制用户 =child=
+- =Wk1800-2100 | Wd0800-2100= — 工作日 18:00-21:00，或周末 08:00-21:00
+
+如果还想限制 SSH 登录，可以再加一条：
+
+#+BEGIN_EXAMPLE
+  sshd ; * ; child ; Wk1800-2100 | Wd0800-2100
+#+END_EXAMPLE
+
+注意： =pam_time.so= 只控制 *登录时刻* ，不会在时间到期后强制结束已有会话。如果需要强制下线，还需要配合其他手段（如 =timeout= 命令或 cron 任务）。
+
+* 安全提醒
+
+PAM 配置错误可能导致 *完全无法登录系统* 。修改 PAM 配置时请注意：
+
+1. *始终保留一个已登录的 root 会话* — 在另一个终端中保持 =sudo -i= 或 root 登录，这样即使配置出错也能恢复
+2. *修改前先备份* — =sudo cp /etc/pam.d/sshd /etc/pam.d/sshd.bak=
+3. *不要删除 =/etc/pam.d/= 下的配置文件* — 这会锁死对应的登录方式
+4. *修改后立即测试* — 在另一个终端中尝试登录，确认配置正确后再关闭备份会话
+
+* 参考
+
+- [[https://www.tecmint.com/configure-pam-in-centos-ubuntu-linux/][How to Configure PAM in CentOS/Ubuntu Linux - Tecmint]]
+- =man pam.d= — PAM 配置文件语法
+- =man pam= — PAM 框架概述
+- =man pam_time= 和 =man time.conf= — 时间限制模块
+</description>
+<pubDate>2026-04-12</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/12/linux-pam-简介/index.html</guid>
+</item>
 <item>
 <title>Bash中的Indirection与Nameref</title>
 <link>https://lujun9972.github.io/blog/2026/04/12/bash中的indirection与nameref/index.html</link>
@@ -1323,40 +1574,6 @@ column的定义式中可以包含有列的属性. 一般来说列的定义式看
 </description>
 <pubDate>2022-06-29</pubDate>
 <guid>https://lujun9972.github.io/blog/2022/06/26/emacs-作为-mpd-客户端/index.html</guid>
-</item>
-<item>
-<title>移动文件路径却不破坏org file link的方法</title>
-<link>https://lujun9972.github.io/blog/2022/06/01/移动文件路径却不破坏org-file-link的方法/index.html</link>
-<description>我习惯在Org file中记录电子书的文件路径、阅读耗时、笔记等信息。 电子书放在统一的目录中，按照分类分子目录进行存放。
-
-但这会带来一个问题，就是我在整理电子书时经常会在不同分类之间移动电子书，这就会破坏Org file中电子书的文件路径。
-
-如果每次都需要手工修改文件中的链接地址的话，那就太麻烦了。好在通过自定义link，我们可以自定义搜索函数来动态搜索电子书路径，而不是写死电子书的存放路径。
-
-方法如下：
-
-#+begin_src emacs-lisp
-  (defvar MY-EBOOK &quot;~/ebooks&quot;)
-  (defun my-search-ebook (pattern &amp;optional _)
-    (let* ((files (directory-files-recursively MY-EBOOK pattern))
-           (count (length files)))
-      (cond ((= count 0)
-             (message &quot;Can&#39;t found file mathcing %s&quot; pattern))
-            ((= count 1)
-             (find-file (car files)))
-            ((&gt; count 1)
-             (find-file (completing-read &quot;Please pick a file: &quot; files nil t))))))
-
-  (org-link-set-parameters &quot;ebook&quot;
-                           :follow #&#39;my-search-ebook
-                           :help-echo (format &quot;Open the file in %s&quot; MY-EBOOK)
-                           :face &#39;(underline t))
-#+end_src
-
-这就自定义了一个 =ebook= 的link，访问这个 link 会自动从 =MY-EBOOK= 定义的目录(~/ebooks)中搜索匹配的文件并打开。
-</description>
-<pubDate>2022-06-26</pubDate>
-<guid>https://lujun9972.github.io/blog/2022/06/01/移动文件路径却不破坏org-file-link的方法/index.html</guid>
 </item>
 </channel>
 </rss>
