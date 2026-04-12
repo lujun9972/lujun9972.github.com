@@ -17,3 +17,61 @@
 
 本文假设系统中已创建一个名为 =geo= 的受限用户。所有配置需要 root 权限。
 
+* 限制允许登录的时间段
+
+Linux 中控制用户登录时间的机制是 PAM（Pluggable Authentication Modules，可插拔认证模块）中的 =pam_time= 模块。
+
+** 快速配置
+
+首先，在 PAM 配置文件中启用 =pam_time.so= 。需要修改的文件取决于你使用的登录方式：
+
++ 控制台登录： =/etc/pam.d/login=
++ 图形界面登录： =/etc/pam.d/lightdm= 或 =/etc/pam.d/gdm=
++ SSH 登录： =/etc/pam.d/sshd=
+
+在上述文件的 =account= 部分添加一行：
+
+#+BEGIN_SRC shell
+  account required pam_time.so
+#+END_SRC
+
+然后在 =/etc/security/time.conf= 中添加规则。该文件的格式为：
+
+#+BEGIN_EXAMPLE
+  services;ttys;users;times
+#+END_EXAMPLE
+
+各字段含义：
+
++ =services= :: 服务名， =*= 表示所有服务
++ =ttys= :: 终端类型， =*= 表示所有终端
++ =users= :: 用户名
++ =times= :: 时间规则
+
+时间规则的语法比较特别：
+
++ =Wd= 表示工作日（周一到周五）， =Wk= 表示每天， =Al= 也表示每天
++ 时间格式为 =HHMM-HHMM=
++ 前面加 =!= 表示取反（"除此时段外禁止"）
+
+例如，限制 =geo= 用户只能在每天 18:00 到 20:00 登录：
+
+#+BEGIN_SRC shell
+  *;*;geo;Wk1800-2000
+#+END_SRC
+
+这行规则的意思是：对所有服务、所有终端、geo 用户，允许每天 18:00-20:00 登录。注意， =pam_time= 的逻辑是：匹配到的允许登录，未匹配到则拒绝。
+
+验证配置：在非允许时段尝试用 =geo= 账户登录，应该会看到类似 "Permission denied" 的提示。
+
+** 原理说明
+
+PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解耦出来。PAM 定义了四种模块类型：
+
++ *auth* :: 验证用户身份（如检查密码）
++ *account* :: 检查账户是否允许访问（如检查账户是否过期、是否在允许的时间段内）
++ *password* :: 管理密码更新
++ *session* :: 管理会话的创建和销毁
+
+=pam_time= 属于 *account* 类型。它的工作时机是在用户通过了 *auth* 阶段的密码验证之后、系统创建会话之前。此时 =pam_time= 会检查当前时间是否匹配 =time.conf= 中的规则，如果不匹配则拒绝登录。
+
