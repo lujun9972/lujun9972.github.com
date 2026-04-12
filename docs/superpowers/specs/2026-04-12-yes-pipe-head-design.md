@@ -6,7 +6,7 @@
 
 ## 文件
 
-- 路径：`linux和它的小伙伴/yes管道head发生了什么.org`
+- 路径：`linux和它的小伙伴/yes|head发生了什么.org`
 - 格式：Org-mode，与现有博文一致
 - 头信息：TITLE / AUTHOR / TAGS: linux和它的小伙伴 / DATE / LANGUAGE: zh-CN
 
