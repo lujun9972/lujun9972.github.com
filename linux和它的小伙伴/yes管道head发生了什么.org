@@ -224,3 +224,155 @@ trap '' PIPE; yes | head
 这样 =yes= 的 =write()= 会返回 =EPIPE= 错误，但 =yes= 不会退出。不过，大多数程序都不会特意处理 =SIGPIPE= ，所以默认行为就是终止进程。
 
 这个机制确保了管道命令的健壮性：当读取方不需要更多数据时，写入方会自动停止，避免浪费 CPU 资源。这体现了 Unix 设计哲学中的一个重要原则：*机制简单，后果可预测* 。
+
+* 实验验证
+
+前面我们已经通过理论分析和简化的 =strace= 输出理解了整个过程。现在让我们做一个完整的、可复现的实验，让你能够亲眼见证这个精妙的机制是如何运作的。
+
+执行以下命令：
+
+#+BEGIN_SRC shell
+strace -f -e trace=write,read,pipe,pipe2,clone,close,dup2,execve,exit_group -o /tmp/yes_head.log bash -c 'yes | head'
+#+END_SRC
+
+这个命令会跟踪所有相关的系统调用，并将结果保存到 =/tmp/yes_head.log= 文件中。让我们看看完整的输出：
+
+#+BEGIN_EXAMPLE
+45209 execve("/usr/bin/bash", ["bash", "-c", "yes | head"], 0x7ffc31bb1c58 /* 69 vars */) = 0
+45209 pipe2([3, 4], 0)                  = 0
+45209 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f4f26b48e50) = 45210
+45209 close(4)                          = 0
+45209 clone(child_stack=NULL, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0x7f4f26b48e50) = 45211
+45209 close(3)                          = 0
+45210 close(3)                          = 0
+45210 dup2(4, 1)                        = 1
+45210 close(4)                          = 0
+45211 dup2(3, 0)                        = 0
+45211 close(3)                          = 0
+45211 execve("/usr/bin/head", ["head"], 0x559560f5af30 /* 69 vars */) = 0
+45210 execve("/usr/bin/yes", ["yes"], 0x559560f5af30 /* 69 vars */) = 0
+45210 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+45211 read(0, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+45210 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+45210 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+45211 close(0)                          = 0
+45210 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = -1 EPIPE (断开的管道)
+45210 --- SIGPIPE {si_signo=SIGPIPE, si_code=SI_USER, si_pid=45210, si_uid=1000} ---
+45211 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n", 20) = 20
+45211 close(1)                          = 0
+45211 close(2)                          = 0
+45211 exit_group(0)                     = ?
+45210 +++ killed by SIGPIPE +++
+45211 +++ exited with 0 +++
+45209 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=45210, si_uid=1000, si_status=SIGPIPE} ---
+45209 exit_group(0)                     = ?
+45209 +++ exited with 0 +++
+#+END_EXAMPLE
+
+让我们逐步解读这个输出：
+
+**阶段一：Shell 建立管道和进程**
+
+#+BEGIN_EXAMPLE
+45209 execve("/usr/bin/bash", ["bash", "-c", "yes | head"], ...) = 0  ← bash 启动
+45209 pipe2([3, 4], 0)                  = 0                        ← 创建管道：fd[0]=3(读), fd[1]=4(写)
+45209 clone(...)                        = 45210                    ← fork 出 yes 进程
+45209 close(4)                          = 0                        ← bash 关闭写端
+45209 clone(...)                        = 45211                    ← fork 出 head 进程
+45209 close(3)                          = 0                        ← bash 关闭读端
+#+END_EXAMPLE
+
+Shell 创建了管道和两个子进程（45210 和 45211），然后自己关闭了管道的两端（因为 bash 不需要读写这个管道）。
+
+**阶段二：子进程重定向文件描述符**
+
+#+BEGIN_EXAMPLE
+45210 close(3)                          = 0                        ← yes 关闭读端
+45210 dup2(4, 1)                        = 1                        ← yes: fd[1] → stdout
+45210 close(4)                          = 0                        ← yes 关闭原来的 fd[1]
+
+45211 dup2(3, 0)                        = 0                        ← head: fd[0] → stdin
+45211 close(3)                          = 0                        ← head 关闭原来的 fd[0]
+#+END_EXAMPLE
+
+=yes= 进程（45210）关闭了读端，将写端设为 stdout；=head= 进程（45211）关闭了写端，将读端设为 stdin。
+
+**阶段三：进程执行**
+
+#+BEGIN_EXAMPLE
+45211 execve("/usr/bin/head", ["head"], ...) = 0                 ← head 开始执行
+45210 execve("/usr/bin/yes", ["yes"], ...) = 0                  ← yes 开始执行
+#+END_EXAMPLE
+
+两个进程分别加载并执行对应的程序。
+
+**阶段四：数据传输**
+
+#+BEGIN_EXAMPLE
+45210 write(1, "y\ny\n...", 8192)       = 8192                    ← yes 写入 8192 字节
+45211 read(0, "y\ny\n...", 8192)        = 8192                    ← head 读取 8192 字节
+45210 write(1, "y\ny\n...", 8192)       = 8192                    ← yes 继续写入
+45210 write(1, "y\ny\n...", 8192)       = 8192                    ← yes 继续写入
+#+END_EXAMPLE
+
+=yes= 持续写入数据，=head= 持续读取数据。可以看到 =yes= 写入了多次，但 =head= 只读取了一次——这是因为 =head= 只需要 10 行就够了。
+
+**阶段五：head 完成任务，关闭读端**
+
+#+BEGIN_EXAMPLE
+45211 close(0)                          = 0                        ← head 关闭 stdin（管道读端）
+#+END_EXAMPLE
+
+=head= 读够了 10 行，关闭了管道读端。
+
+**阶段六：yes 收到 SIGPIPE 终止**
+
+#+BEGIN_EXAMPLE
+45210 write(1, "y\ny\n...", 8192)       = -1 EPIPE                 ← yes 写入失败：断开的管道
+45210 --- SIGPIPE {si_signo=SIGPIPE, si_code=SI_USER, si_pid=45210, si_uid=1000} ---
+45210 +++ killed by SIGPIPE +++
+#+END_EXAMPLE
+
+=yes= 继续写入时发现管道读端已关闭，内核发送 =SIGPIPE= 信号，=yes= 被杀死。
+
+**阶段七：head 输出结果并退出**
+
+#+BEGIN_EXAMPLE
+45211 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n", 20) = 20        ← head 输出结果到终端
+45211 close(1)                          = 0                        ← head 关闭 stdout
+45211 close(2)                          = 0                        ← head 关闭 stderr
+45211 exit_group(0)                     = ?                        ← head 正常退出
+45211 +++ exited with 0 +++
+#+END_EXAMPLE
+
+=head= 将读取的数据输出到终端，然后正常退出。
+
+**阶段八：Shell 收到子进程退出信号**
+
+#+BEGIN_EXAMPLE
+45209 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=45210, si_uid=1000, si_status=SIGPIPE} ---
+45209 exit_group(0)                     = ?                        ← bash 退出
+45209 +++ exited with 0 +++
+#+END_EXAMPLE
+
+Shell 收到 =SIGCHLD= 信号，知道子进程已经退出，于是自己也退出了。
+
+这个完整的 trace 展示了从管道建立、进程创建、数据传输、到最终 =SIGPIPE= 终止的全过程。每一个细节都与我们在前面几节中的理论分析完全吻合。
+
+* 总结
+
+通过这篇文章，我们深入剖析了 =yes | head= 这个看似简单的命令背后所隐藏的精妙机制。让我们用一句话总结全文：
+
+**管道不只是数据传输通道，还是进程间的"生死契约"——读端关闭，写端自动终止。**
+
+整个过程涉及三个层面的协作：
+
+1. *Shell 层*：解析管道符号，创建管道，通过 =fork()= 和 =dup2()= 建立进程间的连接
+2. *内核层*：管理管道缓冲区，通过 blocking I/O 协调读写速率，确保数据顺畅流动
+3. *信号层*：当读端关闭时，通过 =SIGPIPE= 信号通知写端进程终止
+
+最精妙的是：这一切对 =yes= 和 =head= 来说都是 *透明的* 。它们不需要知道彼此的存在，不需要写任何协调代码，只需要各做各的事——=yes= 只管写入，=head= 只管读取。操作系统把剩下的事情都安排好了。
+
+这正是 Unix 设计哲学的体现：*简单组件，巧妙组合，强大功能* 。每个程序只做一件事，并通过标准接口（管道）连接，就能构建出复杂而可靠的数据处理流程。
+
+下次当你看到 =yes | head= 这样的命令时，希望你不再只看到两个程序的简单连接，而是能看到这个精妙的协作机制——那个在内核中默默工作、协调一切、让进程们和谐共处的"隐形管家"。
