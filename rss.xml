@@ -4,10 +4,283 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 11 Apr 2026 15:24:27 UTC</pubDate>
-    <lastBuildDate>Sat, 11 Apr 2026 15:24:27 UTC</lastBuildDate>
+    <pubDate>Sun, 12 Apr 2026 01:50:44 UTC</pubDate>
+    <lastBuildDate>Sun, 12 Apr 2026 01:50:44 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>Bash中的Indirection与Nameref</title>
+<link>https://lujun9972.github.io/blog/2026/04/12/bash中的indirection与nameref/index.html</link>
+<description>在 Bash 中，有时候你需要通过一个变量来间接引用另一个变量。比如你知道变量名是一个字符串，你想根据这个字符串去访问对应的变量值。Bash 提供了两种机制来实现这个需求： *Indirection* （间接展开）和 *Nameref* （名称引用）。
+
+* Indirection：间接展开
+
+** 基本用法
+
+Indirection 的语法很简单：在参数展开中，在变量名前面加一个 =!= 就行了。
+
+#+BEGIN_SRC shell
+  fruit=&quot;apple&quot;
+  var=&quot;fruit&quot;
+
+  echo &quot;${!var}&quot;
+#+END_SRC
+
+#+RESULTS:
+: apple
+
+#+BEGIN_EXAMPLE
+  apple
+#+END_EXAMPLE
+
+这里 =var= 的值是 =&quot;fruit&quot;= ，而 =${!var}= 会把 =var= 的值（也就是 =&quot;fruit&quot;= ）当作变量名，再去取那个变量的值，最终得到 =&quot;apple&quot;= 。这就是&quot;间接&quot;的含义。
+
+注意， =${!var}= 只做 *一层* 间接，不会递归展开。即使 =apple= 也是一个变量名， =${!var}= 也不会再去取 =apple= 的值。
+
+** 一个实际例子：遍历配置变量
+
+假设你有好几个配置项，想根据名字动态地读取它们的值：
+
+#+BEGIN_SRC shell
+  db_host=&quot;192.168.1.100&quot;
+  db_port=&quot;3306&quot;
+  db_user=&quot;admin&quot;
+
+  for item in host port user; do
+      varname=&quot;db_$item&quot;
+      echo &quot;$item = ${!varname}&quot;
+  done
+#+END_SRC
+
+#+RESULTS:
+| host | = | 192.168.1.100 |
+| port | = |          3306 |
+| user | = |         admin |
+
+#+BEGIN_EXAMPLE
+  host = 192.168.1.100
+  port = 3306
+  user = admin
+#+END_EXAMPLE
+
+通过拼接变量名再使用 =${!varname}= 间接展开，可以避免写一堆 =if/elif= 或者 =case= 分支。
+
+** 注意 =!= 的歧义
+
+=!= 在参数展开中有两种不同的含义，容易混淆：
+
+- =${!name}= — 间接展开，取 =name= 的值所指向的变量
+- =${!name[@]}= 或 =${!name[*]}= — 展开数组 =name= 的所有 *索引* （下标）
+
+#+BEGIN_SRC shell
+  fruit=&quot;apple&quot;
+  name=&quot;fruit&quot;
+
+  echo &quot;${!name}&quot;     # 间接展开：取 fruit 的值
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  apple
+#+END_EXAMPLE
+
+#+BEGIN_SRC shell
+  arr=(&quot;a&quot; &quot;b&quot; &quot;c&quot;)
+  name=&quot;arr&quot;
+
+  echo &quot;${!name}&quot;     # 间接展开：取 arr 的值
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  a
+#+END_EXAMPLE
+
+注意这里的结果是 =a= 而不是 =a b c= 。因为对数组变量做间接展开时，等同于 =${arr}= ，而 =${arr}= 实际上就是 =${arr[0]}= ，只展开数组的第一个元素。如果想通过间接方式获取数组的所有元素，Nameref 是更好的选择。
+
+#+BEGIN_SRC shell
+  arr=(&quot;a&quot; &quot;b&quot; &quot;c&quot;)
+  echo &quot;${!arr[@]}&quot;   # 取数组 arr 的索引
+#+END_SRC
+
+#+RESULTS:
+: 0 1 2
+
+#+BEGIN_EXAMPLE
+  0 1 2
+#+END_EXAMPLE
+
+简单记：有 =[@]= 或 =[*]= 时， =!= 取的是索引；没有时， =!= 是间接展开。
+
+** Indirection 的局限
+
+Indirection 最大的局限是它 *只能读，不能写* 。你不能通过 =${!var}= 来给目标变量赋值：
+
+#+BEGIN_SRC shell
+  fruit=&quot;apple&quot;
+  var=&quot;fruit&quot;
+
+  ${!var}=&quot;banana&quot;   # 报错！这不是合法语法
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  bash: apple=banana: command not found...
+#+END_EXAMPLE
+
+如果你需要通过间接方式 *修改* 一个变量，就需要用到下面介绍的 Nameref 了。
+
+* Nameref：名称引用
+
+** 基本用法
+
+Nameref 从 *Bash 4.3* 开始支持，通过 =declare -n= 或 =local -n= 声明一个&quot;引用变量&quot;：
+
+#+BEGIN_SRC shell
+  fruit=&quot;apple&quot;
+  declare -n ref=fruit
+
+  echo &quot;$ref&quot;       # 读取：通过 ref 读 fruit 的值
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  apple
+#+END_EXAMPLE
+
+#+BEGIN_SRC shell
+  ref=&quot;banana&quot;      # 写入：通过 ref 修改 fruit 的值
+  echo &quot;$fruit&quot;
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  banana
+#+END_EXAMPLE
+
+=ref= 不是 =fruit= 的副本，而是指向 =fruit= 的一个&quot;别名&quot;。对 =ref= 的任何读写操作，实际上都作用于 =fruit= 。
+
+** 一个有趣的细节： =${!nameref}= 行为不同
+
+当你对 Nameref 变量使用 =${!ref}= 时，它 *不是* 间接展开，而是返回被引用变量的 *名字* ：
+
+#+BEGIN_SRC shell
+  var=&quot;hello&quot;
+  declare -n ref=var
+
+  echo &quot;$ref&quot;        # 正常展开：通过 ref 得到 var 的值
+  echo &quot;${!ref}&quot;     # 返回被引用变量的名字，而不是间接展开
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  hello
+  var
+#+END_EXAMPLE
+
+这个特性在调试时很有用，可以让你知道一个 Nameref 到底指向了哪个变量。在函数中结合 =${FUNCNAME[0]}= 可以实现很好的日志输出：
+
+#+BEGIN_SRC shell
+  update_value() {
+      local -n up_ref=$1
+      echo &quot;函数 ${FUNCNAME[0]} 正在修改变量 &#39;${!up_ref}&#39;&quot;
+      up_ref=&quot;new_value&quot;
+  }
+
+  my_var=&quot;old_value&quot;
+  update_value my_var
+  echo &quot;调用后 my_var = $my_var&quot;
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  函数 update_value 正在修改变量 &#39;my_var&#39;
+  调用后 my_var = new_value
+#+END_EXAMPLE
+
+** 在函数中使用 Nameref
+
+这是 Nameref 最常见的使用场景。当你需要让函数修改调用者的变量时，Nameref 比传统的 =eval= 或 Indirection 要安全得多。
+
+#+BEGIN_SRC shell
+  swap() {
+      local -n a=$1
+      local -n b=$2
+      local tmp=&quot;$a&quot;
+      a=&quot;$b&quot;
+      b=&quot;$tmp&quot;
+  }
+
+  x=10
+  y=20
+  swap x y
+  echo &quot;x=$x, y=$y&quot;
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  x=20, y=10
+#+END_EXAMPLE
+
+注意函数里用 =local -n= 而不是 =declare -n= ，这样引用变量的作用域就限制在函数内部，不会污染全局命名空间。
+
+** 操作关联数组
+
+Nameref 在操作关联数组（associative array）时尤其好用：
+
+#+BEGIN_SRC shell
+  update_config() {
+      local -n config=$1
+      config[host]=&quot;newhost.example.com&quot;
+      config[port]=&quot;8443&quot;
+      config[enabled]=&quot;yes&quot;
+  }
+
+  declare -A server_config
+  update_config server_config
+
+  echo &quot;${server_config[host]}&quot;
+  echo &quot;${server_config[port]}&quot;
+  echo &quot;${server_config[enabled]}&quot;
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  newhost.example.com
+  8443
+  yes
+#+END_EXAMPLE
+
+如果用 Indirection，你没法直接操作关联数组的元素——因为 =${!var}= 只能取出整个变量的值，不能写成 =${!var[key]}= 这种形式。而 Nameref 完美解决了这个问题。
+
+** 小心 Nameref 循环
+
+两个 Nameref 变量互相引用会造成循环：
+
+#+BEGIN_SRC shell
+  declare -n a=b
+  declare -n b=a
+  echo &quot;$a&quot;   # bash: maximum nesting level exceeded
+#+END_SRC
+
+Bash 会检测到循环并报错，不会真的无限递归，但你仍然要避免写出这样的代码。
+
+* Indirection vs Nameref 对比
+
+| 特性           | Indirection (=${!var}=) | Nameref (=declare -n=) |
+|----------------+-------------------------+------------------------|
+| 最低 Bash 版本 | 2.0+                    | 4.3+                   |
+| 能否读取       | 能                      | 能                     |
+| 能否写入       | 不能                    | 能                     |
+| 生命周期       | 一次性展开              | 持久引用               |
+| 操作数组元素   | 不方便                  | 方便                   |
+| 在函数中使用   | 需配合 =eval= 才能写入  | 直接使用，更安全       |
+
+** 什么时候用哪个？
+
+- 只需要 *读取* 另一个变量的值，或者需要兼容老版本 Bash → 用 Indirection
+- 需要 *修改* 另一个变量的值，或者在函数中传递复杂数据结构 → 用 Nameref
+- 能用 Nameref 的场景，优先用 Nameref——它语义更清晰，也更安全
+
+* 参考
+
+- [[https://www.linuxjournal.com/content/whats-new-bash-parameter-expansion][What&#39;s New in Bash Parameter Expansion - Linux Journal]]
+- =man bash= 中 SEARCH 章节，查找 =Parameter Expansion= 和 =declare=
+</description>
+<pubDate>2026-04-12</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/12/bash中的indirection与nameref/index.html</guid>
+</item>
 <item>
 <title>用GitHub Actions自动构建EGO博客</title>
 <link>https://lujun9972.github.io/blog/2026/04/11/用github-actions自动构建ego博客/index.html</link>
@@ -1084,62 +1357,6 @@ column的定义式中可以包含有列的属性. 一般来说列的定义式看
 </description>
 <pubDate>2022-06-26</pubDate>
 <guid>https://lujun9972.github.io/blog/2022/06/01/移动文件路径却不破坏org-file-link的方法/index.html</guid>
-</item>
-<item>
-<title>如何合理的导出help link 成HTML</title>
-<link>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</link>
-<description>Org 文件在导出为 html 是会将 =help= link 导出为一个HTTP链接，例如一个
-#+begin_example
-  这是一个 [[help:lazy-helm/describe-char][Help]] link
-#+end_example
-
-导出成HTML时会变成
-#+begin_src html
-  这是一个 &lt;a href=&quot;lazy-helm/describe-char&quot;&gt;Help&lt;/a&gt; link
-#+end_src
-
-这个操作很迷，因为实际上并没有这个链接对应的页面。
-
-一个比较合理的方法是导出时保留原文字，但当光标移动到这段文字上去时弹出相关说明。
-
-通过 [[help:org-link-set-parameters][org-link-set-parameters]] 可以注册自己定义的链接导出函数，相关配置如下：
-#+begin_src emacs-lisp
-  (defun org-link--export-help (path desc backend &amp;optional _)
-    &quot;Export a \&quot;help\&quot; type link.
-  PATH is a symbol name, as a string.&quot;
-    (let ((info (pcase (intern path)
-                  ((and (pred fboundp) function) (describe-function function))
-                  ((and (pred boundp) variable) (describe-variable variable))
-                  (name (user-error &quot;Unknown function or variable: %s&quot; name)))))
-      (quit-window)                       ;关闭新开的 help window
-      (pcase backend
-        (&#39;html (format &quot;&lt;label title=&#39;%s&#39;&gt;%s&lt;/label&gt;&quot; info desc))
-        (_ desc))))
-  ;; 注册 help 的导出函数
-  (org-link-set-parameters &quot;help&quot;
-                           :export #&#39;org-link--export-help)
-#+end_src
-
-就可以导出为
-
-#+begin_src html
-  这是一个 &lt;label title=&#39;lazy-helm/describe-char is an interactive Lisp function.
-
-  It is bound to SPC h d c, M-m h d c.
-
-  (lazy-helm/describe-char)
-
-  Wrapper to ensure that ‘helm’ is loaded before calling describe-char.
-
-  &#39;&gt;Help&lt;/label&gt; link
-#+end_src
-
-效果如下所示：
-
-[[file:./images/export-help-link.png]]
-</description>
-<pubDate>2022-06-26</pubDate>
-<guid>https://lujun9972.github.io/blog/2022/05/31/如何合理的导出help-link-成html/index.html</guid>
 </item>
 </channel>
 </rss>
