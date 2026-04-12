@@ -1,0 +1,97 @@
+#+TITLE: yes 管道 head 发生了什么
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-04-12 六 00:00]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 提出问题
+
+让我们先看一个简单的命令：
+
+#+BEGIN_SRC shell
+yes | head
+#+END_SRC
+
+输出结果：
+
+#+BEGIN_EXAMPLE
+y
+y
+y
+y
+y
+y
+y
+y
+y
+y
+#+END_EXAMPLE
+
+这里 =yes= 命令会不断输出 =y= （默认情况下），而 =head= 命令默认只取前 10 行。问题来了：为什么这个管道命令不会一直运行下去？
+
+毕竟 =yes= 是个"不听话"的程序，它会无限地输出 =y= ，理论上应该一直写下去才对。但实际上，命令执行完 10 行后就正常退出了。这是为什么？
+
+* Shell 做了什么
+
+要理解这个问题，首先需要看看 Shell 在遇到管道符号 =|= 时做了什么。
+
+当 Shell 执行 =yes | head= 时，它会经历以下步骤：
+
+1. 调用 =pipe()= 系统调用创建一个管道，得到两个文件描述符：=fd[0]= （读端）和 =fd[1]= （写端）
+2. 调用 =fork()= 两次，创建两个子进程
+3. 在 =yes= 进程中：
+   - 关闭读端 =fd[0]=
+   - 使用 =dup2(fd[1], 1)= 将标准输出（stdout）重定向到管道写端
+   - 关闭原来的 =fd[1]=
+   - 执行 =yes= 程序
+4. 在 =head= 进程中：
+   - 关闭写端 =fd[1]=
+   - 使用 =dup2(fd[0], 0)= 将标准输入（stdin）重定向到管道读端
+   - 关闭原来的 =fd[0]=
+   - 执行 =head= 程序
+
+可以用一个 ASCII 图示来表示这种连接关系：
+
+#+BEGIN_EXAMPLE
+   yes 进程                管道              head 进程
+  +--------+            +--------+            +--------+
+  | stdout | ---------> | 写端   | ---------> | stdin  |
+  | (fd 1) |            | (fd 4) |            | (fd 0) |
+  +--------+            +--------+            +--------+
+                        ^   |
+                        |   v
+                     +--------+
+                     | 读端   |
+                     | (fd 3) |
+                     +--------+
+#+END_EXAMPLE
+
+让我们用 =strace= 来观察一下实际的系统调用序列：
+
+#+BEGIN_SRC shell
+strace -f -e trace=pipe2,clone,dup2,close,execve sh -c 'yes | head' 2>&1 | head -20
+#+END_SRC
+
+输出（经过简化整理）：
+
+#+BEGIN_EXAMPLE
+pipe2([3, 4], 0)                  = 0        ← 创建管道，fd[0]=3(读), fd[1]=4(写)
+clone(...)                        = 45210    ← fork 出 yes 进程
+close(4)                          = 0        ← bash 关闭写端（自己不写）
+clone(...)                        = 45211    ← fork 出 head 进程
+close(3)                          = 0        ← bash 关闭读端（自己不读）
+
+45210 close(3)                    = 0        ← yes 关闭读端
+45210 dup2(4, 1)                  = 1        ← yes: fd[1] → stdout
+45210 close(4)                    = 0        ← yes 关闭原来的 fd[1]
+45210 execve("/usr/bin/yes" ...)  = 0        ← yes 开始执行
+
+45211 dup2(3, 0)                  = 0        ← head: fd[0] → stdin
+45211 close(3)                    = 0        ← head 关闭原来的 fd[0]
+45211 execve("/usr/bin/head" ...) = 0        ← head 开始执行
+#+END_EXAMPLE
+
+从 =strace= 输出可以看到，Shell 确实按照我们描述的步骤建立了管道连接。现在 =yes= 的 stdout 连接到管道写端，=head= 的 stdin 连接到管道读端。
+
+但这还没有解释为什么 =yes= 会停止输出。让我们继续往下看。
