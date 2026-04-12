@@ -8,7 +8,7 @@
 很多初学者在 crontab 中运行长时间任务时，习惯性地加上 =nohup= ，像这样：
 
 #+BEGIN_SRC shell
-  * * * * * nohup /path/to/long-running-command &
+  ,* * * * * nohup /path/to/long-running-command &
 #+END_SRC
 
 他们期望命令的输出会被重定向到 =nohup.out= 文件中。但实际结果是： =nohup.out= 根本没有被创建，命令的输出却出现在了系统邮件中（可以用 =mailx= 命令查看）。
@@ -42,7 +42,7 @@
     }
 #+END_SRC
 
-也就是说，如果你的 stdout 已经被重定向到了文件或管道， =nohup= 会认为"输出已经有地方去了"，就不会再创建 =nohup.out= 了。
+也就是说，如果你的 stdout 已经被重定向到了文件或管道， =nohup= 会认为"输出已经有地方去了"，就不会再创建 =nohup.out= 了。 stderr 也一样： =nohup= 同样会检查 =isatty(STDERR_FILENO)= ，只有 stderr 是终端时才会将它重定向到 =nohup.out= 。
 
 这是理解问题的关键。
 
@@ -50,11 +50,11 @@
 
 要理解为什么 =nohup= 在 crontab 中不生效，我们需要看看 cron 是怎么执行用户命令的。
 
-当你编辑 =crontab= 添加一条任务后， =cron= 守护进程会在指定时间执行你的命令。关键在于 cron 是*怎么*执行这些命令的：
+当你编辑 =crontab= 添加一条任务后， =cron= 守护进程会在指定时间执行你的命令。关键在于 cron 是怎么执行这些命令的：
 
 1. cron 会 fork 出一个子进程
 2. 这个子进程会调用 =exec("/bin/sh", "-c", "你的命令")= 来执行任务
-3. 在执行之前，cron 会将子进程的 stdout 和 stderr 连接到*管道*（pipe），而不是终端
+3. 在执行之前，cron 会将子进程的 stdout 和 stderr 连接到 *管道* ，而不是终端
 
 这意味着什么？意味着在你的命令看来：
 
@@ -67,7 +67,7 @@
 你可以用一个简单的方法验证：在 crontab 中执行 =tty= 命令，它会告诉你当前的终端设备：
 
 #+BEGIN_SRC shell
-  * * * * * tty
+  ,* * * * * tty
 #+END_SRC
 
 你会收到一封系统邮件，内容类似 =not a tty= ，这就证明了 crontab 的执行环境中没有终端。
@@ -76,9 +76,9 @@
 
 现在把前面的线索串起来：
 
-1. crontab 执行命令时，stdout 和 stderr 是*管道*，不是终端
+1. crontab 执行命令时，stdout 和 stderr 是 *管道* ，不是终端
 2. =nohup= 检查 =isatty(STDOUT_FILENO)= ，因为 stdout 是管道，返回 =false=
-3. =nohup= 认为"输出已经有地方去了"，*跳过* 重定向步骤
+3. =nohup= 认为"输出已经有地方去了"，跳过重定向步骤
 4. 命令的输出顺着管道传给了 cron
 5. cron 将收到的输出发送到系统邮件
 
@@ -86,25 +86,25 @@
 
 同时， =nohup= 的另一个功能——忽略 =SIGHUP= 信号——在 crontab 中也毫无意义。因为 cron 的执行环境根本没有终端会话，不存在"终端挂断"的场景，自然也不会有 =SIGHUP= 信号。
 
-总结一下： =nohup= 在 crontab 中是*双重无用*的：
+总结一下： =nohup= 在 crontab 中是 *双重无用* 的：
 
-| 功能 | 在 crontab 中 | 原因 |
-|------+---------------+------|
-| 忽略 SIGHUP | 不需要 | cron 无终端会话，无 SIGHUP |
-| 输出重定向到 nohup.out | 不触发 | stdout 不是终端，isatty 返回 false |
+| 功能                   | 在 crontab 中 | 原因                               |
+|------------------------+---------------+------------------------------------|
+| 忽略 SIGHUP            | 不需要        | cron 无终端会话，无 SIGHUP         |
+| 输出重定向到 nohup.out | 不触发        | stdout 不是终端，isatty 返回 false |
 
 * 正确的做法
 
 既然 =nohup= 在 crontab 中没用，那输出应该怎么处理？答案很简单：自己重定向。
 
 #+BEGIN_SRC shell
-  * * * * * /path/to/command >> /path/to/output.log 2>&1
+  ,* * * * * /path/to/command >> /path/to/output.log 2>&1
 #+END_SRC
 
 这样写就足够了，原因：
 
 - *不需要 nohup* ：cron 没有终端会话，不存在 SIGHUP 的问题
-- *不需要 &* ：cron 本身就在后台执行命令，不需要手动放到后台
+- *不需要 &* ：cron 会为每个任务 fork 一个独立的子进程来执行，不会阻塞主调度循环，所以没必要手动放到后台。更何况使用 = &= 会让命令脱离 shell 成为孤儿进程，当 cron 关闭管道的读端后，命令尝试写入时会收到 SIGPIPE 信号，反而可能崩溃
 - *自己控制输出位置* ：用 shell 的重定向语法精确指定输出文件
 
 如果你想让命令在 cron 触发后持续运行（比如一个需要跑好几个小时的任务），直接执行就行。cron 会等待命令完成，不会中途杀掉进程。但要注意：如果命令运行时间超过了 crontab 的调度间隔，可能会出现重复执行的问题。这时候可以考虑在命令中加入锁机制（比如 =flock= ），或者使用 =systemd timer= 替代 crontab。
@@ -112,7 +112,7 @@
 如果你想丢弃输出，也不想收到邮件：
 
 #+BEGIN_SRC shell
-  * * * * * /path/to/command > /dev/null 2>&1
+  ,* * * * * /path/to/command > /dev/null 2>&1
 #+END_SRC
 
 这比 =nohup command > /dev/null 2>&1 &= 简洁得多，而且效果完全一样。
