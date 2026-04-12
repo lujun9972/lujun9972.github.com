@@ -1,0 +1,111 @@
+#+TITLE: C语言中的未定义行为
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2026-04-12 六 21:30]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+本文是阅读 [[https://opensourceforu.com/2018/10/understanding-undefined-behaviour-in-c/][Understanding Undefined Behaviour in C]] 和 [[https://opensourceforu.com/2018/11/understanding-undefined-behaviour-in-c-2/][Understanding Undefined Behaviour in C - Part 2]] 后的笔记。
+
+* 什么是未定义行为
+
+根据 C 语言标准，未定义行为 (Undefined Behaviour) 是指代码的执行结果未被语言规范所规定。C FAQ 中对此的经典描述是：
+
+#+BEGIN_QUOTE
+Anything at all can happen; the standard imposes no requirements. The program may fail to compile, or it may execute incorrectly (either crashing or silently generating incorrect results), or it may fortuitously do exactly what the programmer intended.
+#+END_QUOTE
+
+简单来说，发生未定义行为时，*任何事情都可能发生* ：程序可能编译失败，可能崩溃，可能静默产生错误结果，也可能碰巧按预期运行。
+
+* 序列点
+
+理解未定义行为需要先了解 *序列点 (Sequence Point)* 的概念。C99 标准规定：
+
+#+BEGIN_QUOTE
+Between the previous and next sequence point an object shall have its stored value modified at most once by the evaluation of an expression. Furthermore, the prior value shall be accessed only to determine the value to be stored.
+#+END_QUOTE
+
+即在两个序列点之间，同一个对象最多只能被修改一次。常见的序列点包括：分号（语句结束）、 =&&= 和 =||= 的左操作数求值后、逗号表达式的左操作数求值后、函数调用时。
+
+* 案例 1：序列点间多次修改变量
+
+#+BEGIN_SRC c
+int a = 10;
+a = a++ * a++;  // 未定义行为：a 在两个序列点间被修改了多次
+#+END_SRC
+
+问题在于变量 =a= 在同一条语句中被修改了多次（两次 =a++= 和一次赋值），而两个序列点（两个分号）之间不允许这样做。不同编译器（gcc、Clang）对此会产生不同的汇编代码和运行结果。
+
+* 案例 2：修改字符串字面量
+
+#+BEGIN_SRC c
+char *p = "string constant";
+*(p + 0) = 'S';  // 未定义行为：尝试修改字符串字面量
+#+END_SRC
+
+字符串字面量通常存储在只读内存区域。修改它通常会导致段错误 (Segmentation Fault)，但编译器不一定会给出警告。
+
+* 案例 3：有符号整数溢出
+
+#+BEGIN_SRC c
+int x = INT_MAX;
+if (x + 1 > x) {  // 未定义行为：有符号整数溢出
+    x++;
+}
+#+END_SRC
+
+有符号整数溢出是未定义行为。编译器可能会优化掉溢出检查——它假设溢出不会发生，因此 =x + 1 > x= 可能被直接优化为 =true= 。gcc 提供了 =-fstrict-overflow= 和 =-fno-strict-overflow= 选项来控制这一行为。
+
+* 案例 4：整数除以零
+
+#+BEGIN_SRC c
+int x = 0;
+double y = 10 / x;  // 未定义行为：整数除以零
+#+END_SRC
+
+C99 标准规定：当除法或取模运算的右操作数为零时，行为未定义。运行时通常会产生 "Floating point exception" 并崩溃。
+
+但 *浮点数除以零是明确定义的* ：根据 IEEE 标准，非零浮点数除以零结果为 =+inf= 或 =-inf= ，零除以零结果为 =NaN= 。
+
+* 案例 5：过大的位移操作
+
+#+BEGIN_SRC c
+uint32_t a = 0xFFFFFFFF;
+uint32_t res = a >> 35;  // 未定义行为：移位量 >= 操作数位宽
+#+END_SRC
+
+C99 标准规定：如果移位操作的右操作数为负数，或者大于等于左操作数的位宽，则行为未定义。对于 32 位整数，移位 35 位就是未定义行为。
+
+* 案例 6：解引用空指针
+
+#+BEGIN_SRC c
+int *p = NULL;
+*p = 10;  // 未定义行为：解引用空指针
+#+END_SRC
+
+空指针不指向任何有效对象。解引用空指针在 Linux 上通常会导致段错误 (SIGSEGV)，但 C 标准对此没有任何保证。编译器也不会生成额外的空指针检查代码。
+
+* 案例 7：数组越界访问
+
+#+BEGIN_SRC c
+int a[5] = {1, 2, 3, 4, 5};
+printf("a[5]: %d\n", a[5]);  // 未定义行为：越界访问
+a[5] = 6;                     // 未定义行为：越界写入
+#+END_SRC
+
+C 语言不像 Java 那样进行数组边界检查。越界访问可能读到垃圾值、覆盖关键数据、导致缓冲区溢出或段错误。编译器即使在 =-Wall= 下也不会对此发出警告。
+
+* 总结
+
+C 语言中的未定义行为是许多隐蔽 bug 的根源。常见的未定义行为包括：
+
+1. 序列点间多次修改同一变量
+2. 修改字符串字面量
+3. 有符号整数溢出
+4. 整数除以零
+5. 移位量超过位宽
+6. 解引用空指针
+7. 数组越界访问
+
+建议使用编译器警告选项（如 =-Wall -Wextra= ）和静态分析工具（如 PVS-Studio）来及早发现潜在的未定义行为。
