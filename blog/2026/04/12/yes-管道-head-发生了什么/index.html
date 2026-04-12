@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>yes 管道 head 发生了什么 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">yes 管道 head 发生了什么</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org27d4b99">提出问题</a></li>
+<li><a href="#orgfa1e28d">Shell 做了什么</a></li>
+<li><a href="#org97b0145">管道是什么</a></li>
+<li><a href="#orgd19e4f2">运行中的协作</a></li>
+<li><a href="#org0be39a5">head 完成后发生了什么</a></li>
+<li><a href="#org6e3f85d">实验验证</a></li>
+<li><a href="#orgf6da4b4">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org27d4b99" class="outline-2">
+<h2 id="org27d4b99">提出问题</h2>
+<div class="outline-text-2" id="text-org27d4b99">
+<p>
+让我们先看一个简单的命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">yes | head
+</pre>
+</div>
+
+<p>
+输出结果：
+</p>
+
+<pre class="example" id="orgc621def">
+y
+y
+y
+y
+y
+y
+y
+y
+y
+y
+</pre>
+
+<p>
+这里 <code>yes</code> 命令会不断输出 <code>y</code> （默认情况下），而 <code>head</code> 命令默认只取前 10 行。问题来了：为什么这个管道命令不会一直运行下去？
+</p>
+
+<p>
+毕竟 <code>yes</code> 是个"不听话"的程序，它会无限地输出 <code>y</code> ，理论上应该一直写下去才对。但实际上，命令执行完 10 行后就正常退出了。这是为什么？
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfa1e28d" class="outline-2">
+<h2 id="orgfa1e28d">Shell 做了什么</h2>
+<div class="outline-text-2" id="text-orgfa1e28d">
+<p>
+要理解这个问题，首先需要看看 Shell 在遇到管道符号 <code>|</code> 时做了什么。
+</p>
+
+<p>
+当 Shell 执行 <code>yes | head</code> 时，它会经历以下步骤：
+</p>
+
+<ol class="org-ol">
+<li>调用 <code>pipe()</code> 系统调用创建一个管道，得到两个文件描述符： <code>fd[0]</code> （读端）和 <code>fd[1]</code> （写端）</li>
+<li>调用 <code>fork()</code> 两次，创建两个子进程</li>
+<li>在 <code>yes</code> 进程中：
+<ul class="org-ul">
+<li>关闭读端 <code>fd[0]</code></li>
+<li>使用 <code>dup2(fd[1], 1)</code> 将标准输出（stdout）重定向到管道写端</li>
+<li>关闭原来的 <code>fd[1]</code></li>
+<li>执行 <code>yes</code> 程序</li>
+</ul></li>
+<li>在 <code>head</code> 进程中：
+<ul class="org-ul">
+<li>关闭写端 <code>fd[1]</code></li>
+<li>使用 <code>dup2(fd[0], 0)</code> 将标准输入（stdin）重定向到管道读端</li>
+<li>关闭原来的 <code>fd[0]</code></li>
+<li>执行 <code>head</code> 程序</li>
+</ul></li>
+</ol>
+
+<p>
+可以用一个 ASCII 图示来表示这种连接关系：
+</p>
+
+<pre class="example" id="org5113bff">
+Shell (bash)
+  |
+  +-- pipe() --&gt; [fd[0] 读端, fd[1] 写端]
+  |
+  +-- fork() --&gt; yes 进程
+  |               关闭 fd[0]
+  |               dup2(fd[1], 1)  &lt;-- stdout --&gt; 管道写端
+  |
+  +-- fork() --&gt; head 进程
+                  关闭 fd[1]
+                  dup2(fd[0], 0)  &lt;-- 管道读端 --&gt; stdin
+
+最终效果：
+
+yes --stdout--&gt; [ 内核管道缓冲区 ] --stdin--&gt; head
+</pre>
+
+<p>
+让我们用 <code>strace</code> 来观察一下实际的系统调用序列：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">strace -f -e <span class="org-variable-name">trace</span>=pipe2,clone,dup2,close,execve bash -c <span class="org-string">'yes | head'</span> 2&gt;&amp;1
+</pre>
+</div>
+
+<p>
+输出（经过简化，只保留关键行）：
+</p>
+
+<pre class="example" id="orgaf65aec">
+pipe2([3, 4], 0)                        = 0
+clone(..., child_tidptr=0x7ff31745ae50) = 62132
+close(4)                                = 0
+clone(..., child_tidptr=0x7ff31745ae50) = 62133
+close(3)                                = 0
+
+62132 close(3)                          = 0
+62132 dup2(4, 1)                        = 1
+62132 close(4)                          = 0
+62133 dup2(3, 0)                        = 0
+62133 close(3)                          = 0
+
+62132 execve("/usr/bin/yes", ["yes"], ...) = 0
+62133 execve("/usr/bin/head", ["head"], ...) = 0
+</pre>
+
+<p>
+从 <code>strace</code> 输出可以看到：
+</p>
+
+<ol class="org-ol">
+<li>Shell 创建了管道（ <code>pipe2([3, 4], 0)</code> ），得到读端 fd=3，写端 fd=4</li>
+<li>Shell 两次 <code>clone()</code> 创建了子进程 62132 和 62133</li>
+<li>Shell 自己关闭了管道的两端（ <code>close(4)</code> 和 <code>close(3)</code> ），因为它自己不参与数据的读写</li>
+<li>进程 62132（yes）关闭了读端 fd=3，把写端 fd=4 通过 <code>dup2</code> 重定向到 stdout</li>
+<li>进程 62133（head）关闭了写端 fd=4（已经不需要了），把读端 fd=3 通过 <code>dup2</code> 重定向到 stdin</li>
+<li>两个进程分别 <code>execve</code> 加载了 <code>yes</code> 和 <code>head</code> 程序</li>
+</ol>
+
+<p>
+现在 <code>yes</code> 的 stdout 连接到管道写端，=head= 的 stdin 连接到管道读端。但这还没有解释为什么 <code>yes</code> 会停止输出。让我们继续往下看。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org97b0145" class="outline-2">
+<h2 id="org97b0145">管道是什么</h2>
+<div class="outline-text-2" id="text-org97b0145">
+<p>
+在深入理解进程协作之前，我们需要先了解管道的本质。
+</p>
+
+<p>
+管道并不是什么神奇的东西，它本质上就是内核维护的一个 <b>固定大小的缓冲区</b> 。在 Linux 中，这个缓冲区默认大小是 64KB（可以通过 <code>fcntl(fd, F_GETPIPE_SZ)</code> 查询）。
+</p>
+
+<p>
+管道有几个重要的特性：
+</p>
+
+<ol class="org-ol">
+<li><b>先进先出（FIFO）</b> ：先写入的数据会被先读出，就像排队买票一样</li>
+<li><b>数据被读走后即从缓冲区中移除</b> ，腾出空间给新数据</li>
+<li><b>单向流动</b> ：数据只能从写端流向读端，不能反向</li>
+<li><b>匿名管道</b> ：没有名字，只能用于有亲缘关系的进程之间（如父子进程）</li>
+</ol>
+
+<p>
+可以把管道想象成一根水管：
+</p>
+
+<pre class="example" id="org119d8ba">
+yes 进程                     内核管道                     head 进程
+  |                                                          |
+  |  写入 y ----&gt;  [ y | y | y | y | ... | y ]  ----&gt;  读取 y
+  |                                                          |
+                ^                 |
+                |                 v
+             写端入口          读端出口
+           (只能进)           (只能出)
+</pre>
+
+<p>
+这个水管（缓冲区）有固定的容量。当水满了（缓冲区满了），就不能再往里倒水（写入数据）；当水空了（缓冲区空了），就取不出水（读取数据）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd19e4f2" class="outline-2">
+<h2 id="orgd19e4f2">运行中的协作</h2>
+<div class="outline-text-2" id="text-orgd19e4f2">
+<p>
+现在我们终于可以回答最初的问题了：为什么 <code>yes</code> 会停止输出？
+</p>
+
+<p>
+关键在于 <b>blocking I/O</b> 的协调机制。（关于 blocking I/O 的详细原理，我已经在另一篇文章中详细讨论过，这里只概述结论）。
+</p>
+
+<p>
+当进程通过管道协作时，内核会自动协调它们的速率：
+</p>
+
+<ol class="org-ol">
+<li><b>当缓冲区满了</b> ：=yes= 的 <code>write()</code> 系统调用会阻塞，=yes= 进程进入睡眠状态，等待管道腾出空间</li>
+<li><b>当缓冲区空了</b> ：=head= 的 <code>read()</code> 系统调用会阻塞，=head= 进程进入睡眠状态，等待新的数据到来</li>
+</ol>
+
+<p>
+这种机制就像一个自动调节阀门，让快慢不同的进程能够和谐地协同工作。
+</p>
+
+<p>
+不过，在我们这个具体的场景中，情况有些特殊。=yes= 的输出速度 <b>远快于</b> <code>head</code> 的消耗速度（=head= 只需要 10 行就满足了）。所以缓冲区几乎不会满——=head= 很快就读完了它需要的 10 行数据。
+</p>
+
+<p>
+那么 <code>head</code> 读完后发生了什么呢？这才是真正让 <code>yes</code> 停下来的原因。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0be39a5" class="outline-2">
+<h2 id="org0be39a5">head 完成后发生了什么</h2>
+<div class="outline-text-2" id="text-org0be39a5">
+<p>
+这个终止链条实际上是一个精妙的连锁反应，可以分解为以下四个步骤：
+</p>
+
+<p>
+第一步：head 读够了 10 行
+</p>
+
+<p>
+<code>head</code> 命令默认只读取前 10 行数据。一旦读够了，它的任务就完成了。
+</p>
+
+<pre class="example" id="org0fc38d5">
+yes --stdout--&gt; [ 管道缓冲区 ] --stdin--&gt; head (完成)
+</pre>
+
+<p>
+第二步：head 进程退出，内核关闭管道读端
+</p>
+
+<p>
+当 <code>head</code> 进程退出时，内核会自动关闭该进程打开的所有文件描述符，包括管道的读端（stdin）。
+</p>
+
+<pre class="example" id="org99770aa">
+yes --stdout--&gt; [ 管道缓冲区 ] --X-- (读端已关闭)
+</pre>
+
+<p>
+第三步：yes 继续写入，内核发现没有读端
+</p>
+
+<p>
+此时 <code>yes</code> 进程还在不知情地继续调用 <code>write()</code> 往管道里写数据。但内核发现管道的读端已经没有进程在持有了（所有引用都关闭了）。
+</p>
+
+<p>
+内核向 <code>yes</code> 进程发送 <code>SIGPIPE</code> 信号（信号编号 13），并且让 <code>write()</code> 系统调用返回 <code>EPIPE</code> 错误。
+</p>
+
+<pre class="example" id="org7762ec7">
+yes --write()--&gt; ???  &lt;-- 内核发送 SIGPIPE (信号13)
+</pre>
+
+<p>
+第四步：SIGPIPE 默认行为：终止 yes 进程
+</p>
+
+<p>
+<code>SIGPIPE</code> 信号的默认处理方式是 <b>终止进程</b> 。=yes= 没有特意设置信号处理函数，所以它收到了 <code>SIGPIPE</code> 后就直接退出了。
+</p>
+
+<pre class="example" id="orgd52c598">
+yes X (被 SIGPIPE 杀死)
+</pre>
+
+<p>
+让我们用 <code>strace</code> 来观察这个过程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">strace -f -e <span class="org-variable-name">trace</span>=write,close,exit_group bash -c <span class="org-string">'yes | head'</span> 2&gt;&amp;1 | tail -20
+</pre>
+</div>
+
+<pre class="example" id="orgb7f077d">
+y
+y
+y
+y
+y
+y
+y
+y
+y
+[pid 62218] --- SIGPIPE {si_signo=SIGPIPE, si_code=SI_USER, si_pid=62218, si_uid=1000} ---
+[pid 62219] &lt;... write resumed&gt;        = 20
+[pid 62219] close(1)                   = 0
+[pid 62219] close(2)                   = 0
+[pid 62219] exit_group(0)              = ?
+[pid 62218] +++ killed by SIGPIPE +++
+[pid 62219] +++ exited with 0 +++
+close(3)                               = -1 EBADF (错误的文件描述符)
+--- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=62218, si_uid=1000, si_status=SIGPIPE} ---
+exit_group(0)                          = ?
++++ exited with 0 +++
+</pre>
+
+<p>
+可以看到：进程 62218（yes）收到了 <code>SIGPIPE</code> 信号后被杀死，而进程 62219（head）正常退出。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6e3f85d" class="outline-2">
+<h2 id="org6e3f85d">实验验证</h2>
+<div class="outline-text-2" id="text-org6e3f85d">
+<p>
+前面我们通过简化的 <code>strace</code> 输出理解了整个过程。现在让我们做一个完整的、可复现的实验，亲眼见证这个精妙的机制是如何运作的。
+</p>
+
+<p>
+执行以下命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">strace -f -e <span class="org-variable-name">trace</span>=write,read,pipe,pipe2,clone,close,dup2,execve,exit_group -o /tmp/yes_head.log bash -c <span class="org-string">'yes | head'</span>
+</pre>
+</div>
+
+<p>
+这个命令会跟踪所有相关的系统调用，并将结果保存到 <code>/tmp/yes_head.log</code> 文件中。让我们看看完整的输出：
+</p>
+
+<pre class="example" id="org8432ef0">
+61937 execve("/usr/bin/bash", ["bash", "-c", "yes | head"], ...) = 0
+61937 pipe2([3, 4], 0)                  = 0
+61937 clone(...)                        = 61938
+61937 close(4)                          = 0
+61937 clone(...)                        = 61939
+61937 close(3)                          = 0
+61938 close(3)                          = 0
+61938 dup2(4, 1)                        = 1
+61938 close(4)                          = 0
+61939 dup2(3, 0)                        = 0
+61939 close(3)                          = 0
+61938 execve("/usr/bin/yes", ["yes"], ...) = 0
+61939 execve("/usr/bin/head", ["head"], ...) = 0
+61938 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+61939 read(0, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+61938 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+61938 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192) = 8192
+61938 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192 &lt;unfinished ...&gt;
+61939 close(0)                          = 0
+61938 &lt;... write resumed&gt;               = 8192
+61939 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n", 20 &lt;unfinished ...&gt;)
+61938 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\ny\n"..., 8192 &lt;unfinished ...&gt;)
+61939 &lt;... write resumed&gt;               = 20
+61938 &lt;... write resumed&gt;               = -1 EPIPE (断开的管道)
+61938 --- SIGPIPE {si_signo=SIGPIPE, si_code=SI_USER, si_pid=61938, si_uid=1000} ---
+61939 close(1)                          = 0
+61939 close(2)                          = 0
+61939 exit_group(0)                     = ?
+61938 +++ killed by SIGPIPE +++
+61939 +++ exited with 0 +++
+61937 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=61938, si_status=SIGPIPE} ---
+61937 exit_group(0)                     = ?
+61937 +++ exited with 0 +++
+</pre>
+
+<p>
+让我们逐步解读这个输出（61937 是 bash，61938 是 yes，61939 是 head）：
+</p>
+
+<p>
+阶段一：Shell 建立管道和进程
+</p>
+
+<pre class="example" id="orga003751">
+61937 pipe2([3, 4], 0)                  = 0       &lt;-- 创建管道：fd[0]=3(读), fd[1]=4(写)
+61937 clone(...)                        = 61938   &lt;-- fork 出 yes 进程
+61937 close(4)                          = 0       &lt;-- bash 关闭写端（自己不写）
+61937 clone(...)                        = 61939   &lt;-- fork 出 head 进程
+61937 close(3)                          = 0       &lt;-- bash 关闭读端（自己不读）
+</pre>
+
+<p>
+Shell 创建了管道和两个子进程，然后自己关闭了管道的两端（因为 bash 不需要读写这个管道）。
+</p>
+
+<p>
+阶段二：子进程重定向文件描述符
+</p>
+
+<pre class="example" id="orgab72e06">
+61938 close(3)                          = 0       &lt;-- yes 关闭读端
+61938 dup2(4, 1)                        = 1       &lt;-- yes: fd[1] --&gt; stdout
+61938 close(4)                          = 0       &lt;-- yes 关闭原来的 fd[1]
+
+61939 dup2(3, 0)                        = 0       &lt;-- head: fd[0] --&gt; stdin
+61939 close(3)                          = 0       &lt;-- head 关闭原来的 fd[0]
+</pre>
+
+<p>
+<code>yes</code> 进程（61938）关闭了读端，将写端设为 stdout；=head= 进程（61939）关闭了写端，将读端设为 stdin。
+</p>
+
+<p>
+阶段三：进程执行
+</p>
+
+<pre class="example" id="orga0e0159">
+61938 execve("/usr/bin/yes", ["yes"], ...) = 0
+61939 execve("/usr/bin/head", ["head"], ...) = 0
+</pre>
+
+<p>
+两个进程分别加载并执行对应的程序。
+</p>
+
+<p>
+阶段四：数据传输
+</p>
+
+<pre class="example" id="orgba21dc9">
+61938 write(1, "y\ny\n...", 8192)        = 8192    &lt;-- yes 写入 8192 字节
+61939 read(0, "y\ny\n...", 8192)         = 8192    &lt;-- head 读取 8192 字节
+61938 write(1, "y\ny\n...", 8192)        = 8192    &lt;-- yes 继续写入
+61938 write(1, "y\ny\n...", 8192)        = 8192    &lt;-- yes 继续写入
+61938 write(1, "y\ny\n...", 8192)        = 8192    &lt;-- yes 继续写入
+</pre>
+
+<p>
+<code>yes</code> 持续写入数据（每次 8192 字节），=head= 读取了一次 8192 字节后就不再读取了——因为它只需要 10 行数据（20 字节）就够了。
+</p>
+
+<p>
+阶段五：head 完成任务，关闭读端
+</p>
+
+<pre class="example" id="orgf37aa52">
+61938 write(1, "y\ny\n...", 8192 &lt;unfinished ...&gt;
+61939 close(0)                          = 0       &lt;-- head 关闭 stdin（管道读端）
+61938 &lt;... write resumed&gt;               = 8192
+</pre>
+
+<p>
+注意这里的时序：=yes= 正在写入第 5 次数据（尚未完成），=head= 就已经关闭了 stdin（管道读端）。然后 <code>yes</code> 的写入操作才完成。这说明 <code>head</code> 和 <code>yes</code> 是真正并行运行的。
+</p>
+
+<p>
+阶段六：yes 收到 SIGPIPE 终止
+</p>
+
+<pre class="example" id="orge2ca83c">
+61939 write(1, "y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n", 20 &lt;unfinished ...&gt;)
+61938 write(1, "y\ny\n...", 8192 &lt;unfinished ...&gt;)
+61939 &lt;... write resumed&gt;               = 20
+61938 &lt;... write resumed&gt;               = -1 EPIPE (断开的管道)
+61938 --- SIGPIPE {si_signo=SIGPIPE, si_code=SI_USER, si_pid=61938, si_uid=1000} ---
+61938 +++ killed by SIGPIPE +++
+</pre>
+
+<p>
+<code>head</code> 把 10 行结果输出到终端（ <code>write(1, ..., 20)</code> ），同时 <code>yes</code> 尝试再次写入管道，但此时管道读端已经关闭，=write()= 返回 <code>EPIPE</code> 错误，=yes= 随即收到 <code>SIGPIPE</code> 信号被杀死。
+</p>
+
+<p>
+阶段七：head 输出结果并退出
+</p>
+
+<pre class="example" id="org335af5c">
+61939 close(1)                          = 0       &lt;-- head 关闭 stdout
+61939 close(2)                          = 0       &lt;-- head 关闭 stderr
+61939 exit_group(0)                     = ?       &lt;-- head 正常退出
+61939 +++ exited with 0 +++
+</pre>
+
+<p>
+<code>head</code> 将读取的数据输出到终端后，关闭所有文件描述符，正常退出。
+</p>
+
+<p>
+阶段八：Shell 收到子进程退出信号
+</p>
+
+<pre class="example" id="org711a174">
+61937 --- SIGCHLD {si_signo=SIGCHLD, si_code=CLD_KILLED, si_pid=61938, si_status=SIGPIPE} ---
+61937 exit_group(0)                     = ?
+61937 +++ exited with 0 +++
+</pre>
+
+<p>
+Shell 收到 <code>SIGCHLD</code> 信号，知道子进程已经退出，于是自己也退出了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf6da4b4" class="outline-2">
+<h2 id="orgf6da4b4">总结</h2>
+<div class="outline-text-2" id="text-orgf6da4b4">
+<p>
+通过这篇文章，我们深入剖析了 <code>yes | head</code> 这个看似简单的命令背后所隐藏的精妙机制。让我们用一句话总结全文：
+</p>
+
+<p>
+<b>管道不只是数据传输通道，还是进程间的"生死契约"——读端关闭，写端自动终止。</b>
+</p>
+
+<p>
+整个过程涉及三个层面的协作：
+</p>
+
+<ol class="org-ol">
+<li><b>Shell 层</b> ：解析管道符号，创建管道，通过 <code>fork()</code> 和 <code>dup2()</code> 建立进程间的连接</li>
+<li><b>内核层</b> ：管理管道缓冲区，通过 blocking I/O 协调读写速率，确保数据顺畅流动</li>
+<li><b>信号层</b> ：当读端关闭时，通过 <code>SIGPIPE</code> 信号通知写端进程终止</li>
+</ol>
+
+<p>
+最精妙的是：这一切对 <code>yes</code> 和 <code>head</code> 来说都是 <b>透明的</b> 。它们不需要知道彼此的存在，不需要写任何协调代码，只需要各做各的事——=yes= 只管写入，=head= 只管读取。操作系统把剩下的事情都安排好了。
+</p>
+
+<p>
+这正是 Unix 设计哲学的体现： <b>简单组件，巧妙组合，强大功能</b> 。每个程序只做一件事，并通过标准接口（管道）连接，就能构建出复杂而可靠的数据处理流程。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-12</span>
+    <span class="post-info">2026-04-12</span>
+    <a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; 1dgnivnpcvqulnsmyvmrvrzpic &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
