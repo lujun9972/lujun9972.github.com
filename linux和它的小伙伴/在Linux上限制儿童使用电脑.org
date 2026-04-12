@@ -102,10 +102,10 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
   fi
 
   case "$TYPE" in
-      open)
+      open_session)
           echo "LOGIN $TIMESTAMP $USERNAME" >> "$LOGFILE"
           ;;
-      close)
+      close_session)
           echo "LOGOUT $TIMESTAMP $USERNAME" >> "$LOGFILE"
           ;;
   esac
@@ -191,18 +191,49 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
       wall "使用时间已到，系统将在 2 分钟后将 $TARGET_USER 踢出！" 2>/dev/null
       sleep 120
       pkill -u "$TARGET_USER"
+      sleep 10
+      pkill -u -9 "$TARGET_USER"
   elif [ "$remaining" -le 5 ]; then
       wall "$TARGET_USER 还有 $remaining 分钟的使用时间" 2>/dev/null
   fi
 #+END_SRC
 
-赋予执行权限，并配置 cron 每分钟运行一次：
+赋予执行权限，并创建 systemd timer 每分钟运行一次：
 
 #+BEGIN_SRC shell :dir /sudo::
   sudo chmod +x /usr/local/bin/check-usage.sh
-  # 添加到 root 的 crontab
-  echo '* * * * * /usr/local/bin/check-usage.sh' | sudo tee /etc/cron.d/check-usage
-  sudo chmod 644 /etc/cron.d/check-usage
+#+END_SRC
+
+创建 systemd service 文件：
+
+#+BEGIN_SRC conf :tangle "/sudo::/etc/systemd/system/check-usage.service"
+  [Unit]
+  Description=Check user daily usage time
+
+  [Service]
+  Type=oneshot
+  ExecStart=/usr/local/bin/check-usage.sh
+#+END_SRC
+
+创建对应的 timer 文件：
+
+#+BEGIN_SRC conf :tangle "/sudo::/etc/systemd/system/check-usage.timer"
+  [Unit]
+  Description=Run check-usage every minute
+
+  [Timer]
+  OnCalendar=*-*-* *:*:00
+  Persistent=true
+
+  [Install]
+  WantedBy=timers.target
+#+END_SRC
+
+启用 timer：
+
+#+BEGIN_SRC shell :dir /sudo::
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now check-usage.timer
 #+END_SRC
 
 ** 原理说明
@@ -211,7 +242,7 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 + *PAM session 管理* :: 当用户登录成功后，PAM 会依次调用 session 类型的模块的 =open= 钩子；当用户登出时，调用 =close= 钩子。 =pam_exec.so= 会将钩子类型通过环境变量 =PAM_TYPE= （值为 =open= 或 =close= ）传递给外部脚本，同时通过 =PAM_USER= 传递用户名。
 
-+ *cron 定时任务* :: =* * * * *= 表示每分钟执行一次。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。
++ *systemd timer 定时任务* :: =OnCalendar=*-*-* *:*:00= 表示每分钟整点执行一次。systemd timer 是 cron 的现代替代方案，几乎所有使用 systemd 的 Linux 发行版都内置支持。它的优势包括：自动记录日志、支持依赖关系、失败后可自动重试。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。
 
 * 超时警告并踢出
 
@@ -363,7 +394,7 @@ Linux 的每个文件都有三组权限：所有者（owner）、所属组（gro
 
 对于需要限制的每个程序，重复上述步骤即可。也可以写一个脚本来批量处理：
 
-#+BEGIN_SRC shell :tangle "/sudo::/usr/local/bin/restrict-programs.sh"
+#+BEGIN_SRC shell 
   #!/bin/bash
   # /usr/local/bin/restrict-programs.sh
   # 限制指定程序只能由 restricted 组执行
