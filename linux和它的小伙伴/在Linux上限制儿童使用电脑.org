@@ -75,3 +75,136 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 =pam_time= 属于 *account* 类型。它的工作时机是在用户通过了 *auth* 阶段的密码验证之后、系统创建会话之前。此时 =pam_time= 会检查当前时间是否匹配 =time.conf= 中的规则，如果不匹配则拒绝登录。
 
+* 限制每日累计使用时长
+
+=pam_time= 只能控制"什么时候能登录"，但无法控制"登录后能用多久"。要实现每日使用时长的累计限制，需要自己动手：记录每次登录和登出的时间，然后定期检查是否超限。
+
+** 快速配置
+
+整个方案由两部分组成：一个记录登录/登出时间的脚本，和一个定期检查累计时长的脚本。
+
+*** 第一步：记录登录/登出时间
+
+创建 =/usr/local/bin/session-logger.sh= ：
+
+#+BEGIN_SRC shell
+  #!/bin/bash
+  # /usr/local/bin/session-logger.sh
+  # 由 pam_exec 调用，记录用户登录/登出时间
+
+  LOGFILE="/var/log/user-sessions.log"
+  TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+  USERNAME="$PAM_USER"
+  TYPE="$PAM_TYPE"
+
+  if [ -z "$USERNAME" ]; then
+      exit 0
+  fi
+
+  case "$TYPE" in
+      open)
+          echo "LOGIN $TIMESTAMP $USERNAME" >> "$LOGFILE"
+          ;;
+      close)
+          echo "LOGOUT $TIMESTAMP $USERNAME" >> "$LOGFILE"
+          ;;
+  esac
+
+  exit 0
+#+END_SRC
+
+然后赋予执行权限：
+
+#+BEGIN_SRC shell
+  sudo chmod +x /usr/local/bin/session-logger.sh
+  sudo touch /var/log/user-sessions.log
+  sudo chmod 622 /var/log/user-sessions.log
+#+END_SRC
+
+在 PAM 配置文件（如 =/etc/pam.d/login= 、 =/etc/pam.d/lightdm= ）的 *session* 部分添加：
+
+#+BEGIN_SRC shell
+  session optional pam_exec.so /usr/local/bin/session-logger.sh
+#+END_SRC
+
+*** 第二步：检查累计时长
+
+创建 =/usr/local/bin/check-usage.sh= ：
+
+#+BEGIN_SRC shell
+  #!/bin/bash
+  # /usr/local/bin/check-usage.sh
+  # 检查用户当日累计使用时长
+
+  LOGFILE="/var/log/user-sessions.log"
+  TODAY=$(date '+%Y-%m-%d')
+  MAX_MINUTES=120  # 每天最多使用 120 分钟（2 小时）
+  TARGET_USER="geo"
+
+  # 计算今日累计在线分钟数
+  calculate_usage() {
+      local user=$1
+      local total_seconds=0
+      local login_time=""
+
+      while IFS= read -r line; do
+          local action=$(echo "$line" | awk '{print $1}')
+          local timestamp=$(echo "$line" | awk '{print $2, $3}')
+          local username=$(echo "$line" | awk '{print $4}')
+
+          [ "$username" != "$user" ] && continue
+
+          case "$action" in
+              LOGIN)
+                  login_time="$timestamp"
+                  ;;
+              LOGOUT)
+                  if [ -n "$login_time" ]; then
+                      local login_ts=$(date -d "$login_time" '+%s')
+                      local logout_ts=$(date -d "$timestamp" '+%s')
+                      total_seconds=$((total_seconds + logout_ts - login_ts))
+                      login_time=""
+                  fi
+                  ;;
+          esac
+      done < <(grep "$TODAY" "$LOGFILE" | grep -E "^(LOGIN|LOGOUT)")
+
+      # 如果用户当前在线（有未配对的 LOGIN），累加到现在
+      if [ -n "$login_time" ]; then
+          local login_ts=$(date -d "$login_time" '+%s')
+          local now_ts=$(date '+%s')
+          total_seconds=$((total_seconds + now_ts - login_ts))
+      fi
+
+      echo $((total_seconds / 60))
+  }
+
+  usage=$(calculate_usage "$TARGET_USER")
+  remaining=$((MAX_MINUTES - usage))
+
+  if [ "$remaining" -le 0 ]; then
+      wall "使用时间已到，系统将在 2 分钟后将 $TARGET_USER 踢出！" 2>/dev/null
+      sleep 120
+      pkill -u "$TARGET_USER"
+  elif [ "$remaining" -le 5 ]; then
+      wall "$TARGET_USER 还有 $remaining 分钟的使用时间" 2>/dev/null
+  fi
+#+END_SRC
+
+赋予执行权限，并配置 cron 每分钟运行一次：
+
+#+BEGIN_SRC shell
+  sudo chmod +x /usr/local/bin/check-usage.sh
+  # 添加到 root 的 crontab
+  echo '* * * * * /usr/local/bin/check-usage.sh' | sudo tee /etc/cron.d/check-usage
+  sudo chmod 644 /etc/cron.d/check-usage
+#+END_SRC
+
+** 原理说明
+
+这里用到了两个机制：
+
++ *PAM session 管理* :: 当用户登录成功后，PAM 会依次调用 session 类型的模块的 =open= 钩子；当用户登出时，调用 =close= 钩子。 =pam_exec.so= 会将钩子类型通过环境变量 =PAM_TYPE= （值为 =open= 或 =close= ）传递给外部脚本，同时通过 =PAM_USER= 传递用户名。
+
++ *cron 定时任务* :: =* * * * *= 表示每分钟执行一次。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。
+
