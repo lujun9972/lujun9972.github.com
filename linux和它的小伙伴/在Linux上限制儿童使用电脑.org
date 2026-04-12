@@ -208,3 +208,46 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 + *cron 定时任务* :: =* * * * *= 表示每分钟执行一次。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。
 
+* 超时警告并踢出
+
+上一节的脚本已经包含了基本的警告和踢出逻辑。这里再详细说明一下各个踢出手段的区别。
+
+** 多级警告策略
+
+实际使用中，建议采用多级警告，给孩子一个心理准备的过程：
+
+#+BEGIN_SRC shell
+  # 在 check-usage.sh 中替换警告逻辑
+  usage=$(calculate_usage "$TARGET_USER")
+  remaining=$((MAX_MINUTES - usage))
+
+  if [ "$remaining" -le 0 ]; then
+      # 已超时，通知并踢出
+      wall "$TARGET_USER，今日使用时间已到！" 2>/dev/null
+      sleep 120
+      pkill -u "$TARGET_USER"
+  elif [ "$remaining" -le 2 ]; then
+      # 最后 2 分钟警告
+      wall "$TARGET_USER，还有 $remaining 分钟，请保存工作！" 2>/dev/null
+  elif [ "$remaining" -le 5 ]; then
+      # 5 分钟提醒
+      wall "$TARGET_USER，还有 $remaining 分钟的使用时间" 2>/dev/null
+  fi
+#+END_SRC
+
+** 踢出用户的不同方式
+
++ *=pkill -u geo=* :: 向 geo 用户的所有进程发送 SIGTERM 信号。这是最简单的方式，但如果有进程忽略了 SIGTERM，可能无法完全清理。可以追加 =pkill -9 -u geo= 来强制结束。
+
++ *=loginctl terminate-session SESSION_ID=* :: 通过 systemd-logind 来终止指定的登录会话。这比 pkill 更精确，因为它能正确地清理会话资源。查看当前会话列表可以用 =loginctl list-sessions= 。
+
++ *=shutdown -h +2=* :: 2 分钟后关闭整个系统。这是最彻底的方式，但会影响所有用户。如果电脑是孩子独占使用的，这也是个不错的选择。
+
+** 原理说明
+
+=wall= 命令的工作原理是向系统中所有终端设备（ =/dev/pts/*= 和 =/dev/tty*= ）写入消息。只有拥有终端的登录用户才能看到消息。
+
+=pkill= 通过匹配进程的 UID 来选择目标进程，先发送 SIGTERM（信号 15），允许进程优雅退出。如果进程不响应，可以发送 SIGKILL（信号 9）强制终止。
+
+=loginctl= 是 systemd-logind 的命令行接口。logind 作为 systemd 的用户登录管理器，跟踪系统中所有的登录会话（包括图形和终端会话）。 =terminate-session= 会向会话中的所有进程发送终止信号，并清理会话资源。
+
