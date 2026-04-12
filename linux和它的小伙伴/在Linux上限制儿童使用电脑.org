@@ -251,3 +251,84 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 =loginctl= 是 systemd-logind 的命令行接口。logind 作为 systemd 的用户登录管理器，跟踪系统中所有的登录会话（包括图形和终端会话）。 =terminate-session= 会向会话中的所有进程发送终止信号，并清理会话资源。
 
+* 限制可访问网站
+
+在 HTTPS 普及的今天，我们无法在不安装额外证书的情况下检查 HTTP 请求的内容。因此 Linux 原生方案只能在 IP 和域名级别进行过滤。下面介绍两种方法。
+
+** 方法一：DNS 级过滤
+
+通过配置本地 DNS 服务器 =dnsmasq= ，将不希望访问的域名解析到无效地址。
+
+首先安装 =dnsmasq= ：
+
+#+BEGIN_SRC shell
+  sudo pacman -S dnsmasq  # Arch Linux
+#+END_SRC
+
+创建黑名单文件 =/etc/blocked-hosts= ：
+
+#+BEGIN_EXAMPLE
+  # /etc/blocked-hosts
+  # 每行一个要屏蔽的域名
+  example-bad-site.com
+  another-bad-site.com
+#+END_EXAMPLE
+
+在 =/etc/dnsmasq.conf= 中添加配置：
+
+#+BEGIN_SRC shell
+  # 将黑名单中的域名解析到 127.0.0.1
+  addn-hosts=/etc/blocked-hosts
+#+END_SRC
+
+然后启动 dnsmasq 并将系统 DNS 指向本地：
+
+#+BEGIN_SRC shell
+  sudo systemctl enable --now dnsmasq
+  # 修改 /etc/resolv.conf
+  echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+#+END_SRC
+
+这种方法的缺点是：只要孩子知道如何修改 DNS 设置，就能轻松绕过。
+
+** 方法二：iptables 按用户限制
+
+=iptables= 的 =owner= 模块可以根据进程的 UID 来匹配网络流量， =time= 模块可以按时间段匹配。两者结合，可以限制特定用户在特定时间段内的网络访问。
+
+#+BEGIN_SRC shell
+  # 允许 geo 用户在 18:00-20:00 访问网络
+  sudo iptables -A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
+
+  # 禁止 geo 用户在其他时间访问网络
+  sudo iptables -A OUTPUT -m owner --uid-owner geo -j DROP
+#+END_SRC
+
+要持久化这些规则，可以将它们写入一个规则文件，然后在启动时自动恢复：
+
+#+BEGIN_SRC shell
+  # /etc/iptables/parental-control.rules
+  *filter
+  :OUTPUT ACCEPT [0:0]
+  -A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
+  -A OUTPUT -m owner --uid-owner geo -j DROP
+  COMMIT
+#+END_SRC
+
+恢复规则：
+
+#+BEGIN_SRC shell
+  sudo iptables-restore < /etc/iptables/parental-control.rules
+#+END_SRC
+
+** 原理说明
+
+Linux 的网络过滤由 Netfilter 框架实现。Netfilter 在网络协议栈中设置了五个钩子点：
+
++ *PREROUTING* :: 数据包进入路由之前
++ *INPUT* :: 数据包发往本机进程之前
++ *FORWARD* :: 数据包转发到其他接口之前
++ *OUTPUT* :: 本机进程发出的数据包
++ *POSTROUTING* :: 数据包发出之前
+
+我们使用的是 *OUTPUT* 链，它处理本机进程发出的所有数据包。 =owner= 模块通过检查数据包对应的 socket 的 UID 来匹配， =time= 模块通过系统时间来匹配。规则从上到下依次匹配，匹配到后就执行指定的动作（ =ACCEPT= 或 =DROP= ）。
+
