@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>在Linux上限制儿童使用电脑 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">在Linux上限制儿童使用电脑</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org3723459">限制允许登录的时间段</a>
+<ul>
+<li><a href="#org0dbd388">快速配置</a></li>
+<li><a href="#org605ab91">原理说明</a></li>
+</ul>
+</li>
+<li><a href="#orgde82f09">限制每日累计使用时长</a>
+<ul>
+<li><a href="#org74f22fc">快速配置</a>
+<ul>
+<li><a href="#org7e4ed5e">第一步：记录登录/登出时间</a></li>
+<li><a href="#org074b137">第二步：检查累计时长</a></li>
+</ul>
+</li>
+<li><a href="#org9785729">原理说明</a></li>
+</ul>
+</li>
+<li><a href="#org326db24">超时警告并踢出</a>
+<ul>
+<li><a href="#orgb660059">多级警告策略</a></li>
+<li><a href="#org3296f29">踢出用户的不同方式</a></li>
+<li><a href="#org45f29d1">原理说明</a></li>
+</ul>
+</li>
+<li><a href="#orga705411">限制可访问网站</a>
+<ul>
+<li><a href="#orgf019a89">方法一：DNS 级过滤</a></li>
+<li><a href="#org5d7cf5a">方法二：iptables 按用户限制</a></li>
+<li><a href="#orgc334eb1">原理说明</a></li>
+</ul>
+</li>
+<li><a href="#org6dfd90f">限制可运行程序</a>
+<ul>
+<li><a href="#org6875866">方法一：文件权限控制</a></li>
+<li><a href="#orgb41ffc5">方法二：AppArmor</a></li>
+<li><a href="#org4257bf0">原理说明</a></li>
+</ul>
+</li>
+<li><a href="#orgc5aaa81">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+作为家长，你可能希望控制孩子使用电脑的时间——比如只能在晚上 6 点到 8 点登录，每天最多用 2 小时，超时后自动踢出。Windows 有专门的家长控制面板，而 Linux 虽然没有这样的集成工具，但它提供的原生机制完全可以实现同样的效果，而且更加灵活。
+</p>
+
+<p>
+本文将介绍如何用纯 Linux 原生方案（PAM、cron、iptables 等）实现以下功能：
+</p>
+
+<ul class="org-ul">
+<li>限制允许登录的时间段</li>
+<li>限制每日累计使用时长</li>
+<li>超时警告并自动踢出</li>
+<li>限制可访问的网站</li>
+<li>限制可运行的程序</li>
+</ul>
+
+<p>
+本文假设系统中已创建一个名为 <code>geo</code> 的受限用户。所有配置需要 root 权限。
+</p>
+
+<div id="outline-container-org3723459" class="outline-2">
+<h2 id="org3723459">限制允许登录的时间段</h2>
+<div class="outline-text-2" id="text-org3723459">
+<p>
+Linux 中控制用户登录时间的机制是 PAM（Pluggable Authentication Modules，可插拔认证模块）中的 <code>pam_time</code> 模块。
+</p>
+</div>
+
+<div id="outline-container-org0dbd388" class="outline-3">
+<h3 id="org0dbd388">快速配置</h3>
+<div class="outline-text-3" id="text-org0dbd388">
+<p>
+首先，在 PAM 配置文件中启用 <code>pam_time.so</code> 。需要修改的文件取决于你使用的登录方式：
+</p>
+
+<ul class="org-ul">
+<li>控制台登录： <code>/etc/pam.d/login</code></li>
+<li>图形界面登录： <code>/etc/pam.d/lightdm</code> 或 <code>/etc/pam.d/gdm</code></li>
+<li>SSH 登录： <code>/etc/pam.d/sshd</code></li>
+</ul>
+
+<p>
+在上述文件的 <code>account</code> 部分添加一行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">account required pam_time.so
+</pre>
+</div>
+
+<p>
+然后在 <code>/etc/security/time.conf</code> 中添加规则。该文件的格式为：
+</p>
+
+<pre class="example" id="orgfa034dc">
+services;ttys;users;times
+</pre>
+
+<p>
+各字段含义：
+</p>
+
+<dl class="org-dl">
+<dt><code>services</code></dt><dd>服务名， <code>*</code> 表示所有服务</dd>
+<dt><code>ttys</code></dt><dd>终端类型， <code>*</code> 表示所有终端</dd>
+<dt><code>users</code></dt><dd>用户名</dd>
+<dt><code>times</code></dt><dd>时间规则</dd>
+</dl>
+
+<p>
+时间规则的语法比较特别：
+</p>
+
+<ul class="org-ul">
+<li><code>Wk</code> 表示工作日（周一到周五）， <code>Wd</code> 表示周末（周六、周日）， <code>Al</code> 表示每天</li>
+<li>时间格式为 <code>HHMM-HHMM</code></li>
+<li>前面加 <code>!</code> 表示取反（"除此时段外禁止"）</li>
+</ul>
+
+<p>
+例如，限制 <code>geo</code> 用户只能在每天 18:00 到 20:00 登录：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">*;*;geo;Al1800-2000
+</pre>
+</div>
+
+<p>
+这行规则的意思是：对所有服务、所有终端、geo 用户，允许每天 18:00-20:00 登录（ <code>Al</code> 表示每天都适用）。注意， <code>pam_time</code> 的逻辑是：匹配到的允许登录，未匹配到则拒绝。
+</p>
+
+<p>
+验证配置：在非允许时段尝试用 <code>geo</code> 账户登录，应该会看到类似 "Permission denied" 的提示。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org605ab91" class="outline-3">
+<h3 id="org605ab91">原理说明</h3>
+<div class="outline-text-3" id="text-org605ab91">
+<p>
+PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解耦出来。PAM 定义了四种模块类型：
+</p>
+
+<dl class="org-dl">
+<dt><b>auth</b></dt><dd>验证用户身份（如检查密码）</dd>
+<dt><b>account</b></dt><dd>检查账户是否允许访问（如检查账户是否过期、是否在允许的时间段内）</dd>
+<dt><b>password</b></dt><dd>管理密码更新</dd>
+<dt><b>session</b></dt><dd>管理会话的创建和销毁</dd>
+</dl>
+
+<p>
+<code>pam_time</code> 属于 <b>account</b> 类型。它的工作时机是在用户通过了 <b>auth</b> 阶段的密码验证之后、系统创建会话之前。此时 <code>pam_time</code> 会检查当前时间是否匹配 <code>time.conf</code> 中的规则，如果不匹配则拒绝登录。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgde82f09" class="outline-2">
+<h2 id="orgde82f09">限制每日累计使用时长</h2>
+<div class="outline-text-2" id="text-orgde82f09">
+<p>
+<code>pam_time</code> 只能控制"什么时候能登录"，但无法控制"登录后能用多久"。要实现每日使用时长的累计限制，需要自己动手：记录每次登录和登出的时间，然后定期检查是否超限。
+</p>
+</div>
+
+<div id="outline-container-org74f22fc" class="outline-3">
+<h3 id="org74f22fc">快速配置</h3>
+<div class="outline-text-3" id="text-org74f22fc">
+<p>
+整个方案由两部分组成：一个记录登录/登出时间的脚本，和一个定期检查累计时长的脚本。
+</p>
+</div>
+
+<div id="outline-container-org7e4ed5e" class="outline-4">
+<h4 id="org7e4ed5e">第一步：记录登录/登出时间</h4>
+<div class="outline-text-4" id="text-org7e4ed5e">
+<p>
+创建 <code>/usr/local/bin/session-logger.sh</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">/usr/local/bin/session-logger.sh
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#30001; pam_exec &#35843;&#29992;&#65292;&#35760;&#24405;&#29992;&#25143;&#30331;&#24405;/&#30331;&#20986;&#26102;&#38388;
+</span>
+<span class="org-variable-name">LOGFILE</span>=<span class="org-string">"/var/log/user-sessions.log"</span>
+<span class="org-variable-name">TIMESTAMP</span>=$(<span class="org-sh-quoted-exec">date '+%Y-%m-%d %H:%M:%S'</span>)
+<span class="org-variable-name">USERNAME</span>=<span class="org-string">"$PAM_USER"</span>
+<span class="org-variable-name">TYPE</span>=<span class="org-string">"$PAM_TYPE"</span>
+
+<span class="org-keyword">if</span> [ -z <span class="org-string">"$USERNAME"</span> ]; <span class="org-keyword">then</span>
+    <span class="org-keyword">exit</span> 0
+<span class="org-keyword">fi</span>
+
+<span class="org-keyword">case</span> <span class="org-string">"$TYPE"</span><span class="org-keyword"> in</span>
+    open_session)
+        <span class="org-builtin">echo</span> <span class="org-string">"LOGIN $TIMESTAMP $USERNAME"</span> &gt;&gt; <span class="org-string">"$LOGFILE"</span>
+        ;;
+    close_session)
+        <span class="org-builtin">echo</span> <span class="org-string">"LOGOUT $TIMESTAMP $USERNAME"</span> &gt;&gt; <span class="org-string">"$LOGFILE"</span>
+        ;;
+<span class="org-keyword">esac</span>
+
+<span class="org-keyword">exit</span> 0
+</pre>
+</div>
+
+<p>
+然后赋予执行权限：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo chmod +x /usr/local/bin/session-logger.sh
+sudo touch /var/log/user-sessions.log
+sudo chmod 600 /var/log/user-sessions.log
+</pre>
+</div>
+
+<p>
+在 PAM 配置文件（如 <code>/etc/pam.d/login</code> 、 <code>/etc/pam.d/lightdm</code> ）的 <b>session</b> 部分添加：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">session optional pam_exec.so /usr/local/bin/session-logger.sh
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org074b137" class="outline-4">
+<h4 id="org074b137">第二步：检查累计时长</h4>
+<div class="outline-text-4" id="text-org074b137">
+<p>
+创建 <code>/usr/local/bin/check-usage.sh</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">/usr/local/bin/check-usage.sh
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#26816;&#26597;&#29992;&#25143;&#24403;&#26085;&#32047;&#35745;&#20351;&#29992;&#26102;&#38271;
+</span>
+<span class="org-variable-name">LOGFILE</span>=<span class="org-string">"/var/log/user-sessions.log"</span>
+<span class="org-variable-name">TODAY</span>=$(<span class="org-sh-quoted-exec">date '+%Y-%m-%d'</span>)
+<span class="org-variable-name">MAX_MINUTES</span>=120  <span class="org-comment-delimiter"># </span><span class="org-comment">&#27599;&#22825;&#26368;&#22810;&#20351;&#29992; 120 &#20998;&#38047;&#65288;2 &#23567;&#26102;&#65289;
+</span><span class="org-variable-name">TARGET_USER</span>=<span class="org-string">"geo"</span>
+<span class="org-variable-name">LOCKFILE</span>=<span class="org-string">"/var/run/check-usage.lock"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;&#38145;&#25991;&#20214;&#38450;&#27490; cron &#37325;&#21472;&#25191;&#34892;
+</span><span class="org-keyword">exec</span> 9&gt;<span class="org-string">"$LOCKFILE"</span>
+flock -n 9 || <span class="org-keyword">exit</span> 0
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35745;&#31639;&#20170;&#26085;&#32047;&#35745;&#22312;&#32447;&#20998;&#38047;&#25968;
+</span><span class="org-function-name">calculate_usage</span>() {
+    <span class="org-builtin">local</span> <span class="org-variable-name">user</span>=$<span class="org-variable-name">1</span>
+    <span class="org-builtin">local</span> <span class="org-variable-name">total_seconds</span>=0
+    <span class="org-builtin">local</span> <span class="org-variable-name">login_time</span>=<span class="org-string">""</span>
+
+    <span class="org-keyword">while</span> <span class="org-variable-name">IFS</span>= read -r line; <span class="org-keyword">do</span>
+        <span class="org-builtin">local</span> <span class="org-variable-name">action</span>=$(<span class="org-sh-quoted-exec">echo "$line" | awk '{print $1}'</span>)
+        <span class="org-builtin">local</span> <span class="org-variable-name">timestamp</span>=$(<span class="org-sh-quoted-exec">echo "$line" | awk '{print $2, $3}'</span>)
+        <span class="org-builtin">local</span> <span class="org-variable-name">username</span>=$(<span class="org-sh-quoted-exec">echo "$line" | awk '{print $4}'</span>)
+
+        [ <span class="org-string">"$username"</span> != <span class="org-string">"$user"</span> ] &amp;&amp; <span class="org-keyword">continue</span>
+
+        <span class="org-keyword">case</span> <span class="org-string">"$action"</span><span class="org-keyword"> in</span>
+            LOGIN)
+                <span class="org-variable-name">login_time</span>=<span class="org-string">"$timestamp"</span>
+                ;;
+            LOGOUT)
+                <span class="org-keyword">if</span> [ -n <span class="org-string">"$login_time"</span> ]; <span class="org-keyword">then</span>
+                    <span class="org-builtin">local</span> <span class="org-variable-name">login_ts</span>=$(<span class="org-sh-quoted-exec">date -d "$login_time" '+%s'</span>)
+                    <span class="org-builtin">local</span> <span class="org-variable-name">logout_ts</span>=$(<span class="org-sh-quoted-exec">date -d "$timestamp" '+%s'</span>)
+                    <span class="org-variable-name">total_seconds</span>=$(<span class="org-sh-quoted-exec">(total_seconds + logout_ts - login_ts</span>))
+                    <span class="org-variable-name">login_time</span>=<span class="org-string">""</span>
+                <span class="org-keyword">fi</span>
+                ;;
+        <span class="org-keyword">esac</span>
+    <span class="org-keyword">done</span> &lt; &lt;(grep <span class="org-string">"$TODAY"</span> <span class="org-string">"$LOGFILE"</span> | grep -E <span class="org-string">"^(LOGIN|LOGOUT)"</span>)
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#22914;&#26524;&#29992;&#25143;&#24403;&#21069;&#22312;&#32447;&#65288;&#26377;&#26410;&#37197;&#23545;&#30340; LOGIN&#65289;&#65292;&#32047;&#21152;&#21040;&#29616;&#22312;
+</span>    <span class="org-keyword">if</span> [ -n <span class="org-string">"$login_time"</span> ]; <span class="org-keyword">then</span>
+        <span class="org-builtin">local</span> <span class="org-variable-name">login_ts</span>=$(<span class="org-sh-quoted-exec">date -d "$login_time" '+%s'</span>)
+        <span class="org-builtin">local</span> <span class="org-variable-name">now_ts</span>=$(<span class="org-sh-quoted-exec">date '+%s'</span>)
+        <span class="org-variable-name">total_seconds</span>=$(<span class="org-sh-quoted-exec">(total_seconds + now_ts - login_ts</span>))
+    <span class="org-keyword">fi</span>
+
+    <span class="org-builtin">echo</span> $(<span class="org-sh-quoted-exec">(total_seconds / 60</span>))
+}
+
+<span class="org-variable-name">usage</span>=$(<span class="org-sh-quoted-exec">calculate_usage "$TARGET_USER"</span>)
+<span class="org-variable-name">remaining</span>=$(<span class="org-sh-quoted-exec">(MAX_MINUTES - usage</span>))
+
+<span class="org-keyword">if</span> [ <span class="org-string">"$remaining"</span> -le 0 ]; <span class="org-keyword">then</span>
+    wall <span class="org-string">"&#20351;&#29992;&#26102;&#38388;&#24050;&#21040;&#65292;&#31995;&#32479;&#23558;&#22312; 2 &#20998;&#38047;&#21518;&#23558; $TARGET_USER &#36386;&#20986;&#65281;"</span> 2&gt;/dev/null
+    sleep 120
+    pkill -u <span class="org-string">"$TARGET_USER"</span>
+    sleep 10
+    pkill -u -9 <span class="org-string">"$TARGET_USER"</span>
+<span class="org-keyword">elif</span> [ <span class="org-string">"$remaining"</span> -le 5 ]; <span class="org-keyword">then</span>
+    wall <span class="org-string">"$TARGET_USER &#36824;&#26377; $remaining &#20998;&#38047;&#30340;&#20351;&#29992;&#26102;&#38388;"</span> 2&gt;/dev/null
+<span class="org-keyword">fi</span>
+</pre>
+</div>
+
+<p>
+赋予执行权限，并创建 systemd timer 每分钟运行一次：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo chmod +x /usr/local/bin/check-usage.sh
+</pre>
+</div>
+
+<p>
+创建 systemd service 文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-conf">[<span class="org-type">Unit</span>]
+<span class="org-variable-name">Description</span>=Check user daily usage time
+
+[<span class="org-type">Service</span>]
+<span class="org-variable-name">Type</span>=oneshot
+<span class="org-variable-name">ExecStart</span>=/usr/local/bin/check-usage.sh
+</pre>
+</div>
+
+<p>
+创建对应的 timer 文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-conf">[<span class="org-type">Unit</span>]
+<span class="org-variable-name">Description</span>=Run check-usage every minute
+
+[<span class="org-type">Timer</span>]
+<span class="org-variable-name">OnCalendar</span>=*-*-* *:*:00
+<span class="org-variable-name">Persistent</span>=true
+
+[<span class="org-type">Install</span>]
+<span class="org-variable-name">WantedBy</span>=timers.target
+</pre>
+</div>
+
+<p>
+启用 timer：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl daemon-reload
+sudo systemctl enable --now check-usage.timer
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9785729" class="outline-3">
+<h3 id="org9785729">原理说明</h3>
+<div class="outline-text-3" id="text-org9785729">
+<p>
+这里用到了两个机制：
+</p>
+
+<dl class="org-dl">
+<dt><b>PAM session 管理</b></dt><dd>当用户登录成功后，PAM 会依次调用 session 类型的模块的 <code>open</code> 钩子；当用户登出时，调用 <code>close</code> 钩子。 <code>pam_exec.so</code> 会将钩子类型通过环境变量 <code>PAM_TYPE</code> （值为 <code>open</code> 或 <code>close</code> ）传递给外部脚本，同时通过 <code>PAM_USER</code> 传递用户名。</dd>
+
+<dt><b>systemd timer 定时任务</b></dt><dd><code>OnCalendar=*-*-* *:*:00</code> 表示每分钟整点执行一次。systemd timer 是 cron 的现代替代方案，几乎所有使用 systemd 的 Linux 发行版都内置支持。它的优势包括：自动记录日志、支持依赖关系、失败后可自动重试。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。</dd>
+</dl>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org326db24" class="outline-2">
+<h2 id="org326db24">超时警告并踢出</h2>
+<div class="outline-text-2" id="text-org326db24">
+<p>
+上一节的脚本已经包含了基本的警告和踢出逻辑。这里再详细说明一下各个踢出手段的区别。
+</p>
+</div>
+
+<div id="outline-container-orgb660059" class="outline-3">
+<h3 id="orgb660059">多级警告策略</h3>
+<div class="outline-text-3" id="text-orgb660059">
+<p>
+实际使用中，建议采用多级警告，给孩子一个心理准备的过程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#22312; check-usage.sh &#20013;&#26367;&#25442;&#35686;&#21578;&#36923;&#36753;
+</span><span class="org-variable-name">usage</span>=$(<span class="org-sh-quoted-exec">calculate_usage "$TARGET_USER"</span>)
+<span class="org-variable-name">remaining</span>=$(<span class="org-sh-quoted-exec">(MAX_MINUTES - usage</span>))
+
+<span class="org-keyword">if</span> [ <span class="org-string">"$remaining"</span> -le 0 ]; <span class="org-keyword">then</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#24050;&#36229;&#26102;&#65292;&#36890;&#30693;&#24182;&#36386;&#20986;
+</span>    wall <span class="org-string">"$TARGET_USER&#65292;&#20170;&#26085;&#20351;&#29992;&#26102;&#38388;&#24050;&#21040;&#65281;"</span> 2&gt;/dev/null
+    sleep 120
+    pkill -u <span class="org-string">"$TARGET_USER"</span>
+<span class="org-keyword">elif</span> [ <span class="org-string">"$remaining"</span> -le 2 ]; <span class="org-keyword">then</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#26368;&#21518; 2 &#20998;&#38047;&#35686;&#21578;
+</span>    wall <span class="org-string">"$TARGET_USER&#65292;&#36824;&#26377; $remaining &#20998;&#38047;&#65292;&#35831;&#20445;&#23384;&#24037;&#20316;&#65281;"</span> 2&gt;/dev/null
+<span class="org-keyword">elif</span> [ <span class="org-string">"$remaining"</span> -le 5 ]; <span class="org-keyword">then</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">5 &#20998;&#38047;&#25552;&#37266;
+</span>    wall <span class="org-string">"$TARGET_USER&#65292;&#36824;&#26377; $remaining &#20998;&#38047;&#30340;&#20351;&#29992;&#26102;&#38388;"</span> 2&gt;/dev/null
+<span class="org-keyword">fi</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3296f29" class="outline-3">
+<h3 id="org3296f29">踢出用户的不同方式</h3>
+<div class="outline-text-3" id="text-org3296f29">
+<dl class="org-dl">
+<dt><b><code>pkill -u geo</code></b></dt><dd>向 geo 用户的所有进程发送 SIGTERM 信号。这是最简单的方式，但如果有进程忽略了 SIGTERM，可能无法完全清理。可以追加 <code>pkill -9 -u geo</code> 来强制结束。</dd>
+
+<dt><b><code>loginctl terminate-session SESSION_ID</code></b></dt><dd>通过 systemd-logind 来终止指定的登录会话。这比 pkill 更精确，因为它能正确地清理会话资源。查看当前会话列表可以用 <code>loginctl list-sessions</code> 。</dd>
+
+<dt><b><code>shutdown -h +2</code></b></dt><dd>2 分钟后关闭整个系统。这是最彻底的方式，但会影响所有用户。如果电脑是孩子独占使用的，这也是个不错的选择。</dd>
+</dl>
+</div>
+</div>
+
+<div id="outline-container-org45f29d1" class="outline-3">
+<h3 id="org45f29d1">原理说明</h3>
+<div class="outline-text-3" id="text-org45f29d1">
+<p>
+<code>wall</code> 命令的工作原理是向系统中所有终端设备（ <code>/dev/pts/*</code> 和 <code>/dev/tty*</code> ）写入消息。只有拥有终端的登录用户才能看到消息。
+</p>
+
+<p>
+<code>pkill</code> 通过匹配进程的 UID 来选择目标进程，先发送 SIGTERM（信号 15），允许进程优雅退出。如果进程不响应，可以发送 SIGKILL（信号 9）强制终止。
+</p>
+
+<p>
+<code>loginctl</code> 是 systemd-logind 的命令行接口。logind 作为 systemd 的用户登录管理器，跟踪系统中所有的登录会话（包括图形和终端会话）。 <code>terminate-session</code> 会向会话中的所有进程发送终止信号，并清理会话资源。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga705411" class="outline-2">
+<h2 id="orga705411">限制可访问网站</h2>
+<div class="outline-text-2" id="text-orga705411">
+<p>
+在 HTTPS 普及的今天，我们无法在不安装额外证书的情况下检查 HTTP 请求的内容。因此 Linux 原生方案只能在 IP 和域名级别进行过滤。下面介绍两种方法。
+</p>
+</div>
+
+<div id="outline-container-orgf019a89" class="outline-3">
+<h3 id="orgf019a89">方法一：DNS 级过滤</h3>
+<div class="outline-text-3" id="text-orgf019a89">
+<p>
+通过配置本地 DNS 服务器 <code>dnsmasq</code> ，将不希望访问的域名解析到无效地址。
+</p>
+
+<p>
+首先安装 <code>dnsmasq</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S dnsmasq  <span class="org-comment-delimiter"># </span><span class="org-comment">Arch Linux</span>
+</pre>
+</div>
+
+<p>
+创建黑名单文件 <code>/etc/blocked-hosts</code> ：
+</p>
+
+<pre class="example" id="org4295e08">
+# /etc/blocked-hosts
+# 每行一个要屏蔽的域名
+example-bad-site.com
+another-bad-site.com
+</pre>
+
+<p>
+在 <code>/etc/dnsmasq.conf</code> 中添加配置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#23558;&#40657;&#21517;&#21333;&#20013;&#30340;&#22495;&#21517;&#35299;&#26512;&#21040; 127.0.0.1
+</span>addn-hosts=/etc/blocked-hosts
+</pre>
+</div>
+
+<p>
+然后启动 dnsmasq 并将系统 DNS 指向本地：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl enable --now dnsmasq
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20462;&#25913; /etc/resolv.conf
+</span><span class="org-builtin">echo</span> <span class="org-string">"nameserver 127.0.0.1"</span> | sudo tee /etc/resolv.conf
+</pre>
+</div>
+
+<p>
+这种方法的缺点是：只要孩子知道如何修改 DNS 设置，就能轻松绕过。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d7cf5a" class="outline-3">
+<h3 id="org5d7cf5a">方法二：iptables 按用户限制</h3>
+<div class="outline-text-3" id="text-org5d7cf5a">
+<p>
+<code>iptables</code> 的 <code>owner</code> 模块可以根据进程的 UID 来匹配网络流量， <code>time</code> 模块可以按时间段匹配。两者结合，可以限制特定用户在特定时间段内的网络访问。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20801;&#35768; geo &#29992;&#25143;&#22312; 18:00-20:00 &#35775;&#38382;&#32593;&#32476;
+</span>sudo iptables -A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#31105;&#27490; geo &#29992;&#25143;&#22312;&#20854;&#20182;&#26102;&#38388;&#35775;&#38382;&#32593;&#32476;
+</span>sudo iptables -A OUTPUT -m owner --uid-owner geo -j DROP
+</pre>
+</div>
+
+<p>
+要持久化这些规则，可以将它们写入一个规则文件，然后在启动时自动恢复：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">/etc/iptables/parental-control.rules
+</span>*filter
+:OUTPUT ACCEPT [0:0]
+-A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
+-A OUTPUT -m owner --uid-owner geo -j DROP
+COMMIT
+</pre>
+</div>
+
+<p>
+恢复规则：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo iptables-restore &lt; /etc/iptables/parental-control.rules
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc334eb1" class="outline-3">
+<h3 id="orgc334eb1">原理说明</h3>
+<div class="outline-text-3" id="text-orgc334eb1">
+<p>
+Linux 的网络过滤由 Netfilter 框架实现。Netfilter 在网络协议栈中设置了五个钩子点：
+</p>
+
+<dl class="org-dl">
+<dt><b>PREROUTING</b></dt><dd>数据包进入路由之前</dd>
+<dt><b>INPUT</b></dt><dd>数据包发往本机进程之前</dd>
+<dt><b>FORWARD</b></dt><dd>数据包转发到其他接口之前</dd>
+<dt><b>OUTPUT</b></dt><dd>本机进程发出的数据包</dd>
+<dt><b>POSTROUTING</b></dt><dd>数据包发出之前</dd>
+</dl>
+
+<p>
+我们使用的是 <b>OUTPUT</b> 链，它处理本机进程发出的所有数据包。 <code>owner</code> 模块通过检查数据包对应的 socket 的 UID 来匹配， <code>time</code> 模块通过系统时间来匹配。规则从上到下依次匹配，匹配到后就执行指定的动作（ <code>ACCEPT</code> 或 <code>DROP</code> ）。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6dfd90f" class="outline-2">
+<h2 id="org6dfd90f">限制可运行程序</h2>
+<div class="outline-text-2" id="text-org6dfd90f">
+<p>
+不想让孩子玩某些游戏或使用某些软件？最直接的方法是通过 Linux 的权限系统来限制。
+</p>
+</div>
+
+<div id="outline-container-org6875866" class="outline-3">
+<h3 id="org6875866">方法一：文件权限控制</h3>
+<div class="outline-text-3" id="text-org6875866">
+<p>
+Linux 的每个文件都有三组权限：所有者（owner）、所属组（group）、其他人（others）。我们可以利用这个机制来限制特定用户执行特定程序。
+</p>
+
+<p>
+假设要禁止 <code>geo</code> 用户运行 <code>steam</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21019;&#24314;&#21463;&#38480;&#32452;
+</span>sudo groupadd restricted
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23558; steam &#30340;&#32452;&#25913;&#20026; restricted&#65292;&#26435;&#38480;&#35774;&#20026; 750
+</span>sudo chgrp restricted /usr/bin/steam
+sudo chmod 750 /usr/bin/steam
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#30830;&#20445; geo &#19981;&#22312; restricted &#32452;&#20013;
+</span>sudo gpasswd -d geo restricted 2&gt;/dev/null || true
+</pre>
+</div>
+
+<p>
+这样，只有 root 用户和 restricted 组的成员可以运行 <code>steam</code> ，而 <code>geo</code> 用户会得到 "Permission denied" 的错误。
+</p>
+
+<p>
+对于需要限制的每个程序，重复上述步骤即可。也可以写一个脚本来批量处理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">/usr/local/bin/restrict-programs.sh
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#38480;&#21046;&#25351;&#23450;&#31243;&#24207;&#21482;&#33021;&#30001; restricted &#32452;&#25191;&#34892;
+</span>
+<span class="org-variable-name">PROGRAMS</span>=<span class="org-string">"/usr/bin/steam /usr/bin/wine /usr/bin/discord"</span>
+
+<span class="org-keyword">for</span> prog<span class="org-keyword"> in</span> $<span class="org-variable-name">PROGRAMS</span>; <span class="org-keyword">do</span>
+    <span class="org-keyword">if</span> [ -f <span class="org-string">"$prog"</span> ]; <span class="org-keyword">then</span>
+        sudo chgrp restricted <span class="org-string">"$prog"</span>
+        sudo chmod 750 <span class="org-string">"$prog"</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"Restricted: $prog"</span>
+    <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<p>
+需要注意：当软件包更新时，权限可能会被重置。可以将这个脚本放在 systemd 的 timer 或 pacman 的 hook 中定期执行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb41ffc5" class="outline-3">
+<h3 id="orgb41ffc5">方法二：AppArmor</h3>
+<div class="outline-text-3" id="text-orgb41ffc5">
+<p>
+AppArmor 提供了更强大的强制访问控制（MAC）。与文件权限不同，AppArmor 的策略无法被用户（包括文件所有者）修改。
+</p>
+
+<p>
+在 Arch Linux 上安装并启用 AppArmor：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S apparmor
+sudo systemctl enable --now apparmor
+</pre>
+</div>
+
+<p>
+AppArmor 通过 profile 来定义程序的访问权限。需要注意的是，AppArmor 的 profile 是绑定到程序的，不能直接按用户限制。要实现按用户限制，需要配合 <code>pam_apparmor</code> 模块，在用户登录时为不同用户加载不同的 profile。
+</p>
+
+<p>
+首先，创建一个限制性的 profile：
+</p>
+
+<pre class="example" id="orgae44a51">
+# /etc/apparmor.d/restrict-geo-steam
+abi &lt;abi/4.0&gt;,
+include &lt;tunables/global&gt;
+
+/usr/bin/steam {
+    include &lt;abstractions/base&gt;
+
+    # 只允许特定用户组执行
+    # 注意：AppArmor 本身不直接支持按用户过滤，
+    # 这里通过 owner 匹配来限制只有文件所有者可以执行
+    owner /usr/bin/steam r,
+}
+</pre>
+
+<p>
+如果需要更精确的按用户控制，建议结合文件权限方法使用——将程序的组设为受限组，然后在 AppArmor profile 中限制该组的访问。或者使用 <code>pam_apparmor</code> 在用户登录时动态加载不同的 profile。
+</p>
+
+<p>
+加载 profile：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo apparmor_parser -r /etc/apparmor.d/restrict-geo-steam
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4257bf0" class="outline-3">
+<h3 id="org4257bf0">原理说明</h3>
+<div class="outline-text-3" id="text-org4257bf0">
+<dl class="org-dl">
+<dt><b>DAC（自主访问控制）</b></dt><dd>Linux 默认的权限模型。每个文件有三组权限位（读 r、写 w、执行 x），分别对应所有者、所属组、其他人。文件的所有者可以自主修改文件的权限。"自主"的含义就在于此——权限由所有者决定。</dd>
+
+<dt><b>MAC（强制访问控制）</b></dt><dd>AppArmor 实现的权限模型。策略由系统管理员定义，普通用户无法绕过或修改。AppArmor 使用基于路径的匹配（而非 SELinux 的基于标签的匹配），配置相对简单。</dd>
+</dl>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc5aaa81" class="outline-2">
+<h2 id="orgc5aaa81">总结</h2>
+<div class="outline-text-2" id="text-orgc5aaa81">
+<p>
+本文介绍了五种用纯 Linux 原生机制限制儿童使用电脑的方法：
+</p>
+
+<dl class="org-dl">
+<dt><b>限制登录时段</b></dt><dd>使用 PAM 的 <code>pam_time</code> 模块，通过 <code>/etc/security/time.conf</code> 配置</dd>
+<dt><b>限制使用时长</b></dt><dd>使用 <code>pam_exec</code> 记录登录/登出时间，配合 cron 定时检查</dd>
+<dt><b>超时踢出</b></dt><dd>使用 <code>wall</code> 发送警告， <code>pkill</code> 或 <code>loginctl</code> 踢出用户</dd>
+<dt><b>限制网站访问</b></dt><dd>使用 <code>dnsmasq</code> 做 DNS 过滤，或 <code>iptables</code> 按用户和时间限制网络访问</dd>
+<dt><b>限制可运行程序</b></dt><dd>使用文件权限或 AppArmor 控制程序执行</dd>
+</dl>
+
+<p>
+这些方案组合使用，可以构建一个相当完整的家长控制系统。但需要注意以下几点：
+</p>
+
+<ul class="org-ul">
+<li>这些方案需要 <b>root 权限</b> 来配置。如果你的孩子拥有 sudo 权限，ta 理论上可以绕过所有限制。</li>
+<li><code>pam_time</code> 只能控制新登录，无法踢出已经在线的用户。需要配合时长检查脚本来处理。</li>
+<li>iptables 的 <code>owner</code> 模块只能匹配本机进程发出的流量，对于通过代理或 VPN 的流量可能无效。</li>
+</ul>
+
+<p>
+最后，技术手段只是辅助。与孩子建立良好的沟通和信任，比任何软件限制都更有效。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-12</span>
+    <span class="post-info">2026-04-12</span>
+    <a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; oc0tmsjkidze5cmwmr3zb3bgga &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

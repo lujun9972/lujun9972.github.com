@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>C语言中的未定义行为 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="编程之旅" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">C语言中的未定义行为</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org12cb5e7">什么是未定义行为</a></li>
+<li><a href="#org4dbbebb">序列点</a></li>
+<li><a href="#org3f4fe33">案例 1：序列点间多次修改变量</a></li>
+<li><a href="#org79818fc">案例 2：修改字符串字面量</a></li>
+<li><a href="#org98a6a61">案例 3：有符号整数溢出</a></li>
+<li><a href="#org8a90893">案例 4：整数除以零</a></li>
+<li><a href="#orga97f3c4">案例 5：过大的位移操作</a></li>
+<li><a href="#org897929e">案例 6：解引用空指针</a></li>
+<li><a href="#org7630f45">案例 7：数组越界访问</a></li>
+<li><a href="#orgcc42872">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文是阅读 <a href="https://opensourceforu.com/2018/10/understanding-undefined-behaviour-in-c/">Understanding Undefined Behaviour in C</a> 和 <a href="https://opensourceforu.com/2018/11/understanding-undefined-behaviour-in-c-2/">Understanding Undefined Behaviour in C - Part 2</a> 后的笔记。
+</p>
+
+<div id="outline-container-org12cb5e7" class="outline-2">
+<h2 id="org12cb5e7">什么是未定义行为</h2>
+<div class="outline-text-2" id="text-org12cb5e7">
+<p>
+根据 C 语言标准，未定义行为 (Undefined Behaviour) 是指代码的执行结果未被语言规范所规定。C FAQ 中对此的经典描述是：
+</p>
+
+<blockquote>
+<p>
+Anything at all can happen; the standard imposes no requirements. The program may fail to compile, or it may execute incorrectly (either crashing or silently generating incorrect results), or it may fortuitously do exactly what the programmer intended.
+</p>
+</blockquote>
+
+<p>
+简单来说，发生未定义行为时，*任何事情都可能发生* ：程序可能编译失败，可能崩溃，可能静默产生错误结果，也可能碰巧按预期运行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4dbbebb" class="outline-2">
+<h2 id="org4dbbebb">序列点</h2>
+<div class="outline-text-2" id="text-org4dbbebb">
+<p>
+理解未定义行为需要先了解 <b>序列点 (Sequence Point)</b> 的概念。C99 标准规定：
+</p>
+
+<blockquote>
+<p>
+Between the previous and next sequence point an object shall have its stored value modified at most once by the evaluation of an expression. Furthermore, the prior value shall be accessed only to determine the value to be stored.
+</p>
+</blockquote>
+
+<p>
+即在两个序列点之间，同一个对象最多只能被修改一次。常见的序列点包括：分号（语句结束）、 <code>&amp;&amp;</code> 和 <code>||</code> 的左操作数求值后、逗号表达式的左操作数求值后、函数调用时。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3f4fe33" class="outline-2">
+<h2 id="org3f4fe33">案例 1：序列点间多次修改变量</h2>
+<div class="outline-text-2" id="text-org3f4fe33">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">a</span> = 10;
+a = a++ * a++;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;a &#22312;&#20004;&#20010;&#24207;&#21015;&#28857;&#38388;&#34987;&#20462;&#25913;&#20102;&#22810;&#27425;</span>
+</pre>
+</div>
+
+<p>
+问题在于变量 <code>a</code> 在同一条语句中被修改了多次（两次 <code>a++</code> 和一次赋值），而两个序列点（两个分号）之间不允许这样做。不同编译器（gcc、Clang）对此会产生不同的汇编代码和运行结果。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org79818fc" class="outline-2">
+<h2 id="org79818fc">案例 2：修改字符串字面量</h2>
+<div class="outline-text-2" id="text-org79818fc">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">char</span> *<span class="org-variable-name">p</span> = <span class="org-string">"string constant"</span>;
+*(p + 0) = <span class="org-string">'S'</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#23581;&#35797;&#20462;&#25913;&#23383;&#31526;&#20018;&#23383;&#38754;&#37327;</span>
+</pre>
+</div>
+
+<p>
+字符串字面量通常存储在只读内存区域。修改它通常会导致段错误 (Segmentation Fault)，但编译器不一定会给出警告。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org98a6a61" class="outline-2">
+<h2 id="org98a6a61">案例 3：有符号整数溢出</h2>
+<div class="outline-text-2" id="text-org98a6a61">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">x</span> = INT_MAX;
+<span class="org-keyword">if</span> (x + 1 &gt; x) {  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#26377;&#31526;&#21495;&#25972;&#25968;&#28322;&#20986;
+</span>    x++;
+}
+</pre>
+</div>
+
+<p>
+有符号整数溢出是未定义行为。编译器可能会优化掉溢出检查——它假设溢出不会发生，因此 <code>x + 1 &gt; x</code> 可能被直接优化为 <code>true</code> 。gcc 提供了 <code>-fstrict-overflow</code> 和 <code>-fno-strict-overflow</code> 选项来控制这一行为。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8a90893" class="outline-2">
+<h2 id="org8a90893">案例 4：整数除以零</h2>
+<div class="outline-text-2" id="text-org8a90893">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">x</span> = 0;
+<span class="org-type">double</span> <span class="org-variable-name">y</span> = 10 / x;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#25972;&#25968;&#38500;&#20197;&#38646;</span>
+</pre>
+</div>
+
+<p>
+C99 标准规定：当除法或取模运算的右操作数为零时，行为未定义。运行时通常会产生 "Floating point exception" 并崩溃。
+</p>
+
+<p>
+但 <b>浮点数除以零是明确定义的</b> ：根据 IEEE 标准，非零浮点数除以零结果为 <code>+inf</code> 或 <code>-inf</code> ，零除以零结果为 <code>NaN</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga97f3c4" class="outline-2">
+<h2 id="orga97f3c4">案例 5：过大的位移操作</h2>
+<div class="outline-text-2" id="text-orga97f3c4">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">uint32_t</span> <span class="org-variable-name">a</span> = 0xFFFFFFFF;
+<span class="org-type">uint32_t</span> <span class="org-variable-name">res</span> = a &gt;&gt; 35;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#31227;&#20301;&#37327; &gt;= &#25805;&#20316;&#25968;&#20301;&#23485;</span>
+</pre>
+</div>
+
+<p>
+C99 标准规定：如果移位操作的右操作数为负数，或者大于等于左操作数的位宽，则行为未定义。对于 32 位整数，移位 35 位就是未定义行为。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org897929e" class="outline-2">
+<h2 id="org897929e">案例 6：解引用空指针</h2>
+<div class="outline-text-2" id="text-org897929e">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> *<span class="org-variable-name">p</span> = <span class="org-constant">NULL</span>;
+*p = 10;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#35299;&#24341;&#29992;&#31354;&#25351;&#38024;</span>
+</pre>
+</div>
+
+<p>
+空指针不指向任何有效对象。解引用空指针在 Linux 上通常会导致段错误 (SIGSEGV)，但 C 标准对此没有任何保证。编译器也不会生成额外的空指针检查代码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7630f45" class="outline-2">
+<h2 id="org7630f45">案例 7：数组越界访问</h2>
+<div class="outline-text-2" id="text-org7630f45">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">a</span>[5] = {1, 2, 3, 4, 5};
+printf(<span class="org-string">"a[5]: %d\n"</span>, a[5]);  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#36234;&#30028;&#35775;&#38382;
+</span><span class="org-type">a</span>[5] = 6;                     <span class="org-comment-delimiter">// </span><span class="org-comment">&#26410;&#23450;&#20041;&#34892;&#20026;&#65306;&#36234;&#30028;&#20889;&#20837;</span>
+</pre>
+</div>
+
+<p>
+C 语言不像 Java 那样进行数组边界检查。越界访问可能读到垃圾值、覆盖关键数据、导致缓冲区溢出或段错误。编译器即使在 <code>-Wall</code> 下也不会对此发出警告。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcc42872" class="outline-2">
+<h2 id="orgcc42872">总结</h2>
+<div class="outline-text-2" id="text-orgcc42872">
+<p>
+C 语言中的未定义行为是许多隐蔽 bug 的根源。常见的未定义行为包括：
+</p>
+
+<ol class="org-ol">
+<li>序列点间多次修改同一变量</li>
+<li>修改字符串字面量</li>
+<li>有符号整数溢出</li>
+<li>整数除以零</li>
+<li>移位量超过位宽</li>
+<li>解引用空指针</li>
+<li>数组越界访问</li>
+</ol>
+
+<p>
+建议使用编译器警告选项（如 <code>-Wall -Wextra</code> ）和静态分析工具（如 PVS-Studio）来及早发现潜在的未定义行为。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-12</span>
+    <span class="post-info">2026-04-12</span>
+    <a href="../../../../../tags/编程之旅">编程之旅</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; oc0tmsjkidze5cmwmr3zb3bgga &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
