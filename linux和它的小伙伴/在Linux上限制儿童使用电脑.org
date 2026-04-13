@@ -147,6 +147,9 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
   flock -n 9 || exit 0
 
   # 计算今日累计在线分钟数
+  # 注意：此算法假设 LOGIN/LOGOUT 记录严格按序配对。如果用户同时有多个会话
+  #（如 SSH + 图形界面），日志可能出现交错序列，导致错误配对。
+  # 家庭环境通常单会话，可以安全使用。
   calculate_usage() {
       local user=$1
       local total_seconds=0
@@ -188,13 +191,13 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
   remaining=$((MAX_MINUTES - usage))
 
   if [ "$remaining" -le 0 ]; then
-      wall "使用时间已到，系统将在 2 分钟后将 $TARGET_USER 踢出！" 2>/dev/null
+      echo "使用时间已到，系统将在 2 分钟后将 $TARGET_USER 踢出！" | wall 2>/dev/null
       sleep 120
       pkill -u "$TARGET_USER"
       sleep 10
-      pkill -u -9 "$TARGET_USER"
+      pkill -9 -u "$TARGET_USER"
   elif [ "$remaining" -le 5 ]; then
-      wall "$TARGET_USER 还有 $remaining 分钟的使用时间" 2>/dev/null
+      echo "$TARGET_USER 还有 $remaining 分钟的使用时间" | wall 2>/dev/null
   fi
 #+END_SRC
 
@@ -252,6 +255,8 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 实际使用中，建议采用多级警告，给孩子一个心理准备的过程：
 
+以下是一个示例，展示如何替换脚本中的警告逻辑：
+
 #+BEGIN_SRC shell
   # 在 check-usage.sh 中替换警告逻辑
   usage=$(calculate_usage "$TARGET_USER")
@@ -259,15 +264,15 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
   if [ "$remaining" -le 0 ]; then
       # 已超时，通知并踢出
-      wall "$TARGET_USER，今日使用时间已到！" 2>/dev/null
+      echo "$TARGET_USER，今日使用时间已到！" | wall 2>/dev/null
       sleep 120
       pkill -u "$TARGET_USER"
   elif [ "$remaining" -le 2 ]; then
       # 最后 2 分钟警告
-      wall "$TARGET_USER，还有 $remaining 分钟，请保存工作！" 2>/dev/null
+      echo "$TARGET_USER，还有 $remaining 分钟，请保存工作！" | wall 2>/dev/null
   elif [ "$remaining" -le 5 ]; then
       # 5 分钟提醒
-      wall "$TARGET_USER，还有 $remaining 分钟的使用时间" 2>/dev/null
+      echo "$TARGET_USER，还有 $remaining 分钟的使用时间" | wall 2>/dev/null
   fi
 #+END_SRC
 
@@ -305,9 +310,9 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
 
 #+BEGIN_EXAMPLE
   # /etc/blocked-hosts
-  # 每行一个要屏蔽的域名
-  example-bad-site.com
-  another-bad-site.com
+  # 每行一个要屏蔽的域名（标准 hosts 格式）
+  127.0.0.1 example-bad-site.com
+  127.0.0.1 another-bad-site.com
 #+END_EXAMPLE
 
 在 =/etc/dnsmasq.conf= 中添加配置：
@@ -338,6 +343,8 @@ PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解
   # 禁止 geo 用户在其他时间访问网络
   sudo iptables -A OUTPUT -m owner --uid-owner geo -j DROP
 #+END_SRC
+
+注意： =--timestop 20:00= 实际上不包含 20:00 整点，规则有效时间为 18:00:00 到 19:59:59。如果需要包含 20:00 整点，可以设置为 =--timestop 20:01=。
 
 要持久化这些规则，可以将它们写入一个规则文件，然后在启动时自动恢复：
 
@@ -394,7 +401,7 @@ Linux 的每个文件都有三组权限：所有者（owner）、所属组（gro
 
 对于需要限制的每个程序，重复上述步骤即可。也可以写一个脚本来批量处理：
 
-#+BEGIN_SRC shell 
+#+BEGIN_SRC shell :tangle "/sudo::/usr/local/bin/restrict-programs.sh" 
   #!/bin/bash
   # /usr/local/bin/restrict-programs.sh
   # 限制指定程序只能由 restricted 组执行
@@ -437,8 +444,8 @@ AppArmor 通过 profile 来定义程序的访问权限。需要注意的是，Ap
 
       # 只允许特定用户组执行
       # 注意：AppArmor 本身不直接支持按用户过滤，
-      # 这里通过 owner 匹配来限制只有文件所有者可以执行
-      owner /usr/bin/steam r,
+      # owner 关键字匹配进程所有者（即运行 steam 的用户）
+      owner /usr/bin/steam rx,
   }
 #+END_EXAMPLE
 
