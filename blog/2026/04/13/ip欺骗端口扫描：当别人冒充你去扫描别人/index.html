@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>IP欺骗端口扫描：当别人冒充你去扫描别人 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">IP欺骗端口扫描：当别人冒充你去扫描别人</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org8178083">什么是 IP 欺骗</a></li>
+<li><a href="#org79a0a9f">伪造源 IP （ <code>-S</code> 参数）</a></li>
+<li><a href="#org00518db">Decoy Scan（诱饵扫描）</a>
+<ul>
+<li><a href="#org2e627ae">原理</a></li>
+<li><a href="#orgf1c35cf">命令格式</a></li>
+<li><a href="#org58b0cb1">实操演示</a></li>
+</ul>
+</li>
+<li><a href="#orgc8f5f0e">Idle Scan（僵尸扫描）</a>
+<ul>
+<li><a href="#org9a506bd">原理</a></li>
+<li><a href="#orgacf3c73">僵尸主机的选择条件</a></li>
+<li><a href="#org7a31c0b">命令格式</a></li>
+<li><a href="#org448ea14">实操演示</a></li>
+</ul>
+</li>
+<li><a href="#orgeaaad0d">防御方案</a>
+<ul>
+<li><a href="#org9fcbe44">检测异常流量</a></li>
+<li><a href="#org016b5da">限制出站 TCP 连接</a></li>
+<li><a href="#orgb280969">BCP38 与 uRPF：根本解决方案</a></li>
+<li><a href="#org80eaf4c">收到 abuse 报告时的应对</a></li>
+</ul>
+</li>
+<li><a href="#org9b9cd73">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+你有没有想过，有人可以用你的 IP 地址去扫描别人的服务器，而你可能毫不知情？
+</p>
+
+<p>
+这并不是天方夜谭。2024 年，开源游戏项目 DDNet 的服务器就遭遇了这种攻击。攻击者利用 nmap 的 IP 欺骗扫描功能，冒充 DDNet 的服务器 IP 对大学网络进行端口扫描。大学的安全系统自动检测到扫描行为后，向 DDNet 的主机商发送了 abuse 报告。主机商在无法验证数据包是否真的来自 DDNet 服务器的情况下，直接关停了他们的 VPS。更糟的是，即使 DDNet 配置了防火墙规则，攻击者仍然可以每天重复这种攻击，最终导致服务被终止。
+</p>
+
+<p>
+这种攻击利用的是 nmap 的 IP 伪造扫描能力。nmap 提供了多种欺骗扫描方式，包括直接伪造源 IP 的 <code>-S</code> 参数、混入诱饵的 <code>Decoy Scan</code> （ <code>-D</code> ），以及更加隐蔽的 <code>Idle Scan</code> （ <code>-sI</code> ）。下面我们就来深入了解这些欺骗扫描技术是如何工作的，以及作为服务器管理员应该如何检测和防御。
+</p>
+
+<p>
+参考资料: <a href="https://hookrace.net/blog/port-scan-with-spoofed-ip-addresses/">https://hookrace.net/blog/port-scan-with-spoofed-ip-addresses/</a>
+</p>
+
+<div id="outline-container-org8178083" class="outline-2">
+<h2 id="org8178083">什么是 IP 欺骗</h2>
+<div class="outline-text-2" id="text-org8178083">
+<p>
+IP 欺骗（IP Spoofing）是指发送数据包时伪造源 IP 地址。在 TCP 协议中，由于三次握手机制的存在，单纯的 IP 伪造很难建立完整的 TCP 连接，因为响应包会被发送到被伪造的 IP 地址而非攻击者。
+</p>
+
+<p>
+但是，端口扫描不一定需要建立完整的 TCP 连接。nmap 的 SYN 扫描（半开扫描）只需要发送一个 SYN 包并观察响应即可判断端口状态，不需要完成三次握手。这就为 IP 欺骗扫描创造了条件。
+</p>
+
+<p>
+nmap 提供了三种主要的伪装扫描方式：
+</p>
+
+<ol class="org-ol">
+<li><code>-S</code> （伪造源 IP ）：最直接的方式，将扫描包的源 IP 设为受害者的 IP 。这也是 DDNet 攻击中最可能使用的方式</li>
+<li><code>Decoy Scan</code> （诱饵扫描，=-D= 参数）：在真实扫描包中混入大量伪造源 IP 的探测包，让目标无法分辨真正的扫描者</li>
+<li><code>Idle Scan</code> （僵尸扫描，=-sI= 参数）：利用第三方僵尸主机的 IP ID 递增特性来间接判断端口状态，攻击者 IP 完全不出现在流量中</li>
+</ol>
+
+<p>
+下面分别详细介绍这三种技术。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org79a0a9f" class="outline-2">
+<h2 id="org79a0a9f">伪造源 IP （ <code>-S</code> 参数）</h2>
+<div class="outline-text-2" id="text-org79a0a9f">
+<p>
+最简单的 IP 伪造方式就是用 <code>-S</code> 参数直接指定扫描包的源 IP 地址：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#23558;&#28304; IP &#20266;&#36896;&#20026; 192.168.31.30 &#26469;&#25195;&#25551;&#30446;&#26631;
+</span>sudo nmap -S 192.168.31.30 192.168.31.25
+</pre>
+</div>
+
+<p>
+使用 <code>-S</code> 后，目标服务器看到的所有扫描包都来自伪造的 IP 。这种方式非常直接，也是 DDNet 攻击中最可能使用的手法——攻击者将自己的源 IP 设为 DDNet 服务器的 IP ，然后去扫描大学网络，大学自然会认为扫描来自 DDNet 。
+</p>
+
+<p>
+不过 <code>-S</code> 有一个局限：由于响应包会被发送到伪造的 IP 而非攻击者，攻击者无法直接收到扫描结果。因此 <code>-S</code> 通常与 <code>-e</code> （指定网络接口）和 <code>-Pn</code> （跳过主机发现）配合使用，或者结合其他手段来获取扫描结果。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org00518db" class="outline-2">
+<h2 id="org00518db">Decoy Scan（诱饵扫描）</h2>
+<div class="outline-text-2" id="text-org00518db">
+</div>
+<div id="outline-container-org2e627ae" class="outline-3">
+<h3 id="org2e627ae">原理</h3>
+<div class="outline-text-3" id="text-org2e627ae">
+<p>
+Decoy Scan 的思路很直接：在发送真实的 SYN 扫描包的同时，发送大量源 IP 伪造的 SYN 包。目标服务器会看到来自多个 IP 地址的扫描请求，无法确定哪个是真正的攻击者。
+</p>
+
+<p>
+其数据包流程为：
+</p>
+
+<ol class="org-ol">
+<li>nmap 向目标发送一批 SYN 包，其中一部分的源 IP 是真实的（攻击者的），其余的是伪造的诱饵 IP</li>
+<li>目标服务器对每个 SYN 包都回复 SYN/ACK（端口开放）或 RST（端口关闭）</li>
+<li>只有真实攻击者能收到目标的响应（因为诱饵 IP 是伪造的）</li>
+<li>攻击者根据收到的响应判断端口状态</li>
+</ol>
+
+<p>
+从目标服务器的日志来看，扫描来自多个不同的 IP，就像遭到了分布式扫描一样。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf1c35cf" class="outline-3">
+<h3 id="orgf1c35cf">命令格式</h3>
+<div class="outline-text-3" id="text-orgf1c35cf">
+<p>
+使用 <code>-D</code> 参数指定诱饵 IP 列表，用逗号分隔。 <code>ME</code> 代表自己的真实 IP ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;&#25351;&#23450; IP &#20316;&#20026;&#35825;&#39285;
+</span>sudo nmap -D 192.168.31.100,192.168.31.101,ME 192.168.31.250
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;&#38543;&#26426;&#29983;&#25104;&#30340; IP &#20316;&#20026;&#35825;&#39285;
+</span>sudo nmap -D RND:10 192.168.31.250
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23558;&#30495;&#23454; IP &#25918;&#22312;&#35825;&#39285;&#21015;&#34920;&#30340;&#21518;&#38754;&#65288;&#26356;&#38544;&#34109;&#65289;
+</span>sudo nmap -D 192.168.31.100,192.168.31.101,192.168.31.102,192.168.31.103,ME 192.168.31.250
+</pre>
+</div>
+
+<p>
+注意： <code>ME</code> 放在第 6 位或之后时，一些端口扫描检测工具（如 scanlogd）不会报告真实 IP（根据 nmap 文档）。
+另外，nmap -D 实现IP地址欺骗（伪造源IP）需要原始套接字 (raw socket) 能力，这通常只有 root 用户才被操作系统允许。当你以普通用户身份运行 nmap 时，系统会拒绝发送源IP不属于本地网卡的伪造数据包。
+</p>
+</div>
+</div>
+<div id="outline-container-org58b0cb1" class="outline-3">
+<h3 id="org58b0cb1">实操演示</h3>
+<div class="outline-text-3" id="text-org58b0cb1">
+<p>
+下面我们在本地环境中演示 Decoy Scan。假设有三台机器：
+</p>
+
+<ul class="org-ul">
+<li>攻击者：192.168.31.10</li>
+<li>目标：192.168.31.25</li>
+<li>诱饵 IP（伪造）：192.168.31.100、192.168.31.101</li>
+</ul>
+
+<p>
+在攻击者机器上执行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo nmap -D 192.168.31.100,192.168.31.101,ME 192.168.31.25
+</pre>
+</div>
+
+<p>
+同时在目标机器上用 <code>tcpdump</code> 抓包观察：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo tcpdump -n -i any <span class="org-string">'tcp[tcpflags] &amp; (tcp-syn) != 0 and not tcp[tcpflags] &amp; (tcp-ack) != 0'</span> -c 30
+</pre>
+</div>
+
+<p>
+目标服务器会看到类似这样的输出：
+</p>
+
+<pre class="example" id="org5db89d9">
+IP 192.168.31.100.12345 &gt; 192.168.31.25.80: Flags [S], seq 123456
+IP 192.168.31.101.12346 &gt; 192.168.31.25.443: Flags [S], seq 234567
+IP 192.168.31.10.12347 &gt; 192.168.31.25.22: Flags [S], seq 345678
+IP 192.168.31.100.12348 &gt; 192.168.31.25.21: Flags [S], seq 456789
+...
+</pre>
+
+<p>
+可以看到，目标服务器认为扫描来自 192.168.31.100、192.168.31.101 和 192.168.31.10 三个 IP。如果这些诱饵 IP 恰好属于某个真实的服务器，那台服务器的管理员就会收到 abuse 投诉，而不是攻击者。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc8f5f0e" class="outline-2">
+<h2 id="orgc8f5f0e">Idle Scan（僵尸扫描）</h2>
+<div class="outline-text-2" id="text-orgc8f5f0e">
+</div>
+<div id="outline-container-org9a506bd" class="outline-3">
+<h3 id="org9a506bd">原理</h3>
+<div class="outline-text-3" id="text-org9a506bd">
+<p>
+Idle Scan 是一种更加精巧的扫描技术。它利用了 TCP/IP 协议栈中 IP ID（IP 标识符）字段递增的特性，通过一个"僵尸主机"来间接探测目标服务器的端口状态，攻击者的 IP <b>完全不会</b> 出现在目标服务器的任何日志中。
+</p>
+
+<p>
+其核心流程分为四步：
+</p>
+
+<ol class="org-ol">
+<li><b>探测僵尸的 IP ID</b> ：攻击者向僵尸主机发送 SYN/ACK 包，僵尸主机会回复 RST 包，该包的 IP ID 值记为 N</li>
+<li><b>伪造 SYN 包发给目标</b> ：攻击者伪造一个源 IP 为僵尸主机的 SYN 包，发送给目标服务器的待测端口</li>
+<li><b>目标与僵尸交互</b> ：
+<ul class="org-ul">
+<li>若目标端口*开放*：目标回复 SYN/ACK 给僵尸，僵尸觉得莫名其妙（没有发起过连接），回复 RST，僵尸的 IP ID 递增 1（从 N 变为 N+1）</li>
+<li>若目标端口*关闭*：目标回复 RST 给僵尸，僵尸不会响应这个 RST，因此 IP ID 不会因这次交互而增加</li>
+</ul></li>
+<li><b>再次探测僵尸的 IP ID</b> ：攻击者再次发送 SYN/ACK 给僵尸，获取新的 IP ID 值 M：
+<ul class="org-ul">
+<li>M = N + 1 → 端口关闭或被过滤</li>
+<li>M = N + 2 → 端口开放（中间那次递增就是目标与僵尸交互时产生的）</li>
+</ul></li>
+</ol>
+
+<p>
+整个过程中，目标服务器只看到来自僵尸主机的扫描，*完全看不到攻击者的 IP*。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgacf3c73" class="outline-3">
+<h3 id="orgacf3c73">僵尸主机的选择条件</h3>
+<div class="outline-text-3" id="text-orgacf3c73">
+<p>
+并不是任何主机都能作为僵尸，需要满足：
+</p>
+
+<ul class="org-ul">
+<li>IP ID 序列是全局递增的（不是 per-connection 递增）</li>
+<li>在扫描期间保持空闲（没有其他流量干扰 IP ID 递增）</li>
+<li>能够响应 unsolicited SYN/ACK（即回复 RST）</li>
+</ul>
+
+<p>
+实践中，网络打印机、老旧路由器、某些 IOT 设备常常满足这些条件。nmap 自带一个脚本可以帮你测试候选僵尸：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo nmap --script ipidseq &lt;candidate_ip&gt;
+</pre>
+</div>
+
+<p>
+如果输出显示 <code>IP ID Sequence: Incremental</code> ，则该主机可以作为僵尸。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7a31c0b" class="outline-3">
+<h3 id="org7a31c0b">命令格式</h3>
+<div class="outline-text-3" id="text-org7a31c0b">
+<p>
+使用 <code>-sI</code> 参数指定僵尸主机：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#22522;&#26412;&#29992;&#27861;
+</span>sudo nmap -sI &lt;zombie_host&gt; &lt;target&gt;
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25351;&#23450;&#31471;&#21475;&#33539;&#22260;
+</span>sudo nmap -sI 192.168.31.50 -p 22,80,443 192.168.31.250
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25195;&#25551;&#25152;&#26377;&#31471;&#21475;&#65288;&#38656;&#35201;&#36739;&#38271;&#26102;&#38388;&#65289;
+</span>sudo nmap -Pn -p- -sI 192.168.31.50 192.168.31.250
+</pre>
+</div>
+
+<p>
+注意：Idle Scan 需要 root 权限，因为要构造原始数据包。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org448ea14" class="outline-3">
+<h3 id="org448ea14">实操演示</h3>
+<div class="outline-text-3" id="text-org448ea14">
+<p>
+假设我们有：
+</p>
+
+<ul class="org-ul">
+<li>攻击者：192.168.31.10</li>
+<li>僵尸主机：192.168.31.50（一台网络打印机）</li>
+<li>目标：192.168.31.25</li>
+</ul>
+
+<p>
+先测试僵尸主机是否可用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo nmap --script ipidseq 192.168.31.50
+</pre>
+</div>
+
+<p>
+确认 IP ID 是递增的后，执行扫描：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo nmap -sI 192.168.31.50 -p 22,80,443 192.168.31.25
+</pre>
+</div>
+
+<p>
+在目标服务器上用 <code>tcpdump</code> 抓包，你会发现 <b>只有</b> 僵尸主机的 IP 出现在日志中：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo tcpdump -n host 192.168.31.25 and tcp
+</pre>
+</div>
+
+<pre class="example" id="orgb987f38">
+IP 192.168.31.50.12345 &gt; 192.168.31.25.22: Flags [S], seq ...
+IP 192.168.31.25.22 &gt; 192.168.31.50.12345: Flags [S.], seq ...
+IP 192.168.31.50.12345 &gt; 192.168.31.25.22: Flags [R], seq ...
+</pre>
+
+<p>
+整个过程攻击者 192.168.31.10 *完全没有出现*。如果大学的安全系统检测到这个扫描，他们会认为扫描来自 192.168.31.50 这台打印机。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgeaaad0d" class="outline-2">
+<h2 id="orgeaaad0d">防御方案</h2>
+<div class="outline-text-2" id="text-orgeaaad0d">
+<p>
+了解了攻击原理后，我们来看看作为服务器管理员可以采取哪些防御措施。
+</p>
+</div>
+
+<div id="outline-container-org9fcbe44" class="outline-3">
+<h3 id="org9fcbe44">检测异常流量</h3>
+<div class="outline-text-3" id="text-org9fcbe44">
+<p>
+使用 <code>tcpdump</code> 监控异常的 SYN 包模式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#30417;&#25511;&#25152;&#26377;&#20837;&#31449; SYN &#21253;
+</span>sudo tcpdump -n -i any <span class="org-string">'tcp[tcpflags] &amp; (tcp-syn) != 0 and not tcp[tcpflags] &amp; (tcp-ack) != 0'</span>
+</pre>
+</div>
+
+<p>
+如果短时间内看到来自大量不同 IP 的 SYN 包，很可能就是 Decoy Scan。
+</p>
+
+<p>
+也可以用 <code>ss</code> 命令查看处于 SYN_RECV 状态的连接：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ss -tunap | grep SYN_RECV
+</pre>
+</div>
+
+<p>
+大量 SYN_RECV 状态的连接说明有人在扫描或进行 SYN Flood 攻击。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org016b5da" class="outline-3">
+<h3 id="org016b5da">限制出站 TCP 连接</h3>
+<div class="outline-text-3" id="text-org016b5da">
+<p>
+DDNet 在遭遇攻击后采取的防御措施之一就是限制出站 TCP 新连接，只保留必要端口。这样即使有人想冒充你去扫描，你的服务器也不会发出这些包（不过这只能证明你的服务器没有主动发出扫描，无法阻止别人伪造你的 IP ）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#38459;&#27490;&#25152;&#26377;&#20986;&#31449; TCP &#26032;&#36830;&#25509;&#65292;&#38500;&#20102;&#25351;&#23450;&#31471;&#21475;
+</span>sudo iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --dport 80 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+sudo iptables -A OUTPUT -p tcp -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+sudo iptables -A OUTPUT -p tcp -m conntrack --ctstate NEW -j DROP
+</pre>
+</div>
+
+<p>
+你也可以直接拒绝特定 IP 段的流量（比如频繁发 abuse 报告的大学）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo iptables -A INPUT -s 147.251.0.0/16 -j DROP
+sudo iptables -A OUTPUT -d 147.251.0.0/16 -j DROP
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb280969" class="outline-3">
+<h3 id="orgb280969">BCP38 与 uRPF：根本解决方案</h3>
+<div class="outline-text-3" id="text-orgb280969">
+<p>
+上面这些措施只是治标。IP 欺骗攻击的根本原因是：很多 ISP 没有过滤伪造源 IP 的数据包。
+</p>
+
+<p>
+BCP38（最初为 RFC 2827，现已被 RFC 3704 取代）是 IETF 发布的最佳实践文档，要求 ISP 在网络边界实施 <b>入站过滤</b> ，阻止源 IP 不属于该网络的数据包离开网络。其具体实现机制叫做 uRPF（Unicast Reverse Path Forwarding，单播反向路径转发）。
+</p>
+
+<p>
+在 Linux 上，uRPF 可以通过内核参数启用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#24403;&#21069; uRPF &#35774;&#32622;&#65288;0=&#20851;&#38381;, 1=&#20005;&#26684;&#27169;&#24335;, 2=&#26494;&#25955;&#27169;&#24335;&#65289;
+</span>cat /proc/sys/net/ipv4/conf/all/rp_filter
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21551;&#29992;&#20005;&#26684;&#27169;&#24335;
+</span>sudo sysctl -w net.ipv4.conf.all.rp_filter=1
+</pre>
+</div>
+
+<p>
+严格模式会检查数据包的源 IP 是否可以通过接收该包的接口到达。如果不匹配，就丢弃该包。这样可以有效阻止伪造源 IP 的数据包从你的网络发出。
+</p>
+
+<p>
+<b>但是</b> ，uRPF 需要在 ISP 的路由器上配置，普通 VPS 用户无能为力。这也是为什么 IP 欺骗攻击至今仍然有效——它需要整个互联网生态的配合才能根治。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org80eaf4c" class="outline-3">
+<h3 id="org80eaf4c">收到 abuse 报告时的应对</h3>
+<div class="outline-text-3" id="text-org80eaf4c">
+<p>
+如果你的服务器被别人冒充进行 IP 欺骗扫描，收到了主机商转发的 abuse 报告，可以采取以下步骤：
+</p>
+
+<ol class="org-ol">
+<li><b>检查服务器日志</b> ：确认在报告所述时间段内，服务器没有发出相关流量</li>
+</ol>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26816;&#26597; iptables &#26085;&#24535;&#65288;&#22914;&#26524;&#37197;&#32622;&#20102; LOG &#35268;&#21017;&#65289;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#23558; reported_time_range &#26367;&#25442;&#20026;&#23454;&#38469;&#30340;&#26102;&#38388;&#33539;&#22260;
+</span>grep <span class="org-string">"reported_time_range"</span> /var/log/kern.log | grep <span class="org-string">"DPT="</span>
+</pre>
+</div>
+
+<ol class="org-ol">
+<li><b>提供 tcpdump 证据</b> ：在服务器上持续抓包记录，作为没有发出扫描流量的证据</li>
+</ol>
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25345;&#32493;&#35760;&#24405; TCP &#26032;&#36830;&#25509;&#65288;&#21518;&#21488;&#36816;&#34892;&#65292;&#20889;&#20837;&#24102;&#26102;&#38388;&#25139;&#30340;&#25991;&#20214;&#65289;
+</span>sudo tcpdump -i any -G 3600 -w <span class="org-string">'/var/log/traffic_%Y%m%d_%H.pcap'</span> <span class="org-string">"tcp[tcpflags] &amp; (tcp-syn) != 0 and not tcp[tcpflags] &amp; (tcp-ack) != 0"</span>
+</pre>
+</div>
+
+<ol class="org-ol">
+<li><b>向主机商解释</b> ：说明 IP 欺骗扫描的原理，指出攻击者可以从任何位置伪造你的 IP 进行扫描，你的服务器不需要发出任何数据包。可以引用原文 <a href="https://hookrace.net/blog/port-scan-with-spoofed-ip-addresses/">https://hookrace.net/blog/port-scan-with-spoofed-ip-addresses/</a> 作为参考</li>
+
+<li><b>请求 ISP 提供 netflow 数据</b> ：只有上游路由器的 netflow 数据才能证明数据包是否真的从你的 VPS 发出</li>
+</ol>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9b9cd73" class="outline-2">
+<h2 id="org9b9cd73">小结</h2>
+<div class="outline-text-2" id="text-org9b9cd73">
+<p>
+IP 欺骗端口扫描利用的是互联网信任链中的漏洞：大学信任 IP 地址 → 主机商信任 abuse 报告 → 但 IP 地址可以被伪造。本质上是一种"借刀杀人"。
+</p>
+
+<p>
+对于个人服务器管理员来说，能做的防御有限：
+</p>
+<ul class="org-ul">
+<li>限制出站连接可以证明自己的清白，但无法阻止别人伪造你的 IP</li>
+<li>保留网络流量日志可以在收到 abuse 报告时提供证据</li>
+<li>向主机商解释 IP 欺骗的原理，争取理解</li>
+</ul>
+
+<p>
+根本解决方案需要 ISP 实施 BCP38 源地址验证，阻止伪造源 IP 的数据包离开网络。但在整个互联网都实施之前，这种攻击手法仍将存在。
+</p>
+
+<p>
+如果你也遭遇了类似的攻击，欢迎在评论区分享你的经历和应对方法。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-13</span>
+    <span class="post-info">2026-04-14</span>
+    <a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; z11rpunz2tcell1cfwpixy4v4f &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

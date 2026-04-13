@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>GIF不仅仅是一种图片格式——用GIF流做些奇怪的事 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="无主之地" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">GIF不仅仅是一种图片格式——用GIF流做些奇怪的事</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org9e31861">GIF 流的原理</a></li>
+<li><a href="#orgc20dda3">用途 1：用 Python 实现一个 GIF 流服务器</a>
+<ul>
+<li><a href="#org1c5ed2c">安装依赖</a></li>
+<li><a href="#org05a7716">完整代码</a></li>
+<li><a href="#org859a95d">运行效果</a></li>
+</ul>
+</li>
+<li><a href="#org5bd998a">用途 2：零依赖的实时系统监控仪表盘</a></li>
+<li><a href="#org5f8a15c">用途 4：在 GIF 帧延迟中藏数据</a></li>
+<li><a href="#org9745a24">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+你有没有想过，有人用 GIF 动画在浏览器里玩游戏？
+</p>
+
+<p>
+这不是玩笑。有人用 Haskell 写了一个贪吃蛇游戏，但它的画面输出不是通过窗口或 Canvas，而是通过 <b>GIF 动画流</b> ——服务器不断向浏览器推送新的 GIF 帧，浏览器自动显示，就这样实现了一个"实时"游戏。打开浏览器，访问一个 URL，就能看到不断变化的 GIF 画面，按 WASD 键还能控制蛇的移动方向。
+</p>
+
+<p>
+这听起来很奇怪，但仔细想想又很巧妙：GIF 是一种几乎所有浏览器都支持的图片格式，不需要 JavaScript，不需要 WebSocket，甚至不需要现代浏览器——只要能显示 GIF 就行。
+</p>
+
+<p>
+那么，这种"GIF 流"的技术原理是什么？除了玩游戏，它还能做哪些奇怪的事？让我们一起来探索。
+</p>
+
+<p>
+参考资料: <a href="https://hookrace.net/blog/haskell-game-programming-with-gif-streams/">https://hookrace.net/blog/haskell-game-programming-with-gif-streams/</a>
+</p>
+
+<div id="outline-container-org9e31861" class="outline-2">
+<h2 id="org9e31861">GIF 流的原理</h2>
+<div class="outline-text-2" id="text-org9e31861">
+<p>
+GIF 流的核心技术是 HTTP 的 <code>multipart/x-mixed-replace</code> Content-Type。这是一种 <b>服务器推送</b> （Server Push）技术，诞生于 Netscape 时代。
+</p>
+
+<p>
+普通的 HTTP 响应是这样的：客户端发请求，服务器返回一个完整的响应（一个 HTML 页面、一张图片等），然后连接关闭。
+</p>
+
+<p>
+而 <code>multipart/x-mixed-replace</code> 允许服务器在 <b>同一个 HTTP 连接</b> 上连续发送多个"部分"，每个部分都会 <b>替换</b> 前一个。浏览器收到新的部分后，会自动用新内容替换旧内容。
+</p>
+
+<p>
+原始的 HTTP 响应看起来是这样的：
+</p>
+
+<pre class="example" id="org1154c64">
+HTTP/1.1 200 OK
+Content-Type: multipart/x-mixed-replace; boundary=frame
+
+--frame
+Content-Type: image/gif
+
+&lt;GIF 二进制数据：第 1 帧&gt;
+--frame
+Content-Type: image/gif
+
+&lt;GIF 二进制数据：第 2 帧&gt;
+--frame
+Content-Type: image/gif
+
+&lt;GIF 二进制数据：第 3 帧&gt;
+...
+</pre>
+
+<p>
+服务器 <b>永远不会关闭这个连接</b> ，而是持续不断地发送新的 GIF 帧。浏览器收到每一帧后立即显示，然后再等待下一帧。就这样，一个静态的 <code>&lt;img&gt;</code> 标签就变成了"实时视频"。
+</p>
+
+<p>
+这项技术最常见于 <b>IP 摄像头的监控画面</b> （MJPEG 流），但用 GIF 来实现同样可行，而且 GIF 格式还有个优势：支持 256 色调色板和透明色，对于简单图形（如游戏画面、监控图表）来说文件体积可能比 JPEG 更小。注意 GIF 的 256 色限制可能导致颜色失真，但对于线条、文本等简单图形效果不错。
+</p>
+
+<p>
+理解了原理后，接下来我们来看看 GIF 流能做哪些有趣的事。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc20dda3" class="outline-2">
+<h2 id="orgc20dda3">用途 1：用 Python 实现一个 GIF 流服务器</h2>
+<div class="outline-text-2" id="text-orgc20dda3">
+<p>
+理解了原理，我们来动手实现一个最简 GIF 流服务器。用 Python 标准库 + Pillow 就够了。
+</p>
+</div>
+
+<div id="outline-container-org1c5ed2c" class="outline-3">
+<h3 id="org1c5ed2c">安装依赖</h3>
+<div class="outline-text-3" id="text-org1c5ed2c">
+<div class="org-src-container">
+<pre class="src src-shell">pip install --user Pillow
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org05a7716" class="outline-3">
+<h3 id="org05a7716">完整代码</h3>
+<div class="outline-text-3" id="text-org05a7716">
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/env python3
+</span><span class="org-doc">"""&#26368;&#31616; GIF &#27969;&#26381;&#21153;&#22120; - &#22312;&#27983;&#35272;&#22120;&#20013;&#26174;&#31034;&#23454;&#26102;&#21464;&#21270;&#30340;&#39068;&#33394;"""</span>
+<span class="org-keyword">from</span> http.server <span class="org-keyword">import</span> HTTPServer, BaseHTTPRequestHandler
+<span class="org-keyword">from</span> io <span class="org-keyword">import</span> BytesIO
+<span class="org-keyword">import</span> time, math
+<span class="org-keyword">from</span> PIL <span class="org-keyword">import</span> Image, ImageDraw
+
+<span class="org-keyword">class</span> <span class="org-type">GifStreamHandler</span>(BaseHTTPRequestHandler):
+    <span class="org-keyword">def</span> <span class="org-function-name">do_GET</span>(<span class="org-keyword">self</span>):
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>.path <span class="org-operator">==</span> <span class="org-string">'/'</span>:
+            <span class="org-comment-delimiter"># </span><span class="org-comment">&#39318;&#39029;&#65306;&#36820;&#22238; HTML &#39029;&#38754;&#65292;&#29992; &lt;img&gt; &#23884;&#20837; GIF &#27969;
+</span>            <span class="org-keyword">self</span>.send_response(200)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Content-Type'</span>, <span class="org-string">'text/html; charset=utf-8'</span>)
+            <span class="org-keyword">self</span>.end_headers()
+            <span class="org-variable-name">html</span> <span class="org-operator">=</span> <span class="org-string">'''&lt;!DOCTYPE html&gt;
+&lt;html&gt;&lt;head&gt;&lt;title&gt;GIF Stream Demo&lt;/title&gt;&lt;/head&gt;
+&lt;body style="background:#111;color:#fff;text-align:center"&gt;
+&lt;h1&gt;GIF Stream Demo&lt;/h1&gt;
+&lt;img src="/stream" style="border:2px solid #555"&gt;
+&lt;p&gt;Open this page to see live GIF stream&lt;/p&gt;
+&lt;/body&gt;&lt;/html&gt;'''</span>
+            <span class="org-keyword">self</span>.wfile.write(html.encode(<span class="org-string">'utf-8'</span>))
+        <span class="org-keyword">elif</span> <span class="org-keyword">self</span>.path <span class="org-operator">==</span> <span class="org-string">'/stream'</span>:
+            <span class="org-comment-delimiter"># </span><span class="org-comment">GIF &#27969;&#31471;&#28857;&#65306;&#36890;&#36807; multipart/x-mixed-replace &#25512;&#36865;&#24103;
+</span>            <span class="org-keyword">self</span>.send_response(200)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Content-Type'</span>, <span class="org-string">'multipart/x-mixed-replace; boundary=frame'</span>)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Cache-Control'</span>, <span class="org-string">'no-cache'</span>)
+            <span class="org-keyword">self</span>.end_headers()
+
+            <span class="org-variable-name">t</span> <span class="org-operator">=</span> 0
+            <span class="org-keyword">while</span> <span class="org-constant">True</span>:
+                <span class="org-keyword">try</span>:
+                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#29983;&#25104; 200x200 &#30340;&#22270;&#20687;&#65292;&#39068;&#33394;&#38543;&#26102;&#38388;&#21464;&#21270;
+</span>                    <span class="org-variable-name">r</span> <span class="org-operator">=</span> <span class="org-builtin">int</span>((math.sin(t <span class="org-operator">*</span> 0.05) <span class="org-operator">+</span> 1) <span class="org-operator">*</span> 127)
+                    <span class="org-variable-name">g</span> <span class="org-operator">=</span> <span class="org-builtin">int</span>((math.sin(t <span class="org-operator">*</span> 0.05 <span class="org-operator">+</span> 2) <span class="org-operator">+</span> 1) <span class="org-operator">*</span> 127)
+                    <span class="org-variable-name">b</span> <span class="org-operator">=</span> <span class="org-builtin">int</span>((math.sin(t <span class="org-operator">*</span> 0.05 <span class="org-operator">+</span> 4) <span class="org-operator">+</span> 1) <span class="org-operator">*</span> 127)
+
+                    <span class="org-variable-name">img</span> <span class="org-operator">=</span> Image.new(<span class="org-string">'RGB'</span>, (200, 200), (r, g, b))
+                    <span class="org-variable-name">draw</span> <span class="org-operator">=</span> ImageDraw.Draw(img)
+                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#22312;&#20013;&#38388;&#26174;&#31034;&#24403;&#21069;&#26102;&#38388;
+</span>                    draw.text((50, 80), time.strftime(<span class="org-string">'%H:%M:%S'</span>), fill<span class="org-operator">=</span>(255, 255, 255))
+
+                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#23558;&#22270;&#20687;&#32534;&#30721;&#20026; GIF
+</span>                    <span class="org-variable-name">buf</span> <span class="org-operator">=</span> BytesIO()
+                    img.save(buf, <span class="org-builtin">format</span><span class="org-operator">=</span><span class="org-string">'GIF'</span>)
+                    <span class="org-variable-name">gif_data</span> <span class="org-operator">=</span> buf.getvalue()
+
+                    <span class="org-comment-delimiter"># </span><span class="org-comment">&#25353; multipart/x-mixed-replace &#26684;&#24335;&#21457;&#36865;
+</span>                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'--frame</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'Content-Type: image/gif</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(f<span class="org-string">'Content-Length: </span>{<span class="org-builtin">len</span>(gif_data)}<span class="org-constant">\r\n</span><span class="org-string">'</span>.encode())
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(gif_data)
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.flush()
+
+                    <span class="org-variable-name">t</span> <span class="org-operator">+=</span> 1
+                    time.sleep(0.1)  <span class="org-comment-delimiter"># </span><span class="org-comment">10 FPS
+</span>                <span class="org-keyword">except</span> (<span class="org-type">BrokenPipeError</span>, <span class="org-type">ConnectionResetError</span>):
+                    <span class="org-keyword">break</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">&#23458;&#25143;&#31471;&#26029;&#24320;&#36830;&#25509;
+</span>        <span class="org-keyword">else</span>:
+            <span class="org-keyword">self</span>.send_error(404)
+
+<span class="org-keyword">if</span> <span class="org-builtin">__name__</span> <span class="org-operator">==</span> <span class="org-string">'__main__'</span>:
+    <span class="org-variable-name">server</span> <span class="org-operator">=</span> HTTPServer((<span class="org-string">'0.0.0.0'</span>, 8080), GifStreamHandler)
+    <span class="org-builtin">print</span>(<span class="org-string">'Listening on http://0.0.0.0:8080/'</span>)
+    server.serve_forever()
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org859a95d" class="outline-3">
+<h3 id="org859a95d">运行效果</h3>
+<div class="outline-text-3" id="text-org859a95d">
+<div class="org-src-container">
+<pre class="src src-shell">python3 /tmp/gif_stream_server.py
+</pre>
+</div>
+
+<p>
+然后在浏览器中打开 <code>http://localhost:8080/</code> ，你会看到一个 HTML 页面，其中的 GIF 图像不断变色，中间显示着实时时钟。
+</p>
+
+<p>
+注意： <code>multipart/x-mixed-replace</code> 需要 <code>&lt;img&gt;</code> 标签来承载，不能直接在浏览器地址栏访问流地址。这是因为现代浏览器（特别是 Chrome ）对直接导航到 multipart 流的支持有限。这也是 IP 摄像头监控画面的标准用法——通过 HTML 页面嵌入 <code>&lt;img src</code>"/stream"&gt;= 来显示 MJPEG/GIF 流。
+</p>
+
+<p>
+整个过程：
+</p>
+<ul class="org-ul">
+<li>服务器每 100ms 生成一帧 GIF 图像</li>
+<li>通过 <code>multipart/x-mixed-replace</code> 协议推送给浏览器</li>
+<li>浏览器自动替换显示，无需任何 JavaScript</li>
+</ul>
+
+<p>
+你还可以用 <code>curl</code> 查看 GIF 流的原始数据，感受 <code>multipart/x-mixed-replace</code> 的格式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475; GIF &#27969;&#30340;&#21069;&#20960;&#20010;&#23383;&#33410;&#65288;Ctrl+C &#20572;&#27490;&#65289;
+</span>curl -s http://localhost:8080/stream | xxd
+</pre>
+</div>
+
+<p>
+你会看到 GIF 文件头（ <code>GIF87a</code> 或 <code>GIF89a</code> ）以及边界标记 <code>--frame</code> 在二进制数据中交替出现。Pillow 对于简单的单帧图像默认输出 <code>GIF87a</code> （1987 年的原始格式），对于包含动画或透明色的图像则使用 <code>GIF89a</code> （1989 年增加了动画、透明色等特性）。两者在 GIF 流中都能正常工作。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5bd998a" class="outline-2">
+<h2 id="org5bd998a">用途 2：零依赖的实时系统监控仪表盘</h2>
+<div class="outline-text-2" id="text-org5bd998a">
+<p>
+回到 GIF 流的话题。既然我们可以用 Python 生成 GIF 帧并通过 HTTP 推送，那就可以做一个 <b>不需要 WebSocket 、不需要 JavaScript 的实时监控仪表盘</b> 。
+</p>
+
+<p>
+核心思路：每隔一段时间采集系统状态（CPU、内存），用 Python 画一个柱状图，编码为 GIF 帧，通过 <code>multipart/x-mixed-replace</code> 推送给浏览器。
+</p>
+
+<p>
+需要额外安装 <code>psutil</code> 来获取系统状态：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S python-psutil
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/env python3
+</span><span class="org-doc">"""GIF &#27969;&#31995;&#32479;&#30417;&#25511;&#20202;&#34920;&#30424; - &#32431; GIF&#65292;&#26080;&#38656; JavaScript"""</span>
+<span class="org-keyword">from</span> http.server <span class="org-keyword">import</span> HTTPServer, BaseHTTPRequestHandler
+<span class="org-keyword">from</span> io <span class="org-keyword">import</span> BytesIO
+<span class="org-keyword">import</span> psutil
+<span class="org-keyword">from</span> PIL <span class="org-keyword">import</span> Image, ImageDraw
+<span class="org-keyword">import</span> time
+
+<span class="org-variable-name">WIDTH</span>, <span class="org-variable-name">HEIGHT</span> <span class="org-operator">=</span> 400, 200
+
+<span class="org-keyword">def</span> <span class="org-function-name">get_stats</span>():
+    <span class="org-doc">"""&#33719;&#21462;&#31995;&#32479;&#29366;&#24577;"""</span>
+    <span class="org-keyword">return</span> {
+        <span class="org-string">'cpu'</span>: psutil.cpu_percent(interval<span class="org-operator">=</span>0),
+        <span class="org-string">'mem'</span>: psutil.virtual_memory().percent,
+        <span class="org-string">'disk'</span>: psutil.disk_usage(<span class="org-string">'/'</span>).percent,
+    }
+
+<span class="org-keyword">def</span> <span class="org-function-name">draw_chart</span>(stats):
+    <span class="org-doc">"""&#32472;&#21046;&#26609;&#29366;&#22270;"""</span>
+    <span class="org-variable-name">img</span> <span class="org-operator">=</span> Image.new(<span class="org-string">'RGB'</span>, (WIDTH, HEIGHT), (20, 20, 20))
+    <span class="org-variable-name">draw</span> <span class="org-operator">=</span> ImageDraw.Draw(img)
+
+    <span class="org-variable-name">labels</span> <span class="org-operator">=</span> [(<span class="org-string">'CPU'</span>, stats[<span class="org-string">'cpu'</span>], (0, 180, 0)),
+              (<span class="org-string">'MEM'</span>, stats[<span class="org-string">'mem'</span>], (0, 0, 180)),
+              (<span class="org-string">'DISK'</span>, stats[<span class="org-string">'disk'</span>], (180, 0, 0))]
+
+    <span class="org-keyword">for</span> i, (label, value, color) <span class="org-keyword">in</span> <span class="org-builtin">enumerate</span>(labels):
+        <span class="org-variable-name">x</span> <span class="org-operator">=</span> 50 <span class="org-operator">+</span> i <span class="org-operator">*</span> 120
+        <span class="org-variable-name">bar_height</span> <span class="org-operator">=</span> <span class="org-builtin">int</span>(value <span class="org-operator">/</span> 100 <span class="org-operator">*</span> 150)
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#30011;&#26609;&#23376;
+</span>        draw.rectangle([x, HEIGHT <span class="org-operator">-</span> 30 <span class="org-operator">-</span> bar_height, x <span class="org-operator">+</span> 60, HEIGHT <span class="org-operator">-</span> 30], fill<span class="org-operator">=</span>color)
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#30011;&#26631;&#31614;
+</span>        draw.text((x <span class="org-operator">+</span> 10, HEIGHT <span class="org-operator">-</span> 25), f<span class="org-string">'</span>{label}<span class="org-string"> </span>{value}<span class="org-string">%'</span>, fill<span class="org-operator">=</span>(200, 200, 200))
+
+    <span class="org-keyword">return</span> img
+
+<span class="org-keyword">class</span> <span class="org-type">MonitorHandler</span>(BaseHTTPRequestHandler):
+    <span class="org-keyword">def</span> <span class="org-function-name">do_GET</span>(<span class="org-keyword">self</span>):
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>.path <span class="org-operator">==</span> <span class="org-string">'/'</span>:
+            <span class="org-keyword">self</span>.send_response(200)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Content-Type'</span>, <span class="org-string">'text/html; charset=utf-8'</span>)
+            <span class="org-keyword">self</span>.end_headers()
+            <span class="org-variable-name">html</span> <span class="org-operator">=</span> <span class="org-string">'''&lt;!DOCTYPE html&gt;
+&lt;html&gt;&lt;head&gt;&lt;title&gt;System Monitor&lt;/title&gt;&lt;/head&gt;
+&lt;body style="background:#111;color:#fff;text-align:center"&gt;
+&lt;h1&gt;GIF Stream System Monitor&lt;/h1&gt;
+&lt;img src="/stream" style="border:2px solid #555"&gt;
+&lt;/body&gt;&lt;/html&gt;'''</span>
+            <span class="org-keyword">self</span>.wfile.write(html.encode(<span class="org-string">'utf-8'</span>))
+        <span class="org-keyword">elif</span> <span class="org-keyword">self</span>.path <span class="org-operator">==</span> <span class="org-string">'/stream'</span>:
+            <span class="org-keyword">self</span>.send_response(200)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Content-Type'</span>, <span class="org-string">'multipart/x-mixed-replace; boundary=frame'</span>)
+            <span class="org-keyword">self</span>.send_header(<span class="org-string">'Cache-Control'</span>, <span class="org-string">'no-cache'</span>)
+            <span class="org-keyword">self</span>.end_headers()
+
+            <span class="org-keyword">while</span> <span class="org-constant">True</span>:
+                <span class="org-keyword">try</span>:
+                    <span class="org-variable-name">stats</span> <span class="org-operator">=</span> get_stats()
+                    <span class="org-variable-name">img</span> <span class="org-operator">=</span> draw_chart(stats)
+                    <span class="org-variable-name">buf</span> <span class="org-operator">=</span> BytesIO()
+                    img.save(buf, <span class="org-builtin">format</span><span class="org-operator">=</span><span class="org-string">'GIF'</span>)
+                    <span class="org-variable-name">gif_data</span> <span class="org-operator">=</span> buf.getvalue()
+
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'--frame</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'Content-Type: image/gif</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(f<span class="org-string">'Content-Length: </span>{<span class="org-builtin">len</span>(gif_data)}<span class="org-constant">\r\n</span><span class="org-string">'</span>.encode())
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.write(gif_data)
+                    <span class="org-keyword">self</span>.wfile.write(b<span class="org-string">'</span><span class="org-constant">\r\n</span><span class="org-string">'</span>)
+                    <span class="org-keyword">self</span>.wfile.flush()
+
+                    time.sleep(1)  <span class="org-comment-delimiter"># </span><span class="org-comment">&#27599;&#31186;&#26356;&#26032;&#19968;&#27425;
+</span>                <span class="org-keyword">except</span> (<span class="org-type">BrokenPipeError</span>, <span class="org-type">ConnectionResetError</span>):
+                    <span class="org-keyword">break</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">&#23458;&#25143;&#31471;&#26029;&#24320;&#36830;&#25509;
+</span>
+<span class="org-keyword">if</span> <span class="org-builtin">__name__</span> <span class="org-operator">==</span> <span class="org-string">'__main__'</span>:
+    <span class="org-variable-name">server</span> <span class="org-operator">=</span> HTTPServer((<span class="org-string">'0.0.0.0'</span>, 8080), MonitorHandler)
+    <span class="org-builtin">print</span>(<span class="org-string">'&#30417;&#25511;&#20202;&#34920;&#30424;: http://0.0.0.0:8080/'</span>)
+    server.serve_forever()
+</pre>
+</div>
+
+<p>
+运行后在浏览器中打开，你会看到一个实时更新的柱状图，显示 CPU、内存和磁盘使用率。
+</p>
+
+<p>
+这个方案的特点：
+</p>
+<ul class="org-ul">
+<li><b>不需要前端框架</b> ：没有 React、Vue，甚至没有 JavaScript</li>
+<li><b>不需要 WebSocket</b> ：纯 HTTP 长连接</li>
+<li><b>兼容性极强</b> ：任何能显示 GIF 的浏览器都支持，包括 <code>w3m</code> 这类文本浏览器配合图片渲染器</li>
+<li><b>但带宽消耗大</b> ：每秒 1 帧 GIF 的数据量虽然不大，但如果需要更高帧率就会显著增加</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5f8a15c" class="outline-2">
+<h2 id="org5f8a15c">用途 4：在 GIF 帧延迟中藏数据</h2>
+<div class="outline-text-2" id="text-org5f8a15c">
+<p>
+GIF 格式的每一帧都有一个 <b>延迟时间</b> （Delay Time），以 1/100 秒为单位。正常情况下这个值是 10（即 100ms），但我们可以用它来编码秘密信息。
+</p>
+
+<p>
+比如，延迟 <code>20</code> 表示二进制 <code>1</code> ，延迟 <code>10</code> 表示二进制 <code>0</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/env python3
+</span><span class="org-doc">"""&#22312; GIF &#24103;&#24310;&#36831;&#20013;&#38544;&#34255;&#28040;&#24687;"""</span>
+<span class="org-keyword">from</span> PIL <span class="org-keyword">import</span> Image
+<span class="org-keyword">import</span> random
+
+<span class="org-keyword">def</span> <span class="org-function-name">encode_message</span>(message, output_path, width<span class="org-operator">=</span>10, height<span class="org-operator">=</span>10):
+    <span class="org-doc">"""&#23558;&#28040;&#24687;&#32534;&#30721;&#21040; GIF &#24103;&#24310;&#36831;&#20013;"""</span>
+    <span class="org-variable-name">binary</span> <span class="org-operator">=</span> <span class="org-string">''</span>.join(<span class="org-builtin">format</span>(<span class="org-builtin">ord</span>(c), <span class="org-string">'08b'</span>) <span class="org-keyword">for</span> c <span class="org-keyword">in</span> message)
+    <span class="org-variable-name">binary</span> <span class="org-operator">+=</span> <span class="org-string">'00000000'</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">&#32467;&#26463;&#26631;&#35760;
+</span>
+    <span class="org-variable-name">frames</span> <span class="org-operator">=</span> []
+    <span class="org-keyword">for</span> bit <span class="org-keyword">in</span> binary:
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#29983;&#25104;&#38543;&#26426;&#22122;&#28857;&#24103;
+</span>        <span class="org-variable-name">pixels</span> <span class="org-operator">=</span> [(random.randint(0, 255),) <span class="org-operator">*</span> 3 <span class="org-keyword">for</span> _ <span class="org-keyword">in</span> <span class="org-builtin">range</span>(width <span class="org-operator">*</span> height)]
+        <span class="org-variable-name">img</span> <span class="org-operator">=</span> Image.new(<span class="org-string">'RGB'</span>, (width, height))
+        img.putdata(pixels)
+        frames.append(img)
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#20445;&#23384;&#20026; GIF&#65292;&#27599;&#24103;&#24310;&#36831;&#32534;&#30721;&#19968;&#20010; bit
+</span>    <span class="org-comment-delimiter"># </span><span class="org-comment">20 = &#20108;&#36827;&#21046; 1, 10 = &#20108;&#36827;&#21046; 0&#65288;&#21333;&#20301;&#65306;1/100 &#31186;&#65289;
+</span>    <span class="org-variable-name">delays</span> <span class="org-operator">=</span> [20 <span class="org-keyword">if</span> b <span class="org-operator">==</span> <span class="org-string">'1'</span> <span class="org-keyword">else</span> 10 <span class="org-keyword">for</span> b <span class="org-keyword">in</span> binary]
+    frames[0].save(
+        output_path,
+        save_all<span class="org-operator">=</span><span class="org-constant">True</span>,
+        append_images<span class="org-operator">=</span>frames[1:],
+        duration<span class="org-operator">=</span>delays,
+        loop<span class="org-operator">=</span>0,
+    )
+    <span class="org-builtin">print</span>(f<span class="org-string">'&#24050;&#23558; "</span>{message}<span class="org-string">" &#32534;&#30721;&#21040; </span>{output_path}<span class="org-string">&#65288;</span>{<span class="org-builtin">len</span>(binary)}<span class="org-string"> &#24103;&#65289;'</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">decode_message</span>(gif_path):
+    <span class="org-doc">"""&#20174; GIF &#24103;&#24310;&#36831;&#20013;&#35299;&#30721;&#28040;&#24687;"""</span>
+    <span class="org-variable-name">img</span> <span class="org-operator">=</span> Image.<span class="org-builtin">open</span>(gif_path)
+    <span class="org-variable-name">binary</span> <span class="org-operator">=</span> <span class="org-string">''</span>
+    <span class="org-keyword">try</span>:
+        <span class="org-keyword">while</span> <span class="org-constant">True</span>:
+            <span class="org-variable-name">delay</span> <span class="org-operator">=</span> img.info.get(<span class="org-string">'duration'</span>, 10)
+            <span class="org-variable-name">binary</span> <span class="org-operator">+=</span> <span class="org-string">'1'</span> <span class="org-keyword">if</span> delay <span class="org-operator">&gt;=</span> 20 <span class="org-keyword">else</span> <span class="org-string">'0'</span>
+            img.seek(img.tell() <span class="org-operator">+</span> 1)
+    <span class="org-keyword">except</span> <span class="org-type">EOFError</span>:
+        <span class="org-keyword">pass</span>
+
+    <span class="org-variable-name">message</span> <span class="org-operator">=</span> <span class="org-string">''</span>
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(0, <span class="org-builtin">len</span>(binary), 8):
+        <span class="org-variable-name">byte</span> <span class="org-operator">=</span> binary[i:i<span class="org-operator">+</span>8]
+        <span class="org-keyword">if</span> byte <span class="org-operator">==</span> <span class="org-string">'00000000'</span>:
+            <span class="org-keyword">break</span>
+        <span class="org-variable-name">message</span> <span class="org-operator">+=</span> <span class="org-builtin">chr</span>(<span class="org-builtin">int</span>(byte, 2))
+    <span class="org-keyword">return</span> message
+
+<span class="org-keyword">if</span> <span class="org-builtin">__name__</span> <span class="org-operator">==</span> <span class="org-string">'__main__'</span>:
+    encode_message(<span class="org-string">'Hello GIF!'</span>, <span class="org-string">'secret.gif'</span>)
+    <span class="org-variable-name">decoded</span> <span class="org-operator">=</span> decode_message(<span class="org-string">'secret.gif'</span>)
+    <span class="org-builtin">print</span>(f<span class="org-string">'&#20174; secret.gif &#35299;&#30721;&#20986;: "</span>{decoded}<span class="org-string">"'</span>)
+</pre>
+</div>
+
+<p>
+运行后你会得到一个看起来像随机噪点的 GIF 动画，但帧延迟中隐藏了秘密消息。肉眼完全看不出区别。
+</p>
+
+<p>
+当然，这种隐写术很容易被分析——只要检查 GIF 帧的时间间隔分布就能发现异常（正常动画的帧延迟应该是均匀的，而编码后的会出现双峰分布）。但作为一个 <b>GIF 的奇怪用途</b> ，它足够有趣了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9745a24" class="outline-2">
+<h2 id="org9745a24">小结</h2>
+<div class="outline-text-2" id="text-org9745a24">
+<p>
+GIF 流是一项"复古"的技术，诞生于上世纪 90 年代。在今天 WebSocket 、WebRTC 、Server-Sent Events 大行其道的时代，它看起来已经过时了。但正是这种简洁性赋予了它独特的价值：
+</p>
+
+<ul class="org-ul">
+<li><b>零前端依赖</b> ：不需要 JavaScript，一个 <code>&lt;img&gt;</code> 标签就够了</li>
+<li><b>极简协议</b> ：基于 HTTP 长连接 + <code>multipart/x-mixed-replace</code> ，实现起来只需要几十行代码</li>
+<li><b>广泛兼容</b> ：几乎所有浏览器都支持，甚至包括一些非主流的浏览方式</li>
+</ul>
+
+<p>
+从贪吃蛇游戏、终端录制、系统监控到隐写术，GIF 证明了"老技术"也可以玩出新花样。下次当你看到一张 GIF 图片时，也许可以想想：它还能做什么更奇怪的事？
+</p>
+
+<p>
+如果你也发现了 GIF 的其他有趣用途，欢迎在评论区分享。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-13</span>
+    <span class="post-info">2026-04-14</span>
+    <a href="../../../../../tags/无主之地">无主之地</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; z11rpunz2tcell1cfwpixy4v4f &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
