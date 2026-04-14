@@ -1,0 +1,1398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Linux 输入栈全景解析：从硬件按键到屏幕响应 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Linux, 输入设备, 内核, udev, libinput, XKB" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Linux 输入栈全景解析：从硬件按键到屏幕响应</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd40bbf4">前言</a></li>
+<li><a href="#org25b7a93">内核的 Input Core</a>
+<ul>
+<li><a href="#org9bcbfd8">input core 是什么</a></li>
+<li><a href="#org9d534cf">事件分发流程</a></li>
+<li><a href="#orge7bc438">关键数据结构</a></li>
+</ul>
+</li>
+<li><a href="#org0c9f16d">设备拓扑路径</a>
+<ul>
+<li><a href="#org81c7586">内核对象层级</a></li>
+<li><a href="#org387dbb6">MODALIAS 与热插拔</a></li>
+</ul>
+</li>
+<li><a href="#org2569f37">sysfs 文件系统</a></li>
+<li><a href="#org611885c">HID — 人机接口设备</a>
+<ul>
+<li><a href="#orgde2c029">HID Report Descriptor 示例</a></li>
+<li><a href="#orgdab053d">HID 调试工具</a></li>
+<li><a href="#orgc962264">HID Core 子系统</a></li>
+</ul>
+</li>
+<li><a href="#org010cd19">evdev — 事件设备</a>
+<ul>
+<li><a href="#orgb446f1a">evdev 事件格式</a></li>
+<li><a href="#org96e8758">设备能力</a></li>
+<li><a href="#org3742d39">evdev 调试工具</a></li>
+</ul>
+</li>
+<li><a href="#orgceddbb4">udev 与 hwdb</a>
+<ul>
+<li><a href="#orgadde586">udev 的职责</a></li>
+<li><a href="#org1af812e">udev 规则基础</a></li>
+<li><a href="#org9793571">udevadm 常用命令</a></li>
+<li><a href="#orgb2e0eac">hwdb — 硬件数据库</a></li>
+</ul>
+</li>
+<li><a href="#org4db2d04">libinput</a>
+<ul>
+<li><a href="#orgadf761d">为什么需要 libinput</a></li>
+<li><a href="#org8a46561">libinput 的主要功能</a></li>
+<li><a href="#orgd2bb5e8">Seat 的概念</a></li>
+<li><a href="#org693d4a8">libinput 调试工具</a></li>
+</ul>
+</li>
+<li><a href="#org3d1b2f4">键盘处理细节</a>
+<ul>
+<li><a href="#org11e3788">扫描码到键码</a></li>
+<li><a href="#orge019f93">控制台键盘</a></li>
+<li><a href="#org29b6090">XKB — 键盘布局系统</a>
+<ul>
+<li><a href="#org6e64968">RMLVO 到 KcCGST 的解析过程</a></li>
+<li><a href="#org716c6af">Compose 键</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#org9573481">指针设备细节</a>
+<ul>
+<li><a href="#orge2fa325">触摸板类型</a></li>
+<li><a href="#org8cd884b">多点触控（MT）</a></li>
+<li><a href="#orga850057">指针加速</a></li>
+<li><a href="#orgb76105d">游戏手柄</a></li>
+</ul>
+</li>
+<li><a href="#org829281c">上层图形栈：X11 与 Wayland</a>
+<ul>
+<li><a href="#org1c88660">X11 输入栈</a></li>
+<li><a href="#org9137e42">Wayland 输入栈</a></li>
+<li><a href="#orgfbd0ad2">Wayland 与 X11 的关键差异</a></li>
+</ul>
+</li>
+<li><a href="#org851b8ac">虚拟输入与自动化</a>
+<ul>
+<li><a href="#org2efa00e">uinput — 用户空间输入模拟</a></li>
+<li><a href="#org6c915b0">XTEST — X11 测试扩展</a></li>
+<li><a href="#org2591973">libei — Wayland 的模拟输入</a></li>
+</ul>
+</li>
+<li><a href="#org9ad17de">输入法框架</a>
+<ul>
+<li><a href="#orgeed6006">IMF 与 IME</a></li>
+</ul>
+</li>
+<li><a href="#org365a884">总结</a></li>
+<li><a href="#orgca2402b">调试工具速查表</a></li>
+<li><a href="#orgf301abb">参考资料</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd40bbf4" class="outline-2">
+<h2 id="orgd40bbf4">前言</h2>
+<div class="outline-text-2" id="text-orgd40bbf4">
+<p>
+本文整理自 <a href="https://venam.net/blog/unix/2025/11/27/input_devices_linux.html">The Input Stack on Linux — An End-To-End Architecture Overview</a>（作者：Patrick Louis），是对 Linux 输入设备栈的一次系统性学习（很多内容不是很懂，依赖AI补充知识点，不确定正确率）。
+</p>
+
+<p>
+当我们按下键盘上的一个键，到屏幕上出现对应的字符，中间经历了怎样的旅程？这篇文章试图回答这个问题。
+</p>
+
+<p>
+Linux 的输入处理大致分为三层：
+</p>
+
+<ul class="org-ul">
+<li>**内核层**：硬件、总线、输入核心子系统（input core）</li>
+<li>**暴露层**：evdev 事件抽象、devtmpfs 设备节点、sysfs 属性、procfs 调试接口</li>
+<li>**用户空间层**：udev 设备管理、libinput 事件处理库、XKB 键盘映射、X11/Wayland 图形栈</li>
+</ul>
+
+<p>
+让我们逐层深入。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org25b7a93" class="outline-2">
+<h2 id="org25b7a93">内核的 Input Core</h2>
+<div class="outline-text-2" id="text-org25b7a93">
+</div>
+<div id="outline-container-org9bcbfd8" class="outline-3">
+<h3 id="org9bcbfd8">input core 是什么</h3>
+<div class="outline-text-3" id="text-org9bcbfd8">
+<p>
+input core 是内核中负责管理输入设备及其事件的核心子系统，代码位于 <code>drivers/input/input.c</code> 。它提供了：
+</p>
+
+<ul class="org-ul">
+<li>设备的分配与注册（ <code>input_allocate_device</code>, <code>input_register_device</code> ）</li>
+<li>事件的分发机制：驱动通过 <code>input_event</code> 推送事件，input core 以扇出（fan-out）方式转发给所有注册的 handler</li>
+<li>默认的 evdev handler 会将事件标准化后暴露到用户空间的 <code>/dev/input/eventX</code></li>
+</ul>
+
+<p>
+简单来说，input core 充当了硬件驱动和用户空间之间的中间层，实现了一种发布-订阅模式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9d534cf" class="outline-3">
+<h3 id="org9d534cf">事件分发流程</h3>
+<div class="outline-text-3" id="text-org9d534cf">
+<div class="org-src-container">
+<pre class="src src-fundamental">&#39537;&#21160;
+  &#8594; input_event()
+    &#8594; input core (&#36941;&#21382; input_handler_list)
+      &#8594; handler.events() (&#22914; evdev)
+        &#8594; handler &#36941;&#21382;&#20854; input_handle &#38142;&#34920;
+          &#8594; &#36890;&#36807;&#23383;&#31526;&#35774;&#22791; /dev/input/eventX &#26292;&#38706;&#32473;&#29992;&#25143;&#31354;&#38388;
+</pre>
+</div>
+
+<p>
+[注] handler 和 handle 的命名很容易混淆：
+</p>
+<ul class="org-ul">
+<li><code>input_handler=：事件处理模块（如 evdev、kbd、joydev），注册在 input core 上，实现 =events</code> 回调</li>
+<li><code>input_handle=：内核中的一个绑定结构，连接一个 =input_dev</code> 和一个 =input_handler=，表示"这个设备被这个 handler 处理"。一个 handler 可以有多个 handle（对应多个设备）</li>
+</ul>
+
+<p>
+用户空间的程序通过打开 handler 创建的字符设备文件来读取事件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge7bc438" class="outline-3">
+<h3 id="orge7bc438">关键数据结构</h3>
+<div class="outline-text-3" id="text-orge7bc438">
+<ul class="org-ul">
+<li><code>struct input_dev</code>: 代表一个输入设备，包含设备名称、能力位图（支持哪些事件类型）等信息</li>
+<li><code>struct input_handler</code>: 事件处理接口，核心是 <code>events</code> 回调函数，负责接收并转发事件</li>
+<li><code>struct input_handle</code>: 连接一个 <code>input_dev</code> 和一个 <code>input_handler</code> 的桥梁，每个 handle 代表一组设备-处理器的绑定关系</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0c9f16d" class="outline-2">
+<h2 id="org0c9f16d">设备拓扑路径</h2>
+<div class="outline-text-2" id="text-org0c9f16d">
+<p>
+一个 USB 键盘在内核中的路径可能像这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">/devices/pci0000:00/0000:00:14.0/usb1/1-1/1-1:1.0/0003:046D:C31C.0003/input/input6/event3
+</pre>
+</div>
+
+<p>
+从左到右解读：
+</p>
+<ol class="org-ol">
+<li><code>pci0000:00/0000:00:14.0</code> — PCI 总线上的 USB 主控制器</li>
+<li><code>usb1/1-1/1-1:1.0</code> — USB 总线和端口层级</li>
+<li><code>0003:046D:C31C.0003</code> — HID 设备节点（总线 0003=USB HID，厂商 046D=Logitech）</li>
+<li><code>input/input6</code> — input 子系统设备</li>
+<li><code>event3</code> — evdev 接口，对应的字符设备 <code>/dev/input/event3</code></li>
+</ol>
+</div>
+
+<div id="outline-container-org81c7586" class="outline-3">
+<h3 id="org81c7586">内核对象层级</h3>
+<div class="outline-text-3" id="text-org81c7586">
+<p>
+内核通过以下对象类型来管理系统中的设备：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">对象</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">bus</td>
+<td class="org-left">总线，设备连接的基础</td>
+</tr>
+
+<tr>
+<td class="org-left">device</td>
+<td class="org-left">物理或逻辑设备</td>
+</tr>
+
+<tr>
+<td class="org-left">driver</td>
+<td class="org-left">与设备关联的驱动程序</td>
+</tr>
+
+<tr>
+<td class="org-left">class</td>
+<td class="org-left">按功能分类的设备类别（如 input、disk）</td>
+</tr>
+
+<tr>
+<td class="org-left">subsystem</td>
+<td class="org-left">系统结构视图，我们关心的是 input 子系统</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org387dbb6" class="outline-3">
+<h3 id="org387dbb6">MODALIAS 与热插拔</h3>
+<div class="outline-text-3" id="text-org387dbb6">
+<p>
+内核通过 MODALIAS 机制实现驱动自动加载：
+</p>
+
+<ol class="org-ol">
+<li>设备接入时，内核构造 MODALIAS 字符串（包含厂商 ID、产品 ID 等）</li>
+<li>通过 uevent（基于 netlink）发送到用户空间</li>
+<li>udev 收到后调用 <code>modprobe</code> 加载对应模块</li>
+</ol>
+
+<p>
+查看设备的 MODALIAS：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">cat /sys/class/input/event3/device/id/modalias
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25110;&#36890;&#36807; udevadm
+</span>udevadm info --query=property /dev/input/event3 | grep MODALIAS
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2569f37" class="outline-2">
+<h2 id="org2569f37">sysfs 文件系统</h2>
+<div class="outline-text-2" id="text-org2569f37">
+<p>
+sysfs 是内核对象在用户空间的文件系统映射，通常挂载在 =/sys/=。
+</p>
+
+<p>
+对于输入设备，重要的目录包括：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">目录</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>/sys/devices/</code></td>
+<td class="org-left">设备的层级结构，反映真实的硬件拓扑</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/sys/class/input/</code></td>
+<td class="org-left">所有 input 类设备的符号链接</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/sys/bus/</code></td>
+<td class="org-left">按总线类型组织的设备视图</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/sys/module/</code></td>
+<td class="org-left">已加载的内核模块信息</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+实用命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#35774;&#22791;&#30340;&#23618;&#32423;&#20851;&#31995;
+</span>udevadm info --tree
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475; input &#35774;&#22791;&#30340;&#33021;&#21147;
+</span>cat /sys/class/input/event3/device/capabilities/ev
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#36890;&#36807; procfs &#26597;&#30475;&#25152;&#26377;&#36755;&#20837;&#35774;&#22791;
+</span>cat /proc/bus/input/devices
+</pre>
+</div>
+
+<p>
+<code>cat /proc/bus/input/devices</code> 是非常有用的调试命令，它会列出所有输入设备及其绑定的 handler（如 event3、kbd 等）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org611885c" class="outline-2">
+<h2 id="org611885c">HID — 人机接口设备</h2>
+<div class="outline-text-2" id="text-org611885c">
+<p>
+HID（Human Interface Device）是当今最重要的输入/输出标准协议。大多数新设备（鼠标、键盘、麦克风等）都通过 USB、I2C、Bluetooth 等传输层使用 HID 协议。
+</p>
+
+<p>
+HID 的核心思想：设备先通过 <code>Report Descriptor</code> 描述自己的能力（有哪些按钮、轴等），然后按照约定的 <code>Report</code> 格式发送/接收数据。这意味着不需要为每种新设备写专门的驱动。
+</p>
+</div>
+
+<div id="outline-container-orgde2c029" class="outline-3">
+<h3 id="orgde2c029">HID Report Descriptor 示例</h3>
+<div class="outline-text-3" id="text-orgde2c029">
+<p>
+一个鼠标的 Report Descriptor 可能描述：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">Usage Page (Button)     ; &#25353;&#38062;&#39029;&#38754;
+  Usage Minimum (1)     ; &#25353;&#38062; 1
+  Usage Maximum (5)     ; &#25353;&#38062; 5
+  Logical Minimum (0)
+  Logical Maximum (1)
+  Report Count (5)      ; 5 &#20010;&#25353;&#38062;
+  Report Size (1)       ; &#27599;&#20010;&#25353;&#38062; 1 bit
+  Input (Data, Variable, Absolute)  ; &#32477;&#23545;&#20540;
+
+  Report Count (1)      ; &#22635;&#20805;
+  Report Size (3)
+  Input (Constant)      ; &#24120;&#37327;&#65292;&#34987;&#24573;&#30053;
+
+Usage Page (Generic Desktop)
+  Usage (X)
+  Usage (Y)
+  Logical Minimum (-127)
+  Logical Maximum (127)
+  Report Size (8)
+  Report Count (2)
+  Input (Data, Variable, Relative)  ; &#30456;&#23545;&#20540;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdab053d" class="outline-3">
+<h3 id="orgdab053d">HID 调试工具</h3>
+<div class="outline-text-3" id="text-orgdab053d">
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#35299;&#30721; HID Report Descriptor
+</span>hid-decode /sys/bus/hid/devices/0003:046D:C31C.0003/report_descriptor
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20174; hidraw &#35774;&#22791;&#35835;&#21462;&#21407;&#22987; HID &#25968;&#25454;
+</span>cat /dev/hidraw0 | hexdump -C
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc962264" class="outline-3">
+<h3 id="orgc962264">HID Core 子系统</h3>
+<div class="outline-text-3" id="text-orgc962264">
+<p>
+HID Core 管理设备的生命周期，解析 Report Descriptor，然后将 Report 分发给注册在 HID 总线上的驱动。最重要的是 =hid-input=，它会将 HID Report 翻译为 evdev 事件，并注册 input 设备。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org010cd19" class="outline-2">
+<h2 id="org010cd19">evdev — 事件设备</h2>
+<div class="outline-text-2" id="text-org010cd19">
+<p>
+evdev 是 input core 的默认 handler，它将各种输入设备的事件标准化后暴露给用户空间。
+</p>
+</div>
+
+<div id="outline-container-orgb446f1a" class="outline-3">
+<h3 id="orgb446f1a">evdev 事件格式</h3>
+<div class="outline-text-3" id="text-orgb446f1a">
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-keyword">struct</span> <span class="org-type">input_event</span> {
+    <span class="org-keyword">struct</span> <span class="org-type">timeval</span> <span class="org-variable-name">time</span>;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26102;&#38388;&#25139;
+</span>    <span class="org-type">__u16</span> <span class="org-variable-name">type</span>;           <span class="org-comment-delimiter">// </span><span class="org-comment">&#20107;&#20214;&#31867;&#22411;
+</span>    <span class="org-type">__u16</span> <span class="org-variable-name">code</span>;           <span class="org-comment-delimiter">// </span><span class="org-comment">&#20107;&#20214;&#20195;&#30721;
+</span>    <span class="org-type">__s32</span> <span class="org-variable-name">value</span>;          <span class="org-comment-delimiter">// </span><span class="org-comment">&#20107;&#20214;&#20540;
+</span>};
+</pre>
+</div>
+
+<p>
+常见事件类型：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类型</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">EV_KEY</td>
+<td class="org-left">按键和按钮</td>
+</tr>
+
+<tr>
+<td class="org-left">EV_REL</td>
+<td class="org-left">相对事件（鼠标移动、滚轮）</td>
+</tr>
+
+<tr>
+<td class="org-left">EV_ABS</td>
+<td class="org-left">绝对事件（触摸屏坐标）</td>
+</tr>
+
+<tr>
+<td class="org-left">EV_SYN</td>
+<td class="org-left">同步事件，标记一帧事件的结束</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+一个触摸板的 evdev 帧示例：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">type: EV_ABS  code: ABS_X         value: 1234
+type: EV_ABS  code: ABS_Y         value: 5678
+type: EV_ABS  code: ABS_PRESSURE  value: 50
+type: EV_SYN  code: SYN_REPORT    value: 0
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org96e8758" class="outline-3">
+<h3 id="org96e8758">设备能力</h3>
+<div class="outline-text-3" id="text-org96e8758">
+<p>
+每个输入设备在注册时会声明自己的能力（capabilities），可通过 sysfs 查看：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">ls /sys/class/input/input6/capabilities/
+<span class="org-comment-delimiter"># </span><span class="org-comment">ev  key  rel  abs  led  sw  ff  msc  snd</span>
+</pre>
+</div>
+
+<p>
+更方便的方式是使用 =libinput record=，它会以人类可读的格式展示设备的所有信息。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3742d39" class="outline-3">
+<h3 id="org3742d39">evdev 调试工具</h3>
+<div class="outline-text-3" id="text-org3742d39">
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992; evtest &#26597;&#30475;&#20107;&#20214;
+</span>sudo evtest /dev/input/event3
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992; libinput record &#35760;&#24405;&#20107;&#20214;
+</span>sudo libinput record /dev/input/event3
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992; evemu &#24405;&#21046;&#21644;&#22238;&#25918;
+</span>sudo evemu-record /dev/input/event3
+sudo evemu-play /dev/input/event3 &lt; recording.txt
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgceddbb4" class="outline-2">
+<h2 id="orgceddbb4">udev 与 hwdb</h2>
+<div class="outline-text-2" id="text-orgceddbb4">
+</div>
+<div id="outline-container-orgadde586" class="outline-3">
+<h3 id="orgadde586">udev 的职责</h3>
+<div class="outline-text-3" id="text-orgadde586">
+<p>
+udev（systemd-udevd）是用户空间的动态设备管理器，它监听内核的 uevent 并执行相应操作：
+</p>
+
+<ul class="org-ul">
+<li>根据 MODALIAS 加载内核模块</li>
+<li>设置设备节点的访问权限</li>
+<li>为设备附加属性</li>
+<li>创建符号链接，使设备名称更可预测</li>
+<li>通过规则系统在设备插拔时执行自定义操作</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org1af812e" class="outline-3">
+<h3 id="org1af812e">udev 规则基础</h3>
+<div class="outline-text-3" id="text-org1af812e">
+<p>
+规则文件存放在：
+</p>
+<ul class="org-ul">
+<li><code>/usr/lib/udev/rules.d/</code> （系统默认）</li>
+<li><code>/etc/udev/rules.d/</code> （管理员自定义，优先级最高）</li>
+</ul>
+
+<p>
+一个简单的规则示例：当特定键盘插入或拔出时执行脚本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">ACTION=="add|remove", SUBSYSTEM=="input", ATTRS{idVendor}=="1234", ATTRS{idProduct}=="5678", RUN+="/path/to/script.sh"
+</pre>
+</div>
+
+<p>
+常用的匹配键：=KERNEL=, <code>SUBSYSTEM</code>, <code>ACTION</code>, <code>ATTR{...}</code>, <code>ENV{...}</code>
+</p>
+
+<p>
+常用的赋值键：=SYMLINK=, <code>ENV{...}</code>, <code>RUN+</code>, <code>MODE</code>, <code>OWNER</code>, <code>GROUP</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9793571" class="outline-3">
+<h3 id="org9793571">udevadm 常用命令</h3>
+<div class="outline-text-3" id="text-org9793571">
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#35774;&#22791;&#30340;&#23646;&#24615;&#23618;&#32423;
+</span>udevadm info -a /dev/input/event3
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23454;&#26102;&#30417;&#25511; uevent
+</span>udevadm monitor
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27979;&#35797;&#35268;&#21017;&#21305;&#37197;
+</span>udevadm test /dev/input/event3
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#25152;&#26377;&#24050;&#21152;&#36733;&#30340;&#35268;&#21017;
+</span>systemd-analyze cat-config udev/rules.d
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb2e0eac" class="outline-3">
+<h3 id="orgb2e0eac">hwdb — 硬件数据库</h3>
+<div class="outline-text-3" id="text-orgb2e0eac">
+<p>
+hwdb 是 udev 的硬件属性查找表，以 <code>.hwdb</code> 文件定义，编译为 <code>hwdb.bin</code> 用于快速检索。
+</p>
+
+<p>
+更新 hwdb：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">sudo systemd-hwdb update
+sudo udevadm trigger
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4db2d04" class="outline-2">
+<h2 id="org4db2d04">libinput</h2>
+<div class="outline-text-2" id="text-org4db2d04">
+<p>
+libinput 是现代 Linux 图形环境的统一输入处理库，被 Xorg（通过驱动）和 Wayland 合成器广泛使用。它封装了 udev 和 evdev，提供设备检测、事件处理、以及各种输入处理的抽象。
+</p>
+</div>
+
+<div id="outline-container-orgadf761d" class="outline-3">
+<h3 id="orgadf761d">为什么需要 libinput</h3>
+<div class="outline-text-3" id="text-orgadf761d">
+<ol class="org-ol">
+<li>**统一性**：避免 X11 各个 xf86 输入驱动中的重复逻辑</li>
+<li>**处理硬件缺陷**：许多设备的固件报告错误的 HID 描述符，libinput 通过 quirks 机制修正</li>
+<li>**复杂输入处理**：触摸板多点触控追踪、按钮防抖、手势识别等</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org8a46561" class="outline-3">
+<h3 id="org8a46561">libinput 的主要功能</h3>
+<div class="outline-text-3" id="text-org8a46561">
+<ul class="org-ul">
+<li>按钮防抖（debouncing）</li>
+<li>触摸板软件按钮（clickpad）</li>
+<li>触摸板压力检测</li>
+<li>手掌和拇指检测</li>
+<li>滚动（两指滚动、边缘滚动）</li>
+<li>点击行为（tap-to-click）</li>
+<li>手势（滑动、捏合）</li>
+<li>指针加速度</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd2bb5e8" class="outline-3">
+<h3 id="orgd2bb5e8">Seat 的概念</h3>
+<div class="outline-text-3" id="text-orgd2bb5e8">
+<p>
+Seat 是与用户会话关联的输入设备集合。大多数机器只有一个 seat，但在多座位场景下一个机器可以有多个用户同时使用不同的输入设备。
+</p>
+
+<p>
+seat 通过 udev 的 <code>ENV{ID_SEAT}</code> 属性分配，可通过 <code>loginctl</code> 管理。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org693d4a8" class="outline-3">
+<h3 id="org693d4a8">libinput 调试工具</h3>
+<div class="outline-text-3" id="text-org693d4a8">
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21015;&#20986;&#25152;&#26377;&#35774;&#22791;&#21450;&#20854;&#37197;&#32622;
+</span>libinput list-devices
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35843;&#35797;&#25152;&#26377;&#20107;&#20214;
+</span>libinput debug-events
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#22270;&#24418;&#21270;&#35843;&#35797;&#35302;&#25720;&#26495;
+</span>libinput debug-gui
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#24405;&#21046;&#21644;&#22238;&#25918;&#35774;&#22791;&#20107;&#20214;&#65288;&#29992;&#20110; bug &#25253;&#21578;&#65289;
+</span>libinput record /dev/input/event3
+libinput replay recording.yaml
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3d1b2f4" class="outline-2">
+<h2 id="org3d1b2f4">键盘处理细节</h2>
+<div class="outline-text-2" id="text-org3d1b2f4">
+</div>
+<div id="outline-container-org11e3788" class="outline-3">
+<h3 id="org11e3788">扫描码到键码</h3>
+<div class="outline-text-3" id="text-org11e3788">
+<p>
+键盘处理涉及三层映射：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">Scancode (&#30828;&#20214;&#21407;&#22987;&#30721;) &#8594; Keycode (&#20869;&#26680;&#20107;&#20214;&#30721;) &#8594; Keysym (&#29992;&#25143;&#31354;&#38388;&#31526;&#21495;)
+</pre>
+</div>
+
+<ul class="org-ul">
+<li><code>Scancode=：硬件产生的原始值，如 =0x1E</code></li>
+<li>=Keycode=：内核映射后的事件码，如 =KEY_A=（定义在 =input-event-codes.h=）</li>
+<li>=Keysym=：用户空间的符号，如 "a" 或 "A"</li>
+</ul>
+
+<p>
+键码映射可通过 hwdb 在运行时修改：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental"># /etc/udev/hwdb.d/61-custom-keyboard.hwdb
+evdev:input:b0003v046DpC31C*
+ KEYBOARD_KEY_70039=leftalt   # &#23558; CapsLock &#26144;&#23556;&#20026;&#24038; Alt
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge019f93" class="outline-3">
+<h3 id="orge019f93">控制台键盘</h3>
+<div class="outline-text-3" id="text-orge019f93">
+<p>
+在文本控制台中，kbd handler（=drivers/tty/vt/keyboard.c=）负责处理键盘输入，它通过 TTY 和 line discipline 机制工作。相关工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#25195;&#25551;&#30721;
+</span>showkey --scancodes
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622;&#25511;&#21046;&#21488;&#38190;&#30424;&#24067;&#23616;
+</span>loadkeys us
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#24403;&#21069;&#38190;&#30424;&#27169;&#24335;
+</span>kbd_mode
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622;&#38190;&#30424;&#37325;&#22797;&#29575;
+</span>kbdrate
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org29b6090" class="outline-3">
+<h3 id="org29b6090">XKB — 键盘布局系统</h3>
+<div class="outline-text-3" id="text-org29b6090">
+<p>
+XKB（X Keyboard）是处理 keycode 到 keysym 映射的用户空间库和配置系统。虽然名字中有 "X"，但它也被 Wayland 和各种图形工具包使用。
+</p>
+
+<p>
+XKB 的核心概念：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">概念</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">RMLVO</td>
+<td class="org-left">Rules-Model-Layout-Variant-Options，用户友好的配置</td>
+</tr>
+
+<tr>
+<td class="org-left">KcCGST</td>
+<td class="org-left">Keycodes-Compat-Geometry-Symbols-Types，内部组件</td>
+</tr>
+
+<tr>
+<td class="org-left">Levels</td>
+<td class="org-left">按键的不同层级（如按 Shift 时切换到 Level 2）</td>
+</tr>
+
+<tr>
+<td class="org-left">Groups</td>
+<td class="org-left">完全切换键盘布局（如切换到日语布局）</td>
+</tr>
+
+<tr>
+<td class="org-left">Modifiers</td>
+<td class="org-left">修饰键状态（Shift、Ctrl、Alt 等）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+[注] XKB 的 keycode = evdev keycode + 8，这是一个历史遗留的偏移量。
+</p>
+</div>
+
+<div id="outline-container-org6e64968" class="outline-4">
+<h4 id="org6e64968">RMLVO 到 KcCGST 的解析过程</h4>
+<div class="outline-text-4" id="text-org6e64968">
+<p>
+用户选择 RMLVO（如 layout=us, variant=dvorak），XKB 通过 rules 文件将其解析为 KcCGST 组件，编译成完整的 keymap。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#24403;&#21069; RMLVO &#35299;&#26512;&#32467;&#26524;
+</span>xkbcli compile-keymap --layout us --variant dvorak
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21015;&#20986;&#25152;&#26377;&#21487;&#29992;&#30340;&#24067;&#23616;
+</span>xkbcli list
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20132;&#20114;&#24335;&#35843;&#35797;&#25353;&#38190;
+</span>xkbcli interactive-evdev
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#22914;&#20309;&#36755;&#20837;&#29305;&#23450;&#23383;&#31526;
+</span>xkbcli how-to-type --keysym <span class="org-string">"eacute"</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org716c6af" class="outline-4">
+<h4 id="org716c6af">Compose 键</h4>
+<div class="outline-text-4" id="text-org716c6af">
+<p>
+XKB 的 Compose 功能允许通过组合键输入特殊字符，配置文件位于：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#31995;&#32479; Compose &#37197;&#32622;
+</span>/usr/share/X11/locale/*/Compose
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29992;&#25143;&#33258;&#23450;&#20041;
+</span>~/.XCompose
+</pre>
+</div>
+
+<p>
+示例：=AltGr+'= + <code>e</code> → <code>é</code>
+</p>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9573481" class="outline-2">
+<h2 id="org9573481">指针设备细节</h2>
+<div class="outline-text-2" id="text-org9573481">
+</div>
+<div id="outline-container-orge2fa325" class="outline-3">
+<h3 id="orge2fa325">触摸板类型</h3>
+<div class="outline-text-3" id="text-orge2fa325">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类型</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Clickpad</td>
+<td class="org-left">整个触摸板可按下，无独立按钮（INPUT_PROP_BUTTONPAD）</td>
+</tr>
+
+<tr>
+<td class="org-left">Forcepad</td>
+<td class="org-left">类似 clickpad，通过压力检测代替物理按钮</td>
+</tr>
+
+<tr>
+<td class="org-left">Trackpoint</td>
+<td class="org-left">ThinkPad 中间的小红帽摇杆</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org8cd884b" class="outline-3">
+<h3 id="org8cd884b">多点触控（MT）</h3>
+<div class="outline-text-3" id="text-org8cd884b">
+<p>
+支持多点触控的触摸板通过 evdev 的 slot 和 tracking ID 机制追踪每个手指：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">slot 0: tracking_id=1  ABS_MT_POSITION_X=100  ABS_MT_POSITION_Y=200
+slot 1: tracking_id=2  ABS_MT_POSITION_X=300  ABS_MT_POSITION_Y=400
+slot 0: tracking_id=-1  (&#25163;&#25351;&#25260;&#36215;)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga850057" class="outline-3">
+<h3 id="orga850057">指针加速</h3>
+<div class="outline-text-3" id="text-orga850057">
+<p>
+libinput 支持三种加速配置：
+</p>
+<ul class="org-ul">
+<li>=adaptive=（默认）：根据速度动态调整</li>
+<li>=flat=：1:1 线性映射</li>
+<li>自定义配置</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb76105d" class="outline-3">
+<h3 id="orgb76105d">游戏手柄</h3>
+<div class="outline-text-3" id="text-orgb76105d">
+<p>
+游戏手柄不经过 evdev 和 libinput，而是使用 joydev handler，通过 <code>/dev/input/jsN</code> 暴露 <code>js_event</code> 格式的事件。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#27979;&#35797;&#28216;&#25103;&#25163;&#26564;
+</span>jstest /dev/input/js0
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26657;&#20934;
+</span>jscal /dev/input/js0
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org829281c" class="outline-2">
+<h2 id="org829281c">上层图形栈：X11 与 Wayland</h2>
+<div class="outline-text-2" id="text-org829281c">
+</div>
+<div id="outline-container-org1c88660" class="outline-3">
+<h3 id="org1c88660">X11 输入栈</h3>
+<div class="outline-text-3" id="text-org1c88660">
+<p>
+在 X11 中：
+</p>
+<ol class="org-ol">
+<li>X Server 通过 <code>xf86-input-libinput</code> 驱动使用 libinput</li>
+<li>配置通过 <code>/usr/share/X11/xorg.conf.d/</code> 中的配置片段</li>
+<li>客户端通过 X 协议接收 XInput 事件</li>
+<li>键盘映射由 X Server 内部维护，通过 XKB 配置</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21015;&#20986; X Server &#35782;&#21035;&#30340;&#36755;&#20837;&#35774;&#22791;
+</span>xinput --list
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#35774;&#22791;&#23646;&#24615;
+</span>xinput --list-props &lt;device_id&gt;
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#30417;&#25511; X &#20107;&#20214;
+</span>xev
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622; XKB &#24067;&#23616;
+</span>setxkbmap -layout us -variant dvorak
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9137e42" class="outline-3">
+<h3 id="org9137e42">Wayland 输入栈</h3>
+<div class="outline-text-3" id="text-org9137e42">
+<p>
+在 Wayland 中：
+</p>
+<ol class="org-ol">
+<li>合成器直接使用 libinput，无中间驱动层</li>
+<li>客户端必须显式注册监听器来接收事件（更安全）</li>
+<li>事件只转发给当前获得焦点的客户端</li>
+<li>输入设备列表在协议中不暴露（合成器内部管理）</li>
+<li>配置方式因合成器而异</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">GNOME Wayland &#37197;&#32622;&#31034;&#20363;
+</span>gsettings get org.gnome.desktop.input-sources xkb-options
+gsettings set org.gnome.desktop.peripherals.touchpad tap-to-click true
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">wlroots &#21512;&#25104;&#22120;&#36890;&#36807;&#29615;&#22659;&#21464;&#37327;&#35774;&#32622; XKB
+</span><span class="org-builtin">export</span> <span class="org-variable-name">XKB_DEFAULT_LAYOUT</span>=us
+<span class="org-builtin">export</span> <span class="org-variable-name">XKB_DEFAULT_VARIANT</span>=dvorak
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgfbd0ad2" class="outline-3">
+<h3 id="orgfbd0ad2">Wayland 与 X11 的关键差异</h3>
+<div class="outline-text-3" id="text-orgfbd0ad2">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">方面</th>
+<th scope="col" class="org-left">X11</th>
+<th scope="col" class="org-left">Wayland</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">事件广播</td>
+<td class="org-left">全局广播（任何客户端可监听）</td>
+<td class="org-left">只发给焦点客户端</td>
+</tr>
+
+<tr>
+<td class="org-left">输入注入</td>
+<td class="org-left">XTEST 扩展可直接注入事件</td>
+<td class="org-left">需要 libei + portal 权限控制</td>
+</tr>
+
+<tr>
+<td class="org-left">键盘配置</td>
+<td class="org-left">X Server 统一管理</td>
+<td class="org-left">各合成器自行实现</td>
+</tr>
+
+<tr>
+<td class="org-left">设备列举</td>
+<td class="org-left">xinput 可列出</td>
+<td class="org-left">协议不暴露，需 libinput list-devices</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org851b8ac" class="outline-2">
+<h2 id="org851b8ac">虚拟输入与自动化</h2>
+<div class="outline-text-2" id="text-org851b8ac">
+</div>
+<div id="outline-container-org2efa00e" class="outline-3">
+<h3 id="org2efa00e">uinput — 用户空间输入模拟</h3>
+<div class="outline-text-3" id="text-org2efa00e">
+<p>
+uinput 模块允许在用户空间创建虚拟输入设备：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;linux/uinput.h&gt;</span>
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#21019;&#24314;&#34394;&#25311;&#35774;&#22791;
+</span><span class="org-type">int</span> <span class="org-variable-name">fd</span> = open(<span class="org-string">"/dev/uinput"</span>, O_WRONLY | O_NONBLOCK);
+<span class="org-function-name">ioctl</span>(fd, UI_SET_EVBIT, EV_KEY);
+<span class="org-function-name">ioctl</span>(fd, UI_SET_KEYBIT, KEY_A);
+
+<span class="org-keyword">struct</span> <span class="org-type">uinput_setup</span> <span class="org-variable-name">setup</span> = {.id.bustype = BUS_USB, .name = <span class="org-string">"virtual"</span>};
+<span class="org-function-name">ioctl</span>(fd, UI_DEV_SETUP, &amp;setup);
+<span class="org-function-name">ioctl</span>(fd, UI_DEV_CREATE, 0);
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#21457;&#36865;&#20107;&#20214;
+</span><span class="org-keyword">struct</span> <span class="org-type">input_event</span> <span class="org-variable-name">ev</span> = {.type = EV_KEY, .code = KEY_A, .value = 1};
+<span class="org-function-name">write</span>(fd, &amp;ev, <span class="org-keyword">sizeof</span>(ev));
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6c915b0" class="outline-3">
+<h3 id="org6c915b0">XTEST — X11 测试扩展</h3>
+<div class="outline-text-3" id="text-org6c915b0">
+<p>
+XTEST 允许在 X11 中直接注入键盘和鼠标事件，无需 root 权限：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992; xdotool &#27169;&#25311;&#36755;&#20837;
+</span>xdotool key a
+xdotool mousemove 100 100 click 1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2591973" class="outline-3">
+<h3 id="org2591973">libei — Wayland 的模拟输入</h3>
+<div class="outline-text-3" id="text-org2591973">
+<p>
+Wayland 通过 libei（Emulated Input）库来处理虚拟输入，架构如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">&#23458;&#25143;&#31471;(libei) &#8594; xdg-desktop-portal(dbus) &#8594; &#21512;&#25104;&#22120;(EIS&#20391;) &#8594; &#20869;&#37096;&#34394;&#25311;&#35774;&#22791;
+</pre>
+</div>
+
+<p>
+这种方式下，合成器可以控制哪些客户端被允许模拟输入，提供更好的安全性。
+</p>
+
+<p>
+相关工具：=ydotool=（基于 uinput）、=wtype=（基于 Wayland 虚拟键盘协议）
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9ad17de" class="outline-2">
+<h2 id="org9ad17de">输入法框架</h2>
+<div class="outline-text-2" id="text-org9ad17de">
+<p>
+输入法（Input Method）用于输入键盘上没有的字符（如中文、日文等）。
+</p>
+</div>
+
+<div id="outline-container-orgeed6006" class="outline-3">
+<h3 id="orgeed6006">IMF 与 IME</h3>
+<div class="outline-text-3" id="text-orgeed6006">
+<ul class="org-ul">
+<li>**IMF**（Input Method Framework）：输入法框架，负责管理输入法切换、与工具包集成</li>
+<li>**IME**（Input Method Engine）：具体的输入法引擎，负责将按键序列转换为文字</li>
+</ul>
+
+<p>
+当今两大主流 IMF：
+</p>
+<ul class="org-ul">
+<li>**IBus**（GNOME/GTK 默认）</li>
+<li>**Fcitx5**（KDE/Qt 默认）</li>
+</ul>
+
+<p>
+切换输入法框架的环境变量：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">GTK &#24212;&#29992;
+</span><span class="org-builtin">export</span> <span class="org-variable-name">GTK_IM_MODULE</span>=ibus    <span class="org-comment-delimiter"># </span><span class="org-comment">&#25110; fcitx
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">Qt &#24212;&#29992;
+</span><span class="org-builtin">export</span> <span class="org-variable-name">QT_IM_MODULE</span>=ibus     <span class="org-comment-delimiter"># </span><span class="org-comment">&#25110; fcitx
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">X &#24212;&#29992;
+</span><span class="org-builtin">export</span> <span class="org-variable-name">XMODIFIERS</span>=@<span class="org-variable-name">im</span>=ibus   <span class="org-comment-delimiter"># </span><span class="org-comment">&#25110; @im=fcitx</span>
+</pre>
+</div>
+
+<p>
+输入法的处理流程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">&#25353;&#38190;&#20107;&#20214; &#8594; XKB(keycode&#8594;keysym) &#8594; &#24037;&#20855;&#21253; IM &#27169;&#22359; &#8594; IMF &#8594; IME(&#20505;&#36873;&#35789;) &#8594; &#25552;&#20132;&#25991;&#26412;
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org365a884" class="outline-2">
+<h2 id="org365a884">总结</h2>
+<div class="outline-text-2" id="text-org365a884">
+<p>
+从按下键盘到屏幕响应，事件经过了这样的旅程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">&#30828;&#20214; &#8594; &#24635;&#32447;&#39537;&#21160; &#8594; HID &#39537;&#21160; &#8594; Input Core &#8594; evdev handler &#8594; /dev/input/eventX
+  &#8594; udev(&#26435;&#38480;/&#23646;&#24615;) &#8594; libinput(&#20107;&#20214;&#22788;&#29702;) &#8594; &#21512;&#25104;&#22120;/X Server
+  &#8594; XKB(&#38190;&#30424;&#26144;&#23556;) &#8594; &#24037;&#20855;&#21253; &#8594; &#24212;&#29992;&#31243;&#24207;
+</pre>
+</div>
+
+<p>
+每一层都有自己的职责，也都有相应的调试工具。理解这个栈对于排查输入相关问题、自定义输入行为都非常有帮助。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgca2402b" class="outline-2">
+<h2 id="orgca2402b">调试工具速查表</h2>
+<div class="outline-text-2" id="text-orgca2402b">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">层级</th>
+<th scope="col" class="org-left">工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">硬件/总线</td>
+<td class="org-left"><code>lsusb -v</code>, <code>lspci -vn</code>, <code>hwinfo --short</code></td>
+</tr>
+
+<tr>
+<td class="org-left">HID</td>
+<td class="org-left"><code>hid-decode</code>, <code>usbhid-dump</code>, <code>hid-tools</code></td>
+</tr>
+
+<tr>
+<td class="org-left">evdev</td>
+<td class="org-left"><code>evtest</code>, <code>evemu-record</code>, <code>libinput record</code></td>
+</tr>
+
+<tr>
+<td class="org-left">sysfs</td>
+<td class="org-left"><code>cat /proc/bus/input/devices</code>, <code>udevadm info</code></td>
+</tr>
+
+<tr>
+<td class="org-left">udev</td>
+<td class="org-left"><code>udevadm monitor</code>, <code>udevadm test</code>, <code>udevadm info</code></td>
+</tr>
+
+<tr>
+<td class="org-left">libinput</td>
+<td class="org-left"><code>libinput list-devices</code>, <code>libinput debug-events</code>, <code>libinput debug-gui</code></td>
+</tr>
+
+<tr>
+<td class="org-left">XKB</td>
+<td class="org-left"><code>xkbcli list</code>, <code>xkbcli interactive-evdev</code>, <code>xkbcli how-to-type</code></td>
+</tr>
+
+<tr>
+<td class="org-left">X11</td>
+<td class="org-left"><code>xinput</code>, <code>xev</code>, <code>setxkbmap</code>, <code>xdotool</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Wayland</td>
+<td class="org-left"><code>wev</code>, <code>gsettings</code>, <code>loginctl seat-status</code></td>
+</tr>
+
+<tr>
+<td class="org-left">游戏手柄</td>
+<td class="org-left"><code>jstest</code>, <code>jscal</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-orgf301abb" class="outline-2">
+<h2 id="orgf301abb">参考资料</h2>
+<div class="outline-text-2" id="text-orgf301abb">
+<ul class="org-ul">
+<li><a href="https://venam.net/blog/unix/2025/11/27/input_devices_linux.html">The Input Stack on Linux — An End-To-End Architecture Overview</a>（本文主要参考来源）</li>
+<li><a href="https://who-t.blogspot.com/">who-t (Peter Hutterer) 的博客</a>（libinput 和输入系统的核心开发者）</li>
+<li><a href="https://linuxtouchpad.org/docs/">Linux Touchpad 文档</a></li>
+<li><a href="https://wiki.archlinux.org/title/Keyboard_input">ArchWiki: Keyboard input</a></li>
+<li><a href="https://docs.kernel.org/hid/hidintro.html">内核 HID 子系统文档</a></li>
+<li><a href="https://xkbcommon.org/doc/current/keymap-text-format-v1-v2.html">XKB Keymap 格式规范</a></li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-14</span>
+    <span class="post-info">2026-04-14</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/输入设备">输入设备</a> : <a href="../../../../../tags/内核">内核</a> : <a href="../../../../../tags/udev">udev</a> : <a href="../../../../../tags/libinput">libinput</a> : <a href="../../../../../tags/xkb">XKB</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; ahhkzqflhvruxcz0lwfxlmk5ff &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
