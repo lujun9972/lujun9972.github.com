@@ -1,0 +1,206 @@
+#+TITLE: Linux 数据去重学习笔记
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-04-15 二 00:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+记录 Linux 上数据去重（Data Deduplication）的原理、主流方案和实践要点。
+参考文章：[[https://www.opensourceforu.com/2026/04/data-deduplication-done-the-right-way/][Data Deduplication Done The Right Way]]
+
+* 什么是数据去重
+
+数据去重（Data Deduplication）的核心思想很简单： *每个唯一的数据块只存一份，在需要重复使用时通过引用来共享* 。
+
+一个典型的场景：如果你每天对同一台虚拟机做快照，连续做 30 天，你并不是真的存了 30 份完全不同的数据——绝大多数数据块都是重复的。去重就是把这些重复的部分消除掉。
+
+在 Linux 上，通过现代文件系统（如 Btrfs、ZFS）、块设备层方案（如 dm-vdo）以及用户空间工具，可以实现不同层级的数据去重。
+
+* 去重的工作原理
+
+去重分为两个大步骤：先决定如何切割数据，再判断哪些数据已经存在。
+
+** 1. 分块（Chunking）
+
+数据首先被切成小块。有两种主要策略：
+
++ *固定大小分块（Fixed-size）* ：按固定字节数切分，简单高效，但当文件中间插入或删除字节时，后续所有块的边界都会偏移。
++ *内容定义分块（Content-Defined Chunking, CDC）* ：根据数据流中的模式来选择块的边界，这样即使文件中间有增删，也只有受影响的少量块发生变化，其余块的边界保持不变。CDC 的去重效率通常更高。
+
+** 2. 指纹（Fingerprinting）
+
+每个数据块计算一个指纹（通常使用加密哈希，如 SHA-256），这个指纹相当于数据块的"身份证"。
+
+** 3. 索引（Indexing）
+
+所有指纹存储在一个索引中。当新数据块到来时，系统检查其指纹是否已存在于索引中。
+
+** 4. 复用（Reuse）
+
+如果发现重复，系统不会再次写入该数据块，而是创建或更新引用计数。
+
+** Inline vs Post-process
+
++ *Inline 去重* ：在写入路径上实时进行，数据在落盘前就被检查。优点是即时节省空间，缺点是增加了 CPU、内存和 I/O 开销。
++ *Post-process 去重* ：写入时不干预，等系统空闲时再由扫描器处理。优点是写入速度快，代价是延迟的去重效果。
+
+* Linux 上的去重方案
+
+Linux 没有一个统一的"去重开关"，而是需要根据你的场景选择合适的层级。
+
+** Btrfs：CoW 文件系统 + 用户空间工具
+
+Btrfs 是一个现代化的 Copy-on-Write（CoW）文件系统，在克隆和快照时天然不会重复存储相同的数据块。通过 reflink（=cp --reflink=）可以创建即时逻辑副本，共享数据块直到被修改。
+
+但 Btrfs *不会自动进行 inline 去重* ，需要借助用户空间工具：
+
++ *duperemove* ：批量扫描工具，计算 extent 或 block 的哈希，在数据库中查找重复项，然后请求 Btrfs 将它们合并为共享 extent。适合在备份卷上定期运行。
+
+  #+BEGIN_SRC shell
+    # 扫描指定目录（只读模式，查看哪些文件可去重，不实际执行）
+    duperemove -r /path/to/backup
+
+    # 实际执行去重（-d 表示 dedupe）
+    duperemove -r -d /path/to/backup
+  #+END_SRC
+
++ *bees* ：一个长期运行的守护进程，增量遍历文件系统树并在后台持续去重。适合需要持续去重的场景。
+
+管理员在 VM 集合、容器层和 ISO 库上报告了很高的空间节省率。但需要注意： *过于激进的去重加上碎片化可能会降低繁忙卷上的随机读取性能* 。
+
+** ZFS on Linux：原生 inline 块级去重
+
+OpenZFS 提供了原生的 inline 块级去重。每个写入操作都经过以下流程：
+
+1. 对数据块计算哈希
+2. 在去重表（Dedup Table, DDT）中查找
+3. 如果已存在，增加引用计数而非写入新数据
+
+  #+BEGIN_SRC shell
+    # 在指定 dataset 上启用去重
+    zfs set dedup=on poolname/dataset
+
+    # 查看去重状态
+    zfs get dedup poolname/dataset
+  #+END_SRC
+
+  #+BEGIN_SRC org
+NAME      PROPERTY  VALUE          SOURCE
+poolname  dedup     on             local
+  #+END_SRC
+
+  #+BEGIN_SRC shell
+    # 查看 DDT（去重表）的统计信息
+    zpool status -D poolname
+  #+END_SRC
+
+  #+BEGIN_SRC org
+pool: poolname
+ state: ONLINE
+config:
+
+	NAME                 STATE     READ WRITE CKSUM
+	poolname             ONLINE       0     0     0
+	  /dev/sdb1          ONLINE       0     0     0
+
+errors: No known data errors
+
+ dedup: no DDT entries
+  #+END_SRC
+
+ZFS 去重的优势是不需要运行外部扫描器。风险在于 DDT 主要驻留在 RAM 中，其大小随唯一块数量增长（而非逻辑容量）。
+
+一个经验法则： *在 VM 启动盘场景下常见 3:1 到 5:1 的去重率，但需要精心规划内存——根据块大小和工作负载，每几 TB 唯一数据可能需要几 GB 的 RAM* 。
+
+近期 ZFS 社区的改进包括：基于时间的旧条目修剪（Age-based pruning）、以及尝试利用空闲资源的"机会性"去重模式。
+
+最佳实践： *将去重限定在特定用途的 pool 上* （如专门存放 VM 镜像的 pool），而非对所有 dataset 一刀切地开启。
+
+** dm-vdo：文件系统之下的去重
+
+dm-vdo（Virtual Data Optimizer）是一个 device-mapper 目标，位于文件系统之下，提供 inline 块级去重、压缩、零块消除和精简配置。
+
+  #+BEGIN_SRC shell
+    # 安装 vdo
+    sudo pacman -S vdo  # Arch Linux
+    # 或
+    sudo apt install vdo  # Debian/Ubuntu
+
+    # 创建 VDO 卷（逻辑大小可以大于物理大小）
+    sudo vdo create --name=myvdo --device=/dev/sdb1 --vdoLogicalSize=100G
+
+    # 在 VDO 卷上创建文件系统
+    sudo mkfs.xfs /dev/mapper/myvdo
+
+    # 挂载
+    sudo mount /dev/mapper/myvdo /mnt/vdo
+
+    # 查看 VDO 卷的统计信息
+    sudo vdostats --human-readable myvdo
+  #+END_SRC
+
+VDO 的设计将职责分离为：
++ UDS（去重索引）：快速识别重复块
++ 引用计数的数据存储：映射逻辑块到物理块
+
+因为 VDO 工作在块设备层，所以它是 *文件系统无关的* —— 你可以在上面运行 XFS、ext4 或 Btrfs。这对于不方便更换文件系统但又急需节省存储空间的场景特别有用。
+
+* 去重的利与弊
+
+** 收益场景
+
++ *备份* ：研究和厂商报告显示，备份工作负载通常能获得 60-80% 的逻辑空间缩减，因为日备份或周备份之间共享大量相同区域。
++ *VDI 和虚拟机* ：一组相似的虚拟机共享内核、库和基础镜像，去重率通常可达 3:1 或更高。
++ *网络与云* ：客户端去重可以避免发送重复数据，减少 WAN 使用量。
+
+** 风险与代价
+
++ *碎片化* ：当多个逻辑块映射到共享物理块的拼图时，顺序读取可能退化为随机 I/O。这对基于 HDD 的阵列和冷存储影响尤其严重。
++ *元数据和内存* ：去重索引随唯一块数量增长。如果索引超出 RAM 容量，查找会溢出到磁盘，性能急剧下降。
++ *加密冲突* ：应用层加密（写入前加密）会有效破坏去重，因为相同的明文会产生不同的密文。加密去重需要特殊方案才能使密文保持可比较。
+
+一个实用的经验法则： *去重非常适合备份和镜像类数据，对延迟敏感的主数据库有风险，对已经压缩或重度加密的数据则几乎无用* 。
+
+* 实践建议
+
+** 识别"低垂果实"
+
+优先寻找以下工作负载：
++ 包含大量相似完整备份的大型备份仓库
++ VM 镜像库、黄金镜像和实验快照
++ ISO 镜像源、容器基础层、多分支代码仓库
+
+这些工作负载天然包含大量重复块，且通常不像事务数据库那样对延迟敏感。
+
+** 选择合适的层级
+
++ 如果已经在 Btrfs 上做备份盘，可以用 =duperemove= 每周运行或 =bees= 持续运行。先在测试目录上测量空间节省率和运行时间。
++ 如果想在 SAN 或本地 RAID 上实现文件系统无关的去重，可以在测试 LUN 上评估 =dm-vdo=，在上面叠加 XFS 或 ext4，然后重放典型备份工作负载对比逻辑使用量与物理使用量。
++ 如果用 ZFS 做 VM 池，只在包含高度相似数据的 dataset 上启用去重，并持续监控 DDT 大小、RAM 使用量和读取延迟。
+
+** 结合快照策略
+
+CoW 文件系统（Btrfs/ZFS）上的混合策略：
+1. 定期在 CoW 文件系统上做快照
+2. 对较老的快照进行更激进的去重，保持最新一代相对无碎片
+3. 清理快照时优先删除碎片化严重的较老世代
+
+这样把碎片化的代价推向很少被读取的旧数据，保持最近备份的快速可读性。
+
+** 关注关键指标
+
++ 逻辑使用量 vs 物理使用量（有效去重 + 压缩率）
++ 备份和恢复任务的平均延迟和尾部延迟
++ 去重索引大小和内存占用（ZFS 的 DDT 大小、VDO 的索引大小、duperemove 的数据库大小）
+
+如果去重率低于约 1.2:1，而你在付出显著的性能或复杂度代价，那么这个工作负载可能不值得做去重。
+
+* 未来方向
+
+Linux 存储去重的发展趋势：
+
++ *更快的 CDC 算法* （如 RapidCDC 及更新的变体），在保持高去重率的同时大幅降低 CPU 开销
++ *面向 NVM 和 SSD 优化的 inline 去重* ，随机 I/O 惩罚更小，元数据可以驻留在持久内存中
++ *容器感知的去重引擎* ，理解 Docker/OCI 层语义，在数千个镜像间避免冗余副本而不影响 pull 性能
+
+去重将越来越不像一个昂贵的实验，而更像一个可预测的基础构建块——尤其在备份、VM 和容器镜像平台中。

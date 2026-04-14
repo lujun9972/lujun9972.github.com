@@ -1,0 +1,216 @@
+#+TITLE: 服务器升级后"假死"之谜
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-04-14 一 00:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+你的服务器没有崩溃，没有报错，进程还在运行——但它已经 *死了* 。
+
+某天你发现定时备份没跑，邮件也没收到。SSH 登录上去一看， =cronie= 进程还在，端口还开着， =systemctl status cronie= 显示 =active (running)= 。一切看起来都正常，但 cron 任务就是不执行。
+
+服务器明明还活着，为什么它不再工作了？
+
+参考资料: <https://hookrace.net/blog/quest-for-the-lost-home-server/> 
+
+* 线索一：日志里的断点
+
+第一件事，当然是看日志。先检查 cron 的日志：
+
+#+BEGIN_SRC shell :results org
+  journalctl -u cronie --since "yesterday" --no-pager | tail -20
+#+END_SRC
+
+发现最后一条 cron 日志停在了 *两天前* ——刚好是上次 =pacman -Syu= 系统升级的时候。之后就没有任何记录了。
+
+也许 cronie 进程自己挂了？检查一下：
+
+#+BEGIN_SRC shell
+  systemctl status cronie
+#+END_SRC
+
+#+RESULTS:
+
+结果显示：
+
+#+BEGIN_EXAMPLE
+● cronie.service - Periodic Command Scheduler
+     Loaded: loaded (/usr/lib/systemd/system/cronie.service; enabled)
+     Active: active (running) since Mon 2026-04-12 10:30:00 CST; 2 days ago
+   Main PID: 1258 (crond)
+      Tasks: 1 (limit: 4915)
+     Memory: 1.2M
+        CPU: 50ms
+     CGroup: /system.slice/cronie.service
+             └─1258 /usr/bin/crond -n
+#+END_EXAMPLE
+
+进程还在，状态是 =active (running)= ，没有报错，内存占用正常。它看起来完全 *没毛病* 。
+
+但日志不会骗人——从升级之后就再也没有执行过任何任务。这说明问题不在 cronie 进程本身，而在于它依赖的 *运行时环境已经与升级后的系统不兼容* 了。
+
+推理到这里，嫌疑人范围缩小了：既然进程本身没问题，那问题一定出在它依赖的 *底层运行环境* 上。
+
+* 线索二：锁定嫌疑人
+
+既然问题出在系统升级之后，那就看看那天到底升级了什么。
+
+#+BEGIN_SRC shell
+  grep " upgraded " /var/log/pacman.log | grep "2026-04-12"
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+[2026-04-12T10:15:30+0800] [ALPM] upgraded glibc (2.39-4 -> 2.40-1)
+[2026-04-12T10:15:35+0800] [ALPM] upgraded openssl (3.2.1-1 -> 3.3.0-1)
+[2026-04-12T10:15:40+0800] [ALPM] upgraded systemd (255-4 -> 256-1)
+...
+#+END_EXAMPLE
+
+看到了吗？ =glibc= 在升级列表中。
+
+=glibc= （GNU C Library）是 Linux 系统上 *几乎所有程序* 的基础依赖。它提供了 =printf= 、 =malloc= 、 =fork= 、 =exec= 等最基础的 C 函数。当你升级了 glibc 后，磁盘上的 .so 文件被替换成了新版本，但 *已经在运行中的进程* 仍然在内存中加载着旧版本的 =libc-2.39.so= 。
+
+这里有一个关键机制：Linux 的文件系统允许一个进程打开一个文件后，即使该文件被删除或替换，进程仍然可以通过 *文件描述符* 继续访问旧版本。所以 cronie 进程可以继续运行——它正在执行的代码已经在内存中了，不需要重新加载。
+
+但是，当 cronie 需要执行一个 cron 任务时，它必须 *fork 一个子进程* 。 =fork()= 之后，子进程需要执行新的程序。这时动态链接器 =ld-linux.so= 会被调用，它负责加载程序所需的共享库。
+
+这里有一个关键细节：Linux 程序通常通过符号链接（如 =/usr/lib/libc.so.6= ）链接到 C 库，而不是直接链接到特定版本文件（如 =libc-2.39.so= ）。升级 glibc 时，这个符号链接会被更新指向新版本（如 =libc-2.40.so= ）。
+
+那么问题到底出在哪里？关键在于 glibc 不仅仅提供 =printf= 、 =malloc= 这些基础函数，它还通过 *插件机制* 提供用户查找、域名解析、身份认证等系统服务。比如 =getpwnam()= （用户查找）和 =gethostbyname()= （域名解析）内部通过 NSS（Name Service Switch）机制，在运行时用 =dlopen()= 加载 =libnss_files.so= 、 =libnss_dns.so= 等模块。升级后这些模块被替换成了编译自新版 glibc 的版本，而 cronie 内存中还是旧版 glibc——新旧 glibc 之间的 ABI 变化，就可能导致这些模块无法正确加载或工作异常。
+
+这个推论说得通，但我们还需要 *证据* 。
+
+* 线索三：在 /proc 中抓现行
+
+Linux 的 =/proc= 文件系统是一个宝藏。每个正在运行的进程在 =/proc/$PID/= 下都有一个目录，其中 =maps= 文件记录了该进程的完整内存映射——包括它加载的所有共享库。
+
+我们来检查 cronie 进程：
+
+#+BEGIN_SRC shell
+  PID=$(pidof crond)
+  grep "libc" /proc/$PID/maps | grep "(deleted)"
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+7f1234560000-7f1234580000 r--p 00000000 00:28 12345  /usr/lib/libc-2.39.so (deleted)
+7f1234580000-7f12345d0000 r-xp 00020000 00:28 12345  /usr/lib/libc-2.39.so (deleted)
+7f12345d0000-7f1234600000 r--p 00070000 00:28 12345  /usr/lib/libc-2.39.so (deleted)
+#+END_EXAMPLE
+
+ *破案了* 。
+
+=libc-2.39.so (deleted)= —— cronie 进程仍然绑定着旧版本的 glibc。虽然通过文件描述符旧库数据依然可访问，进程本身不会崩溃，但它已经与升级后的系统环境 *脱节* 了。这就是 cronie 无法正常执行任务的根源。
+
+** 为什么进程还能运行却无法正常工作？
+
+这个现象可以用一句话解释： *已经加载的代码继续跑着没问题，但它与升级后的系统环境已经不兼容了* 。
+
+1. cronie 主进程的代码和数据已经在内存中，它自己的主循环继续正常运行
+2. 但当 cronie 需要执行一个 cron 任务时，它首先要调用 =getpwnam()= 查找该任务对应的用户信息
+3. =getpwnam()= 内部通过 NSS 机制，尝试 =dlopen()= 加载 =libnss_files.so= 等模块
+4. 这些模块在升级后被替换为编译自新版 glibc 的版本，与 cronie 内存中的旧版 glibc 存在 ABI 不兼容
+5. 模块加载失败或返回错误，cronie 无法获取用户信息，任务被静默跳过
+
+所以 cronie 的表现就是：主进程还在运行，systemd 显示一切正常，但 *永远无法执行任何新的任务* ——一个"活着的僵尸"。
+
+我们可以用一个更全面的脚本来检查系统中所有引用了已删除共享库的进程：
+
+#+BEGIN_SRC shell
+  lsof | grep "(deleted)" | grep "\.so" | awk '{print $1}' | sort -u
+#+END_SRC
+
+这会列出所有"引用了已删除 .so 文件"的进程名。通常你会发现不止 cronie， =sshd= 、 =systemd-logind= 等长期运行的守护进程都可能中招。
+
+* 解决与检测
+
+既然知道了原因，修复就很简单了：
+
+#+BEGIN_SRC shell :dir /sudo::
+  systemctl restart cronie
+#+END_SRC
+
+重启服务后，cronie 会加载新版本的 glibc，一切恢复正常。如果有多个服务受影响，可以逐一重启，或者直接重启系统。
+
+** 但更重要的是：如何系统地检测这个问题？
+
+*** 方法一：lsof 快速扫描
+
+#+BEGIN_SRC shell
+  lsof | grep "(deleted)" | grep "\.so" | awk '{print $1, $2}' | sort -u
+#+END_SRC
+
+这会列出所有引用了已删除共享库的进程名和 PID。
+
+*** 方法二：检查 /proc/maps
+
+原文给出了一段更详细的脚本，可以精确地找出每个进程引用了哪些已删除的 .so：
+
+#+BEGIN_SRC shell
+  ps -e --no-headers -o pid | while read PID; do
+    # 跳过内核线程（没有 cmdline 文件）
+    [ -f "/proc/$PID/cmdline" ] || continue
+
+    # 检查是否有 .so 文件被标记为已删除
+    if grep -q "\.so.*(deleted)" "/proc/$PID/maps" 2>/dev/null; then
+      echo "PID: $PID"
+      # 将命令行中的空字符替换为空格
+      tr '\0' ' ' < "/proc/$PID/cmdline"
+      echo  # 空行分隔
+    fi
+  done
+#+END_SRC
+
+改进后的脚本有以下优化：
+- 使用 =ps -e --no-headers -o pid= 列出所有用户进程的 PID
+- 跳过内核线程（它们没有 =/proc/$PID/cmdline= 文件）
+- 使用 =if grep -q= 条件判断，避免输出混乱
+- 使用 =tr= 命令替代 =sed= 处理命令行中的空字符
+- 只在发现问题时输出，格式更清晰
+
+*** 方法三：发行版自带的工具
+
+不同发行版有自己的检测工具：
+
+| 发行版            | 工具                                      | 说明                                            |
+|------------------+------------------------------------------+-------------------------------------------------|
+| Arch Linux       | =overdue= (AUR) / =needrestart= (archlinuxcn) | =overdue= 是社区维护的 AUR 包；=needrestart= 在 archlinuxcn 仓库中 |
+| Debian/Ubuntu    | =checkrestart= （ =debian-goodies= 包）   | 列出需要重启的服务                                  |
+| openSUSE/SLES    | =zypper ps=                               | 升级后自动显示引用旧库的进程                          |
+| RHEL/CentOS      | =needs-restarting=                        | 检查哪些服务需要重启                                 |
+
+对于 Arch Linux，有两个常用工具：
+
+- =overdue= ：社区维护的 AUR 包，会在每次 =pacman= 事务结束后自动运行，列出所有引用了已删除 .so 的守护进程
+- =needrestart= ：在 =archlinuxcn= 仓库中，功能类似
+
+安装方法：
+
+#+BEGIN_SRC shell
+  # 安装 needrestart（需要启用 archlinuxcn 仓库）
+  pacman -S needrestart
+
+  # 或者安装 overdue（需要 AUR 助手如 yay/paru）
+  yay -S overdue
+#+END_SRC
+
+安装后，每次 =pacman -Syu= 完成时，这些工具会自动输出类似这样的提示：
+
+#+BEGIN_EXAMPLE
+==> The following daemon files have been updated since the last restart:
+    /usr/lib/libcrypto.so.3 — used by: sshd (PID 890), nginx (PID 1024)
+    /usr/lib/libc.so.6 — used by: cronie (PID 1234)
+==> Consider restarting these daemons or rebooting the system.
+#+END_EXAMPLE
+
+* 预防与反思
+
+经历过一次"假死"之后，你大概不想再来第二次。以下是系统升级后的自检清单：
+
+1. *升级后检查幽灵进程* ：运行 =lsof | grep "(deleted)" | grep "\.so"= ，看看有没有进程引用了已删除的共享库
+2. *关注核心库的升级* ： =glibc= 、 =openssl= 、 =systemd= 、 =pam= 这类基础库升级后，几乎肯定需要重启依赖它们的服务
+3. *安装自动化检测工具* ：Arch 用户可安装 AUR 中的 =overdue= 或 =archlinuxcn= 仓库中的 =needrestart= ，Debian 用户装 =debian-goodies= ，让系统自己告诉你哪些服务需要重启
+4. *重要服务升级后主动重启* ：与其等到出问题再排查，不如升级后直接重启关键服务（ =cronie= 、 =sshd= 、 =nginx= 等）
+
+最后回过头来看这个案例：服务器没有硬件故障，没有网络问题，也没有被入侵。一切只是因为一次常规的 =pacman -Syu= 升级了 glibc，而 cronie 在升级后没有重启。
+
+Linux 的一个骄傲是"升级不需要重启系统"——这确实是真的。但它有一个隐含条件： *你需要知道哪些服务需要手动重启* 。如果你不知道，你的服务器就会变成一个看起来还活着、实际上已经死了的僵尸。

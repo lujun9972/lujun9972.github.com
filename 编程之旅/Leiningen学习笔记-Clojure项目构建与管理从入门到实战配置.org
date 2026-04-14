@@ -1,0 +1,575 @@
+#+TITLE: Leiningen 学习笔记：Clojure 项目构建与管理从入门到实战配置
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅,Clojure,Leiningen,构建工具
+#+DATE: [2026-04-14 一]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+本文是学习 [[https://dev.to/ivangavlik/leiningen-complete-tutorial-best-practices-3f8l][Leiningen — Complete Tutorial & Best Practices]] 过程中的笔记整理。全文以一个 =greeting-api= 项目为统一示例，从零开始演示 Leiningen 的完整工作流。
+
+* Leiningen 是什么
+Leiningen（简称 lein）是 Clojure 的构建工具和项目管理器。如果你用过其他语言，可以这样类比：
+- Node.js → npm
+- Java → Maven
+- Python → pip
+- Clojure → Leiningen
+
+它围绕 Clojure 的哲学设计，主要功能包括：
+1. 创建和脚手架项目
+2. 管理依赖（从 Clojars 和 Maven Central）
+3. 运行 REPL、测试和构建
+4. 编译打包应用（JAR/uberjar）
+5. 通过插件运行自定义任务
+6. 管理不同环境的配置（dev/test/prod）
+
+** 安装
+Leiningen 需要 JDK 8 或更高版本。安装步骤如下：
+
+#+BEGIN_SRC shell
+# 1. 下载 lein 脚本
+curl -L -o ~/bin/lein https://raw.githubusercontent.com/technomancy/leiningen/stable/bin/lein
+
+# 2. 赋予执行权限
+chmod +x ~/bin/lein
+
+# 3. 首次运行会自动完成安装
+lein version
+#+END_SRC
+
+我的环境输出如下：
+#+BEGIN_SRC fundamental
+  Leiningen 2.10.0 on Java 21.0.10 OpenJDK 64-Bit Server VM
+#+END_SRC
+
+[注] 简单来说，Leiningen 就是 Clojure 世界里的"瑞士军刀"，项目从创建到部署几乎都离不开它。
+
+* 创建项目
+使用 =lein new app= 命令创建一个应用项目：
+
+#+BEGIN_SRC shell :dir /tmp/
+  lein new app greeting-api
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Generating a project called greeting-api based on the 'app' template.
+#+END_SRC
+
+** 生成的目录结构
+Leiningen 实际生成了如下文件：
+
+#+BEGIN_SRC fundamental
+  greeting-api/
+  ├── CHANGELOG.md
+  ├── LICENSE
+  ├── README.md
+  ├── doc/
+  │   └── intro.md
+  ├── project.clj              ← 核心：依赖、配置、构建定义
+  ├── resources/               ← 静态文件、配置、资源
+  ├── src/
+  │   └── greeting_api/
+  │       └── core.clj         ← 主命名空间
+  └── test/
+      └── greeting_api/
+          └── core_test.clj    ← 测试文件
+#+END_SRC
+
+[注] 这里有个容易踩坑的地方：Clojure 命名空间用 =-= （连字符），但对应的文件夹和文件名用 =_= （下划线）。比如命名空间 =greeting-api.core= 对应的文件路径是 =src/greeting_api/core.clj= 。这个转换规则是 Clojure 的惯例，Leiningen 会自动处理，但如果手动创建文件时搞混了就会找不到命名空间。
+
+** Leiningen 自动生成的初始文件
+生成后 =project.clj= 的内容如下：
+
+#+BEGIN_SRC clojure
+  (defproject greeting-api "0.1.0-SNAPSHOT"
+    :description "FIXME: write description"
+    :url "http://example.com/FIXME"
+    :license {:name "EPL-2.0 OR GPL-2.0-or-later WITH Classpath-exception-2.0"
+              :url "https://www.eclipse.org/legal/epl-2.0/"}
+    :dependencies [[org.clojure/clojure "1.11.1"]]
+    :main ^:skip-aot greeting-api.core
+    :target-path "target/%s"
+    :profiles {:uberjar {:aot :all
+                         :jvm-opts ["-Dclojure.compiler.direct-linking=true"]}})
+#+END_SRC
+
+生成后 =src/greeting_api/core.clj= 的内容如下：
+
+#+BEGIN_SRC clojure
+  (ns greeting-api.core
+    (:gen-class))
+
+  (defn -main
+    "I don't do a whole lot ... yet."
+    [& args]
+    (println "Hello, World!"))
+#+END_SRC
+
+[注] 注意 =(:gen-class)= 声明——它告诉编译器为这个命名空间生成 Java 类。这是后面打包 uberjar 时能找到入口点的关键，如果忘了加，即使配置了 =:aot= ，JVM 也找不到入口。另外 =:main ^:skip-aot= 中的 =^:skip-aot= 表示日常开发时不做 AOT 编译，只在打包 uberjar 时才编译。
+
+** 第一次运行
+在项目根目录下执行：
+
+#+BEGIN_SRC shell :dir /tmp
+  cd greeting-api
+  lein run
+#+END_SRC
+
+实际输出（首次运行会下载依赖，后续运行不再显示下载信息）：
+#+BEGIN_SRC fundamental
+  Retrieving nrepl/nrepl/1.0.0/nrepl-1.0.0.pom from clojars
+  Retrieving nrepl/nrepl/1.0.0/nrepl-1.0.0.jar from clojars
+  ...
+  Hello, World!
+#+END_SRC
+
+* project.clj 详解
+=project.clj= 是整个项目的核心配置文件。现在我们在初始版本的基础上逐步添加功能，将其改造为一个完整的配置。
+
+下面是 =greeting-api= 项目最终的 =project.clj= ，每个部分会在后续章节中详细演示：
+
+#+BEGIN_SRC clojure :tangle /tmp/greeting-api/project.clj
+  (defproject greeting-api "0.1.0-SNAPSHOT"
+    :description "一个简单的问候 API 服务"
+    :url "https://github.com/you/greeting-api"
+    :license {:name "MIT"}
+
+    ;; ===== 依赖 =====
+    ;; 格式：[group/artifact "version"]
+    ;; 实际上就是 Maven 坐标的简写形式
+    :dependencies [[org.clojure/clojure "1.11.1"]
+                   [ring/ring-core "1.13.0"]      ; HTTP 抽象层
+                   [hiccup "1.0.5"]]               ; HTML 生成
+
+    ;; 入口命名空间（lein run 时调用其中的 -main 函数）
+    :main greeting-api.core
+
+    ;; 源码路径（这些是默认值，通常不需要显式配置）
+    :source-paths ["src"]
+    :test-paths ["test"]
+    :resource-paths ["resources"]
+
+    ;; ===== 插件（详见后文 Plugins 章节）=====
+    :plugins [[lein-ring "0.12.6"]]
+
+    ;; Ring 插件配置
+    :ring {:handler greeting-api.core/app
+           :port 3000}
+
+    ;; ===== Aliases（详见后文 Aliases 章节）=====
+    :aliases {"fmt"   ["cljfmt" "fix"]
+              "lint"  ["eastwood"]
+              "build" ["with-profile" "uberjar" "uberjar"]
+              "ci"    ["do" "clean," "cljfmt" "check," "eastwood," "test," "uberjar"]}
+
+    ;; ===== Profiles（详见后文 Profiles 章节）=====
+    :profiles {:dev     {:dependencies [[ring/ring-mock "0.4.0"]]
+                         :plugins [[lein-cljfmt "0.9.2"]
+                                   [jonase/eastwood "1.4.3"]]
+                         :source-paths ["dev"]}
+               :uberjar {:aot :all
+                         :omit-source true}})
+#+END_SRC
+
+[注] =defproject= 宏的第一个参数是项目名，第二个是版本号（遵循 [[https://semver.org/lang/zh-CN/][语义化版本]] 规范）。=0.1.0-SNAPSHOT= 中的 SNAPSHOT 表示开发版本，这在 Java/Clojure 生态中是惯例。
+
+* 编写核心代码
+现在我们来编写 =greeting-api= 的核心代码，后续所有配置演示都围绕这个项目。
+
+** 修改 src/greeting_api/core.clj
+
+#+BEGIN_SRC clojure :tangle /tmp/greeting-api/src/greeting_api/core.clj
+  (ns greeting-api.core
+    (:require [ring.util.response :as resp]
+              [ring.middleware.params :refer [wrap-params]])
+    (:gen-class))
+
+  (defn greet
+    "返回问候字符串"
+    [name]
+    (str "Hello, " name "!"))
+
+  ;; Ring handler：处理 HTTP 请求
+  (defn handler [request]
+    (let [name (get-in request [:query-params "name"] "World")]
+      (resp/response (greet name))))
+
+  ;; 用 wrap-params 中间件自动解析查询参数，然后供 lein-ring 使用
+  (def app (wrap-params handler))
+
+  (defn -main [& args]
+    (println (greet "World")))
+#+END_SRC
+
+[注] 这里用到了 =wrap-params= 中间件，它的作用是将 URL 中的查询参数（如 =?name=Alice= ）解析到 =:query-params= 中。Ring 默认不解析查询参数，需要手动添加这个中间件。
+
+** 编写测试 test/greeting_api/core_test.clj
+
+#+BEGIN_SRC clojure :tangle /tmp/greeting-api/test/greeting_api/core_test.clj
+  (ns greeting-api.core-test
+    (:require [clojure.test :refer :all]
+              [greeting-api.core :refer :all]))
+
+  (deftest test-greet
+    (testing "按名字问候"
+      (is (= "Hello, Alice!" (greet "Alice"))))
+    (testing "默认问候"
+      (is (= "Hello, World!" (greet "World")))))
+#+END_SRC
+
+** 运行测试
+
+#+BEGIN_SRC shell :dir /tmp/greeting-api/
+  lein test
+#+END_SRC
+
+#+RESULTS:
+
+实际输出：
+#+BEGIN_SRC fundamental
+  lein test greeting-api.core-test
+
+  Ran 1 tests containing 2 assertions.
+  0 failures, 0 errors.
+#+END_SRC
+
+[注] =lein test= 会自动运行 =test/= 目录下所有命名空间中以 =deftest= 定义的测试。
+
+** 运行项目
+确保 =project.clj= 中配置了 =:main greeting-api.core= 后：
+
+#+BEGIN_SRC shell
+  lein run
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Hello, World!
+#+END_SRC
+
+也可以通过 =-m= 参数直接指定要运行的命名空间和函数：
+#+BEGIN_SRC shell
+  lein run -m greeting-api.core/-main
+#+END_SRC
+
+* Profiles（环境配置）
+Profile 是 Leiningen 中非常实用的功能，它允许你为不同环境（开发、测试、生产）定义不同的配置，而这些配置会合并覆盖默认配置。
+
+** 合并规则与默认激活
+Profile 的合并规则是"后面的覆盖前面的"。Leiningen 有几个默认激活的 profile：
+1. =:user= （来自 =~/.lein/profiles.clj= ）——总是激活
+2. =:dev= ——在大多数命令中自动激活
+3. =:test= ——在运行 =lein test= 时自动激活
+
+这意味着你在 =:dev= 里配置的依赖和插件不需要手动指定就会生效。
+
+** 在 greeting-api 中使用 Profiles
+我们在 =greeting-api= 的 =project.clj= 中定义以下 profiles：
+
+#+BEGIN_SRC clojure
+  :profiles {:dev     {:dependencies [[ring/ring-mock "0.4.0"]]
+                         :plugins [[lein-cljfmt "0.9.2"]
+                                   [jonase/eastwood "1.4.3"]]
+                         :source-paths ["dev"]}
+               :uberjar {:aot :all
+                         :omit-source true}})
+#+END_SRC
+
+逐项说明：
+- =:dev= profile（开发时自动激活）：
+  - 添加 =ring-mock= 依赖用于模拟 HTTP 请求
+  - 添加 =lein-cljfmt= 插件用于代码格式化
+  - 添加 =dev/= 作为额外源码目录，可以在 =dev/user.clj= 中放 REPL 辅助函数
+- =:uberjar= profile（打包时使用）：
+  - =:aot :all= 启用 AOT 编译所有命名空间
+  - =:omit-source true= 不把源码打入 JAR
+
+** 手动激活 Profile
+
+#+BEGIN_SRC shell :dir /tmp/greeting-api/ :results raw
+  lein with-profile uberjar uberjar    # 用 :uberjar profile 打包
+  lein with-profile dev,test test      # 同时激活 :dev 和 :test
+#+END_SRC
+
+#+RESULTS:
+#'leiningen.core.project/project
+Warning: The Main-Class specified does not exist within the jar. It may not be executable as expected. A gen-class directive may be missing in the namespace which contains the main method, or the namespace has not been AOT-compiled.
+Created /tmp/greeting-api/target/greeting-api-0.1.0-SNAPSHOT.jar
+Created /tmp/greeting-api/target/greeting-api-0.1.0-SNAPSHOT-standalone.jar
+#'leiningen.core.project/project
+
+lein test user
+
+Ran 0 tests containing 0 assertions.
+0 failures, 0 errors.
+
+** 常见使用模式
+
+*** 开发工具不打入生产包
+把开发工具放在 =:dev= profile 里是个好习惯。如上面的配置所示， =ring-mock= 、 =lein-cljfmt= 都只在开发时生效，打包 uberjar 时这些依赖不会被包含进去，保持生产包干净。
+
+*** 额外的源码目录
+在 =:dev= profile 中配置 =:source-paths ["dev"]= 后，Leiningen 会把项目根目录（即 =project.clj= 所在目录）下的 =dev/= 也作为源码目录。这样就可以在 =dev/user.clj= 中放 REPL 辅助函数和启动代码，方便开发但不影响生产构建。
+
+例如创建 =dev/user.clj= ：
+#+BEGIN_SRC clojure :tangle /tmp/greeting-api/dev/user.clj
+  (ns user
+    (:require [greeting-api.core :as core]))
+
+  (defn start-dev []
+    (println "Dev mode started!")
+    (core/greet "Developer"))
+#+END_SRC
+
+在 REPL 中，由于默认进入的是 =:main= 指定的命名空间（这里是 =greeting-api.core= ），且 =:source-paths= 只是让目录在 classpath 上可被找到，并不会自动加载其中的代码，所以需要先 =require= 加载 =user= 命名空间：
+
+#+BEGIN_SRC fundamental
+  greeting-api.core=> (require 'user)
+  nil
+  greeting-api.core=> (user/start-dev)
+  Dev mode started!
+  "Hello, Developer!"
+#+END_SRC
+
+也可以切换到 =user= 命名空间后直接调用：
+#+BEGIN_SRC fundamental
+  greeting-api.core=> (in-ns 'user)
+  nil
+  user=> (start-dev)
+  Dev mode started!
+  "Hello, Developer!"
+#+END_SRC
+
+* Plugins（插件体系）
+插件用来扩展 Leiningen 的功能。根据使用场景，插件有三种放置位置。
+
+这里我们以 =greeting-api= 项目为例，演示如何安装和使用插件。
+
+** 项目级插件（团队共享）
+放在 =project.clj= 的顶层 =:plugins= 中，所有人 clone 后都能使用。
+
+在 =greeting-api= 的 =project.clj= 中添加：
+
+#+BEGIN_SRC clojure
+  :plugins [[lein-ring "0.12.6"]]
+#+END_SRC
+
+启动 Ring 服务器：
+#+BEGIN_SRC shell
+  lein ring server-headless
+#+END_SRC
+
+服务器启动后，用 curl 测试：
+#+BEGIN_SRC shell
+  curl http://localhost:3000
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Hello, World!
+#+END_SRC
+
+带参数访问：
+#+BEGIN_SRC shell
+  curl "http://localhost:3000?name=Alice"
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Hello, Alice!
+#+END_SRC
+
+按 =Ctrl+C= 停止服务器。
+
+[注] =lein-ring= 的 =:handler= 配置指向 =core.clj= 中的 =app= 变量。注意我们的 =app= 使用了 =wrap-params= 中间件来解析查询参数。
+
+** Profile 内插件（按需激活）
+放在特定 profile 中，只在激活该 profile 时生效。
+
+在 =greeting-api= 的 =project.clj= 的 =:dev= profile 中添加：
+
+#+BEGIN_SRC clojure
+  :profiles {:dev {:plugins [[lein-cljfmt "0.9.2"]
+                             [jonase/eastwood "1.4.3"]]}}
+#+END_SRC
+
+使用 =lein-cljfmt= 检查代码格式：
+#+BEGIN_SRC shell :dir /tmp/greeting-api/
+  lein cljfmt check
+#+END_SRC
+
+实际输出（代码格式正确时）：
+#+BEGIN_SRC fundamental
+  All source files formatted correctly
+#+END_SRC
+
+如果有格式问题，用以下命令自动修复：
+#+BEGIN_SRC shell
+  lein cljfmt fix
+#+END_SRC
+
+** 全局插件（个人工具）
+放在 =~/.lein/profiles.clj= 中，不进入项目仓库，适合个人常用工具：
+
+#+BEGIN_SRC clojure
+  {:user {:plugins [[lein-ancient "0.7.0"]
+                    [lein-pprint "1.3.2"]]}}
+#+END_SRC
+
+使用 =lein-ancient= 检查依赖是否过时：
+#+BEGIN_SRC shell
+  lein ancient :all
+#+END_SRC
+
+#+begin_example
+  Retrieving lein-ancient/lein-ancient/0.7.0/lein-ancient-0.7.0.jar from clojars
+  [org.clojure/clojure "1.12.4"] is available but we use "1.11.1" (use :check-clojure to upgrade)
+  [ring/ring-core "1.15.4"] is available but we use "1.13.0"
+  [hiccup "2.0.0"] is available but we use "1.0.5"
+  (warn)  [central] - Δ 13667ms - failure when checking ring/ring-mock: java.net.SocketTimeoutException: Read timed out
+  [ring/ring-mock "0.6.2"] is available but we use "0.4.0"
+#+end_example
+
+** lein-ring 配置
+在上面的配置中，我们为 =greeting-api= 配置了 =lein-ring= 插件：
+
+#+BEGIN_SRC clojure
+  :ring {:handler greeting-api.core/app    ; 指向 core.clj 中的 app 变量
+         :port 3000}                        ; 端口号
+#+END_SRC
+
+=lein-ring= 还支持更多选项：
+#+BEGIN_SRC clojure
+  :ring {:handler greeting-api.core/app
+         :port 3000
+         :auto-reload? true           ; 自动重载（默认 true）
+         :reload-paths ["src"]        ; 监听的目录
+         :open-browser? false}        ; 是否自动打开浏览器
+#+END_SRC
+
+** 常用插件一览
+
+| 类别     | 插件            | 用途                        | 常用命令            |
+|----------+-----------------+-----------------------------+---------------------|
+| Web 开发 | lein-ring       | 运行 Ring 应用，自动重载    | =lein ring server=  |
+| 代码格式 | lein-cljfmt     | 格式化代码（类似 Prettier） | =lein cljfmt fix=   |
+| 静态分析 | jonase/eastwood | 发现常见 bug                | =lein eastwood=     |
+| 惯用法   | lein-kibit      | 建议更地道的写法            | =lein kibit=        |
+| 依赖管理 | lein-ancient    | 检查过时的依赖              | =lein ancient :all= |
+
+查找更多插件可以访问 [[https://clojars.org][Clojars]]（搜索 =lein-*= 前缀）或 [[https://github.com/technomancy/leiningen/wiki/Plugins][Leiningen 官方插件列表]] 。
+
+* Aliases（自定义快捷命令）
+Aliases 允许你在 =project.clj= 中定义快捷命令，避免每次输入一长串参数。
+
+** 在 greeting-api 中配置 Aliases
+
+#+BEGIN_SRC clojure
+  :aliases {"fmt"   ["cljfmt" "fix"]
+            "lint"  ["eastwood"]
+            "build" ["with-profile" "uberjar" "uberjar"]}
+#+END_SRC
+
+** 使用简单别名
+
+#+BEGIN_SRC shell
+  lein fmt    # 等同于 lein cljfmt fix
+  lein lint   # 等同于 lein eastwood
+#+END_SRC
+
+** 链式任务（do）
+用 =do= 将多个任务串联执行。注意逗号是 Leiningen =do= 任务的语法要求——它分隔 =do= 中的不同任务表达式，每个任务（除最后一个）后需要逗号。
+
+例如配置一个 CI 流水线：
+#+BEGIN_SRC clojure
+  :aliases {"ci" ["do" "clean," "cljfmt" "check," "test," "uberjar"]}
+#+END_SRC
+
+运行：
+#+BEGIN_SRC shell
+  lein ci
+  # 依次执行：clean → cljfmt check → test → uberjar
+#+END_SRC
+
+** Profile + 任务组合
+="build"= 别名演示了如何组合 profile 和任务：
+
+#+BEGIN_SRC clojure
+  "build" ["with-profile" "uberjar" "uberjar"]
+#+END_SRC
+
+等价于：
+#+BEGIN_SRC shell
+  lein with-profile uberjar uberjar
+#+END_SRC
+
+即用 =:uberjar= profile 来执行 =uberjar= 任务（触发 AOT 编译）。
+
+* AOT 编译与打包
+AOT 即 Ahead-Of-Time（提前编译）。正常情况下，Clojure 代码是在 JVM 启动时即时编译的。而 AOT 则是在构建阶段就把 Clojure 代码编译成 =.class= 文件。
+
+** 为什么需要 AOT？
+当你用 =lein run= 运行项目时，Leiningen 会启动 JVM、加载 Clojure 运行时、即时编译你的代码，然后调用 =-main= 函数——这个过程依赖 Leiningen 的运行时支持。
+
+但当你想用 =java -jar greeting-api.jar= 直接运行一个 JAR 包时，JVM 需要一个标准的 Java 入口方法：
+#+BEGIN_SRC java
+  public static void main(String[] args)
+#+END_SRC
+
+Clojure 的 =-main= 函数本身不是这样的入口。AOT 编译会将 =:aot= 配置中指定的所有命名空间编译成 =.class= 文件，其中包含符合 Java 入口点规范的 =main= 方法，这样 JVM 就能直接运行了。
+
+** 为什么只在 uberjar profile 中使用？
+AOT 有几个缺点，不适合在开发时使用：
+- 编译变慢：每次都要编译所有命名空间
+- 过期的 =.class= 文件：修改代码后如果旧的 =.class= 文件没清理干净，可能引发难以排查的 bug
+- 产物更大： =target/= 目录里多出一堆文件
+
+因此标准做法是把 AOT 放在 =:uberjar= profile 中（这也是 =lein new app= 生成的默认配置）：
+
+#+BEGIN_SRC clojure
+  :profiles {:uberjar {:aot :all
+                       :omit-source true}}
+#+END_SRC
+
+** 打包 greeting-api
+确保 =src/greeting_api/core.clj= 中有 =(:gen-class)= 声明（前面已经添加），然后执行：
+
+#+BEGIN_SRC shell
+  lein build
+  # 等价于: lein with-profile uberjar uberjar
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Compiling greeting-api.core
+  Created /tmp/greeting-api/target/greeting-api-0.1.0-SNAPSHOT.jar
+  Created /tmp/greeting-api/target/greeting-api-0.1.0-SNAPSHOT-standalone.jar
+#+END_SRC
+
+验证打包结果：
+#+BEGIN_SRC shell
+  java -jar target/greeting-api-0.1.0-SNAPSHOT-standalone.jar
+#+END_SRC
+
+实际输出：
+#+BEGIN_SRC fundamental
+  Hello, World!
+#+END_SRC
+
+[注] =standalone.jar= 就是 uberjar——它把 Clojure 运行时和所有依赖都打进了同一个 JAR 文件，可以直接用 =java -jar= 运行，无需安装 Leiningen 或 Clojure。
+
+* 总结
+通过这篇笔记，我们用一个 =greeting-api= 项目演示了 Leiningen 的完整工作流：
+
+1. **安装与创建**：用 =lein new app= 创建项目，注意命名空间 =-= 与文件路径 =_= 的转换
+2. **依赖与运行**：在 =project.clj= 中声明依赖，用 =lein run= 和 =lein test= 运行和测试
+3. **Profiles**：用 =:dev= 放开发工具，用 =:uberjar= 做 AOT 编译，保持生产包干净
+4. **Plugins**：通过插件扩展功能（如 =lein-ring= 运行 Web 服务）
+5. **Aliases**：用 =:aliases= 定义快捷命令，统一团队工作流
+6. **打包**：用 =lein uberjar= 生成可独立运行的 JAR 文件
+
+** 推荐资源
+- [[https://leiningen.org/][Leiningen 官网]]
+- [[https://github.com/technomancy/leiningen/blob/master/doc/TUTORIAL.md][Leiningen Tutorial（官方教程）]]
+- [[https://clojars.org][Clojars（Clojure 包仓库）]]
+- [[https://dev.to/ivangavlik/leiningen-complete-tutorial-best-practices-3f8l][原文：Leiningen — Complete Tutorial & Best Practices]]
