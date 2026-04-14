@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Linux 数据去重学习笔记 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="linux和它的小伙伴" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Linux 数据去重学习笔记</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org9e05486">什么是数据去重</a></li>
+<li><a href="#org5bce394">去重的工作原理</a>
+<ul>
+<li><a href="#orga822c1b">1. 分块（Chunking）</a></li>
+<li><a href="#orgeda92ef">2. 指纹（Fingerprinting）</a></li>
+<li><a href="#orgd88f2d8">3. 索引（Indexing）</a></li>
+<li><a href="#orgb28f47e">4. 复用（Reuse）</a></li>
+<li><a href="#orgfabdf99">Inline vs Post-process</a></li>
+</ul>
+</li>
+<li><a href="#orgea88078">Linux 上的去重方案</a>
+<ul>
+<li><a href="#orgaa62ba7">Btrfs：CoW 文件系统 + 用户空间工具</a></li>
+<li><a href="#org04af16b">ZFS on Linux：原生 inline 块级去重</a></li>
+<li><a href="#org8deaea6">dm-vdo：文件系统之下的去重</a></li>
+</ul>
+</li>
+<li><a href="#org0927ce8">去重的利与弊</a>
+<ul>
+<li><a href="#orgd5f87f8">收益场景</a></li>
+<li><a href="#orga36eea5">风险与代价</a></li>
+</ul>
+</li>
+<li><a href="#orge36207f">实践建议</a>
+<ul>
+<li><a href="#org5fd740d">识别"低垂果实"</a></li>
+<li><a href="#orge6ee8fd">选择合适的层级</a></li>
+<li><a href="#org27d0981">结合快照策略</a></li>
+<li><a href="#org78da75a">关注关键指标</a></li>
+</ul>
+</li>
+<li><a href="#orgce37eba">未来方向</a></li>
+</ul>
+</div>
+</div>
+<p>
+记录 Linux 上数据去重（Data Deduplication）的原理、主流方案和实践要点。
+参考文章：<a href="https://www.opensourceforu.com/2026/04/data-deduplication-done-the-right-way/">Data Deduplication Done The Right Way</a>
+</p>
+
+<div id="outline-container-org9e05486" class="outline-2">
+<h2 id="org9e05486">什么是数据去重</h2>
+<div class="outline-text-2" id="text-org9e05486">
+<p>
+数据去重（Data Deduplication）的核心思想很简单： <b>每个唯一的数据块只存一份，在需要重复使用时通过引用来共享</b> 。
+</p>
+
+<p>
+一个典型的场景：如果你每天对同一台虚拟机做快照，连续做 30 天，你并不是真的存了 30 份完全不同的数据——绝大多数数据块都是重复的。去重就是把这些重复的部分消除掉。
+</p>
+
+<p>
+在 Linux 上，通过现代文件系统（如 Btrfs、ZFS）、块设备层方案（如 dm-vdo）以及用户空间工具，可以实现不同层级的数据去重。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5bce394" class="outline-2">
+<h2 id="org5bce394">去重的工作原理</h2>
+<div class="outline-text-2" id="text-org5bce394">
+<p>
+去重分为两个大步骤：先决定如何切割数据，再判断哪些数据已经存在。
+</p>
+</div>
+
+<div id="outline-container-orga822c1b" class="outline-3">
+<h3 id="orga822c1b">1. 分块（Chunking）</h3>
+<div class="outline-text-3" id="text-orga822c1b">
+<p>
+数据首先被切成小块。有两种主要策略：
+</p>
+
+<ul class="org-ul">
+<li><b>固定大小分块（Fixed-size）</b> ：按固定字节数切分，简单高效，但当文件中间插入或删除字节时，后续所有块的边界都会偏移。</li>
+<li><b>内容定义分块（Content-Defined Chunking, CDC）</b> ：根据数据流中的模式来选择块的边界，这样即使文件中间有增删，也只有受影响的少量块发生变化，其余块的边界保持不变。CDC 的去重效率通常更高。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgeda92ef" class="outline-3">
+<h3 id="orgeda92ef">2. 指纹（Fingerprinting）</h3>
+<div class="outline-text-3" id="text-orgeda92ef">
+<p>
+每个数据块计算一个指纹（通常使用加密哈希，如 SHA-256），这个指纹相当于数据块的"身份证"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd88f2d8" class="outline-3">
+<h3 id="orgd88f2d8">3. 索引（Indexing）</h3>
+<div class="outline-text-3" id="text-orgd88f2d8">
+<p>
+所有指纹存储在一个索引中。当新数据块到来时，系统检查其指纹是否已存在于索引中。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb28f47e" class="outline-3">
+<h3 id="orgb28f47e">4. 复用（Reuse）</h3>
+<div class="outline-text-3" id="text-orgb28f47e">
+<p>
+如果发现重复，系统不会再次写入该数据块，而是创建或更新引用计数。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfabdf99" class="outline-3">
+<h3 id="orgfabdf99">Inline vs Post-process</h3>
+<div class="outline-text-3" id="text-orgfabdf99">
+<ul class="org-ul">
+<li><b>Inline 去重</b> ：在写入路径上实时进行，数据在落盘前就被检查。优点是即时节省空间，缺点是增加了 CPU、内存和 I/O 开销。</li>
+<li><b>Post-process 去重</b> ：写入时不干预，等系统空闲时再由扫描器处理。优点是写入速度快，代价是延迟的去重效果。</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgea88078" class="outline-2">
+<h2 id="orgea88078">Linux 上的去重方案</h2>
+<div class="outline-text-2" id="text-orgea88078">
+<p>
+Linux 没有一个统一的"去重开关"，而是需要根据你的场景选择合适的层级。
+</p>
+</div>
+
+<div id="outline-container-orgaa62ba7" class="outline-3">
+<h3 id="orgaa62ba7">Btrfs：CoW 文件系统 + 用户空间工具</h3>
+<div class="outline-text-3" id="text-orgaa62ba7">
+<p>
+Btrfs 是一个现代化的 Copy-on-Write（CoW）文件系统，在克隆和快照时天然不会重复存储相同的数据块。通过 reflink（=cp --reflink=）可以创建即时逻辑副本，共享数据块直到被修改。
+</p>
+
+<p>
+但 Btrfs <b>不会自动进行 inline 去重</b> ，需要借助用户空间工具：
+</p>
+
+<ul class="org-ul">
+<li><p>
+<b>duperemove</b> ：批量扫描工具，计算 extent 或 block 的哈希，在数据库中查找重复项，然后请求 Btrfs 将它们合并为共享 extent。适合在备份卷上定期运行。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25195;&#25551;&#25351;&#23450;&#30446;&#24405;&#65288;&#21482;&#35835;&#27169;&#24335;&#65292;&#26597;&#30475;&#21738;&#20123;&#25991;&#20214;&#21487;&#21435;&#37325;&#65292;&#19981;&#23454;&#38469;&#25191;&#34892;&#65289;
+</span>duperemove -r /path/to/backup
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23454;&#38469;&#25191;&#34892;&#21435;&#37325;&#65288;-d &#34920;&#31034; dedupe&#65289;
+</span>duperemove -r -d /path/to/backup
+</pre>
+</div></li>
+
+<li><b>bees</b> ：一个长期运行的守护进程，增量遍历文件系统树并在后台持续去重。适合需要持续去重的场景。</li>
+</ul>
+
+<p>
+管理员在 VM 集合、容器层和 ISO 库上报告了很高的空间节省率。但需要注意： <b>过于激进的去重加上碎片化可能会降低繁忙卷上的随机读取性能</b> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org04af16b" class="outline-3">
+<h3 id="org04af16b">ZFS on Linux：原生 inline 块级去重</h3>
+<div class="outline-text-3" id="text-org04af16b">
+<p>
+OpenZFS 提供了原生的 inline 块级去重。每个写入操作都经过以下流程：
+</p>
+
+<ol class="org-ol">
+<li>对数据块计算哈希</li>
+<li>在去重表（Dedup Table, DDT）中查找</li>
+<li><p>
+如果已存在，增加引用计数而非写入新数据
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#22312;&#25351;&#23450; dataset &#19978;&#21551;&#29992;&#21435;&#37325;
+</span>zfs set <span class="org-variable-name">dedup</span>=on poolname/dataset
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#21435;&#37325;&#29366;&#24577;
+</span>zfs get dedup poolname/dataset
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">NAME      PROPERTY  VALUE          SOURCE
+poolname  dedup     on             local
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475; DDT&#65288;&#21435;&#37325;&#34920;&#65289;&#30340;&#32479;&#35745;&#20449;&#24687;
+</span>zpool status -D poolname
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">pool: poolname
+ state: ONLINE
+config:
+
+        NAME                 STATE     READ WRITE CKSUM
+        poolname             ONLINE       0     0     0
+          /dev/sdb1          ONLINE       0     0     0
+
+errors: No known data errors
+
+ dedup: no DDT entries
+</pre>
+</div></li>
+</ol>
+
+<p>
+ZFS 去重的优势是不需要运行外部扫描器。风险在于 DDT 主要驻留在 RAM 中，其大小随唯一块数量增长（而非逻辑容量）。
+</p>
+
+<p>
+一个经验法则： <b>在 VM 启动盘场景下常见 3:1 到 5:1 的去重率，但需要精心规划内存——根据块大小和工作负载，每几 TB 唯一数据可能需要几 GB 的 RAM</b> 。
+</p>
+
+<p>
+近期 ZFS 社区的改进包括：基于时间的旧条目修剪（Age-based pruning）、以及尝试利用空闲资源的"机会性"去重模式。
+</p>
+
+<p>
+最佳实践： <b>将去重限定在特定用途的 pool 上</b> （如专门存放 VM 镜像的 pool），而非对所有 dataset 一刀切地开启。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8deaea6" class="outline-3">
+<h3 id="org8deaea6">dm-vdo：文件系统之下的去重</h3>
+<div class="outline-text-3" id="text-org8deaea6">
+<p>
+dm-vdo（Virtual Data Optimizer）是一个 device-mapper 目标，位于文件系统之下，提供 inline 块级去重、压缩、零块消除和精简配置。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#23433;&#35013; vdo
+</span>sudo pacman -S vdo  <span class="org-comment-delimiter"># </span><span class="org-comment">Arch Linux
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#25110;
+</span>sudo apt install vdo  <span class="org-comment-delimiter"># </span><span class="org-comment">Debian/Ubuntu
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21019;&#24314; VDO &#21367;&#65288;&#36923;&#36753;&#22823;&#23567;&#21487;&#20197;&#22823;&#20110;&#29289;&#29702;&#22823;&#23567;&#65289;
+</span>sudo vdo create --name=myvdo --device=/dev/sdb1 --vdoLogicalSize=100G
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#22312; VDO &#21367;&#19978;&#21019;&#24314;&#25991;&#20214;&#31995;&#32479;
+</span>sudo mkfs.xfs /dev/mapper/myvdo
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25346;&#36733;
+</span>sudo mount /dev/mapper/myvdo /mnt/vdo
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475; VDO &#21367;&#30340;&#32479;&#35745;&#20449;&#24687;
+</span>sudo vdostats --human-readable myvdo
+</pre>
+</div>
+
+<p>
+VDO 的设计将职责分离为：
+</p>
+<ul class="org-ul">
+<li>UDS（去重索引）：快速识别重复块</li>
+<li>引用计数的数据存储：映射逻辑块到物理块</li>
+</ul>
+
+<p>
+因为 VDO 工作在块设备层，所以它是 <b>文件系统无关的</b> —— 你可以在上面运行 XFS、ext4 或 Btrfs。这对于不方便更换文件系统但又急需节省存储空间的场景特别有用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0927ce8" class="outline-2">
+<h2 id="org0927ce8">去重的利与弊</h2>
+<div class="outline-text-2" id="text-org0927ce8">
+</div>
+<div id="outline-container-orgd5f87f8" class="outline-3">
+<h3 id="orgd5f87f8">收益场景</h3>
+<div class="outline-text-3" id="text-orgd5f87f8">
+<ul class="org-ul">
+<li><b>备份</b> ：研究和厂商报告显示，备份工作负载通常能获得 60-80% 的逻辑空间缩减，因为日备份或周备份之间共享大量相同区域。</li>
+<li><b>VDI 和虚拟机</b> ：一组相似的虚拟机共享内核、库和基础镜像，去重率通常可达 3:1 或更高。</li>
+<li><b>网络与云</b> ：客户端去重可以避免发送重复数据，减少 WAN 使用量。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orga36eea5" class="outline-3">
+<h3 id="orga36eea5">风险与代价</h3>
+<div class="outline-text-3" id="text-orga36eea5">
+<ul class="org-ul">
+<li><b>碎片化</b> ：当多个逻辑块映射到共享物理块的拼图时，顺序读取可能退化为随机 I/O。这对基于 HDD 的阵列和冷存储影响尤其严重。</li>
+<li><b>元数据和内存</b> ：去重索引随唯一块数量增长。如果索引超出 RAM 容量，查找会溢出到磁盘，性能急剧下降。</li>
+<li><b>加密冲突</b> ：应用层加密（写入前加密）会有效破坏去重，因为相同的明文会产生不同的密文。加密去重需要特殊方案才能使密文保持可比较。</li>
+</ul>
+
+<p>
+一个实用的经验法则： <b>去重非常适合备份和镜像类数据，对延迟敏感的主数据库有风险，对已经压缩或重度加密的数据则几乎无用</b> 。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge36207f" class="outline-2">
+<h2 id="orge36207f">实践建议</h2>
+<div class="outline-text-2" id="text-orge36207f">
+</div>
+<div id="outline-container-org5fd740d" class="outline-3">
+<h3 id="org5fd740d">识别"低垂果实"</h3>
+<div class="outline-text-3" id="text-org5fd740d">
+<p>
+优先寻找以下工作负载：
+</p>
+<ul class="org-ul">
+<li>包含大量相似完整备份的大型备份仓库</li>
+<li>VM 镜像库、黄金镜像和实验快照</li>
+<li>ISO 镜像源、容器基础层、多分支代码仓库</li>
+</ul>
+
+<p>
+这些工作负载天然包含大量重复块，且通常不像事务数据库那样对延迟敏感。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge6ee8fd" class="outline-3">
+<h3 id="orge6ee8fd">选择合适的层级</h3>
+<div class="outline-text-3" id="text-orge6ee8fd">
+<ul class="org-ul">
+<li>如果已经在 Btrfs 上做备份盘，可以用 <code>duperemove</code> 每周运行或 <code>bees</code> 持续运行。先在测试目录上测量空间节省率和运行时间。</li>
+<li>如果想在 SAN 或本地 RAID 上实现文件系统无关的去重，可以在测试 LUN 上评估 =dm-vdo=，在上面叠加 XFS 或 ext4，然后重放典型备份工作负载对比逻辑使用量与物理使用量。</li>
+<li>如果用 ZFS 做 VM 池，只在包含高度相似数据的 dataset 上启用去重，并持续监控 DDT 大小、RAM 使用量和读取延迟。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org27d0981" class="outline-3">
+<h3 id="org27d0981">结合快照策略</h3>
+<div class="outline-text-3" id="text-org27d0981">
+<p>
+CoW 文件系统（Btrfs/ZFS）上的混合策略：
+</p>
+<ol class="org-ol">
+<li>定期在 CoW 文件系统上做快照</li>
+<li>对较老的快照进行更激进的去重，保持最新一代相对无碎片</li>
+<li>清理快照时优先删除碎片化严重的较老世代</li>
+</ol>
+
+<p>
+这样把碎片化的代价推向很少被读取的旧数据，保持最近备份的快速可读性。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org78da75a" class="outline-3">
+<h3 id="org78da75a">关注关键指标</h3>
+<div class="outline-text-3" id="text-org78da75a">
+<ul class="org-ul">
+<li>逻辑使用量 vs 物理使用量（有效去重 + 压缩率）</li>
+<li>备份和恢复任务的平均延迟和尾部延迟</li>
+<li>去重索引大小和内存占用（ZFS 的 DDT 大小、VDO 的索引大小、duperemove 的数据库大小）</li>
+</ul>
+
+<p>
+如果去重率低于约 1.2:1，而你在付出显著的性能或复杂度代价，那么这个工作负载可能不值得做去重。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgce37eba" class="outline-2">
+<h2 id="orgce37eba">未来方向</h2>
+<div class="outline-text-2" id="text-orgce37eba">
+<p>
+Linux 存储去重的发展趋势：
+</p>
+
+<ul class="org-ul">
+<li><b>更快的 CDC 算法</b> （如 RapidCDC 及更新的变体），在保持高去重率的同时大幅降低 CPU 开销</li>
+<li><b>面向 NVM 和 SSD 优化的 inline 去重</b> ，随机 I/O 惩罚更小，元数据可以驻留在持久内存中</li>
+<li><b>容器感知的去重引擎</b> ，理解 Docker/OCI 层语义，在数千个镜像间避免冗余副本而不影响 pull 性能</li>
+</ul>
+
+<p>
+去重将越来越不像一个昂贵的实验，而更像一个可预测的基础构建块——尤其在备份、VM 和容器镜像平台中。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-15</span>
+    <span class="post-info">2026-04-15</span>
+    <a href="../../../../../tags/linux和它的小伙伴">linux和它的小伙伴</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; 2gnpaxuhab5ehkfhy13oebfeih &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
