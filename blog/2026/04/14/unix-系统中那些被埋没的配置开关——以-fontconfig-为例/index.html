@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Unix 系统中那些被埋没的配置开关——以 FontConfig 为例 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Linux, Unix哲学, FontConfig, 配置管理, mechanism-vs-policy" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Unix 系统中那些被埋没的配置开关——以 FontConfig 为例</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd4b1047">前言</a></li>
+<li><a href="#org63116fe">Mechanism, Not Policy</a></li>
+<li><a href="#org7d994fd">FontConfig：你可能从未了解过的字体魔法</a>
+<ul>
+<li><a href="#orgf15618a">大多数人只知道 fc-list</a></li>
+<li><a href="#org4e3a4f2">FontConfig 的配置格式</a></li>
+<li><a href="#org8572298">预置的优化配置</a></li>
+<li><a href="#org3529b52">fc-match：查看字体匹配真相</a></li>
+<li><a href="#org9a49750">fc-pattern：调试字体属性</a></li>
+<li><a href="#org6d4b7f1">为什么这么强大的能力几乎没人知道？</a></li>
+</ul>
+</li>
+<li><a href="#org0f787c4">其他被埋没的配置</a>
+<ul>
+<li><a href="#orgd552bd9">Audio Restore List</a></li>
+<li><a href="#org03a2a76">Journald</a></li>
+<li><a href="#org45bb8b2">sudo</a></li>
+<li><a href="#org211ff64">Polkit</a></li>
+<li><a href="#org87c5ef2">udev</a></li>
+</ul>
+</li>
+<li><a href="#orgdfe39cb">为什么这个问题难以解决</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd4b1047" class="outline-2">
+<h2 id="orgd4b1047">前言</h2>
+<div class="outline-text-2" id="text-orgd4b1047">
+<p>
+本文灵感来自 <a href="https://venam.net/blog/unix/2025/04/18/mechanism_policy.html">Buried Toggles Begging to be Brought to Light</a>（作者：Patrick Louis），文章探讨了一个 Unix 世界里的经典问题：很多系统软件提供了极其强大的配置能力，但这些能力被深埋在复杂的配置文件和晦涩的命令行选项中，几乎没有人知道它们的存在。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org63116fe" class="outline-2">
+<h2 id="org63116fe">Mechanism, Not Policy</h2>
+<div class="outline-text-2" id="text-org63116fe">
+<p>
+Unix 设计哲学中有一条广为人知的信条：*"提供机制，而非策略"（Mechanism, not policy）*。意思是系统应该提供灵活的底层能力，而把"怎么用"的决定权留给用户。
+</p>
+
+<p>
+这个理念催生了无数强大的工具，但也带来了一个副作用。Henry Spencer 曾一针见血地指出：
+</p>
+
+<blockquote>
+<p>
+这种态度的缺点是，人们倾向于认为一旦完成了高度可配置和富有表现力的接口，工作就算完成了……即使结果是其他任何人如果不经过漫长研究几乎不可能使用。可配置性的反面是迫切需要良好的默认值和一种简单的方式将一切重置为默认值。表达力的反面是需要指导——无论是在程序中还是在文档中——关于如何入门以及如何实现最常见的需求。
+</p>
+</blockquote>
+
+<p>
+ESR 在 <b>The Art of Unix Programming</b> 中也表达了类似的观点：
+</p>
+
+<blockquote>
+<p>
+当人们说一个用户界面是直观的，他们的意思是它 (a) 可发现、(b) 使用时透明、(c) 遵循最小惊讶原则。
+</p>
+</blockquote>
+
+<p>
+venam 在文章中列举了 Linux 系统中 9 个"被埋没的配置开关"的例子。本文将以 <b>FontConfig</b> 为重点深入探讨，其余领域简要带过。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7d994fd" class="outline-2">
+<h2 id="org7d994fd">FontConfig：你可能从未了解过的字体魔法</h2>
+<div class="outline-text-2" id="text-org7d994fd">
+</div>
+<div id="outline-container-orgf15618a" class="outline-3">
+<h3 id="orgf15618a">大多数人只知道 fc-list</h3>
+<div class="outline-text-3" id="text-orgf15618a">
+<p>
+如果你问一个 Linux 用户怎么管理字体，大概率会得到这样的回答：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">fc-list | head
+</pre>
+</div>
+
+<pre class="example" id="orgf0369af">
+/usr/share/fonts/100dpi/courB18.pcf.gz: Adobe Courier:style=Bold
+/usr/share/fonts/100dpi/helvBO18.pcf.gz: Adobe Helvetica:style=Bold Oblique
+/usr/share/fonts/100dpi/UTRG__12.pcf.gz: Adobe Utopia:style=Regular
+/usr/share/fonts/gsfonts/D050000L.otf: D050000L:style=Regular
+/usr/share/fonts/100dpi/timB12-ISO8859-1.pcf.gz: Adobe Times:style=Bold
+</pre>
+
+<p>
+这确实是大多数人使用 FontConfig 的方式——列出系统里有哪些字体，然后就没了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4e3a4f2" class="outline-3">
+<h3 id="org4e3a4f2">FontConfig 的配置格式</h3>
+<div class="outline-text-3" id="text-org4e3a4f2">
+<p>
+但实际上，FontConfig 拥有一套极其强大的 XML 配置格式，可以对字体进行 <b>匹配和属性编辑</b> 。配置文件位于 <code>/etc/fonts/fonts.conf</code> 和 <code>/etc/fonts/conf.d/</code> 目录下。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">ls /etc/fonts/conf.d/ | head
+</pre>
+</div>
+
+<pre class="example" id="orgc055656">
+10-hinting-slight.conf
+10-scale-bitmap-fonts.conf
+10-yes-antialias.conf
+11-lcdfilter-default.conf
+20-unhint-small-dejavu-lgc-sans.conf
+20-unhint-small-dejavu-lgc-sans-mono.conf
+20-unhint-small-dejavu-lgc-serif.conf
+20-unhint-small-dejavu-sans.conf
+20-unhint-small-dejavu-sans-mono.conf
+20-unhint-small-dejavu-serif.conf
+</pre>
+
+<p>
+每个配置文件都是一个 XML 文档，核心结构是 <code>&lt;match&gt;</code> 元素，包含 =&lt;test&gt;=（匹配条件）和 =&lt;edit&gt;=（编辑操作）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-fundamental">&lt;match target="font"&gt;
+  &lt;test name="family"&gt;
+    &lt;string&gt;Monospace&lt;/string&gt;
+  &lt;/test&gt;
+  &lt;edit name="hintstyle" mode="assign"&gt;
+    &lt;const&gt;hintslight&lt;/const&gt;
+  &lt;/edit&gt;
+&lt;/match&gt;
+</pre>
+</div>
+
+<p>
+这段配置的意思是：对所有 Monospace 族字体，将 hintstyle 设置为 hintslight。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8572298" class="outline-3">
+<h3 id="org8572298">预置的优化配置</h3>
+<div class="outline-text-3" id="text-org8572298">
+<p>
+你的系统上很可能已经有一套预置的字体优化配置，但大多数人从未留意过：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">ls /usr/share/fontconfig/conf.avail/
+</pre>
+</div>
+
+<pre class="example" id="orge85c52c">
+05-reset-dirs-sample.conf
+09-autohint-if-no-hinting.conf
+10-autohint.conf
+10-hinting-full.conf
+10-hinting-medium.conf
+10-hinting-none.conf
+10-hinting-slight.conf
+10-no-antialias.conf
+10-scale-bitmap-fonts.conf
+10-sub-pixel-bgr.conf
+10-sub-pixel-none.conf
+10-sub-pixel-rgb.conf
+10-sub-pixel-vbgr.conf
+10-sub-pixel-vrgb.conf
+10-unhinted.conf
+10-yes-antialias.conf
+11-lcdfilter-default.conf
+11-lcdfilter-legacy.conf
+11-lcdfilter-light.conf
+11-lcdfilter-none.conf
+...（共 70+ 个预置配置文件）
+</pre>
+
+<p>
+这些预置配置涵盖了各种渲染优化场景，如 LCD 滤波器设置、像素间距建议、特定语言的字体回退等。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3529b52" class="outline-3">
+<h3 id="org3529b52">fc-match：查看字体匹配真相</h3>
+<div class="outline-text-3" id="text-org3529b52">
+<p>
+<code>fc-match</code> 是理解 FontConfig 行为的关键工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">fc-match Sans
+</pre>
+</div>
+
+<pre class="example" id="orgd6b3629">
+wqy-zenhei.ttc: "文泉驿正黑" "Regular"
+</pre>
+
+<p>
+这会告诉你当你请求 Sans 字体时，系统实际会使用什么字体。加上 <code>-s</code> 参数可以看到完整的替换链：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">fc-match -s Sans | head -5
+</pre>
+</div>
+
+<pre class="example" id="orgd7e16ab">
+wqy-zenhei.ttc: "文泉驿正黑" "Regular"
+DejaVuSans.ttf: "DejaVu Sans" "Book"
+DejaVuSans-Bold.ttf: "DejaVu Sans" "Bold"
+DejaVuSans-Oblique.ttf: "DejaVu Sans" "Oblique"
+DejaVuSans-BoldOblique.ttf: "DejaVu Sans" "Bold Oblique"
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org9a49750" class="outline-3">
+<h3 id="org9a49750">fc-pattern：调试字体属性</h3>
+<div class="outline-text-3" id="text-org9a49750">
+<p>
+<code>fc-pattern</code> 可以让你看到字体的完整属性列表：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">fc-match --verbose Sans | head -20
+</pre>
+</div>
+
+<pre class="example" id="orgffd5819">
+Pattern has 45 elts (size 48)
+	family: "文泉驿正黑"(w) "WenQuanYi Zen Hei"(w) "文泉驛正黑"(w)
+	familylang: "zh-cn"(s) "en"(w) "zh-tw"(w)
+	style: "Regular"(s)
+	stylelang: "en"(s)
+	fullname: "文泉驿正黑"(w) "WenQuanYi Zen Hei"(w) "文泉驛正黑"(w)
+	fullnamelang: "zh-cn"(s) "en"(w) "zh-tw"(w)
+	slant: 0(i)(s)
+	weight: 100(f)(s)
+	width: 100(f)(s)
+	size: 12(f)(s)
+	pixelsize: 12.5(f)(s)
+	spacing: 0(i)(w)
+	foundry: "WenQ"(s)
+	antialias: True(w)
+	hintstyle: 0(i)(w)
+	hinting: True(w)
+	verticallayout: False(s)
+	autohint: False(w)
+	globaladvance: False(w)
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org6d4b7f1" class="outline-3">
+<h3 id="org6d4b7f1">为什么这么强大的能力几乎没人知道？</h3>
+<div class="outline-text-3" id="text-org6d4b7f1">
+<p>
+venam 指出，目前的字体相关界面仅限于显示已安装字体列表和不同尺寸的预览。曾经有一个叫 <b>fontweak</b> 的项目试图让 FontConfig 的配置更加可发现，但功能有限且无法展示全局视图。
+</p>
+
+<p>
+FontConfig 的困境是典型的 <b>"mechanism without discoverable policy"</b> : 它提供了强大的匹配-编辑机制，但用户需要一个直观的界面来回答"我的系统当前对字体到底做了什么？"
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0f787c4" class="outline-2">
+<h2 id="org0f787c4">其他被埋没的配置</h2>
+<div class="outline-text-2" id="text-org0f787c4">
+<p>
+venam 在文章中还列举了其他几个类似的例子，这里简要概述。
+</p>
+</div>
+
+<div id="outline-container-orgd552bd9" class="outline-3">
+<h3 id="orgd552bd9">Audio Restore List</h3>
+<div class="outline-text-3" id="text-orgd552bd9">
+<p>
+PulseAudio 和 PipeWire 会记住每个设备、每个音频流的最后音量设置。但这个信息是隐藏的——当你插上耳机或打开视频时，你无法预知音量会是多少。可能震耳欲聋，也可能完全静音。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org03a2a76" class="outline-3">
+<h3 id="org03a2a76">Journald</h3>
+<div class="outline-text-3" id="text-org03a2a76">
+<p>
+<code>systemd.journal-fields(7)</code> 定义了一套固定的字段体系，Journald 本质上是一个固定列/字段的线性存储。但大多数人只会随机敲命令直到找到想要的结果，或者死记硬背一两个 <code>--unit &lt;service&gt; --reverse</code> 之类的技巧。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org45bb8b2" class="outline-3">
+<h3 id="org45bb8b2">sudo</h3>
+<div class="outline-text-3" id="text-org45bb8b2">
+<p>
+每个人都知道 <code>sudo</code> ，但很少有人能解释 <code>sudo -ll</code> 的输出，或者完整配置 sudoers 文件。sudoers 文件包含默认全局设置、别名和匹配规则，但唯一的编辑器 <code>visudo</code> 对新手极其不友好。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org211ff64" class="outline-3">
+<h3 id="org211ff64">Polkit</h3>
+<div class="outline-text-3" id="text-org211ff64">
+<p>
+Policy Kit 是一个很棒的桌面安全概念：标准化的动作和服务，通过间接总线触发，由集中的策略执行器决定调用者是否被允许。但它的规则和 JavaScript 格式的配置散落在系统各处，创建新的动作和规则非常困难。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org87c5ef2" class="outline-3">
+<h3 id="org87c5ef2">udev</h3>
+<div class="outline-text-3" id="text-org87c5ef2">
+<p>
+udev 规则是另一个"配置散落"的典型。它有匹配模式和动作执行（甚至支持 <code>goto</code> 和标签跳转，是图灵完备的）。唯一"可视化"这些配置的方法是：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">systemd-analyze cat-config udev/rules.d
+</pre>
+</div>
+
+<pre class="example" id="org203b6ae">
+# /usr/lib/udev/rules.d/01-md-raid-creating.rules
+# do not edit this file, it will be overwritten on update
+# While mdadm is creating an array, it creates a file
+# /run/mdadm/creating-mdXXX.  If that file exists, then
+# the array is not "ready" and we should make sure the
+# content is ignored.
+
+KERNEL=="md*", TEST=="/run/mdadm/creating-$kernel", ENV{SYSTEMD_READY}="0"
+
+# /usr/lib/udev/rules.d/10-dm.rules
+...
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdfe39cb" class="outline-2">
+<h2 id="orgdfe39cb">为什么这个问题难以解决</h2>
+<div class="outline-text-2" id="text-orgdfe39cb">
+<p>
+venam 在文章结尾提到了人们面对复杂配置的三种态度：
+</p>
+
+<ol class="org-ol">
+<li><b>保持默认</b> —— 用容器化/不可变系统的方式，一切保持出厂设置</li>
+<li><b>精雕细琢（RICE）</b> —— 乐在其中地折腾每一项配置</li>
+<li><b>探索中间地带</b> —— 尝试让隐藏的能力更容易被发现和使用</li>
+</ol>
+
+<p>
+FontConfig 的例子很好地说明了核心矛盾：可配置性和可发现性之间存在天然的张力。提供更多配置选项意味着更复杂的界面，而简化界面又意味着放弃一些能力。
+</p>
+
+<p>
+但也许问题不在于"要不要简化"，而在于"如何让用户知道这些选项的存在"。一个好的界面不一定需要展示所有选项，但它应该让用户在需要时能够 <b>发现</b> 选项的存在。这正是目前大多数 Linux 系统工具所缺失的。
+</p>
+
+<p>
+正如 ESR 所说，一个好的界面应该是可发现的、透明的、符合最小惊讶原则的。我们还有很长的路要走。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-14</span>
+    <span class="post-info">2026-04-14</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/unix哲学">Unix哲学</a> : <a href="../../../../../tags/fontconfig">FontConfig</a> : <a href="../../../../../tags/配置管理">配置管理</a> : <a href="../../../../../tags/mechanism-vs-policy">mechanism-vs-policy</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; j0dt1v4j3kvu3apyzpie0zbfdh &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

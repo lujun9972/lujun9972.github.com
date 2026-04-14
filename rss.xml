@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 14 Apr 2026 11:53:31 UTC</pubDate>
-    <lastBuildDate>Tue, 14 Apr 2026 11:53:31 UTC</lastBuildDate>
+    <pubDate>Tue, 14 Apr 2026 14:25:52 UTC</pubDate>
+    <lastBuildDate>Tue, 14 Apr 2026 14:25:52 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -296,6 +296,250 @@ IP 欺骗端口扫描利用的是互联网信任链中的漏洞：大学信任 I
 </description>
 <pubDate>2026-04-14</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/13/ip欺骗端口扫描：当别人冒充你去扫描别人/index.html</guid>
+</item>
+<item>
+<title>Unix 系统中那些被埋没的配置开关——以 FontConfig 为例</title>
+<link>https://lujun9972.github.io/blog/2026/04/14/unix-系统中那些被埋没的配置开关——以-fontconfig-为例/index.html</link>
+<description>* 前言
+
+本文灵感来自 [[https://venam.net/blog/unix/2025/04/18/mechanism_policy.html][Buried Toggles Begging to be Brought to Light]]（作者：Patrick Louis），文章探讨了一个 Unix 世界里的经典问题：很多系统软件提供了极其强大的配置能力，但这些能力被深埋在复杂的配置文件和晦涩的命令行选项中，几乎没有人知道它们的存在。
+
+* Mechanism, Not Policy
+
+Unix 设计哲学中有一条广为人知的信条：*&quot;提供机制，而非策略&quot;（Mechanism, not policy）*。意思是系统应该提供灵活的底层能力，而把&quot;怎么用&quot;的决定权留给用户。
+
+这个理念催生了无数强大的工具，但也带来了一个副作用。Henry Spencer 曾一针见血地指出：
+
+#+BEGIN_QUOTE
+这种态度的缺点是，人们倾向于认为一旦完成了高度可配置和富有表现力的接口，工作就算完成了……即使结果是其他任何人如果不经过漫长研究几乎不可能使用。可配置性的反面是迫切需要良好的默认值和一种简单的方式将一切重置为默认值。表达力的反面是需要指导——无论是在程序中还是在文档中——关于如何入门以及如何实现最常见的需求。
+#+END_QUOTE
+
+ESR 在 *The Art of Unix Programming* 中也表达了类似的观点：
+
+#+BEGIN_QUOTE
+当人们说一个用户界面是直观的，他们的意思是它 (a) 可发现、(b) 使用时透明、(c) 遵循最小惊讶原则。
+#+END_QUOTE
+
+venam 在文章中列举了 Linux 系统中 9 个&quot;被埋没的配置开关&quot;的例子。本文将以 *FontConfig* 为重点深入探讨，其余领域简要带过。
+
+* FontConfig：你可能从未了解过的字体魔法
+
+** 大多数人只知道 fc-list
+
+如果你问一个 Linux 用户怎么管理字体，大概率会得到这样的回答：
+
+#+BEGIN_SRC sh
+fc-list | head
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+/usr/share/fonts/100dpi/courB18.pcf.gz: Adobe Courier:style=Bold
+/usr/share/fonts/100dpi/helvBO18.pcf.gz: Adobe Helvetica:style=Bold Oblique
+/usr/share/fonts/100dpi/UTRG__12.pcf.gz: Adobe Utopia:style=Regular
+/usr/share/fonts/gsfonts/D050000L.otf: D050000L:style=Regular
+/usr/share/fonts/100dpi/timB12-ISO8859-1.pcf.gz: Adobe Times:style=Bold
+#+END_EXAMPLE
+
+这确实是大多数人使用 FontConfig 的方式——列出系统里有哪些字体，然后就没了。
+
+** FontConfig 的配置格式
+
+但实际上，FontConfig 拥有一套极其强大的 XML 配置格式，可以对字体进行 *匹配和属性编辑* 。配置文件位于 =/etc/fonts/fonts.conf= 和 =/etc/fonts/conf.d/= 目录下。
+
+#+BEGIN_SRC sh
+ls /etc/fonts/conf.d/ | head
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+10-hinting-slight.conf
+10-scale-bitmap-fonts.conf
+10-yes-antialias.conf
+11-lcdfilter-default.conf
+20-unhint-small-dejavu-lgc-sans.conf
+20-unhint-small-dejavu-lgc-sans-mono.conf
+20-unhint-small-dejavu-lgc-serif.conf
+20-unhint-small-dejavu-sans.conf
+20-unhint-small-dejavu-sans-mono.conf
+20-unhint-small-dejavu-serif.conf
+#+END_EXAMPLE
+
+每个配置文件都是一个 XML 文档，核心结构是 =&lt;match&gt;= 元素，包含 =&lt;test&gt;=（匹配条件）和 =&lt;edit&gt;=（编辑操作）：
+
+#+BEGIN_SRC fundamental
+&lt;match target=&quot;font&quot;&gt;
+  &lt;test name=&quot;family&quot;&gt;
+    &lt;string&gt;Monospace&lt;/string&gt;
+  &lt;/test&gt;
+  &lt;edit name=&quot;hintstyle&quot; mode=&quot;assign&quot;&gt;
+    &lt;const&gt;hintslight&lt;/const&gt;
+  &lt;/edit&gt;
+&lt;/match&gt;
+#+END_SRC
+
+这段配置的意思是：对所有 Monospace 族字体，将 hintstyle 设置为 hintslight。
+
+** 预置的优化配置
+
+你的系统上很可能已经有一套预置的字体优化配置，但大多数人从未留意过：
+
+#+BEGIN_SRC sh
+ls /usr/share/fontconfig/conf.avail/
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+05-reset-dirs-sample.conf
+09-autohint-if-no-hinting.conf
+10-autohint.conf
+10-hinting-full.conf
+10-hinting-medium.conf
+10-hinting-none.conf
+10-hinting-slight.conf
+10-no-antialias.conf
+10-scale-bitmap-fonts.conf
+10-sub-pixel-bgr.conf
+10-sub-pixel-none.conf
+10-sub-pixel-rgb.conf
+10-sub-pixel-vbgr.conf
+10-sub-pixel-vrgb.conf
+10-unhinted.conf
+10-yes-antialias.conf
+11-lcdfilter-default.conf
+11-lcdfilter-legacy.conf
+11-lcdfilter-light.conf
+11-lcdfilter-none.conf
+...（共 70+ 个预置配置文件）
+#+END_EXAMPLE
+
+这些预置配置涵盖了各种渲染优化场景，如 LCD 滤波器设置、像素间距建议、特定语言的字体回退等。
+
+** fc-match：查看字体匹配真相
+
+=fc-match= 是理解 FontConfig 行为的关键工具：
+
+#+BEGIN_SRC sh
+fc-match Sans
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+wqy-zenhei.ttc: &quot;文泉驿正黑&quot; &quot;Regular&quot;
+#+END_EXAMPLE
+
+这会告诉你当你请求 Sans 字体时，系统实际会使用什么字体。加上 =-s= 参数可以看到完整的替换链：
+
+#+BEGIN_SRC sh
+fc-match -s Sans | head -5
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+wqy-zenhei.ttc: &quot;文泉驿正黑&quot; &quot;Regular&quot;
+DejaVuSans.ttf: &quot;DejaVu Sans&quot; &quot;Book&quot;
+DejaVuSans-Bold.ttf: &quot;DejaVu Sans&quot; &quot;Bold&quot;
+DejaVuSans-Oblique.ttf: &quot;DejaVu Sans&quot; &quot;Oblique&quot;
+DejaVuSans-BoldOblique.ttf: &quot;DejaVu Sans&quot; &quot;Bold Oblique&quot;
+#+END_EXAMPLE
+
+** fc-pattern：调试字体属性
+
+=fc-pattern= 可以让你看到字体的完整属性列表：
+
+#+BEGIN_SRC sh
+fc-match --verbose Sans | head -20
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+Pattern has 45 elts (size 48)
+	family: &quot;文泉驿正黑&quot;(w) &quot;WenQuanYi Zen Hei&quot;(w) &quot;文泉驛正黑&quot;(w)
+	familylang: &quot;zh-cn&quot;(s) &quot;en&quot;(w) &quot;zh-tw&quot;(w)
+	style: &quot;Regular&quot;(s)
+	stylelang: &quot;en&quot;(s)
+	fullname: &quot;文泉驿正黑&quot;(w) &quot;WenQuanYi Zen Hei&quot;(w) &quot;文泉驛正黑&quot;(w)
+	fullnamelang: &quot;zh-cn&quot;(s) &quot;en&quot;(w) &quot;zh-tw&quot;(w)
+	slant: 0(i)(s)
+	weight: 100(f)(s)
+	width: 100(f)(s)
+	size: 12(f)(s)
+	pixelsize: 12.5(f)(s)
+	spacing: 0(i)(w)
+	foundry: &quot;WenQ&quot;(s)
+	antialias: True(w)
+	hintstyle: 0(i)(w)
+	hinting: True(w)
+	verticallayout: False(s)
+	autohint: False(w)
+	globaladvance: False(w)
+#+END_EXAMPLE
+
+** 为什么这么强大的能力几乎没人知道？
+
+venam 指出，目前的字体相关界面仅限于显示已安装字体列表和不同尺寸的预览。曾经有一个叫 *fontweak* 的项目试图让 FontConfig 的配置更加可发现，但功能有限且无法展示全局视图。
+
+FontConfig 的困境是典型的 *&quot;mechanism without discoverable policy&quot;* : 它提供了强大的匹配-编辑机制，但用户需要一个直观的界面来回答&quot;我的系统当前对字体到底做了什么？&quot;
+
+* 其他被埋没的配置
+
+venam 在文章中还列举了其他几个类似的例子，这里简要概述。
+
+** Audio Restore List
+
+PulseAudio 和 PipeWire 会记住每个设备、每个音频流的最后音量设置。但这个信息是隐藏的——当你插上耳机或打开视频时，你无法预知音量会是多少。可能震耳欲聋，也可能完全静音。
+
+** Journald
+
+=systemd.journal-fields(7)= 定义了一套固定的字段体系，Journald 本质上是一个固定列/字段的线性存储。但大多数人只会随机敲命令直到找到想要的结果，或者死记硬背一两个 =--unit &lt;service&gt; --reverse= 之类的技巧。
+
+** sudo
+
+每个人都知道 =sudo= ，但很少有人能解释 =sudo -ll= 的输出，或者完整配置 sudoers 文件。sudoers 文件包含默认全局设置、别名和匹配规则，但唯一的编辑器 =visudo= 对新手极其不友好。
+
+** Polkit
+
+Policy Kit 是一个很棒的桌面安全概念：标准化的动作和服务，通过间接总线触发，由集中的策略执行器决定调用者是否被允许。但它的规则和 JavaScript 格式的配置散落在系统各处，创建新的动作和规则非常困难。
+
+** udev
+
+udev 规则是另一个&quot;配置散落&quot;的典型。它有匹配模式和动作执行（甚至支持 =goto= 和标签跳转，是图灵完备的）。唯一&quot;可视化&quot;这些配置的方法是：
+
+#+BEGIN_SRC sh
+systemd-analyze cat-config udev/rules.d
+#+END_SRC
+
+#+RESULTS:
+#+BEGIN_EXAMPLE
+# /usr/lib/udev/rules.d/01-md-raid-creating.rules
+# do not edit this file, it will be overwritten on update
+# While mdadm is creating an array, it creates a file
+# /run/mdadm/creating-mdXXX.  If that file exists, then
+# the array is not &quot;ready&quot; and we should make sure the
+# content is ignored.
+
+KERNEL==&quot;md*&quot;, TEST==&quot;/run/mdadm/creating-$kernel&quot;, ENV{SYSTEMD_READY}=&quot;0&quot;
+
+# /usr/lib/udev/rules.d/10-dm.rules
+...
+#+END_EXAMPLE
+
+* 为什么这个问题难以解决
+
+venam 在文章结尾提到了人们面对复杂配置的三种态度：
+
+1. *保持默认* —— 用容器化/不可变系统的方式，一切保持出厂设置
+2. *精雕细琢（RICE）* —— 乐在其中地折腾每一项配置
+3. *探索中间地带* —— 尝试让隐藏的能力更容易被发现和使用
+
+FontConfig 的例子很好地说明了核心矛盾：可配置性和可发现性之间存在天然的张力。提供更多配置选项意味着更复杂的界面，而简化界面又意味着放弃一些能力。
+
+但也许问题不在于&quot;要不要简化&quot;，而在于&quot;如何让用户知道这些选项的存在&quot;。一个好的界面不一定需要展示所有选项，但它应该让用户在需要时能够 *发现* 选项的存在。这正是目前大多数 Linux 系统工具所缺失的。
+
+正如 ESR 所说，一个好的界面应该是可发现的、透明的、符合最小惊讶原则的。我们还有很长的路要走。
+</description>
+<pubDate>2026-04-14</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/14/unix-系统中那些被埋没的配置开关——以-fontconfig-为例/index.html</guid>
 </item>
 <item>
 <title>Linux 输入栈全景解析：从硬件按键到屏幕响应</title>
@@ -3903,279 +4147,6 @@ Shell 收到 =SIGCHLD= 信号，知道子进程已经退出，于是自己也退
 </description>
 <pubDate>2026-04-12</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/12/为什么-nohup-在-crontab-中不起作用/index.html</guid>
-</item>
-<item>
-<title>Bash中的Indirection与Nameref</title>
-<link>https://lujun9972.github.io/blog/2026/04/12/bash中的indirection与nameref/index.html</link>
-<description>在 Bash 中，有时候你需要通过一个变量来间接引用另一个变量。比如你知道变量名是一个字符串，你想根据这个字符串去访问对应的变量值。Bash 提供了两种机制来实现这个需求： *Indirection* （间接展开）和 *Nameref* （名称引用）。
-
-* Indirection：间接展开
-
-** 基本用法
-
-Indirection 的语法很简单：在参数展开中，在变量名前面加一个 =!= 就行了。
-
-#+BEGIN_SRC shell
-  fruit=&quot;apple&quot;
-  var=&quot;fruit&quot;
-
-  echo &quot;${!var}&quot;
-#+END_SRC
-
-#+RESULTS:
-: apple
-
-#+BEGIN_EXAMPLE
-  apple
-#+END_EXAMPLE
-
-这里 =var= 的值是 =&quot;fruit&quot;= ，而 =${!var}= 会把 =var= 的值（也就是 =&quot;fruit&quot;= ）当作变量名，再去取那个变量的值，最终得到 =&quot;apple&quot;= 。这就是&quot;间接&quot;的含义。
-
-注意， =${!var}= 只做 *一层* 间接，不会递归展开。即使 =apple= 也是一个变量名， =${!var}= 也不会再去取 =apple= 的值。
-
-** 一个实际例子：遍历配置变量
-
-假设你有好几个配置项，想根据名字动态地读取它们的值：
-
-#+BEGIN_SRC shell
-  db_host=&quot;192.168.1.100&quot;
-  db_port=&quot;3306&quot;
-  db_user=&quot;admin&quot;
-
-  for item in host port user; do
-      varname=&quot;db_$item&quot;
-      echo &quot;$item = ${!varname}&quot;
-  done
-#+END_SRC
-
-#+RESULTS:
-| host | = | 192.168.1.100 |
-| port | = |          3306 |
-| user | = |         admin |
-
-#+BEGIN_EXAMPLE
-  host = 192.168.1.100
-  port = 3306
-  user = admin
-#+END_EXAMPLE
-
-通过拼接变量名再使用 =${!varname}= 间接展开，可以避免写一堆 =if/elif= 或者 =case= 分支。
-
-** 注意 =!= 的歧义
-
-=!= 在参数展开中有两种不同的含义，容易混淆：
-
-- =${!name}= — 间接展开，取 =name= 的值所指向的变量
-- =${!name[@]}= 或 =${!name[*]}= — 展开数组 =name= 的所有 *索引* （下标）
-
-#+BEGIN_SRC shell
-  fruit=&quot;apple&quot;
-  name=&quot;fruit&quot;
-
-  echo &quot;${!name}&quot;     # 间接展开：取 fruit 的值
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  apple
-#+END_EXAMPLE
-
-#+BEGIN_SRC shell
-  arr=(&quot;a&quot; &quot;b&quot; &quot;c&quot;)
-  name=&quot;arr&quot;
-
-  echo &quot;${!name}&quot;     # 间接展开：取 arr 的值
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  a
-#+END_EXAMPLE
-
-注意这里的结果是 =a= 而不是 =a b c= 。因为对数组变量做间接展开时，等同于 =${arr}= ，而 =${arr}= 实际上就是 =${arr[0]}= ，只展开数组的第一个元素。如果想通过间接方式获取数组的所有元素，Nameref 是更好的选择。
-
-#+BEGIN_SRC shell
-  arr=(&quot;a&quot; &quot;b&quot; &quot;c&quot;)
-  echo &quot;${!arr[@]}&quot;   # 取数组 arr 的索引
-#+END_SRC
-
-#+RESULTS:
-: 0 1 2
-
-#+BEGIN_EXAMPLE
-  0 1 2
-#+END_EXAMPLE
-
-简单记：有 =[@]= 或 =[*]= 时， =!= 取的是索引；没有时， =!= 是间接展开。
-
-** Indirection 的局限
-
-Indirection 最大的局限是它 *只能读，不能写* 。你不能通过 =${!var}= 来给目标变量赋值：
-
-#+BEGIN_SRC shell
-  fruit=&quot;apple&quot;
-  var=&quot;fruit&quot;
-
-  ${!var}=&quot;banana&quot;   # 报错！这不是合法语法
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  bash: apple=banana: command not found...
-#+END_EXAMPLE
-
-如果你需要通过间接方式 *修改* 一个变量，就需要用到下面介绍的 Nameref 了。
-
-* Nameref：名称引用
-
-** 基本用法
-
-Nameref 从 *Bash 4.3* 开始支持，通过 =declare -n= 或 =local -n= 声明一个&quot;引用变量&quot;：
-
-#+BEGIN_SRC shell
-  fruit=&quot;apple&quot;
-  declare -n ref=fruit
-
-  echo &quot;$ref&quot;       # 读取：通过 ref 读 fruit 的值
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  apple
-#+END_EXAMPLE
-
-#+BEGIN_SRC shell
-  ref=&quot;banana&quot;      # 写入：通过 ref 修改 fruit 的值
-  echo &quot;$fruit&quot;
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  banana
-#+END_EXAMPLE
-
-=ref= 不是 =fruit= 的副本，而是指向 =fruit= 的一个&quot;别名&quot;。对 =ref= 的任何读写操作，实际上都作用于 =fruit= 。
-
-** 一个有趣的细节： =${!nameref}= 行为不同
-
-当你对 Nameref 变量使用 =${!ref}= 时，它 *不是* 间接展开，而是返回被引用变量的 *名字* ：
-
-#+BEGIN_SRC shell
-  var=&quot;hello&quot;
-  declare -n ref=var
-
-  echo &quot;$ref&quot;        # 正常展开：通过 ref 得到 var 的值
-  echo &quot;${!ref}&quot;     # 返回被引用变量的名字，而不是间接展开
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  hello
-  var
-#+END_EXAMPLE
-
-这个特性在调试时很有用，可以让你知道一个 Nameref 到底指向了哪个变量。在函数中结合 =${FUNCNAME[0]}= 可以实现很好的日志输出：
-
-#+BEGIN_SRC shell
-  update_value() {
-      local -n up_ref=$1
-      echo &quot;函数 ${FUNCNAME[0]} 正在修改变量 &#39;${!up_ref}&#39;&quot;
-      up_ref=&quot;new_value&quot;
-  }
-
-  my_var=&quot;old_value&quot;
-  update_value my_var
-  echo &quot;调用后 my_var = $my_var&quot;
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  函数 update_value 正在修改变量 &#39;my_var&#39;
-  调用后 my_var = new_value
-#+END_EXAMPLE
-
-** 在函数中使用 Nameref
-
-这是 Nameref 最常见的使用场景。当你需要让函数修改调用者的变量时，Nameref 比传统的 =eval= 或 Indirection 要安全得多。
-
-#+BEGIN_SRC shell
-  swap() {
-      local -n a=$1
-      local -n b=$2
-      local tmp=&quot;$a&quot;
-      a=&quot;$b&quot;
-      b=&quot;$tmp&quot;
-  }
-
-  x=10
-  y=20
-  swap x y
-  echo &quot;x=$x, y=$y&quot;
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  x=20, y=10
-#+END_EXAMPLE
-
-注意函数里用 =local -n= 而不是 =declare -n= ，这样引用变量的作用域就限制在函数内部，不会污染全局命名空间。
-
-** 操作关联数组
-
-Nameref 在操作关联数组（associative array）时尤其好用：
-
-#+BEGIN_SRC shell
-  update_config() {
-      local -n config=$1
-      config[host]=&quot;newhost.example.com&quot;
-      config[port]=&quot;8443&quot;
-      config[enabled]=&quot;yes&quot;
-  }
-
-  declare -A server_config
-  update_config server_config
-
-  echo &quot;${server_config[host]}&quot;
-  echo &quot;${server_config[port]}&quot;
-  echo &quot;${server_config[enabled]}&quot;
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-  newhost.example.com
-  8443
-  yes
-#+END_EXAMPLE
-
-如果用 Indirection，你没法直接操作关联数组的元素——因为 =${!var}= 只能取出整个变量的值，不能写成 =${!var[key]}= 这种形式。而 Nameref 完美解决了这个问题。
-
-** 小心 Nameref 循环
-
-两个 Nameref 变量互相引用会造成循环：
-
-#+BEGIN_SRC shell
-  declare -n a=b
-  declare -n b=a
-  echo &quot;$a&quot;   # bash: maximum nesting level exceeded
-#+END_SRC
-
-Bash 会检测到循环并报错，不会真的无限递归，但你仍然要避免写出这样的代码。
-
-* Indirection vs Nameref 对比
-
-| 特性           | Indirection (=${!var}=) | Nameref (=declare -n=) |
-|----------------+-------------------------+------------------------|
-| 最低 Bash 版本 | 2.0+                    | 4.3+                   |
-| 能否读取       | 能                      | 能                     |
-| 能否写入       | 不能                    | 能                     |
-| 生命周期       | 一次性展开              | 持久引用               |
-| 操作数组元素   | 不方便                  | 方便                   |
-| 在函数中使用   | 需配合 =eval= 才能写入  | 直接使用，更安全       |
-
-** 什么时候用哪个？
-
-- 只需要 *读取* 另一个变量的值，或者需要兼容老版本 Bash → 用 Indirection
-- 需要 *修改* 另一个变量的值，或者在函数中传递复杂数据结构 → 用 Nameref
-- 能用 Nameref 的场景，优先用 Nameref——它语义更清晰，也更安全
-
-* 参考
-
-- [[https://www.linuxjournal.com/content/whats-new-bash-parameter-expansion][What&#39;s New in Bash Parameter Expansion - Linux Journal]]
-- =man bash= 中 SEARCH 章节，查找 =Parameter Expansion= 和 =declare=
-</description>
-<pubDate>2026-04-12</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/12/bash中的indirection与nameref/index.html</guid>
 </item>
 </channel>
 </rss>
