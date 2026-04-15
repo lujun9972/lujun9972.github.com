@@ -1,0 +1,180 @@
+#+TITLE: X11 Forwarding 排障指南
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录,ssh,X11
+#+DATE: [2026-04-15 二 00:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+X11 Forwarding 让你通过 SSH 在远程服务器上运行图形程序，窗口却显示在本地桌面上。听起来很美好，但实际配置中踩坑无数。这篇文章先讲原理，再按顺序排查常见问题。
+
+* X11 Forwarding 的工作原理
+
+X Window System 采用 Client/Server 架构，但这个"客户端"和"服务端"的方向跟通常的直觉相反：
+
+- *X Server* 运行在你面前的机器上（你的桌面），负责控制屏幕显示和接收键盘鼠标输入
+- *X Client* 是远程服务器上你想运行的图形程序（如 =xterm= 、 =firefox= ）
+
+X Client 需要连到 X Server 才能把窗口画出来。正常情况下它们通过 =/tmp/.X11-unix= 目录下的 Unix-domain socket 通信，或者通过 TCP 网络连接。
+
+** SSH 隧道化的过程
+
+1. 你用 =ssh -X= 连接远程主机
+2. 远程 SSH 服务端在后台启动一个 *proxy X Server* ，监听一个 TCP 端口（通常从 6010 开始，对应 DISPLAY =localhost:10.0= ）
+3. 远程的 X Client 连接这个 proxy X Server
+4. proxy X Server 把所有 X11 协议数据通过 SSH 加密隧道传回你本地的 X Server
+5. 本地 X Server 渲染窗口
+
+#+BEGIN_SRC shell
+  # 连接后检查 DISPLAY 变量，确认 forwarding 生效
+  echo $DISPLAY
+  # 正常输出类似: localhost:10.0
+#+END_SRC
+
+其中 =localhost:10.0= 的含义：
+- =localhost= :: 连接地址（本机的 TCP 端口）
+- =10= :: display number，对应 TCP 端口 6010（6000 + 10）
+- =.0= :: screen number（通常为 0）
+
+** 认证机制
+
+SSH 连接时会在远程主机的 =~/.Xauthority= 文件中写入一条 MIT-MAGIC-COOKIE-1 认证记录。X Client 连接 proxy X Server 时需要出示这个 cookie，防止未授权的连接。
+
+#+BEGIN_SRC shell
+  # 查看 Xauthority 中的认证记录
+  xauth list
+  # 输出类似: localhost/unix:10  MIT-MAGIC-COOKIE-1  1a2b3c4d5e6f...
+#+END_SRC
+
+* 排障清单
+
+理解了原理之后，排障就变成了逐层排查：客户端 → SSH 连接 → 服务端 → 权限 → 特殊场景。
+
+**1. 本地 X Server 是否在运行？**
+
+远程的图形要显示在本地，本地得有一个 X Server 在运行。Linux 桌面用户通常不需要操心，但如果你在 Windows 上用 SSH 客户端，需要额外安装 X Server（如 VcXsrv）。
+
+#+BEGIN_SRC shell
+  # 本地检查 X Server 是否运行（Linux）
+  ls /tmp/.X11-unix/
+#+END_SRC
+
+**2. SSH 客户端是否开启了 X11 Forwarding？**
+
+#+BEGIN_SRC shell
+  # 方式一：命令行参数
+  ssh -X user@host
+
+  # 方式二：在 ~/.ssh/config 中配置
+  # Host *
+  #   ForwardX11 yes
+  #   ForwardAgent yes
+#+END_SRC
+
+使用 =-X= 参数连接后，检查 =$DISPLAY= 是否被设置。如果为空，说明 forwarding 没有建立成功。
+
+如果用的是 SecureCRT 或 PuTTY 这类图形化 SSH 客户端，需要在会话设置里手动勾选 X11 Forwarding 选项。
+
+**3. 远程服务端：xauth 和 xterm 是否已安装？**
+
+=xauth= 是 X11 Forwarding 的必要组件，没有它 SSH 无法设置认证。 =xterm= 则是最好的测试工具。
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 检查是否安装
+  which xauth
+  which xterm
+
+  # Debian/Ubuntu 安装
+  apt install xauth xterm
+
+  # RHEL/CentOS 安装
+  yum install xorg-x11-xauth xterm
+#+END_SRC
+
+**4. sshd 配置是否正确？**
+
+远程服务器上的 =/etc/ssh/sshd_config= 需要启用 X11 forwarding：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 检查配置
+  grep X11Forwarding /etc/ssh/sshd_config
+  grep AllowAgentForwarding /etc/ssh/sshd_config
+  # 应该输出:
+  #   X11Forwarding yes
+  #   AllowAgentForwarding yes
+
+  # 如果被注释掉或为 no，修改后重启 sshd
+  systemctl restart sshd
+#+END_SRC
+
+**5. HOME目录和 .Xauthority 权限是否正常？**
+
+SSH 登录时需要在家目录下创建或更新 =~/.Xauthority= 文件。如果家目录不可写，forwarding 会静默失败。
+
+#+BEGIN_SRC shell
+  # 检查家目录权限
+  ls -la ~ | head -1
+
+  # 如果有旧的 .Xauthority 出问题，删掉重新登录
+  rm ~/.Xauthority
+  # 重新 ssh -X 连接，会自动重建
+
+  # ~/.ssh 目录权限也必须正确，否则 SSH 会拒绝使用
+  chmod 700 ~/.ssh
+  chmod 600 ~/.ssh/*
+#+END_SRC
+
+**6. IPv6 被禁用导致的隐蔽问题**
+
+这是一个极其隐蔽的坑。如果你禁用了 IPv6，OpenSSH 在某些配置下会 *静默拒绝* X11 forwarding——不报错，只是 =$DISPLAY= 为空。
+
+#+BEGIN_SRC shell
+  # 检查 IPv6 是否被禁用
+  sysctl net.ipv6.conf.all.disable_ipv6
+  # 返回 1 表示已禁用
+#+END_SRC
+
+解决方法是在 =/etc/ssh/sshd_config= 中强制使用 IPv4：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 在 sshd_config 中添加
+  AddressFamily inet
+  # 然后重启 sshd
+  systemctl restart sshd
+#+END_SRC
+
+**7. sudo 下运行图形程序**
+
+用 =sudo= 运行图形程序时报 =X11 connection rejected because of wrong authentication= ，是因为 root 用户的 =~/.Xauthority= 中没有对应的认证 cookie。
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 方法一：复制当前用户的 .Xauthority 到目标用户
+  cp ~/.Xauthority ~root/.Xauthority
+  xterm  # 现在应该能弹窗了
+
+  # 方法二：用 sudo -u 而不是 sudo su -
+  # "sudo su -" 的 "-" 会重置环境变量，包括 $DISPLAY
+  sudo -u username xterm
+#+END_SRC
+
+方法二更干净——避免用 =sudo su -= ，因为它会清空环境变量导致 =$DISPLAY= 丢失。
+
+* 调试大招
+
+如果以上排查都没解决问题，开启 SSH 调试模式：
+
+#+BEGIN_SRC shell
+  # 增加 -v 参数查看详细信息
+  ssh -v -X user@host
+
+  # 需要更多细节就叠加 v
+  ssh -vvv -X user@host
+#+END_SRC
+
+重点关注输出中关于 =X11 forwarding= 、 =DISPLAY= 、 =xauth= 的行。同时在服务端检查日志：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 服务端查看 SSH 日志
+  journalctl -u sshd --since "5 minutes ago"
+  # 或
+  tail -f /var/log/auth.log
+#+END_SRC
