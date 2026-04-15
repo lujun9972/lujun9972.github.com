@@ -1,0 +1,372 @@
+#+TITLE:       PARA Org-mode 测试配置
+#+AUTHOR:      lujun9972
+#+DATE:        2026-04-15 三
+#+LANGUAGE:    zh-CN
+#+OPTIONS:     H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 前置说明
+
+这份配置用于测试博文《AI 时代的 PARA 方法》中的 Org-mode PARA 实现。
+使用方式：
+
+1. 先执行 [[创建目录结构]] 中的 shell 代码块（=C-c C-c=）
+2. 将 [[Emacs 配置]] 中的代码加入你的 =init.el= 或 =*scratch*= buffer 执行
+3. 用 =M-x org-capture= 测试四个模板
+4. 用 =C-c C-w= (=org-refile=) 测试归档
+
+基础目录设为 =~/我的笔记= ，可按需修改 =org-para-base-dir= 。
+
+* 创建目录结构
+
+#+BEGIN_SRC shell :tangle (format "/tmp/para-setup-%s.sh" (user-login-name))
+PARA_DIR="$HOME/org"
+
+# 创建 PARA 四层目录
+mkdir -p "$PARA_DIR/projects/2026-博客重构"
+mkdir -p "$PARA_DIR/projects/2026-Anki插件开发"
+mkdir -p "$PARA_DIR/areas/健康"
+mkdir -p "$PARA_DIR/areas/财务"
+mkdir -p "$PARA_DIR/areas/职业"
+mkdir -p "$PARA_DIR/resources/emacs"
+mkdir -p "$PARA_DIR/resources/python"
+mkdir -p "$PARA_DIR/resources/linux"
+mkdir -p "$PARA_DIR/archives"
+
+# 创建 inbox 文件（org-capture 目标）
+cat > "$PARA_DIR/projects/inbox.org" << 'EOF'
+#+TITLE: Projects Inbox
+#+FILETAGS: :project:
+
+,* Projects Inbox
+EOF
+
+cat > "$PARA_DIR/areas/inbox.org" << 'EOF'
+#+TITLE: Areas Inbox
+#+FILETAGS: :area:
+
+,* Areas Inbox
+EOF
+
+cat > "$PARA_DIR/resources/inbox.org" << 'EOF'
+#+TITLE: Resources Inbox
+#+FILETAGS: :resource:
+EOF
+
+# 创建 journal 文件
+touch "$PARA_DIR/journal.org"
+
+# 创建示例项目文件（供 org-refile 测试）
+cat > "$PARA_DIR/projects/2026-博客重构/index.org" << 'EOF'
+#+TITLE: 2026 博客重构
+#+FILETAGS: :project:
+
+,* TODO 重新设计博客首页
+  SCHEDULED: <2026-04-20 日>
+,* TODO 迁移到新的静态站点生成器
+,* DONE 梳理现有文章分类
+  CLOSED: [2026-04-10 四]
+EOF
+
+cat > "$PARA_DIR/projects/2026-Anki插件开发/index.org" << 'EOF'
+#+TITLE: 2026 Anki 插件开发
+#+FILETAGS: :project:
+
+,* TODO 调研 Anki 插件 API
+,* TODO 设计卡片模板系统
+,* INPROGRESS 编写核心功能代码
+EOF
+
+# 创建示例领域文件
+cat > "$PARA_DIR/areas/健康/index.org" << 'EOF'
+#+TITLE: 健康
+#+FILETAGS: :area:
+
+,* 每周运动目标：3 次
+,* 年度体检：每年 Q1
+,* TODO 预约牙科检查
+EOF
+
+cat > "$PARA_DIR/areas/财务/index.org" << 'EOF'
+#+TITLE: 财务
+#+FILETAGS: :area:
+
+,* TODO 完成 2025 年度报税
+  DEADLINE: <2026-05-31 日>
+,* 每月记账复盘
+EOF
+
+# 创建示例资源文件
+cat > "$PARA_DIR/resources/emacs/index.org" << 'EOF'
+#+TITLE: Emacs 学习笔记
+#+FILETAGS: :resource:
+
+,* Org-mode 技巧
+,** 使用 columnview 生成任务报表
+,** org-roam 双向链接配置
+,* Elisp 常用模式
+,** advice-add / advice-remove
+,** defmacro 与 defun 的区别
+EOF
+
+echo "PARA 目录结构创建完成："
+echo ""
+tree "$PARA_DIR" 2>/dev/null || find "$PARA_DIR" -type f | sort
+#+END_SRC
+
+#+RESULTS:
+| PARA                | 目录结构创建完成： |                   |           |
+|                     |                    |                   |           |
+| /home/lujun9972/org |                    |                   |           |
+| ├──                 | archives           |                   |           |
+| ├──                 | areas              |                   |           |
+| │                   | ├──                | inbox.org         |           |
+| │                   | ├──                | 健康              |           |
+| │                   | │                  | └──               | index.org |
+| │                   | ├──                | 职业              |           |
+| │                   | └──                | 财务              |           |
+| │                   | └──                | index.org         |           |
+| ├──                 | journal.org        |                   |           |
+| ├──                 | projects           |                   |           |
+| │                   | ├──                | 2026-Anki插件开发 |           |
+| │                   | │                  | └──               | index.org |
+| │                   | ├──                | 2026-博客重构     |           |
+| │                   | │                  | └──               | index.org |
+| │                   | └──                | inbox.org         |           |
+| └──                 | resources          |                   |           |
+| ├──                 | emacs              |                   |           |
+| │                   | └──                | index.org         |           |
+| ├──                 | inbox.org          |                   |           |
+| ├──                 | linux              |                   |           |
+| └──                 | python             |                   |           |
+|                     |                    |                   |           |
+| 13                  | directories,       | 9                 | files     |
+
+* Emacs 配置
+
+#+BEGIN_SRC emacs-lisp :tangle (format "/tmp/para-config-%s.el" (user-login-name))
+;;; para-config.el --- PARA Org-mode 配置 -*- lexical-binding: t; -*-
+
+;; ============================================================
+;; 基础设置
+;; ============================================================
+
+(defvar org-para-base-dir "~/org"
+  "PARA 方法的根目录。")
+
+;; ============================================================
+;; org-capture 模板：快速捕获到 PARA 各层
+;; ============================================================
+
+(setq org-capture-templates
+      `(("p" "Project - 项目任务" entry
+         (file+headline ,(expand-file-name "projects/inbox.org" org-para-base-dir)
+                        "Projects Inbox")
+         "* TODO %?\n  %U\n  %a\n  %i"
+         :empty-lines 1)
+
+        ("a" "Area - 领域任务" entry
+         (file+headline ,(expand-file-name "areas/inbox.org" org-para-base-dir)
+                        "Areas Inbox")
+         "* TODO %?\n  %U\n  %a\n  %i"
+         :empty-lines 1)
+
+        ("r" "Resource - 资源笔记" entry
+         (file ,(expand-file-name "resources/inbox.org" org-para-base-dir))
+         "* %? :resource:\n  %U\n  %i"
+         :empty-lines 1)
+
+        ("j" "Journal - 日记" entry
+         (file+datetree ,(expand-file-name "journal.org" org-para-base-dir))
+         "* %?\n  %U"
+         :empty-lines 1)
+
+        ;; 便捷模板：带链接的选择式捕获
+        ("c" "Capture with choice" entry
+         (file+headline ,(expand-file-name "projects/inbox.org" org-para-base-dir)
+                        "Projects Inbox")
+         "* TODO %^{任务描述}\n  %U\n  %a\n  %i"
+         :empty-lines 1)))
+
+;; ============================================================
+;; org-refile 目标：归档到 PARA 各文件
+;; ============================================================
+
+(setq org-refile-targets
+      `((,(expand-file-name "projects/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "projects/**/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "areas/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "areas/**/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "resources/*.org" org-para-base-dir) :maxlevel . 1)
+        (,(expand-file-name "resources/**/*.org" org-para-base-dir) :maxlevel . 1)
+        (,(expand-file-name "archives/*.org" org-para-base-dir) :maxlevel . 1)))
+
+(setq org-refile-use-outline-path 'file)
+(setq org-outline-path-complete-in-steps t)
+
+;; ============================================================
+;; org-agenda：PARA 视图
+;; ============================================================
+
+(setq org-agenda-files
+      (list (expand-file-name "projects" org-para-base-dir)
+            (expand-file-name "areas" org-para-base-dir)))
+
+;; 自定义 agenda 视图：按 PARA 层级分组
+(setq org-agenda-custom-commands
+      '(("P" "PARA 视图"
+         ((agenda "" ((org-agenda-span 'week)))
+          (todo "TODO|INPROGRESS"
+                ((org-agenda-overriding-header "活跃项目任务")
+                 (org-agenda-files (list (expand-file-name "projects" org-para-base-dir)))))
+          (todo "TODO"
+                ((org-agenda-overriding-header "领域维护任务")
+                 (org-agenda-files (list (expand-file-name "areas" org-para-base-dir)))))))
+        ("p" "仅项目任务"
+         todo "TODO|INPROGRESS"
+         ((org-agenda-overriding-header "项目任务")
+          (org-agenda-files (list (expand-file-name "projects" org-para-base-dir)))))))
+
+;; ============================================================
+;; org-roam 集成（可选，需要安装 org-roam）
+;; ============================================================
+
+(with-eval-after-load 'org-roam
+  (setq org-roam-directory org-para-base-dir)
+
+  ;; 通过 filetags 区分 PARA 类别
+  ;; 在 org 文件头部添加: #+filetags: :project: 或 :area: 或 :resource: 或 :archive:
+  (setq org-roam-node-display-template
+        "${tags:20} ${title:*}")
+
+  ;; 按类别过滤 org-roam 节点
+  (defun my/org-roam-filter-by-tag (tag)
+    "返回一个过滤函数，只保留带有 TAG 的 org-roam 节点。"
+    (lambda (node)
+      (member tag (org-roam-node-tags node))))
+
+  (defun my/org-roam-list-notes-by-tag (tag)
+    "列出所有带有 TAG 的 org-roam 笔记文件路径。"
+    (mapcar #'org-roam-node-file
+            (seq-filter
+             (my/org-roam-filter-by-tag tag)
+             (org-roam-node-list))))
+
+  ;; 快捷命令：按 PARA 类别浏览笔记
+  (defun my/org-roam-find-project ()
+    "查找或创建项目笔记。"
+    (interactive)
+    (org-roam-node-find nil nil (my/org-roam-filter-by-tag "project")))
+
+  (defun my/org-roam-find-area ()
+    "查找或创建领域笔记。"
+    (interactive)
+    (org-roam-node-find nil nil (my/org-roam-filter-by-tag "area")))
+
+  (defun my/org-roam-find-resource ()
+    "查找或创建资源笔记。"
+    (interactive)
+    (org-roam-node-find nil nil (my/org-roam-filter-by-tag "resource"))))
+
+;; ============================================================
+;; 辅助函数：PARA 维护
+;; ============================================================
+
+(defun my/para-archive-project (project-file)
+  "将一个完成的项目移到 archives 目录。
+PROJECT-FILE 是项目文件或目录的路径。"
+  (interactive
+   (list (completing-read "归档项目: "
+                          (directory-files
+                           (expand-file-name "projects" org-para-base-dir)
+                           t directory-files-no-dot-files-regexp))))
+  (let* ((archive-dir (expand-file-name "archives" org-para-base-dir))
+         (project-name (file-name-nondirectory project-file))
+         (dest (expand-file-name project-name archive-dir)))
+    (rename-file project-file dest)
+    (message "已归档: %s -> %s" project-name dest)))
+
+(defun my/para-show-stats ()
+  "显示当前 PARA 各层的文件数量统计。"
+  (interactive)
+  (let ((stats
+         (cl-loop for category in '("projects" "areas" "resources" "archives")
+                  for dir = (expand-file-name category org-para-base-dir)
+                  for count = (length (directory-files-recursively dir "\\.org$"))
+                  collect (cons category count))))
+    (with-output-to-temp-buffer "*PARA Stats*"
+      (princ "PARA 目录统计\n")
+      (princ (make-string 30 ?=)) (terpri)
+      (cl-loop for (cat . cnt) in stats
+               do (princ (format "%-15s %d 个文件\n" cat cnt)))
+      (terpri)
+      (princ (format "总计: %d 个文件\n"
+                     (cl-loop for (_ . cnt) in stats sum cnt))))))
+
+;; 快捷键绑定（可选）
+(global-set-key (kbd "C-c p c") #'org-capture)
+(global-set-key (kbd "C-c p a") #'org-agenda)
+(global-set-key (kbd "C-c p s") #'my/para-show-stats)
+(global-set-key (kbd "C-c p A") #'my/para-archive-project)
+
+(provide 'para-config)
+;;; para-config.el ends here
+#+END_SRC
+
+* 测试步骤
+
+** 1. 创建目录结构
+
+在 shell 中执行：
+
+#+BEGIN_SRC shell
+bash /tmp/para-setup-$(whoami).sh
+#+END_SRC
+
+或者在 org 文件中 =C-c C-c= 执行 [[创建目录结构]] 的代码块。
+
+** 2. 加载 Emacs 配置
+
+#+BEGIN_SRC emacs-lisp
+;; 方式一：直接加载
+(load "/tmp/para-config-$(whoami).el")
+
+;; 方式二：在 *scratch* 中 eval-region
+#+END_SRC
+
+** 3. 测试 org-capture
+
+| 快捷键 | 模板 | 目标 |
+|--------|------|------|
+| =C-c p c= → =p= | Project 任务 | projects/inbox.org |
+| =C-c p c= → =a= | Area 任务 | areas/inbox.org |
+| =C-c p c= → =r= | Resource 笔记 | resources/inbox.org |
+| =C-c p c= → =j= | 日记 | journal.org |
+
+** 4. 测试 org-refile
+
+在任何 org 条目上按 =C-c C-w= (=org-refile=)，应该能看到：
+- projects 下的项目文件
+- areas 下的领域文件
+- resources 下的资源文件
+- archives 目录
+
+** 5. 测试 agenda 视图
+
+| 快捷键 | 视图 |
+|--------|------|
+| =C-c p a= → =P= | PARA 总览（按周 agenda + 项目任务 + 领域任务） |
+| =C-c p a= → =p= | 仅显示项目任务 |
+
+** 6. 测试统计
+
+=C-c p s= 显示各层文件数量。
+
+* 快捷键速查
+
+| 快捷键 | 功能 |
+|--------|------|
+| =C-c p c= | org-capture |
+| =C-c p a= | org-agenda |
+| =C-c p s= | PARA 统计 |
+| =C-c p A= | 归档项目 |
+| =C-c C-w= | org-refile（在任何 org 条目上） |

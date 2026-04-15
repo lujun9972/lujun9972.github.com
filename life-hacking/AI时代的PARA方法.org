@@ -1,0 +1,218 @@
+#+TITLE: AI 时代的 PARA 方法：用 Org-mode 和 AI 打造个人知识管理系统
+#+AUTHOR: lujun9972
+#+TAGS: PARA, Org-mode, AI, 知识管理
+#+DATE: [2026-04-15 三]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 从一个实验说起
+
+Tiago Forte（PARA 方法的创始人、《Building a Second Brain》作者）最近做了一个实验：他让自己的电脑文件自由堆积了一个月，不整理任何东西。月底，桌面和下载文件夹里累积了 222 个文件。
+
+这些文件五花八门：
+- 财务文档：个人报税单、商业财务报表、退休账户表格、人寿保险地址变更单
+- 视觉素材：工作坊宣传图、社交媒体照片、博客文章配图、采访视频录像素材
+- 各种待读内容：PDF 论文、研究报告、他人推荐的文章
+
+然后他手工将这 222 个文件按照 PARA 方法整理到文件系统中。整个过程耗时 36 分钟，平均每个文件约 10 秒。
+
+很多人看到这个实验会想："这种事交给 AI 不就行了？" Claude Code 确实能帮你整理文件。但 Tiago 认为效率和省时其实是整理文件最不重要的方面。有更深层的原因。
+
+**而在 AI 时代，这个理由变得前所未有的重要：整理你的文件，是为了让 AI 能更好地利用你的信息。**
+
+* PARA 四层结构速览
+
+PARA 是一个通用的数字信息组织方法，将所有信息归入四个类别：
+
+| 类别 | 含义 | 特征 | 举例 |
+|------|------|------|------|
+| Projects（项目） | 有明确目标和截止日期的任务 | 临时性、行动导向 | 写一篇博文、准备一次演讲、完成一个开发项目 |
+| Areas（领域） | 持续维护的责任领域 | 永久性、标准导向 | 健康、财务、职业发展、人际关系 |
+| Resources（资源） | 感兴趣的主题和参考资料 | 按兴趣分类、未来可能有用 | 编程技巧、设计灵感、历史知识 |
+| Archives（归档） | 不再活跃的其他三类内容 | 保留但不活跃 | 已完成的项目、不再负责的领域、失去兴趣的资源 |
+
+PARA 的妙处在于它只有四个类别，却涵盖了你可能想保存的任何东西。简单到不需要思考"这该放哪"。
+
+如果你熟悉我这个博客的结构，你会发现它本质上也是一个 PARA 系统：
+- =Emacs之怒=、=编程之旅=、=linux和它的小伙伴= → Resources（按主题归类的知识）
+- =life-hacking= → Areas（持续维护的生活效率领域）
+- =读书笔记= → Resources（参考资料）
+- 博客的 git 历史本身就是 Archives
+
+* AI 时代为什么更需要 PARA
+
+Tiago 在文章中提出了一个关键洞察：
+
+#+BEGIN_QUOTE
+AI 正在让任何现有数据仓库的价值飙升——包括你电脑上的文件和文档。但这些数据需要（一定程度上的）组织。
+#+END_QUOTE
+
+原因有三：
+
+**1. LLM 的上下文窗口有限**
+
+你不能把整个数字世界一次性喂给 AI。你需要找到并提供当前任务所需的"最小可行上下文"。如果你的文件已经按照 PARA 组织好了，你可以直接指向一个 Project 文件夹——而不是一堆毫不相关的散碎文件。
+
+#+BEGIN_QUOTE
+搜索只能找到单个文件的精确匹配。PARA 给你更有价值的东西：预组装的上下文块，反映你真实的工作和思维方式。
+#+END_QUOTE
+
+**2. 本地文件 > 云端**
+
+像 Claude Code 这样运行在你电脑上的 AI 工具需要访问本地文件。云端访问有延迟、登录障碍、token 消耗等问题。你的本地文件更快、更可靠、更容易访问。
+
+**3. PARA 天然适合 AI 辅助工作**
+
+- *简单*：只有四个类别，人类和 AI 都容易理解
+- *个性化*：类别基于你自己的承诺和兴趣，而不是固定层级
+- *知道如何遗忘*：Archives 类别让 AI 不被无关信息淹没
+- *跨平台*：同一套分类逻辑可以统一不同工具和平台
+
+* 在 Org-mode 中落地 PARA
+
+理论说完了，让我们来实际搭建。以下是在 Org-mode 中实现 PARA 的具体方案。
+
+**目录结构设计：**
+
+#+BEGIN_SRC text :tangle no
+~/org/
+├── projects/
+│   ├── 2026-博客重构/
+│   ├── 2026-Anki插件开发/
+│   └── ...
+├── areas/
+│   ├── 健康/
+│   ├── 财务/
+│   ├── 职业/
+│   └── ...
+├── resources/
+│   ├── emacs/
+│   ├── python/
+│   ├── linux/
+│   └── ...
+└── archives/
+    └── ...
+#+END_SRC
+
+**org-capture 模板配置：**
+
+通过 org-capture 快速将想法、任务、笔记归入 PARA 的正确位置：
+
+#+BEGIN_SRC emacs-lisp :tangle no
+(setq org-para-base-dir "~/我的笔记")
+
+(setq org-capture-templates
+      '(("p" "Project" entry
+         (file+headline (lambda () (expand-file-name "projects/inbox.org" org-para-base-dir)) "Projects Inbox")
+         "* TODO %?\n  %U\n  %a\n  %i")
+        ("a" "Area" entry
+         (file+headline (lambda () (expand-file-name "areas/inbox.org" org-para-base-dir)) "Areas Inbox")
+         "* TODO %?\n  %U\n  %a\n  %i")
+        ("r" "Resource" entry
+         (file (lambda () (expand-file-name "resources/inbox.org" org-para-base-dir)))
+         "* %? :resource:\n  %U\n  %i")
+        ("j" "Journal" entry
+         (file+datetree (lambda () (expand-file-name "journal.org" org-para-base-dir)))
+         "* %?\n  %U")))
+#+END_SRC
+
+**org-refile 目标设置：**
+
+让 org-refile 可以直接将条目归档到 PARA 目录下的各文件：
+
+#+BEGIN_SRC emacs-lisp :tangle no
+(setq org-refile-targets
+      `((,(expand-file-name "projects/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "areas/*.org" org-para-base-dir) :maxlevel . 2)
+        (,(expand-file-name "resources/*.org" org-para-base-dir) :maxlevel . 1)
+        (,(expand-file-name "archives/*.org" org-para-base-dir) :maxlevel . 1)))
+
+(setq org-refile-use-outline-path 'file)
+(setq org-outline-path-complete-in-steps t)
+#+END_SRC
+
+**org-roam 与 PARA 的结合：**
+
+如果你使用 org-roam，可以用 filetags 来标记 PARA 类别：
+
+#+BEGIN_SRC emacs-lisp :tangle no
+(setq org-roam-directory org-para-base-dir)
+
+;; 通过 filetags 区分 PARA 类别
+;; 在 org 文件头部添加: #+filetags: :project: 或 :area: 或 :resource: 或 :archive:
+(setq org-roam-node-display-template
+      "${tags:20} ${title:*}"
+      org-roam-node-annotation-function
+      (lambda (node)
+        (let ((tags (org-roam-node-tags node)))
+          (when tags
+            (format " [%s]" (string-join tags ", "))))))
+
+;; 按类别过滤 org-roam 节点
+(defun my/org-roam-filter-by-tag (tag)
+  (lambda (node)
+    (member tag (org-roam-node-tags node))))
+
+(defun my/org-roam-list-notes-by-tag (tag)
+  (mapcar #'org-roam-node-file
+          (seq-filter
+           (my/org-roam-filter-by-tag tag)
+           (org-roam-node-list))))
+#+END_SRC
+
+以上配置完成后，你就有了：
+- =org-capture= 快速捕获 → 进入 inbox
+- =org-refile= 重新归档 → 移到正确的 PARA 位置
+- =org-roam= 双向链接 → 在 PARA 之间建立联系
+
+* 用 Claude Code 增强整理流程
+
+PARA 的整理可以借助 AI 来加速。这里演示如何用 Claude Code 自动将下载文件夹中的文件分类到 PARA 结构。
+
+首先，让我们看看一个典型的 Downloads 文件夹会积累什么样的文件：
+
+#+BEGIN_SRC shell :tangle no
+ls ~/Downloads/ | head -20
+#+END_SRC
+
+然后用 Claude Code 进行自动分类：
+
+#+BEGIN_SRC shell :tangle no
+cd ~/org
+claude "请帮我整理 ~/Downloads/ 下的文件到 PARA 目录结构中：
+1. 查看文件列表和文件类型
+2. 根据文件名和类型判断属于 Projects/Areas/Resources/Archives 中的哪一类
+3. 将文件移动到对应的 ~/org/ 子目录下
+4. 如果是项目相关文件，放入 projects/ 下对应的子目录
+5. 如果无法确定分类，放入 resources/inbox/ 待后续处理
+注意：不要移动 .part 文件和不完整的下载文件"
+#+END_SRC
+
+Claude Code 会：
+- 逐个检查文件名和类型
+- 根据上下文判断分类
+- 创建必要的子目录
+- 移动文件到正确位置
+
+但正如 Tiago 所指出的，AI 有做不到的事情：
+
+#+BEGIN_QUOTE
+当我注意到桌面上有一个屏幕录制，那会提醒我要把它发给视频编辑。当我看到下载文件夹里有一组照片，它可能让我想到一些微弱关联的事情——比如我孩子学校即将到来的拍照日。这些关联是 AI 目前无法识别的。
+#+END_QUOTE
+
+所以最佳实践是：
+- *AI 批量处理*：让 AI 处理大量文件的初步分类
+- *人工复审*：你自己过一遍，捕捉那些需要联想和行动的项目
+- *定期维护*：每周花 10 分钟整理，而不是积累一个月
+
+* 总结
+
+PARA 的核心不是分类学，而是行动学。它以你正在做的事情（Projects）为中心，而不是以信息的主题为中心。这正是 AI 最擅长辅助的场景——指向一个明确的项目文件夹，让 AI 帮你处理它。
+
+Org-mode 为 PARA 提供了完美的载体：纯文本、本地存储、可编程、可搜索。再加上 AI 工具的辅助，整理数字生活的成本从"每月 36 分钟"可能降到"每周 5 分钟"。
+
+但记住 Tiago 的提醒：整理文件最重要的收获不是速度。是在整理的过程中，你会重新审视自己的承诺、责任和兴趣。这个反思过程，AI 暂时代替不了。
+
+-----
+
+参考：[[https://fortelabs.com/blog/why-para-is-the-key-to-the-ai-era/][Why PARA Is the Key to the AI Era - Forte Labs]]
