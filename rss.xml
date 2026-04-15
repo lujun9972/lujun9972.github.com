@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 15 Apr 2026 09:54:26 UTC</pubDate>
-    <lastBuildDate>Wed, 15 Apr 2026 09:54:26 UTC</lastBuildDate>
+    <pubDate>Wed, 15 Apr 2026 14:30:31 UTC</pubDate>
+    <lastBuildDate>Wed, 15 Apr 2026 14:30:31 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -1677,6 +1677,186 @@ export XMODIFIERS=@im=ibus   # 或 @im=fcitx
 </description>
 <pubDate>2026-04-15</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/14/linux-输入栈全景解析：从硬件按键到屏幕响应/index.html</guid>
+</item>
+<item>
+<title>X11 Forwarding 排障指南</title>
+<link>https://lujun9972.github.io/blog/2026/04/15/x11-forwarding-排障指南/index.html</link>
+<description>X11 Forwarding 让你通过 SSH 在远程服务器上运行图形程序，窗口却显示在本地桌面上。听起来很美好，但实际配置中踩坑无数。这篇文章先讲原理，再按顺序排查常见问题。
+
+* X11 Forwarding 的工作原理
+
+X Window System 采用 Client/Server 架构，但这个&quot;客户端&quot;和&quot;服务端&quot;的方向跟通常的直觉相反：
+
+- *X Server* 运行在你面前的机器上（你的桌面），负责控制屏幕显示和接收键盘鼠标输入
+- *X Client* 是远程服务器上你想运行的图形程序（如 =xterm= 、 =firefox= ）
+
+X Client 需要连到 X Server 才能把窗口画出来。正常情况下它们通过 =/tmp/.X11-unix= 目录下的 Unix-domain socket 通信，或者通过 TCP 网络连接。
+
+** SSH 隧道化的过程
+
+1. 你用 =ssh -X= 连接远程主机
+2. 远程 SSH 服务端在后台启动一个 *proxy X Server* ，监听一个 TCP 端口（通常从 6010 开始，对应 DISPLAY =localhost:10.0= ）
+3. 远程的 X Client 连接这个 proxy X Server
+4. proxy X Server 把所有 X11 协议数据通过 SSH 加密隧道传回你本地的 X Server
+5. 本地 X Server 渲染窗口
+
+#+BEGIN_SRC shell
+  # 连接后检查 DISPLAY 变量，确认 forwarding 生效
+  echo $DISPLAY
+  # 正常输出类似: localhost:10.0
+#+END_SRC
+
+其中 =localhost:10.0= 的含义：
+- =localhost= :: 连接地址（本机的 TCP 端口）
+- =10= :: display number，对应 TCP 端口 6010（6000 + 10）
+- =.0= :: screen number（通常为 0）
+
+** 认证机制
+
+SSH 连接时会在远程主机的 =~/.Xauthority= 文件中写入一条 MIT-MAGIC-COOKIE-1 认证记录。X Client 连接 proxy X Server 时需要出示这个 cookie，防止未授权的连接。
+
+#+BEGIN_SRC shell
+  # 查看 Xauthority 中的认证记录
+  xauth list
+  # 输出类似: localhost/unix:10  MIT-MAGIC-COOKIE-1  1a2b3c4d5e6f...
+#+END_SRC
+
+* 排障清单
+
+理解了原理之后，排障就变成了逐层排查：客户端 → SSH 连接 → 服务端 → 权限 → 特殊场景。
+
+**1. 本地 X Server 是否在运行？**
+
+远程的图形要显示在本地，本地得有一个 X Server 在运行。Linux 桌面用户通常不需要操心，但如果你在 Windows 上用 SSH 客户端，需要额外安装 X Server（如 VcXsrv）。
+
+#+BEGIN_SRC shell
+  # 本地检查 X Server 是否运行（Linux）
+  ls /tmp/.X11-unix/
+#+END_SRC
+
+**2. SSH 客户端是否开启了 X11 Forwarding？**
+
+#+BEGIN_SRC shell
+  # 方式一：命令行参数
+  ssh -X user@host
+
+  # 方式二：在 ~/.ssh/config 中配置
+  # Host *
+  #   ForwardX11 yes
+  #   ForwardAgent yes
+#+END_SRC
+
+使用 =-X= 参数连接后，检查 =$DISPLAY= 是否被设置。如果为空，说明 forwarding 没有建立成功。
+
+如果用的是 SecureCRT 或 PuTTY 这类图形化 SSH 客户端，需要在会话设置里手动勾选 X11 Forwarding 选项。
+
+**3. 远程服务端：xauth 和 xterm 是否已安装？**
+
+=xauth= 是 X11 Forwarding 的必要组件，没有它 SSH 无法设置认证。 =xterm= 则是最好的测试工具。
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 检查是否安装
+  which xauth
+  which xterm
+
+  # Debian/Ubuntu 安装
+  apt install xauth xterm
+
+  # RHEL/CentOS 安装
+  yum install xorg-x11-xauth xterm
+#+END_SRC
+
+**4. sshd 配置是否正确？**
+
+远程服务器上的 =/etc/ssh/sshd_config= 需要启用 X11 forwarding：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 检查配置
+  grep X11Forwarding /etc/ssh/sshd_config
+  grep AllowAgentForwarding /etc/ssh/sshd_config
+  # 应该输出:
+  #   X11Forwarding yes
+  #   AllowAgentForwarding yes
+
+  # 如果被注释掉或为 no，修改后重启 sshd
+  systemctl restart sshd
+#+END_SRC
+
+**5. HOME目录和 .Xauthority 权限是否正常？**
+
+SSH 登录时需要在家目录下创建或更新 =~/.Xauthority= 文件。如果家目录不可写，forwarding 会静默失败。
+
+#+BEGIN_SRC shell
+  # 检查家目录权限
+  ls -la ~ | head -1
+
+  # 如果有旧的 .Xauthority 出问题，删掉重新登录
+  rm ~/.Xauthority
+  # 重新 ssh -X 连接，会自动重建
+
+  # ~/.ssh 目录权限也必须正确，否则 SSH 会拒绝使用
+  chmod 700 ~/.ssh
+  chmod 600 ~/.ssh/*
+#+END_SRC
+
+**6. IPv6 被禁用导致的隐蔽问题**
+
+这是一个极其隐蔽的坑。如果你禁用了 IPv6，OpenSSH 在某些配置下会 *静默拒绝* X11 forwarding——不报错，只是 =$DISPLAY= 为空。
+
+#+BEGIN_SRC shell
+  # 检查 IPv6 是否被禁用
+  sysctl net.ipv6.conf.all.disable_ipv6
+  # 返回 1 表示已禁用
+#+END_SRC
+
+解决方法是在 =/etc/ssh/sshd_config= 中强制使用 IPv4：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 在 sshd_config 中添加
+  AddressFamily inet
+  # 然后重启 sshd
+  systemctl restart sshd
+#+END_SRC
+
+**7. sudo 下运行图形程序**
+
+用 =sudo= 运行图形程序时报 =X11 connection rejected because of wrong authentication= ，是因为 root 用户的 =~/.Xauthority= 中没有对应的认证 cookie。
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 方法一：复制当前用户的 .Xauthority 到目标用户
+  cp ~/.Xauthority ~root/.Xauthority
+  xterm  # 现在应该能弹窗了
+
+  # 方法二：用 sudo -u 而不是 sudo su -
+  # &quot;sudo su -&quot; 的 &quot;-&quot; 会重置环境变量，包括 $DISPLAY
+  sudo -u username xterm
+#+END_SRC
+
+方法二更干净——避免用 =sudo su -= ，因为它会清空环境变量导致 =$DISPLAY= 丢失。
+
+* 调试大招
+
+如果以上排查都没解决问题，开启 SSH 调试模式：
+
+#+BEGIN_SRC shell
+  # 增加 -v 参数查看详细信息
+  ssh -v -X user@host
+
+  # 需要更多细节就叠加 v
+  ssh -vvv -X user@host
+#+END_SRC
+
+重点关注输出中关于 =X11 forwarding= 、 =DISPLAY= 、 =xauth= 的行。同时在服务端检查日志：
+
+#+BEGIN_SRC shell :dir /sudo::
+  # 服务端查看 SSH 日志
+  journalctl -u sshd --since &quot;5 minutes ago&quot;
+  # 或
+  tail -f /var/log/auth.log
+#+END_SRC
+</description>
+<pubDate>2026-04-15</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/15/x11-forwarding-排障指南/index.html</guid>
 </item>
 <item>
 <title>GIF不仅仅是一种图片格式——用GIF流做些奇怪的事</title>
@@ -3714,489 +3894,6 @@ IP 欺骗端口扫描利用的是互联网信任链中的漏洞：大学信任 I
 </description>
 <pubDate>2026-04-14</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/13/ip欺骗端口扫描：当别人冒充你去扫描别人/index.html</guid>
-</item>
-<item>
-<title>在Linux上限制儿童使用电脑</title>
-<link>https://lujun9972.github.io/blog/2026/04/12/在linux上限制儿童使用电脑/index.html</link>
-<description>作为家长，你可能希望控制孩子使用电脑的时间——比如只能在晚上 6 点到 8 点登录，每天最多用 2 小时，超时后自动踢出。Windows 有专门的家长控制面板，而 Linux 虽然没有这样的集成工具，但它提供的原生机制完全可以实现同样的效果，而且更加灵活。
-
-本文将介绍如何用纯 Linux 原生方案（PAM、cron、iptables 等）实现以下功能：
-
-+ 限制允许登录的时间段
-+ 限制每日累计使用时长
-+ 超时警告并自动踢出
-+ 限制可访问的网站
-+ 限制可运行的程序
-
-本文假设系统中已创建一个名为 =geo= 的受限用户。所有配置需要 root 权限。
-
-* 限制允许登录的时间段
-
-Linux 中控制用户登录时间的机制是 PAM（Pluggable Authentication Modules，可插拔认证模块）中的 =pam_time= 模块。
-
-** 快速配置
-
-首先，在 PAM 配置文件中启用 =pam_time.so= 。需要修改的文件取决于你使用的登录方式：
-
-+ 控制台登录： =/etc/pam.d/login=
-+ 图形界面登录： =/etc/pam.d/lightdm= 或 =/etc/pam.d/gdm=
-+ SSH 登录： =/etc/pam.d/sshd=
-
-在上述文件的 =account= 部分添加一行：
-
-#+BEGIN_SRC shell
-  account required pam_time.so
-#+END_SRC
-
-然后在 =/etc/security/time.conf= 中添加规则。该文件的格式为：
-
-#+BEGIN_EXAMPLE
-  services;ttys;users;times
-#+END_EXAMPLE
-
-各字段含义：
-
-+ =services= :: 服务名， =*= 表示所有服务
-+ =ttys= :: 终端类型， =*= 表示所有终端
-+ =users= :: 用户名
-+ =times= :: 时间规则
-
-时间规则的语法比较特别：
-
-+ =Wk= 表示工作日（周一到周五）， =Wd= 表示周末（周六、周日）， =Al= 表示每天
-+ 时间格式为 =HHMM-HHMM=
-+ 前面加 =!= 表示取反（&quot;除此时段外禁止&quot;）
-
-例如，限制 =geo= 用户只能在每天 18:00 到 20:00 登录：
-
-#+BEGIN_SRC shell
-  *;*;geo;Al1800-2000
-#+END_SRC
-
-这行规则的意思是：对所有服务、所有终端、geo 用户，允许每天 18:00-20:00 登录（ =Al= 表示每天都适用）。注意， =pam_time= 的逻辑是：匹配到的允许登录，未匹配到则拒绝。
-
-验证配置：在非允许时段尝试用 =geo= 账户登录，应该会看到类似 &quot;Permission denied&quot; 的提示。
-
-** 原理说明
-
-PAM 是 Linux 的可插拔认证框架，它将认证逻辑从应用程序中解耦出来。PAM 定义了四种模块类型：
-
-+ *auth* :: 验证用户身份（如检查密码）
-+ *account* :: 检查账户是否允许访问（如检查账户是否过期、是否在允许的时间段内）
-+ *password* :: 管理密码更新
-+ *session* :: 管理会话的创建和销毁
-
-=pam_time= 属于 *account* 类型。它的工作时机是在用户通过了 *auth* 阶段的密码验证之后、系统创建会话之前。此时 =pam_time= 会检查当前时间是否匹配 =time.conf= 中的规则，如果不匹配则拒绝登录。
-
-* 限制每日累计使用时长
-
-=pam_time= 只能控制&quot;什么时候能登录&quot;，但无法控制&quot;登录后能用多久&quot;。要实现每日使用时长的累计限制，需要自己动手：记录每次登录和登出的时间，然后定期检查是否超限。
-
-** 快速配置
-
-整个方案由两部分组成：一个记录登录/登出时间的脚本，和一个定期检查累计时长的脚本。
-
-*** 第一步：记录登录/登出时间
-
-创建 =/usr/local/bin/session-logger.sh= ：
-
-#+BEGIN_SRC shell :tangle &quot;/sudo::/usr/local/bin/session-logger.sh&quot;
-  #!/bin/bash
-  # /usr/local/bin/session-logger.sh
-  # 由 pam_exec 调用，记录用户登录/登出时间
-
-  LOGFILE=&quot;/var/log/user-sessions.log&quot;
-  TIMESTAMP=$(date &#39;+%Y-%m-%d %H:%M:%S&#39;)
-  USERNAME=&quot;$PAM_USER&quot;
-  TYPE=&quot;$PAM_TYPE&quot;
-
-  if [ -z &quot;$USERNAME&quot; ]; then
-      exit 0
-  fi
-
-  case &quot;$TYPE&quot; in
-      open_session)
-          echo &quot;LOGIN $TIMESTAMP $USERNAME&quot; &gt;&gt; &quot;$LOGFILE&quot;
-          ;;
-      close_session)
-          echo &quot;LOGOUT $TIMESTAMP $USERNAME&quot; &gt;&gt; &quot;$LOGFILE&quot;
-          ;;
-  esac
-
-  exit 0
-#+END_SRC
-
-然后赋予执行权限：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo chmod +x /usr/local/bin/session-logger.sh
-  sudo touch /var/log/user-sessions.log
-  sudo chmod 600 /var/log/user-sessions.log
-#+END_SRC
-
-在 PAM 配置文件（如 =/etc/pam.d/login= 、 =/etc/pam.d/lightdm= ）的 *session* 部分添加：
-
-#+BEGIN_SRC shell
-  session optional pam_exec.so /usr/local/bin/session-logger.sh
-#+END_SRC
-
-*** 第二步：检查累计时长
-
-创建 =/usr/local/bin/check-usage.sh= ：
-
-#+BEGIN_SRC shell :tangle &quot;/sudo::/usr/local/bin/check-usage.sh&quot;
-  #!/bin/bash
-  # /usr/local/bin/check-usage.sh
-  # 检查用户当日累计使用时长
-
-  LOGFILE=&quot;/var/log/user-sessions.log&quot;
-  TODAY=$(date &#39;+%Y-%m-%d&#39;)
-  MAX_MINUTES=120  # 每天最多使用 120 分钟（2 小时）
-  TARGET_USER=&quot;geo&quot;
-  LOCKFILE=&quot;/var/run/check-usage.lock&quot;
-
-  # 使用锁文件防止 cron 重叠执行
-  exec 9&gt;&quot;$LOCKFILE&quot;
-  flock -n 9 || exit 0
-
-  # 计算今日累计在线分钟数
-  # 注意：此算法假设 LOGIN/LOGOUT 记录严格按序配对。如果用户同时有多个会话
-  #（如 SSH + 图形界面），日志可能出现交错序列，导致错误配对。
-  # 家庭环境通常单会话，可以安全使用。
-  calculate_usage() {
-      local user=$1
-      local total_seconds=0
-      local login_time=&quot;&quot;
-
-      while IFS= read -r line; do
-          local action=$(echo &quot;$line&quot; | awk &#39;{print $1}&#39;)
-          local timestamp=$(echo &quot;$line&quot; | awk &#39;{print $2, $3}&#39;)
-          local username=$(echo &quot;$line&quot; | awk &#39;{print $4}&#39;)
-
-          [ &quot;$username&quot; != &quot;$user&quot; ] &amp;&amp; continue
-
-          case &quot;$action&quot; in
-              LOGIN)
-                  login_time=&quot;$timestamp&quot;
-                  ;;
-              LOGOUT)
-                  if [ -n &quot;$login_time&quot; ]; then
-                      local login_ts=$(date -d &quot;$login_time&quot; &#39;+%s&#39;)
-                      local logout_ts=$(date -d &quot;$timestamp&quot; &#39;+%s&#39;)
-                      total_seconds=$((total_seconds + logout_ts - login_ts))
-                      login_time=&quot;&quot;
-                  fi
-                  ;;
-          esac
-      done &lt; &lt;(grep &quot;$TODAY&quot; &quot;$LOGFILE&quot; | grep -E &quot;^(LOGIN|LOGOUT)&quot;)
-
-      # 如果用户当前在线（有未配对的 LOGIN），累加到现在
-      if [ -n &quot;$login_time&quot; ]; then
-          local login_ts=$(date -d &quot;$login_time&quot; &#39;+%s&#39;)
-          local now_ts=$(date &#39;+%s&#39;)
-          total_seconds=$((total_seconds + now_ts - login_ts))
-      fi
-
-      echo $((total_seconds / 60))
-  }
-
-  usage=$(calculate_usage &quot;$TARGET_USER&quot;)
-  remaining=$((MAX_MINUTES - usage))
-
-  if [ &quot;$remaining&quot; -le 0 ]; then
-      echo &quot;使用时间已到，系统将在 2 分钟后将 $TARGET_USER 踢出！&quot; | wall 2&gt;/dev/null
-      sleep 120
-      pkill -u &quot;$TARGET_USER&quot;
-      sleep 10
-      pkill -9 -u &quot;$TARGET_USER&quot;
-  elif [ &quot;$remaining&quot; -le 5 ]; then
-      echo &quot;$TARGET_USER 还有 $remaining 分钟的使用时间&quot; | wall 2&gt;/dev/null
-  fi
-#+END_SRC
-
-赋予执行权限，并创建 systemd timer 每分钟运行一次：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo chmod +x /usr/local/bin/check-usage.sh
-#+END_SRC
-
-创建 systemd service 文件：
-
-#+BEGIN_SRC conf :tangle &quot;/sudo::/etc/systemd/system/check-usage.service&quot;
-  [Unit]
-  Description=Check user daily usage time
-
-  [Service]
-  Type=oneshot
-  ExecStart=/usr/local/bin/check-usage.sh
-#+END_SRC
-
-创建对应的 timer 文件：
-
-#+BEGIN_SRC conf :tangle &quot;/sudo::/etc/systemd/system/check-usage.timer&quot;
-  [Unit]
-  Description=Run check-usage every minute
-
-  [Timer]
-  OnCalendar=*-*-* *:*:00
-  Persistent=true
-
-  [Install]
-  WantedBy=timers.target
-#+END_SRC
-
-启用 timer：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo systemctl daemon-reload
-  sudo systemctl enable --now check-usage.timer
-#+END_SRC
-
-** 原理说明
-
-这里用到了两个机制：
-
-+ *PAM session 管理* :: 当用户登录成功后，PAM 会依次调用 session 类型的模块的 =open= 钩子；当用户登出时，调用 =close= 钩子。 =pam_exec.so= 会将钩子类型通过环境变量 =PAM_TYPE= （值为 =open= 或 =close= ）传递给外部脚本，同时通过 =PAM_USER= 传递用户名。
-
-+ *systemd timer 定时任务* :: =OnCalendar=*-*-* *:*:00= 表示每分钟整点执行一次。systemd timer 是 cron 的现代替代方案，几乎所有使用 systemd 的 Linux 发行版都内置支持。它的优势包括：自动记录日志、支持依赖关系、失败后可自动重试。这个频率足够及时地检测到超时，同时不会给系统带来明显负担。
-
-* 超时警告并踢出
-
-上一节的脚本已经包含了基本的警告和踢出逻辑。这里再详细说明一下各个踢出手段的区别。
-
-** 多级警告策略
-
-实际使用中，建议采用多级警告，给孩子一个心理准备的过程：
-
-以下是一个示例，展示如何替换脚本中的警告逻辑：
-
-#+BEGIN_SRC shell
-  # 在 check-usage.sh 中替换警告逻辑
-  usage=$(calculate_usage &quot;$TARGET_USER&quot;)
-  remaining=$((MAX_MINUTES - usage))
-
-  if [ &quot;$remaining&quot; -le 0 ]; then
-      # 已超时，通知并踢出
-      echo &quot;$TARGET_USER，今日使用时间已到！&quot; | wall 2&gt;/dev/null
-      sleep 120
-      pkill -u &quot;$TARGET_USER&quot;
-  elif [ &quot;$remaining&quot; -le 2 ]; then
-      # 最后 2 分钟警告
-      echo &quot;$TARGET_USER，还有 $remaining 分钟，请保存工作！&quot; | wall 2&gt;/dev/null
-  elif [ &quot;$remaining&quot; -le 5 ]; then
-      # 5 分钟提醒
-      echo &quot;$TARGET_USER，还有 $remaining 分钟的使用时间&quot; | wall 2&gt;/dev/null
-  fi
-#+END_SRC
-
-** 踢出用户的不同方式
-
-+ *=pkill -u geo=* :: 向 geo 用户的所有进程发送 SIGTERM 信号。这是最简单的方式，但如果有进程忽略了 SIGTERM，可能无法完全清理。可以追加 =pkill -9 -u geo= 来强制结束。
-
-+ *=loginctl terminate-session SESSION_ID=* :: 通过 systemd-logind 来终止指定的登录会话。这比 pkill 更精确，因为它能正确地清理会话资源。查看当前会话列表可以用 =loginctl list-sessions= 。
-
-+ *=shutdown -h +2=* :: 2 分钟后关闭整个系统。这是最彻底的方式，但会影响所有用户。如果电脑是孩子独占使用的，这也是个不错的选择。
-
-** 原理说明
-
-=wall= 命令的工作原理是向系统中所有终端设备（ =/dev/pts/*= 和 =/dev/tty*= ）写入消息。只有拥有终端的登录用户才能看到消息。
-
-=pkill= 通过匹配进程的 UID 来选择目标进程，先发送 SIGTERM（信号 15），允许进程优雅退出。如果进程不响应，可以发送 SIGKILL（信号 9）强制终止。
-
-=loginctl= 是 systemd-logind 的命令行接口。logind 作为 systemd 的用户登录管理器，跟踪系统中所有的登录会话（包括图形和终端会话）。 =terminate-session= 会向会话中的所有进程发送终止信号，并清理会话资源。
-
-* 限制可访问网站
-
-在 HTTPS 普及的今天，我们无法在不安装额外证书的情况下检查 HTTP 请求的内容。因此 Linux 原生方案只能在 IP 和域名级别进行过滤。下面介绍两种方法。
-
-** 方法一：DNS 级过滤
-
-通过配置本地 DNS 服务器 =dnsmasq= ，将不希望访问的域名解析到无效地址。
-
-首先安装 =dnsmasq= ：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo pacman -S dnsmasq  # Arch Linux
-#+END_SRC
-
-创建黑名单文件 =/etc/blocked-hosts= ：
-
-#+BEGIN_EXAMPLE
-  # /etc/blocked-hosts
-  # 每行一个要屏蔽的域名（标准 hosts 格式）
-  127.0.0.1 example-bad-site.com
-  127.0.0.1 another-bad-site.com
-#+END_EXAMPLE
-
-在 =/etc/dnsmasq.conf= 中添加配置：
-
-#+BEGIN_SRC shell
-  # 将黑名单中的域名解析到 127.0.0.1
-  addn-hosts=/etc/blocked-hosts
-#+END_SRC
-
-然后启动 dnsmasq 并将系统 DNS 指向本地：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo systemctl enable --now dnsmasq
-  # 修改 /etc/resolv.conf
-  echo &quot;nameserver 127.0.0.1&quot; | sudo tee /etc/resolv.conf
-#+END_SRC
-
-这种方法的缺点是：只要孩子知道如何修改 DNS 设置，就能轻松绕过。
-
-** 方法二：iptables 按用户限制
-
-=iptables= 的 =owner= 模块可以根据进程的 UID 来匹配网络流量， =time= 模块可以按时间段匹配。两者结合，可以限制特定用户在特定时间段内的网络访问。
-
-#+BEGIN_SRC shell :dir /sudo::
-  # 允许 geo 用户在 18:00-20:00 访问网络
-  sudo iptables -A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
-
-  # 禁止 geo 用户在其他时间访问网络
-  sudo iptables -A OUTPUT -m owner --uid-owner geo -j DROP
-#+END_SRC
-
-注意： =--timestop 20:00= 实际上不包含 20:00 整点，规则有效时间为 18:00:00 到 19:59:59。如果需要包含 20:00 整点，可以设置为 =--timestop 20:01=。
-
-要持久化这些规则，可以将它们写入一个规则文件，然后在启动时自动恢复：
-
-#+BEGIN_SRC shell :tangle &quot;/sudo::/etc/iptables/parental-control.rules&quot;
-  # /etc/iptables/parental-control.rules
-  *filter
-  :OUTPUT ACCEPT [0:0]
-  -A OUTPUT -m owner --uid-owner geo -m time --timestart 18:00 --timestop 20:00 -j ACCEPT
-  -A OUTPUT -m owner --uid-owner geo -j DROP
-  COMMIT
-#+END_SRC
-
-恢复规则：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo iptables-restore &lt; /etc/iptables/parental-control.rules
-#+END_SRC
-
-** 原理说明
-
-Linux 的网络过滤由 Netfilter 框架实现。Netfilter 在网络协议栈中设置了五个钩子点：
-
-+ *PREROUTING* :: 数据包进入路由之前
-+ *INPUT* :: 数据包发往本机进程之前
-+ *FORWARD* :: 数据包转发到其他接口之前
-+ *OUTPUT* :: 本机进程发出的数据包
-+ *POSTROUTING* :: 数据包发出之前
-
-我们使用的是 *OUTPUT* 链，它处理本机进程发出的所有数据包。 =owner= 模块通过检查数据包对应的 socket 的 UID 来匹配， =time= 模块通过系统时间来匹配。规则从上到下依次匹配，匹配到后就执行指定的动作（ =ACCEPT= 或 =DROP= ）。
-
-* 限制可运行程序
-
-不想让孩子玩某些游戏或使用某些软件？最直接的方法是通过 Linux 的权限系统来限制。
-
-** 方法一：文件权限控制
-
-Linux 的每个文件都有三组权限：所有者（owner）、所属组（group）、其他人（others）。我们可以利用这个机制来限制特定用户执行特定程序。
-
-假设要禁止 =geo= 用户运行 =steam= ：
-
-#+BEGIN_SRC shell :dir /sudo::
-  # 创建受限组
-  sudo groupadd restricted
-
-  # 将 steam 的组改为 restricted，权限设为 750
-  sudo chgrp restricted /usr/bin/steam
-  sudo chmod 750 /usr/bin/steam
-
-  # 确保 geo 不在 restricted 组中
-  sudo gpasswd -d geo restricted 2&gt;/dev/null || true
-#+END_SRC
-
-这样，只有 root 用户和 restricted 组的成员可以运行 =steam= ，而 =geo= 用户会得到 &quot;Permission denied&quot; 的错误。
-
-对于需要限制的每个程序，重复上述步骤即可。也可以写一个脚本来批量处理：
-
-#+BEGIN_SRC shell :tangle &quot;/sudo::/usr/local/bin/restrict-programs.sh&quot; 
-  #!/bin/bash
-  # /usr/local/bin/restrict-programs.sh
-  # 限制指定程序只能由 restricted 组执行
-
-  PROGRAMS=&quot;/usr/bin/steam /usr/bin/wine /usr/bin/discord&quot;
-
-  for prog in $PROGRAMS; do
-      if [ -f &quot;$prog&quot; ]; then
-          sudo chgrp restricted &quot;$prog&quot;
-          sudo chmod 750 &quot;$prog&quot;
-          echo &quot;Restricted: $prog&quot;
-      fi
-  done
-#+END_SRC
-
-需要注意：当软件包更新时，权限可能会被重置。可以将这个脚本放在 systemd 的 timer 或 pacman 的 hook 中定期执行。
-
-** 方法二：AppArmor
-
-AppArmor 提供了更强大的强制访问控制（MAC）。与文件权限不同，AppArmor 的策略无法被用户（包括文件所有者）修改。
-
-在 Arch Linux 上安装并启用 AppArmor：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo pacman -S apparmor
-  sudo systemctl enable --now apparmor
-#+END_SRC
-
-AppArmor 通过 profile 来定义程序的访问权限。需要注意的是，AppArmor 的 profile 是绑定到程序的，不能直接按用户限制。要实现按用户限制，需要配合 =pam_apparmor= 模块，在用户登录时为不同用户加载不同的 profile。
-
-首先，创建一个限制性的 profile：
-
-#+BEGIN_EXAMPLE
-  # /etc/apparmor.d/restrict-geo-steam
-  abi &lt;abi/4.0&gt;,
-  include &lt;tunables/global&gt;
-
-  /usr/bin/steam {
-      include &lt;abstractions/base&gt;
-
-      # 只允许特定用户组执行
-      # 注意：AppArmor 本身不直接支持按用户过滤，
-      # owner 关键字匹配进程所有者（即运行 steam 的用户）
-      owner /usr/bin/steam rx,
-  }
-#+END_EXAMPLE
-
-如果需要更精确的按用户控制，建议结合文件权限方法使用——将程序的组设为受限组，然后在 AppArmor profile 中限制该组的访问。或者使用 =pam_apparmor= 在用户登录时动态加载不同的 profile。
-
-加载 profile：
-
-#+BEGIN_SRC shell :dir /sudo::
-  sudo apparmor_parser -r /etc/apparmor.d/restrict-geo-steam
-#+END_SRC
-
-** 原理说明
-
-+ *DAC（自主访问控制）* :: Linux 默认的权限模型。每个文件有三组权限位（读 r、写 w、执行 x），分别对应所有者、所属组、其他人。文件的所有者可以自主修改文件的权限。&quot;自主&quot;的含义就在于此——权限由所有者决定。
-
-+ *MAC（强制访问控制）* :: AppArmor 实现的权限模型。策略由系统管理员定义，普通用户无法绕过或修改。AppArmor 使用基于路径的匹配（而非 SELinux 的基于标签的匹配），配置相对简单。
-
-* 总结
-
-本文介绍了五种用纯 Linux 原生机制限制儿童使用电脑的方法：
-
-+ *限制登录时段* :: 使用 PAM 的 =pam_time= 模块，通过 =/etc/security/time.conf= 配置
-+ *限制使用时长* :: 使用 =pam_exec= 记录登录/登出时间，配合 cron 定时检查
-+ *超时踢出* :: 使用 =wall= 发送警告， =pkill= 或 =loginctl= 踢出用户
-+ *限制网站访问* :: 使用 =dnsmasq= 做 DNS 过滤，或 =iptables= 按用户和时间限制网络访问
-+ *限制可运行程序* :: 使用文件权限或 AppArmor 控制程序执行
-
-这些方案组合使用，可以构建一个相当完整的家长控制系统。但需要注意以下几点：
-
-+ 这些方案需要 *root 权限* 来配置。如果你的孩子拥有 sudo 权限，ta 理论上可以绕过所有限制。
-+ =pam_time= 只能控制新登录，无法踢出已经在线的用户。需要配合时长检查脚本来处理。
-+ iptables 的 =owner= 模块只能匹配本机进程发出的流量，对于通过代理或 VPN 的流量可能无效。
-
-最后，技术手段只是辅助。与孩子建立良好的沟通和信任，比任何软件限制都更有效。
-
-</description>
-<pubDate>2026-04-14</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/12/在linux上限制儿童使用电脑/index.html</guid>
 </item>
 </channel>
 </rss>
