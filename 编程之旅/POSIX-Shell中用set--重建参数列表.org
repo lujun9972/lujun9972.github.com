@@ -1,0 +1,147 @@
+#+TITLE: POSIX Shell 中用 set -- 重建参数列表
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅 shell posix
+#+DATE: [2026-04-15 二 20:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+写 wrapper 脚本时，经常需要变换命令行参数：替换某些选项、插入新参数、或调整参数顺序。比如把 ~--foobar~ 转换成 ~--foo=bar~ ，同时保留其他参数不变。
+
+* 朴素方法及其陷阱
+
+最容易想到的做法是字符串拼接：
+
+#+BEGIN_SRC shell
+  new_args=""
+  for arg in "$@"
+  do
+      case "$arg" in
+          --foobar) new_args="$new_args --foo=bar" ;;
+          *)        new_args="$new_args $arg" ;;
+      esac
+  done
+  exec program $new_args
+#+END_SRC
+
+问题出在最后一行的 =$new_args= 没有 加引号。当参数含空格时，shell 的词法分割会把一个参数拆成多个：
+
+#+BEGIN_SRC shell :results output
+  # 模拟: wrapper --foobar "some file"
+  # $new_args 的值是 "--foo=bar some file"
+  # 不加引号的 $new_args 会按 IFS 分词，"some file" 变成两个参数
+  new_args="--foo=bar some file"
+  for arg in $new_args; do
+      echo "arg: [$arg]"
+  done
+#+END_SRC
+
+输出：
+
+#+RESULTS:
+: arg: [--foo=bar]
+: arg: [some]
+: arg: [file]
+
+="some file"= 被拆成了 =some= 和 =file= 两个参数。
+
+那给 =$new_args= 加上引号呢？那样所有参数会合并成一个字符串，也不对。根本问题在于： *用字符串存储参数列表，无法保留参数间的边界信息* 。
+
+* POSIX Shell 的唯一数组：位置参数
+
+POSIX shell 没有数组类型（那是 Bash/Zsh 的扩展），但它有一个特殊的「数组」——位置参数列表 =$1= , =$2= , ... =$n= 。
+
+而 =set --= 可以整体替换这个列表。配合 =for arg= 循环，就能在遍历原参数的同时重建新列表：
+
+#+BEGIN_SRC shell
+  first_iter=1
+  for arg in "$@"          # 遍历原始参数
+  do
+      if [ "$first_iter" -eq 1 ]; then
+          set --            # 清空位置参数（只在第一次迭代）
+          first_iter=0
+      fi
+      case "$arg" in
+          --foobar) set -- "$@" --foo=bar ;;   # 追加转换后的参数
+          *)        set -- "$@" "$arg" ;;       # 追加原参数
+      esac
+  done
+  exec program "$@"         # 安全传递，保留参数边界
+#+END_SRC
+
+关键点：
+
+1. 第一次迭代时 =set --= 清空位置参数，避免原始参数残留
+2. =set -- "$@" ...= 在保留现有参数的同时追加新参数
+3. 最终 =exec program "$@"= 安全传递所有参数
+
+* "$@" 的特殊展开
+
+这个方案之所以能工作，是因为加引号的 ="$@"= 有特殊语义： *它会展开为每个位置参数一个独立的字段* ，而不是合并成一个字符串。
+
+对比四种写法：
+
+#+BEGIN_SRC shell :results output
+  set -- "hello world" "foo bar"
+  echo '--- $* (不加引号) ---'
+  for arg in $*; do echo "  [$arg]"; done
+  echo '--- "$*" (加引号) ---'
+  for arg in "$*"; do echo "  [$arg]"; done
+  echo '--- $@ (不加引号) ---'
+  for arg in $@; do echo "  [$arg]"; done
+  echo '--- "$@" (加引号) ---'
+  for arg in "$@"; do echo "  [$arg]"; done
+#+END_SRC
+
+输出：
+
+#+RESULTS:
+: --- $* (不加引号) ---
+:   [hello]
+:   [world]
+:   [foo]
+:   [bar]
+: --- "$*" (加引号) ---
+:   [hello world foo bar]
+: --- $@ (不加引号) ---
+:   [hello]
+:   [world]
+:   [foo]
+:   [bar]
+: --- "$@" (加引号) ---
+:   [hello world]
+:   [foo bar]
+
+只有 ="$@"= 能正确保留每个参数的边界。
+
+* 用函数隔离位置参数
+
+每个 shell 函数有自己独立的位置参数列表，这意味着可以在函数内安全操作而不影响外层的 ="$@"= ：
+
+#+BEGIN_SRC shell :results output
+  transform_args() {
+      first_iter=1
+      for arg in "$@"
+      do
+          if [ "$first_iter" -eq 1 ]; then
+              set --
+              first_iter=0
+          fi
+          case "$arg" in
+              --foobar) set -- "$@" --foo=bar ;;
+              *)        set -- "$@" "$arg" ;;
+          esac
+      done
+      printf '%s\n' "$@"
+  }
+
+  transform_args --verbose --foobar "some file"
+#+END_SRC
+
+输出：
+
+#+RESULTS:
+: --verbose
+: --foo=bar
+: some file
+
+参数 ="some file"= 被完整保留， =--foobar= 被正确转换为 =--foo=bar= 。
