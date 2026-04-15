@@ -1,0 +1,128 @@
+#+TITLE: 创建跨平台 ZIP 文件的隐藏陷阱：Extra Field
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴,zip,兼容性
+#+DATE: [2026-04-15 二 22:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在 Linux 下用 =zip -r something.zip something/= 打包文件分享给朋友，结果对方在 iOS 上怎么也打不开——文件明明没损坏，换个人用 macOS 又能正常解压。
+
+这背后的原因是 ZIP 格式中的 /Extra Field/ （扩展字段）。
+
+* 什么是 Extra Field
+
+ZIP 格式规范中，每个文件条目除了基本的文件名、压缩数据之外，还可以携带一组可选的"扩展字段"（Extra Field）。这些字段用来存储标准 ZIP 头部没有覆盖的元数据。
+
+Info-ZIP（Linux 上最常用的 =zip= 命令）默认会利用这个机制保存 Unix 特有的文件属性，包括：
+- Unix 文件权限（owner/group/other 的读写执行位）
+- UID 和 GID
+- 修改时间、访问时间等时间戳
+
+按 ZIP 规范的设计，实现应该忽略自己不认识的 Extra Field，只处理能理解的。但现实中，某些平台的 ZIP 实现（特别是 iOS 上的某些解压工具）遇到包含 Extra Field 的 ZIP 文件时会直接报错，而不是优雅地忽略它们。
+
+* 用 zipinfo 观察差异
+
+我们可以用 =zipinfo= 命令直观地看到有无 Extra Field 的区别。先创建一个测试目录：
+
+#+BEGIN_SRC shell :exports both :results value code
+  mkdir -p /tmp/zip-test/demo
+  echo "hello world" > /tmp/zip-test/demo/hello.txt
+  chmod 755 /tmp/zip-test/demo/hello.txt
+#+END_SRC
+
+分别用默认方式和 =-X= 选项打包：
+
+#+BEGIN_SRC shell :exports both :results output
+  cd /tmp/zip-test
+  zip -r with-extra.zip demo/
+  zip -rX without-extra.zip demo/
+#+END_SRC
+
+#+RESULTS:
+:   adding: demo/ (stored 0%)
+:   adding: demo/hello.txt (stored 0%)
+:   adding: demo/ (stored 0%)
+:   adding: demo/hello.txt (stored 0%)
+
+用 =zipinfo= 查看包含 Extra Field 的版本：
+
+#+BEGIN_SRC shell :exports both :results output
+  zipinfo /tmp/zip-test/with-extra.zip
+#+END_SRC
+
+#+RESULTS:
+: Archive:  /tmp/zip-test/with-extra.zip
+: Zip file size: 328 bytes, number of entries: 2
+: drwxr-xr-x  3.0 unx        0 bx stor 26-Apr-15 23:01 demo/
+: -rwxr-xr-x  3.0 unx       12 tx stor 26-Apr-15 23:01 demo/hello.txt
+: 2 files, 12 bytes uncompressed, 12 bytes compressed:  0.0%
+
+注意输出中的 =unx= 和 =bx= / =tx= ： =unx= 表示 Unix 格式的条目， =bx= / =tx= 中的 =x= 表示文件保留了可执行权限。
+
+再看不含 Extra Field 的版本：
+
+#+BEGIN_SRC shell :exports both :results output
+  zipinfo /tmp/zip-test/without-extra.zip
+#+END_SRC
+
+#+RESULTS:
+: Archive:  /tmp/zip-test/without-extra.zip
+: Zip file size: 224 bytes, number of entries: 2
+: drwxr-xr-x  3.0 unx        0 b- stor 26-Apr-15 23:01 demo/
+: -rwxr-xr-x  3.0 unx       12 t- stor 26-Apr-15 23:01 demo/hello.txt
+: 2 files, 12 bytes uncompressed, 12 bytes compressed:  0.0%
+
+用 =zipinfo -v= 可以看到更详细的差异：
+
+#+BEGIN_SRC shell :exports both :results output
+  zipinfo -v /tmp/zip-test/with-extra.zip | grep -E "(length of extra field|central-directory extra field|subfield with ID)"
+#+END_SRC
+
+#+RESULTS:
+:   length of extra field:                          24 bytes
+:   The central-directory extra field contains:
+:   - A subfield with ID 0x5455 (universal time) and 5 data bytes.
+:   - A subfield with ID 0x7875 (Unix UID/GID (any size)) and 11 data bytes:
+:   length of extra field:                          24 bytes
+:   The central-directory extra field contains:
+:   - A subfield with ID 0x5455 (universal time) and 5 data bytes.
+:   - A subfield with ID 0x7875 (Unix UID/GID (any size)) and 11 data bytes:
+
+对比不含 Extra Field 的版本：
+
+#+BEGIN_SRC shell :exports both :results output
+  zipinfo -v /tmp/zip-test/without-extra.zip | grep "extra field"
+#+END_SRC
+
+#+RESULTS:
+:   length of extra field:                          0 bytes
+:   length of extra field:                          0 bytes
+
+文件大小的差异也很明显：328 bytes vs 224 bytes，差了 104 bytes，正好是两个条目各 24 bytes 的 Extra Field（包含 Universal Time 和 Unix UID/GID）加上头部开销。
+
+* 解决方案
+
+用 =-X= （或其长选项 =--no-extra= ）排除 Extra Field：
+
+#+BEGIN_SRC shell
+  zip -rX something.zip something/
+#+END_SRC
+
+这样生成的 ZIP 文件就是纯标准格式，兼容性最好。
+
+如果你的项目使用 Python 打包， =zipfile= 模块默认 *不会* 写入 Extra Field，所以无需特殊处理。但如果你显式设置了 =external_attr= 来保存 Unix 权限，则需要注意这个问题。
+
+* 什么时候该保留 Extra Field
+
+=zip -rX= 并不是万能的最佳实践。以下场景 *应该* 保留 Extra Field：
+
+- *系统备份* ：需要保留完整的 Unix 权限、所有者信息
+- *在 Linux 之间传输* ：两端都支持 Extra Field，保留元数据有好处
+
+而以下场景 *应该排除* Extra Field （用 =-X= ）：
+
+- *跨平台分享文件* ：收件人可能在 macOS、Windows、iOS 等平台
+- *上传到网站/网盘* ：不确定下载方会用什么工具解压
+- *只需文件内容* ：不关心文件权限等元数据
+
+一句话总结：分享给不确定的接收方时，用 =zip -rX= ；只在 Linux 内部流转时，保留默认行为即可。
