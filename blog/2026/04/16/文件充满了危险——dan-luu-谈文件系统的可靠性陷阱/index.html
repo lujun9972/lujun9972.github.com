@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>文件充满了危险——Dan Luu 谈文件系统的可靠性陷阱 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="文件系统, 可靠性, fsync, 数据安全, DanLuu" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">文件充满了危险——Dan Luu 谈文件系统的可靠性陷阱</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc699a68">三层风险速览</a>
+<ul>
+<li><a href="#orgf8a5ab5">文件 API：安全写一个文件有多难</a></li>
+<li><a href="#orgaa6c9c2">文件系统：fsync 的错误处理几乎不可能做对</a></li>
+<li><a href="#org9956bb7">磁盘：厂商声称的和实际的内容</a></li>
+</ul>
+</li>
+<li><a href="#orgdea17cd">那些不管用的偏方</a>
+<ul>
+<li><a href="#orgcbf379e">"用 rename 代替覆盖写入"</a></li>
+<li><a href="#org3488c10">"只追加不覆盖"</a></li>
+</ul>
+</li>
+<li><a href="#orgebb3552">实用建议</a>
+<ul>
+<li><a href="#org6cd36a0">用数据库代替直接文件操作</a></li>
+<li><a href="#org523e8e3">备份策略</a></li>
+<li><a href="#org6678381">理解文件系统选择的代价</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+2019 年，Dropbox 宣布 Linux 版只支持 ext4 文件系统。Reddit r/programming（最大的英文编程论坛之一）上最高赞的评论是：
+</p>
+
+<blockquote>
+<p>
+我不太理解，为什么应用程序要直接支持这些文件系统？内核不是已经抽象了底层存储细节吗？
+</p>
+</blockquote>
+
+<blockquote>
+<p>
+这不应该是操作系统的工作吗？
+</p>
+</blockquote>
+
+<p>
+大多数人觉得文件很简单——打开、写入、关闭，能出什么问题？Dan Luu 在 <a href="https://danluu.com/deconstruct-files/">Deconstruct 2019</a> 的演讲 "Files are fraught with peril" 给出了令人不安的答案：从 API 到文件系统到物理磁盘， <b>每一层都有可能导致数据丢失或损坏的陷阱</b> 。
+</p>
+
+<div id="outline-container-orgc699a68" class="outline-2">
+<h2 id="orgc699a68">三层风险速览</h2>
+<div class="outline-text-2" id="text-orgc699a68">
+</div>
+<div id="outline-container-orgf8a5ab5" class="outline-3">
+<h3 id="orgf8a5ab5">文件 API：安全写一个文件有多难</h3>
+<div class="outline-text-3" id="text-orgf8a5ab5">
+<p>
+假设我们要把文件内容从 <code>a foo</code> 改成 <code>a bar</code> 。最直觉的做法是调用 <code>pwrite</code> 系统调用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C">pwrite([file], <span class="org-string">"bar"</span>, 3, 2)  <span class="org-comment-delimiter">// </span><span class="org-comment">&#22312;&#20559;&#31227; 2 &#22788;&#20889;&#20837; 3 &#23383;&#33410;</span>
+</pre>
+</div>
+
+<p>
+问题在于：如果在写入过程中崩溃或断电，你可能得到 <code>a boo</code> 、 <code>a bor</code> 这样的半写入状态——数据损坏。
+</p>
+
+<p>
+要安全地写文件，需要实现一个"撤销日志"（undo log），并且逐步保证每个步骤的持久性和顺序：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C">creat(/d/log)                        <span class="org-comment-delimiter">// </span><span class="org-comment">1. &#21019;&#24314;&#26085;&#24535;&#25991;&#20214;
+</span>write(/d/log, <span class="org-string">"...[checksum],foo"</span>, 7) <span class="org-comment-delimiter">// </span><span class="org-comment">2. &#20889;&#20837;&#21407;&#22987;&#25968;&#25454;&#21644;&#26657;&#39564;&#21644;
+</span>fsync(/d/log)                        <span class="org-comment-delimiter">// </span><span class="org-comment">3. &#30830;&#20445;&#26085;&#24535;&#33853;&#30424;
+</span>fsync(/d)                            <span class="org-comment-delimiter">// </span><span class="org-comment">4. &#30830;&#20445;&#29238;&#30446;&#24405;&#35760;&#24405;&#20102;&#26085;&#24535;&#25991;&#20214;
+</span>pwrite(/d/orig, <span class="org-string">"bar"</span>, 3, 2)         <span class="org-comment-delimiter">// </span><span class="org-comment">5. &#20462;&#25913;&#21407;&#22987;&#25991;&#20214;
+</span>fsync(/d/orig)                       <span class="org-comment-delimiter">// </span><span class="org-comment">6. &#30830;&#20445;&#20462;&#25913;&#33853;&#30424;
+</span>unlink(/d/log)                       <span class="org-comment-delimiter">// </span><span class="org-comment">7. &#21024;&#38500;&#26085;&#24535;</span>
+</pre>
+</div>
+
+<p>
+为什么每一步都不可省略：
+</p>
+
+<ul class="org-ul">
+<li>不加 checksum（步骤 2）： <code>data=writeback</code> 模式下，日志文件可能包含垃圾数据，"恢复"时反而把垃圾写入原始文件</li>
+<li>不 fsync 父目录（步骤 4）：崩溃后日志文件可能不存在，等于没有保护</li>
+<li>不 fsync（步骤 3、6）： <code>data=ordered</code> 模式下，操作可能被重排序，导致文件先被修改、日志还没写完</li>
+</ul>
+
+<p>
+而这一切只是在 ext3/ext4 一个文件系统家族内部的差异。换成 btrfs、ZFS、XFS，行为又有不同。
+</p>
+
+<p>
+2014 年的一项研究对 Leveldb、LMDB、GDBM、HSQLDB、SQLite、PostgreSQL、Git、Mercurial、HDFS、Zookeeper 做了静态分析，发现 <b>除 SQLite 的特定模式外，所有软件都有文件 API 使用方面的 bug</b> 。这些软件的开发者已经比绝大多数程序员更了解文件系统了。
+</p>
+
+<p>
+为什么 API 这么难用？本质原因是四个难题叠在一起：
+</p>
+
+<ol class="org-ol">
+<li><b>安全写文件面临的挑战和并发编程一模一样</b> ——你需要保证原子性、保证操作顺序</li>
+<li>文件 API 在不同文件系统、不同挂载模式下的行为还不一致</li>
+<li>文档不清楚</li>
+<li>性能与正确性有固有冲突。 <code>fsync</code> 同时做了两件事：barrier（防止操作重排序）和 cache flush（强制数据写入磁盘）。很多时候你只需要 barrier 来保证顺序，但 <code>fsync</code> 强迫你连带执行代价极高的 cache flush。2013 年的一项研究修改 ext4 加了一个只做 barrier 不做 flush 的操作，发现性能接近完全禁用 cache flush（即 unsafe 模式）的水平——说明 <code>fsync</code> 接口捆绑导致的性能惩罚几乎等于安全与不安全之间的全部差距。但大多数人无法自己改文件系统，只能在性能和安全之间妥协，而妥协往往意味着不安全</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgaa6c9c2" class="outline-3">
+<h3 id="orgaa6c9c2">文件系统：fsync 的错误处理几乎不可能做对</h3>
+<div class="outline-text-3" id="text-orgaa6c9c2">
+<p>
+文件系统的错误处理经历了漫长的改进。2005 年的一项研究发现，大多数文件系统几乎丢弃了所有写错误。到 2017 年，Wesley Aptekar-Cassels 和 Dan Luu 重新测试，发现基本错误处理已有显著改善。
+</p>
+
+<p>
+但 <code>fsync</code> 的错误处理依然是个灾难。在 2018 年 Q2 之前的 Linux 内核上，=fsync= 遇到错误（比如磁盘写入失败）时，错误很可能会被直接丢弃，甚至报告给错误的进程。即使在较新的内核上，=fsync= 报错之后的局面也很棘手：
+</p>
+
+<ul class="org-ul">
+<li><b>XFS 和 btrfs</b> ：已修改但未持久化的数据会被直接丢弃，无法恢复</li>
+<li><b>ext4</b> ：数据不会立刻丢弃，但被标记为"未修改"，文件系统不会再尝试写入；内存紧张时随时可能被清除</li>
+<li><b>ZFS on Linux</b> ：CPU 使用率飙升，系统可能挂起或不可用</li>
+</ul>
+
+<p>
+PostgreSQL、MySQL、MongoDB 的应对策略是： <b>遇到 <code>fsync</code> 错误直接崩溃进程，让用户从最近的检查点恢复</b> 。这不是过度谨慎，而是因为在 Linux 上确实没有更好的恢复方法。
+</p>
+
+<p>
+更糟糕的是 <code>syncfs</code> ——它 <b>根本不返回错误</b> ，意味着静默数据丢失。
+</p>
+
+<p>
+这个问题也不限于 Linux。当 PostgreSQL 团队首次提出"fsync 错误时应该崩溃"时，开发者 mailing list 上的第一反应是：
+</p>
+
+<blockquote>
+<p>
+你一定在开玩笑……如果 [fsync 的当前行为] 确实如此，我们需要反击这种内核脑残行为。
+</p>
+</blockquote>
+
+<p>
+但讨论完细节后，所有人都同意崩溃是唯一正确的选择。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9956bb7" class="outline-3">
+<h3 id="org9956bb7">磁盘：厂商声称的和实际的内容</h3>
+<div class="outline-text-3" id="text-org9956bb7">
+<p>
+磁盘厂商在数据手册中声称的不可纠正错误率（UBER）：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类型</th>
+<th scope="col" class="org-right">厂商声称的 UBER</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">消费级 HDD</td>
+<td class="org-right">1e-14</td>
+</tr>
+
+<tr>
+<td class="org-left">企业级 HDD</td>
+<td class="org-right">1e-15</td>
+</tr>
+
+<tr>
+<td class="org-left">消费级 SSD</td>
+<td class="org-right">1e-15</td>
+</tr>
+
+<tr>
+<td class="org-left">企业级 SSD</td>
+<td class="org-right">1e-16</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+看起来很可靠？1e-14 意味着每读 1e14 bit 才会出一个错。但 10TB HDD 全量读一次就是 8e13 bit——差不多就该出一个错了。读十几遍就几乎必然会遇到错误。
+</p>
+
+<p>
+而实际观测值远比厂商声称的糟糕：
+</p>
+
+<ul class="org-ul">
+<li>Microsoft 的研究观测到 SSD 错误率 1e-11 到 6e-14</li>
+<li>Facebook 的研究观测到 SSD 错误率 2e-9 到 6e-11</li>
+</ul>
+
+<p>
+2e-9 意味着每 250MB 就可能出现一个不可纠正错误——比声称的值差了 50 万到 500 万倍。
+</p>
+
+<p>
+SSD 的数据保持能力也不像想象中那么可靠。一块剩余 90% 写入寿命的 SSD 厂商声称数据可保持约 10 年，但接近寿命终点的 SSD 可能只能保持数据 3 个月到 1 年。Luke Leighton 测试了 6 款声称有断电保护的 SSD，其中 4 款在断电测试中失败——凡是 Intel 以外的品牌都失败了。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdea17cd" class="outline-2">
+<h2 id="orgdea17cd">那些不管用的偏方</h2>
+<div class="outline-text-2" id="text-orgdea17cd">
+<p>
+网上讨论"如何安全写文件"时，总有人提出各种"一个技巧就够了"的说法。Dan Luu 阅读了两千多条互联网评论后，总结了最常见的两种：
+</p>
+</div>
+
+<div id="outline-container-orgcbf379e" class="outline-3">
+<h3 id="orgcbf379e">"用 rename 代替覆盖写入"</h3>
+<div class="outline-text-3" id="text-orgcbf379e">
+<p>
+做法是：先写入临时文件，再用 <code>rename</code> 覆盖原文件。理由是 POSIX 规范说 <code>rename</code> 是原子的。
+</p>
+
+<p>
+问题在于两层：
+</p>
+
+<p>
+第一，POSIX 说 <code>rename</code> 是原子的，指的是在 <b>正常操作</b> 下原子——要么成功要么失败，不会出现"重命名了一半"的状态。但崩溃时并非如此。崩溃可能发生在文件系统已经把新文件名写入了目录、但还没来得及删除旧文件名指向的数据的时刻。结果是：新文件指向的是不完整的内容，旧文件的数据也丢失了。大多数主流 Linux 文件系统至少有一种挂载模式会出现这种情况。
+</p>
+
+<p>
+第二，=rename= 不保证按程序顺序执行。你可能先写入临时文件，再 <code>rename</code> 覆盖原文件——程序逻辑上是这个顺序。但文件系统可能先执行 <code>rename</code> ，再写入临时文件的内容。崩溃后你会发现：新文件存在，但内容是空的或旧的。
+</p>
+
+<p>
+btrfs 是主流文件系统中唯一明确保证 <code>rename</code> 在崩溃时也原子的（仅限覆盖已有文件的场景）。但 2018 年的一项测试发现了大量原子性 bug——btrfs *声称*有这个保证，*实现*上却经常做不到。也就是说，即使你为了 <code>rename</code> 的原子性专门选用 btrfs，也得不到可靠的安全保证。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3488c10" class="outline-3">
+<h3 id="org3488c10">"只追加不覆盖"</h3>
+<div class="outline-text-3" id="text-org3488c10">
+<p>
+追加写入也不保证顺序或原子性（已有多项研究证实）。相信追加是安全的是很多实际 bug 的来源。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgebb3552" class="outline-2">
+<h2 id="orgebb3552">实用建议</h2>
+<div class="outline-text-2" id="text-orgebb3552">
+</div>
+<div id="outline-container-org6cd36a0" class="outline-3">
+<h3 id="org6cd36a0">用数据库代替直接文件操作</h3>
+<div class="outline-text-3" id="text-org6cd36a0">
+<p>
+如果你需要可靠地存储数据，SQLite 是一个很好的选择。它是在前述研究中 <b>唯一</b> 没有文件 API bug 的软件（在特定模式下）。相比自己处理 fsync、undo log、checksum，让成熟的数据库来处理这些复杂性要可靠得多。
+</p>
+
+<p>
+这不是说绝对不能用文件——但如果你在写一个需要降低数据损坏率的应用，优先考虑数据库。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org523e8e3" class="outline-3">
+<h3 id="org523e8e3">备份策略</h3>
+<div class="outline-text-3" id="text-org523e8e3">
+<p>
+鉴于磁盘错误率远高于厂商声称的数值、SSD 断电保护经常失效、文件系统 <code>fsync</code> 错误处理有缺陷， <b>定期备份是不可替代的</b> 。不要依赖任何单层保护。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6678381" class="outline-3">
+<h3 id="org6678381">理解文件系统选择的代价</h3>
+<div class="outline-text-3" id="text-org6678381">
+<p>
+Dropbox 只支持 ext4 不是偷懒。支持多种文件系统意味着要针对每种文件系统的 bug 和特殊行为做适配，测试矩阵指数级增长。对于一家需要可靠同步数据到磁盘的公司来说，限制支持的文件系统范围是务实的工程选择。
+</p>
+
+<p>
+如果有人告诉你"文件系统都一样，内核已经抽象了"，让他们看看 ext4 三种 <code>data</code> 模式下完全不同的崩溃行为。
+</p>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-16</span>
+    <span class="post-info">2026-04-16</span>
+    <a href="../../../../../tags/文件系统">文件系统</a> : <a href="../../../../../tags/可靠性">可靠性</a> : <a href="../../../../../tags/fsync">fsync</a> : <a href="../../../../../tags/数据安全">数据安全</a> : <a href="../../../../../tags/danluu">DanLuu</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; wymfr5ei2g4unblxoe4fek5heg &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
