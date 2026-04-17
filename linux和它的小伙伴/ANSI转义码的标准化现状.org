@@ -1,0 +1,136 @@
+#+TITLE: ANSI 转义码的标准化现状
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-04-17 五]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+终端之所以能显示彩色文字、响应鼠标、复制到剪贴板，都是靠 ANSI 转义码实现的。但转义码到底有没有标准？为什么有时候不生效？
+Julia Evans 的这篇博文([[https://jvns.ca/blog/2025/03/07/escape-code-standards/][Standards for ANSI escape codes]]) 梳理了转义码的标准化现状：有哪些标准、标准之间是什么关系、终端应用开发者面临什么选择。
+
+* 什么是转义码
+
+你在终端里按左方向键时，终端发送的其实是 =^[[D= —— 这就是一个转义码。它的第一个字符是"Escape"字符，通常写作 =ESC= 、 =\x1b= 、 =\E= 、 =\033= 或 =^[= 。
+
+转义码是终端模拟器与终端中运行的程序之间的通信方式，分为两类：
+
+1. *输入码* ：终端模拟器发送的，比如左方向键 =ESC[D= ， Ctrl+左方向键 =ESC[1;5D= ，鼠标点击 =ESC[M :3=
+2. *输出码* ：程序输出的，用于改变文字颜色、移动光标、清屏、隐藏光标、复制到剪贴板、设置窗口标题等
+
+可以在终端中直接体验：
+
+#+BEGIN_SRC bash
+echo -e "\033[31m这是红色文字\033[0m"
+echo -e "\033[5;10H把光标移到第5行第10列"
+echo -e "\033]0;新窗口标题\007"
+#+END_SRC
+
+#+RESULTS:
+
+那么这些转义码有标准吗？有，但标准不止一个，而且没有一个能覆盖所有场景。
+
+* ECMA-48
+
+最早的转义码标准是 [[https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf][ECMA-48]] ，最早发布于 1976 年。它做了两件事：
+
+1. 定义了转义码的通用 *格式* ，比如 CSI 序列（ =ESC[= + 内容）和 OSC 序列（ =ESC]= + 内容）
+2. 定义了具体的转义码，比如"光标左移"是 =ESC[D= ，"文字变红"是 =ESC[31m=
+
+ECMA-48 的格式是可扩展的，允许后续定义更多转义码。但很多今天常用的转义码并不在其中——比如 vim、htop、tmux 中常用的鼠标操作，ECMA-48 就没有定义。
+
+ECMA-48 覆盖不到的部分，被另一个来源填补了。
+
+* xterm 控制序列
+
+有些广泛使用的转义码不在 ECMA-48 中：
+
+- 启用鼠标报告（你在终端的哪里点击了？）
+- bracketed paste（你粘贴了文本还是手动输入的？）
+- OSC 52（终端应用用来复制文本到系统剪贴板）
+
+这些功能大多源自 xterm，记录在 [[https://invisible-island.net/xterm/ctlseqs/ctlseqs.html][XTerm Control Sequences]] 文档中，并被其他终端模拟器广泛实现。这个列表严格来说不是标准，但 xterm 极具影响力，因此成了事实标准。
+
+OSC 52 是个特别实用的例子。OSC 是 =ESC]= 开头的转义码大类（Operating System Command），52 是"剪贴板操作"的编号。它的格式是 =ESC]52;c;<base64编码的文本>ESC\= ，其中 =c= 表示 system clipboard（还有 =p= 表示 primary selection）。
+
+远程服务器上的程序本来无法访问你本地的剪贴板，但通过 OSC 52，程序发出转义序列，你的终端模拟器收到后把内容写入本地剪贴板。Vim、tmux 等工具都支持配置 OSC 52。
+
+#+BEGIN_SRC bash
+printf "\033]52;c;%s\007" "$(echo -n '要复制的文本' | base64)"
+#+END_SRC
+
+#+RESULTS:
+
+* terminfo 数据库
+
+上世纪 80 年代，终端之间对转义码支持的差异非常大。为了应对这个问题，出现了 =terminfo= 数据库，记录各种终端支持的转义码。
+
+=terminfo= 的标准叫 [[https://publications.opengroup.org/c243-1][X/Open Curses]] ，定义了数据库格式和访问数据库的 C 库接口（curses）。
+
+你可以查看系统上所有终端的"清屏"转义码：
+
+#+BEGIN_SRC bash
+for term in $(toe -a | awk '{print $1}')
+do
+  echo "$term"
+  infocmp -1 -T "$term" 2>/dev/null | grep 'clear=' | sed 's/clear=//g;s/,//g'
+done
+#+END_SRC
+
+#+RESULTS:
+
+现代系统上的 =terminfo= 数据库由 =ncurses= 管理。
+
+有了标准（ECMA-48、xterm）和适配层（terminfo），终端应用开发者面前的问题是：到底该用哪个？
+
+* 程序该不该用 terminfo
+
+终端应用处理转义码有两种主要策略：
+
+1. 使用 =terminfo= 数据库，根据 =TERM= 环境变量决定使用哪些转义码（Fish 采用这种方式）
+2. 确定一组"通用"转义码，硬编码到程序中
+
+选择策略 2 的项目不少：kakoune、python-prompt-toolkit、linenoise、libvaxis、chalk 等。
+
+为什么有人不用 =terminfo= 呢？一位 Fish 维护者的 [[https://twoot.site/@bean/113056942625234032][长文吐槽]] 值得一看，核心观点是： =terminfo= 的工作在过去极其重要，但现在已经不是了。
+
+但 =terminfo= 在 2025 年仍有支持者，理由也站得住脚：
+
+- 有人期望通过 =TERM= 环境变量控制程序行为（比如 =TERM=dumb= ），在后 =terminfo= 时代没有标准替代方案
+- 终端之间的差异虽然比 80 年代小了，但远没有消失：图形终端、Linux 帧缓冲控制台、串口控制台、Emacs shell 模式等各有不同
+- 没有标准定义什么是"通用"转义码集合，有些程序使用的转义码其实并不够通用
+
+那如果走策略 2，这个"通用集合"到底是什么？目前看来是以下三者的交集：
+
+- VT100 支持的码（部分已不适用于现代终端）
+- ECMA-48 定义的码（同样有部分过时）
+- xterm 支持的码（并非全部被广泛支持）
+
+实际上可能最终还是"找出用户最常用的终端模拟器，然后在那些终端上测试"——跟 Web 开发者决定用哪些 CSS 特性一样。
+
+Web 有 [[https://caniuse.com/][Can I use]] 和 [[https://web-platform-dx.github.io/web-features/][Baseline]] 这样的兼容性参考，终端没有对应的工具。 =terminfo= 理论上应该扮演这个角色，但新终端功能的加入经常要等 10 年以上，严重限制了它的实用性。
+
+这种困境并非终端独有——Web 也经历过类似的问题。
+
+* terminfo 与 User Agent 检测
+
+=ncurses= 用 =TERM= 环境变量决定转义码的方式，跟 Web 服务器根据浏览器 User Agent 返回不同版本的网页很像。
+
+结果也类似——iTerm2 把自己报告为 =xterm-256color= ，就像 Safari 的 User Agent 是一串以 =Mozilla/5.0= 开头的字符串。两者都是在绕过不够好的检测机制。
+
+Web 最终放弃了 User Agent 检测，转向标准化。但终端领域比 Web 碎片化更严重，资金也更少，能否走同样的路还不好说。
+
+* 为什么这很重要
+
+有人说 Unix 终端"过时了"。如果我们能建立更清晰的标准体系（像 Web 那样），终端模拟器开发者就能更容易地构建新功能，终端应用的作者也能更自信地采用这些功能。
+
+标准化不容易——ECMA-48 诞生近 50 年了，我们还没走到终点。但 HTML/CSS/JS 曾经也非常混乱，现在好多了。也许终端也有希望。
+
+如果你想深入了解，这些文档值得一读：
+
+- [[https://man7.org/linux/man-pages/man4/console_codes.4.html][Linux console_codes 手册页]]：Linux 支持的转义码
+- [[https://vt100.net/docs/vt100-ug/chapter3.html][VT100 用户手册]]：VT100 处理转义码和控制序列的方式
+- [[https://sw.kovidgoyal.net/kitty/keyboard-protocol/][kitty 键盘协议]]：新一代终端的键盘处理方案
+- [[https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda][OSC 8]]：终端中的超链接（及 [[https://github.com/Alhadis/OSC8-Adoption?tab=readme-ov-file][采用情况]] ）
+- [[https://github.com/tmux/tmux/blob/882fb4d295deb3e4b803eb444915763305114e4f/tools/ansicode.txt][tmux 的 ANSI 标准摘要]]
+- [[https://iterm2.com/feature-reporting/][iTerm 的终端特性报告规范]]
+- Sixel 图形
