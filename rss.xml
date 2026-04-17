@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 17 Apr 2026 13:52:13 UTC</pubDate>
-    <lastBuildDate>Fri, 17 Apr 2026 13:52:13 UTC</lastBuildDate>
+    <pubDate>Fri, 17 Apr 2026 14:19:43 UTC</pubDate>
+    <lastBuildDate>Fri, 17 Apr 2026 14:19:43 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -143,6 +143,68 @@ Web 最终放弃了 User Agent 检测，转向标准化。但终端领域比 Web
 </description>
 <pubDate>2026-04-17</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/17/ansi-转义码的标准化现状/index.html</guid>
+</item>
+<item>
+<title>终端程序的潜规则</title>
+<link>https://lujun9972.github.io/blog/2026/04/17/终端程序的潜规则/index.html</link>
+<description>
+终端里发生的一切，归四个角色管：操作系统、shell、终端模拟器、你正在运行的程序。前三个的行为基本可预测，有些还被 POSIX 标准化了。但第四个——你正在运行的程序——就说不准了。
+
+奇怪的是，终端程序的行为虽然没什么正式标准，却出奇地一致。Julia Evans　的这篇文章（[[https://jvns.ca/blog/2024/11/26/terminal-rules/][&quot;Rules&quot; that terminal programs follow]]） 总结了终端程序普遍遵循的几条不成文&quot;规则&quot;，这里按退出机制、输入编辑、输出规范三类进行重新整理。
+
+* 退出机制
+
+终端程序大体分三类：非交互式（如 =cat= 、 =find= ）、TUI（如 =less= 、 =htop= ）、REPL（如 =python3= 、 =bash= ）。每类有自己的退出约定。
+
+非交互程序：Ctrl-C 退出。这其实是因为程序如果不注册 =SIGINT= 信号处理器，默认就会被 Ctrl-C 杀掉。所以这是一条&quot;保持默认行为&quot;的规则。
+
+TUI：按 =q= 退出。 =less= 、 =htop= 这类全屏界面的程序，按 =q= 就会退出。例外是 =tmux= 和文本编辑器——按 =q= 退出在它们身上没有意义。
+
+REPL：空行上按 Ctrl-D 退出。在&quot;cooked mode&quot;下，操作系统在空行上按 Ctrl-D 会发送 EOF。大多数 REPL（sqlite3、python3、fish、bash）虽然不用 cooked mode，但都手动实现了这个行为来模拟默认效果。Julia Evans 原以为这是&quot;终端物理定律&quot;，直到看到各输入库（readline、prompt-toolkit）都需要单独实现才意识到并非如此。Erlang 的 REPL 就不遵守这条。
+
+注意：Ctrl-C 对交互程序的作用不同——它的作用是中断当前操作（比如 =python3= 中正在执行的代码、 =less= 中的搜索），而不是退出程序。
+
+* 输入编辑
+
+几乎所有终端程序都 *隐约* 遵守 readline 快捷键约定，即使它们并不真的用 readline 库。ipython、atuin、fzf、zsh、fish、tmux 的命令行都各自实现了 Ctrl-E（行尾）、Ctrl-A（行首）、Ctrl-U（删除整行）、Ctrl-Y（粘贴）等快捷键。
+
+其中 Ctrl-W（删除上一个词）的遵守率最高——几乎每个非编辑器程序都支持。原因跟 Ctrl-C 一样：cooked mode 下操作系统默认就是这么处理的，程序只是模仿默认行为。
+
+例外有两类：
+- =git= 、 =cat= 、 =nc= 等程序只支持最基本的编辑（退格、Ctrl-W、Ctrl-U），没有完整的行编辑
+- 文本编辑器各有各的编辑体系
+
+* 输出规范
+
+不用超过 16 种颜色。终端程序很少使用 16 种 ANSI 基础色以外的颜色。原因是用 hex 码指定颜色很容易跟用户的背景色冲突——比如 =#EEEEEE= 在白色背景上几乎看不见。而基础 16 色，用户一般已经在终端模拟器里调好了。
+
+文本编辑器是主要例外，比如 Helix 默认用紫色背景——但编辑器不算&quot;核心&quot;程序，用户不喜欢可以换主题。
+
+管道中禁用颜色。大多数程序在输出到管道时会关闭颜色和格式化。比如 =rg blah= 在终端中高亮匹配，但 =rg blah | cat= 不会。 =ls --color=auto= 也一样：终端中用颜色，管道中不用。
+
+如果你想强制保留颜色，可以用 =unbuffer= 欺骗程序让它以为自己在终端中。 =unbuffer= 来自 =expect= 包，原理是用伪终端（pty）包裹程序的输出，让程序以为自己连着真正的终端：
+
+#+BEGIN_SRC bash
+unbuffer rg blah | less -R
+# 或者用程序自带的参数，效果一样
+rg --color=always blah | less -R
+#+END_SRC
+
+#+RESULTS:
+
+=-= 表示 stdin/stdout。给程序传 =-= 代替文件名，它就会从 stdin 读或往 stdout 写。比如在 Linux 上：
+
+#+BEGIN_SRC bash
+xclip -o | black - | xclip -i
+#+END_SRC
+
+#+RESULTS:
+
+这条规则只要适用就会被实现，但并非所有程序都支持。
+
+</description>
+<pubDate>2026-04-17</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/17/终端程序的潜规则/index.html</guid>
 </item>
 <item>
 <title>PARA Org-mode 测试配置</title>
@@ -1242,224 +1304,6 @@ Dropbox 只支持 ext4 不是偷懒。支持多种文件系统意味着要针对
 </description>
 <pubDate>2026-04-16</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/16/文件充满了危险——dan-luu-谈文件系统的可靠性陷阱/index.html</guid>
-</item>
-<item>
-<title>AI 时代的 PARA 方法：用 Org-mode 和 AI 打造个人知识管理系统</title>
-<link>https://lujun9972.github.io/blog/2026/04/15/ai-时代的-para-方法：用-org-mode-和-ai-打造个人知识管理系统/index.html</link>
-<description>* 从一个实验说起
-
-Tiago Forte（PARA 方法的创始人、《Building a Second Brain》作者）最近做了一个实验：他让自己的电脑文件自由堆积了一个月，不整理任何东西。月底，桌面和下载文件夹里累积了 222 个文件。
-
-这些文件五花八门：
-- 财务文档：个人报税单、商业财务报表、退休账户表格、人寿保险地址变更单
-- 视觉素材：工作坊宣传图、社交媒体照片、博客文章配图、采访视频录像素材
-- 各种待读内容：PDF 论文、研究报告、他人推荐的文章
-
-然后他手工将这 222 个文件按照 PARA 方法整理到文件系统中。整个过程耗时 36 分钟，平均每个文件约 10 秒。
-
-很多人看到这个实验会想：&quot;这种事交给 AI 不就行了？&quot; Claude Code 确实能帮你整理文件。但 Tiago 认为效率和省时其实是整理文件最不重要的方面。有更深层的原因。
-
-**而在 AI 时代，这个理由变得前所未有的重要：整理你的文件，是为了让 AI 能更好地利用你的信息。**
-
-* PARA 四层结构速览
-
-PARA 是一个通用的数字信息组织方法，将所有信息归入四个类别：
-
-| 类别 | 含义 | 特征 | 举例 |
-|------|------|------|------|
-| Projects（项目） | 有明确目标和截止日期的任务 | 临时性、行动导向 | 写一篇博文、准备一次演讲、完成一个开发项目 |
-| Areas（领域） | 持续维护的责任领域 | 永久性、标准导向 | 健康、财务、职业发展、人际关系 |
-| Resources（资源） | 感兴趣的主题和参考资料 | 按兴趣分类、未来可能有用 | 编程技巧、设计灵感、历史知识 |
-| Archives（归档） | 不再活跃的其他三类内容 | 保留但不活跃 | 已完成的项目、不再负责的领域、失去兴趣的资源 |
-
-PARA 的妙处在于它只有四个类别，却涵盖了你可能想保存的任何东西。简单到不需要思考&quot;这该放哪&quot;。
-
-如果你熟悉我这个博客的结构，你会发现它本质上也是一个 PARA 系统：
-- =Emacs之怒=、=编程之旅=、=linux和它的小伙伴= → Resources（按主题归类的知识）
-- =life-hacking= → Areas（持续维护的生活效率领域）
-- =读书笔记= → Resources（参考资料）
-- 博客的 git 历史本身就是 Archives
-
-* AI 时代为什么更需要 PARA
-
-Tiago 在文章中提出了一个关键洞察：
-
-#+BEGIN_QUOTE
-AI 正在让任何现有数据仓库的价值飙升——包括你电脑上的文件和文档。但这些数据需要（一定程度上的）组织。
-#+END_QUOTE
-
-原因有三：
-
-**1. LLM 的上下文窗口有限**
-
-你不能把整个数字世界一次性喂给 AI。你需要找到并提供当前任务所需的&quot;最小可行上下文&quot;。如果你的文件已经按照 PARA 组织好了，你可以直接指向一个 Project 文件夹——而不是一堆毫不相关的散碎文件。
-
-#+BEGIN_QUOTE
-搜索只能找到单个文件的精确匹配。PARA 给你更有价值的东西：预组装的上下文块，反映你真实的工作和思维方式。
-#+END_QUOTE
-
-**2. 本地文件 &gt; 云端**
-
-像 Claude Code 这样运行在你电脑上的 AI 工具需要访问本地文件。云端访问有延迟、登录障碍、token 消耗等问题。你的本地文件更快、更可靠、更容易访问。
-
-**3. PARA 天然适合 AI 辅助工作**
-
-- *简单*：只有四个类别，人类和 AI 都容易理解
-- *个性化*：类别基于你自己的承诺和兴趣，而不是固定层级
-- *知道如何遗忘*：Archives 类别让 AI 不被无关信息淹没
-- *跨平台*：同一套分类逻辑可以统一不同工具和平台
-
-* 在 Org-mode 中落地 PARA
-
-理论说完了，让我们来实际搭建。以下是在 Org-mode 中实现 PARA 的具体方案。
-
-**目录结构设计：**
-
-#+BEGIN_SRC text :tangle no
-~/org/
-├── projects/
-│   ├── 2026-博客重构/
-│   ├── 2026-Anki插件开发/
-│   └── ...
-├── areas/
-│   ├── 健康/
-│   ├── 财务/
-│   ├── 职业/
-│   └── ...
-├── resources/
-│   ├── emacs/
-│   ├── python/
-│   ├── linux/
-│   └── ...
-└── archives/
-    └── ...
-#+END_SRC
-
-**org-capture 模板配置：**
-
-通过 org-capture 快速将想法、任务、笔记归入 PARA 的正确位置：
-
-#+BEGIN_SRC emacs-lisp :tangle no
-(setq org-para-base-dir &quot;~/我的笔记&quot;)
-
-(setq org-capture-templates
-      &#39;((&quot;p&quot; &quot;Project&quot; entry
-         (file+headline (lambda () (expand-file-name &quot;projects/inbox.org&quot; org-para-base-dir)) &quot;Projects Inbox&quot;)
-         &quot;* TODO %?\n  %U\n  %a\n  %i&quot;)
-        (&quot;a&quot; &quot;Area&quot; entry
-         (file+headline (lambda () (expand-file-name &quot;areas/inbox.org&quot; org-para-base-dir)) &quot;Areas Inbox&quot;)
-         &quot;* TODO %?\n  %U\n  %a\n  %i&quot;)
-        (&quot;r&quot; &quot;Resource&quot; entry
-         (file (lambda () (expand-file-name &quot;resources/inbox.org&quot; org-para-base-dir)))
-         &quot;* %? :resource:\n  %U\n  %i&quot;)
-        (&quot;j&quot; &quot;Journal&quot; entry
-         (file+datetree (lambda () (expand-file-name &quot;journal.org&quot; org-para-base-dir)))
-         &quot;* %?\n  %U&quot;)))
-#+END_SRC
-
-**org-refile 目标设置：**
-
-让 org-refile 可以直接将条目归档到 PARA 目录下的各文件：
-
-#+BEGIN_SRC emacs-lisp :tangle no
-(setq org-refile-targets
-      `((,(expand-file-name &quot;projects/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;areas/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;resources/*.org&quot; org-para-base-dir) :maxlevel . 1)
-        (,(expand-file-name &quot;archives/*.org&quot; org-para-base-dir) :maxlevel . 1)))
-
-(setq org-refile-use-outline-path &#39;file)
-(setq org-outline-path-complete-in-steps t)
-#+END_SRC
-
-**org-roam 与 PARA 的结合：**
-
-如果你使用 org-roam，可以用 filetags 来标记 PARA 类别：
-
-#+BEGIN_SRC emacs-lisp :tangle no
-(setq org-roam-directory org-para-base-dir)
-
-;; 通过 filetags 区分 PARA 类别
-;; 在 org 文件头部添加: #+filetags: :project: 或 :area: 或 :resource: 或 :archive:
-(setq org-roam-node-display-template
-      &quot;${tags:20} ${title:*}&quot;
-      org-roam-node-annotation-function
-      (lambda (node)
-        (let ((tags (org-roam-node-tags node)))
-          (when tags
-            (format &quot; [%s]&quot; (string-join tags &quot;, &quot;))))))
-
-;; 按类别过滤 org-roam 节点
-(defun my/org-roam-filter-by-tag (tag)
-  (lambda (node)
-    (member tag (org-roam-node-tags node))))
-
-(defun my/org-roam-list-notes-by-tag (tag)
-  (mapcar #&#39;org-roam-node-file
-          (seq-filter
-           (my/org-roam-filter-by-tag tag)
-           (org-roam-node-list))))
-#+END_SRC
-
-以上配置完成后，你就有了：
-- =org-capture= 快速捕获 → 进入 inbox
-- =org-refile= 重新归档 → 移到正确的 PARA 位置
-- =org-roam= 双向链接 → 在 PARA 之间建立联系
-
-* 用 Claude Code 增强整理流程
-
-PARA 的整理可以借助 AI 来加速。这里演示如何用 Claude Code 自动将下载文件夹中的文件分类到 PARA 结构。
-
-首先，让我们看看一个典型的 Downloads 文件夹会积累什么样的文件：
-
-#+BEGIN_SRC shell :tangle no
-ls ~/Downloads/ | head -20
-#+END_SRC
-
-然后用 Claude Code 进行自动分类：
-
-#+BEGIN_SRC shell :tangle no
-cd ~/org
-claude &quot;请帮我整理 ~/Downloads/ 下的文件到 PARA 目录结构中：
-1. 查看文件列表和文件类型
-2. 根据文件名和类型判断属于 Projects/Areas/Resources/Archives 中的哪一类
-3. 将文件移动到对应的 ~/org/ 子目录下
-4. 如果是项目相关文件，放入 projects/ 下对应的子目录
-5. 如果无法确定分类，放入 resources/inbox/ 待后续处理
-注意：不要移动 .part 文件和不完整的下载文件&quot;
-#+END_SRC
-
-Claude Code 会：
-- 逐个检查文件名和类型
-- 根据上下文判断分类
-- 创建必要的子目录
-- 移动文件到正确位置
-
-但正如 Tiago 所指出的，AI 有做不到的事情：
-
-#+BEGIN_QUOTE
-当我注意到桌面上有一个屏幕录制，那会提醒我要把它发给视频编辑。当我看到下载文件夹里有一组照片，它可能让我想到一些微弱关联的事情——比如我孩子学校即将到来的拍照日。这些关联是 AI 目前无法识别的。
-#+END_QUOTE
-
-所以最佳实践是：
-- *AI 批量处理*：让 AI 处理大量文件的初步分类
-- *人工复审*：你自己过一遍，捕捉那些需要联想和行动的项目
-- *定期维护*：每周花 10 分钟整理，而不是积累一个月
-
-* 总结
-
-PARA 的核心不是分类学，而是行动学。它以你正在做的事情（Projects）为中心，而不是以信息的主题为中心。这正是 AI 最擅长辅助的场景——指向一个明确的项目文件夹，让 AI 帮你处理它。
-
-Org-mode 为 PARA 提供了完美的载体：纯文本、本地存储、可编程、可搜索。再加上 AI 工具的辅助，整理数字生活的成本从&quot;每月 36 分钟&quot;可能降到&quot;每周 5 分钟&quot;。
-
-但记住 Tiago 的提醒：整理文件最重要的收获不是速度。是在整理的过程中，你会重新审视自己的承诺、责任和兴趣。这个反思过程，AI 暂时代替不了。
-
------
-
-参考：[[https://fortelabs.com/blog/why-para-is-the-key-to-the-ai-era/][Why PARA Is the Key to the AI Era - Forte Labs]]
-</description>
-<pubDate>2026-04-15</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/15/ai-时代的-para-方法：用-org-mode-和-ai-打造个人知识管理系统/index.html</guid>
 </item>
 </channel>
 </rss>
