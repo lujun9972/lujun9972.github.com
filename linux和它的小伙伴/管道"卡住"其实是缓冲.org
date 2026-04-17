@@ -1,0 +1,119 @@
+#+TITLE: 管道为什么有时候会"卡住"：缓冲的锅
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-04-17 五]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文：[[https://jvns.ca/blog/2024/11/29/why-pipes-get-stuck-buffering/][Why pipes sometimes get "stuck": buffering]] —— Julia Evans
+
+你可能遇到过这种情况——用管道过滤日志，结果什么输出都没有：
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | grep thing1 | grep thing2
+#+END_SRC
+
+#+RESULTS:
+
+日志文件里明明有匹配的内容，管道就是不出东西。去掉第二个 =grep= 又正常了。原因不是管道坏了，而是程序 *根本没把数据写进管道* 。
+
+* 原因：缓冲
+
+程序往管道或文件写数据时，通常会攒到大约 8KB 才真正写出去。这是出于性能考虑——每次写一点点要频繁调用系统调用，攒一批再写效率更高。
+
+上面的例子中， =grep thing1= 把匹配结果攒在自己的缓冲区里，等凑够 8KB 才写。如果匹配结果产生得很慢，这个 8KB 可能 *永远不会* 攒满。
+
+那为什么 =tail -f file | grep thing= （只有一个 grep）就能正常工作？因为 =grep= 用 =isatty= 函数检查 stdout 是不是终端：
+
+- 输出到终端：逐行刷新（line buffering），每匹配一行就立刻输出
+- 输出到管道：块缓冲（block buffering），攒够约 8KB 才输出
+
+只有一个 =grep= 时，它的 stdout 直接连着终端，所以逐行输出。加第二个 =grep= 后，第一个 =grep= 的 stdout 变成了管道，就切换到块缓冲了。
+
+缓冲区大小不一定是 8KB，取决于实现。 =grep= 的缓冲由 libc 处理，glibc 中定义为 =BUFSIZ= 变量。
+
+* 哪些命令会缓冲
+
+记住哪些命令会缓冲、哪些不会，挺烦人的。
+
+不缓冲的：
+
+- =tail=
+- =cat=
+- =tee=
+
+会缓冲的（括号内是禁用块缓冲的参数）：
+
+- =grep= （ =--line-buffered= ）
+- =sed= （ =-u= ）
+- =awk= （用 =fflush()= 函数）
+- =tcpdump= （ =-l= ）
+- =jq= （ =-u= ）
+- =tr= （ =-u= ）
+- =cut= （无法禁用缓冲）
+
+像 =sort= 这类命令虽然也会缓冲，但无所谓——它必须等所有输入都到齐才能排序，不存在"慢慢产生数据"的场景。
+
+* 五种解决方案
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | grep thing1 | grep thing2
+#+END_SRC
+
+ *方案一：换个不用管道的写法。* 直接让 =grep= 读文件，避免管道缓冲问题：
+
+#+BEGIN_SRC bash
+grep thing1 /some/log/file | grep thing2
+#+END_SRC
+
+#+RESULTS:
+
+ *方案二：用 =--line-buffered= 。* 让 =grep= 逐行输出：
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | grep --line-buffered thing1 | grep thing2
+#+END_SRC
+
+#+RESULTS:
+
+ *方案三：用 =awk= 或更复杂的正则代替多重管道。* =awk= 也缓冲，所以让它做最后一个命令：
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | awk '/thing1/ && /thing2/'
+# 或者
+tail -f /some/log/file | grep -E 'thing1.*thing2'
+#+END_SRC
+
+#+RESULTS:
+
+ *方案四：用 =stdbuf= 。* =stdbuf= 通过 =LD_PRELOAD= 关闭 libc 的缓冲：
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | stdbuf -o0 grep thing1 | grep thing2
+#+END_SRC
+
+#+RESULTS:
+
+=stdbuf= 是 GNU coreutils 自带的，但有一些局限：对静态链接的二进制不生效，不适用于不用 libc 缓冲的程序，macOS 上不一定能用。
+
+ *方案五：用 =unbuffer= 。* =unbuffer= 来自 =expect= 包，用伪终端包裹程序的输出，让程序以为自己连着终端：
+
+#+BEGIN_SRC bash
+tail -f /some/log/file | unbuffer grep thing1 | grep thing2
+#+END_SRC
+
+#+RESULTS:
+
+=unbuffer= 比 =stdbuf= 更可靠，基本总能生效。副作用是程序会以为自己真的在终端里——比如 =grep= 会输出颜色。
+
+* Ctrl-C 会丢掉缓冲区里的内容
+
+如果你忘了加缓冲参数：
+
+#+BEGIN_SRC bash
+sudo tcpdump -ni any port 53 | grep example.com
+#+END_SRC
+
+按 Ctrl-C 时，所有程序被杀掉，缓冲区里的数据就丢了——就算 =tcpdump= 想刷新缓冲区也没用，因为 =grep= 已经先死了。
+
+变通办法：找到 =tcpdump= 的 PID，用 =kill -TERM $PID= 发送 SIGTERM，这样 =tcpdump= 会主动刷新缓冲区，你就能看到输出。
