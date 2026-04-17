@@ -1,0 +1,62 @@
+#+TITLE: 终端程序的潜规则
+#+AUTHOR: lujun9972
+#+TAGS: 编程之旅
+#+DATE: [2026-04-17 五]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+
+终端里发生的一切，归四个角色管：操作系统、shell、终端模拟器、你正在运行的程序。前三个的行为基本可预测，有些还被 POSIX 标准化了。但第四个——你正在运行的程序——就说不准了。
+
+奇怪的是，终端程序的行为虽然没什么正式标准，却出奇地一致。Julia Evans　的这篇文章（[[https://jvns.ca/blog/2024/11/26/terminal-rules/]["Rules" that terminal programs follow]]） 总结了终端程序普遍遵循的几条不成文"规则"，这里按退出机制、输入编辑、输出规范三类进行重新整理。
+
+* 退出机制
+
+终端程序大体分三类：非交互式（如 =cat= 、 =find= ）、TUI（如 =less= 、 =htop= ）、REPL（如 =python3= 、 =bash= ）。每类有自己的退出约定。
+
+非交互程序：Ctrl-C 退出。这其实是因为程序如果不注册 =SIGINT= 信号处理器，默认就会被 Ctrl-C 杀掉。所以这是一条"保持默认行为"的规则。
+
+TUI：按 =q= 退出。 =less= 、 =htop= 这类全屏界面的程序，按 =q= 就会退出。例外是 =tmux= 和文本编辑器——按 =q= 退出在它们身上没有意义。
+
+REPL：空行上按 Ctrl-D 退出。在"cooked mode"下，操作系统在空行上按 Ctrl-D 会发送 EOF。大多数 REPL（sqlite3、python3、fish、bash）虽然不用 cooked mode，但都手动实现了这个行为来模拟默认效果。Julia Evans 原以为这是"终端物理定律"，直到看到各输入库（readline、prompt-toolkit）都需要单独实现才意识到并非如此。Erlang 的 REPL 就不遵守这条。
+
+注意：Ctrl-C 对交互程序的作用不同——它的作用是中断当前操作（比如 =python3= 中正在执行的代码、 =less= 中的搜索），而不是退出程序。
+
+* 输入编辑
+
+几乎所有终端程序都 *隐约* 遵守 readline 快捷键约定，即使它们并不真的用 readline 库。ipython、atuin、fzf、zsh、fish、tmux 的命令行都各自实现了 Ctrl-E（行尾）、Ctrl-A（行首）、Ctrl-U（删除整行）、Ctrl-Y（粘贴）等快捷键。
+
+其中 Ctrl-W（删除上一个词）的遵守率最高——几乎每个非编辑器程序都支持。原因跟 Ctrl-C 一样：cooked mode 下操作系统默认就是这么处理的，程序只是模仿默认行为。
+
+例外有两类：
+- =git= 、 =cat= 、 =nc= 等程序只支持最基本的编辑（退格、Ctrl-W、Ctrl-U），没有完整的行编辑
+- 文本编辑器各有各的编辑体系
+
+* 输出规范
+
+不用超过 16 种颜色。终端程序很少使用 16 种 ANSI 基础色以外的颜色。原因是用 hex 码指定颜色很容易跟用户的背景色冲突——比如 =#EEEEEE= 在白色背景上几乎看不见。而基础 16 色，用户一般已经在终端模拟器里调好了。
+
+文本编辑器是主要例外，比如 Helix 默认用紫色背景——但编辑器不算"核心"程序，用户不喜欢可以换主题。
+
+管道中禁用颜色。大多数程序在输出到管道时会关闭颜色和格式化。比如 =rg blah= 在终端中高亮匹配，但 =rg blah | cat= 不会。 =ls --color=auto= 也一样：终端中用颜色，管道中不用。
+
+如果你想强制保留颜色，可以用 =unbuffer= 欺骗程序让它以为自己在终端中。 =unbuffer= 来自 =expect= 包，原理是用伪终端（pty）包裹程序的输出，让程序以为自己连着真正的终端：
+
+#+BEGIN_SRC bash
+unbuffer rg blah | less -R
+# 或者用程序自带的参数，效果一样
+rg --color=always blah | less -R
+#+END_SRC
+
+#+RESULTS:
+
+=-= 表示 stdin/stdout。给程序传 =-= 代替文件名，它就会从 stdin 读或往 stdout 写。比如在 Linux 上：
+
+#+BEGIN_SRC bash
+xclip -o | black - | xclip -i
+#+END_SRC
+
+#+RESULTS:
+
+这条规则只要适用就会被实现，但并非所有程序都支持。
+
