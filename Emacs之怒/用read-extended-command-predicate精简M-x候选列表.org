@@ -1,0 +1,65 @@
+#+TITLE: TIL: 用 read-extended-command-predicate 精简 M-x 候选列表
+#+AUTHOR: lujun9972
+#+TAGS: Emacs, M-x, 补全, Emacs28, TIL
+#+DATE: [2026-04-18 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+M-x 会列出所有命令，包括当前 buffer 用不上的。在 Python buffer 里看到 Org 命令、在 shell buffer 里看到 Magit 命令——都是噪音。
+
+Emacs 28 提供了一个变量来解决这个问题：
+
+#+BEGIN_SRC emacs-lisp
+(setq read-extended-command-predicate
+      #'command-completion-default-include-p)
+#+END_SRC
+
+设置后，M-x 会隐藏那些声明了"我不适用于当前 major mode"的命令。没有声明的命令不受影响，照常显示。
+
+* 过滤原理
+
+~command-completion-default-include-p~ 检查两个东西：
+- 命令的 ~interactive~ 形式中声明的 mode 归属
+- 命令的 ~completion-predicate~ symbol property
+
+两者都没声明的命令被视为通用命令，不会被过滤。
+
+* 三个内置谓词
+
+Emacs 提供了三个过滤谓词，从宽松到严格：
+
+| 谓词 | 行为 |
+|---+---|
+| ~command-completion-default-include-p~ | 排除声明了"属于其他 mode"的命令，其余全显示 |
+| ~command-completion-using-modes-and-keymaps-p~ | 只显示当前 mode 的命令 + 有键绑定的命令 + ~customize-*~ 命令 |
+| ~command-completion-using-modes-p~ | 只显示声明了当前 mode 的命令，最严格 |
+
+建议从第一个开始，最安全。
+
+* 包作者如何声明 mode 归属
+
+在 ~interactive~ 形式中加上 mode 参数：
+
+#+BEGIN_SRC emacs-lisp
+(defun my-foo-command ()
+  "Do something useful in foo-mode."
+  (interactive nil foo-mode)
+  ...)
+#+END_SRC
+
+~nil~ 是 interactive spec（无参数），~foo-mode~ 告诉 Emacs 这个命令只在 ~foo-mode~ 下有意义。适用于多个 mode 时，依次列出：
+
+#+BEGIN_SRC emacs-lisp
+(defun cider-eval-defun-at-point ()
+  "Evaluate the top-level form at point."
+  (interactive nil clojure-mode clojure-ts-mode)
+  ...)
+#+END_SRC
+
+* 注意事项
+
+- 被过滤的命令并没有消失，只是不在补全列表里显示。输入完整命令名依然可以执行
+- 内置命令大多已经声明了 mode 归属，第三方包的覆盖程度参差不齐
+- 如果你用 Vertico，它的示例配置里已经有这行，只是被注释掉了，取消注释即可
+
+原文：[[https://emacsredux.com/blog/2026/04/04/read-extended-command-predicate/][Declutter M-x with read-extended-command-predicate]]
