@@ -1,0 +1,103 @@
+#+TITLE: 降低程序内存的五个原则
+#+AUTHOR: lujun9972
+#+TAGS: Python, 性能优化, 内存, 通用原则
+#+DATE: [2026-04-18 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Michael Kennedy 在 [[https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/][Cutting Python Web App Memory Over 31%]] 中把两个 Python Web 应用的内存从 1988MB 砍到 472MB。他的具体做法是五个手段：async worker、Raw+DC 数据库模式、子进程隔离 import、重型库延迟导入、缓存搬到磁盘。
+
+剥掉 Python 的外壳，这五个手段背后是五个通用的内存优化原则。
+
+* 原则一：减少代码副本数
+
+#+BEGIN_QUOTE
+Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，省了 542MB。
+#+END_QUOTE
+
+每个进程都要加载完整的应用代码和第三方依赖。两个 worker 意味着两份副本。如果能让一个进程通过并发（而非并行）处理所有请求，代码只需要加载一次。
+
+这不是 Python 独有的思路：
+- *Nginx* 默认启用多个 worker 进程，但如果机器内存紧张，配成单 worker + 事件驱动也能跑
+- *Java* 从 thread-per-request（每个线程栈占几百 KB 到 1MB）转向 reactive 模型（Netty、WebFlux），逻辑类似——减少并发单元的资源开销
+- *Go* 的 goroutine 天然共享地址空间，初始栈只有 2-8KB，不需要为每个并发任务复制进程
+- *Emacs* 的 daemon 模式：一个 ~emacs --daemon~ 进程加载所有配置和包，多个 ~emacsclient~ 共享同一个实例，不需要每个终端窗口都启动一个完整的 Emacs
+
+本质：并发不等于并行。用并发模型替代多进程并行，消除代码和依赖的重复加载。
+
+* 原则二：用最轻的工具
+
+#+BEGIN_QUOTE
+把 MongoEngine ODM 替换为 raw query + 带 ~__slots__~ 的 dataclass，每个 worker 省 100MB，吞吐量还翻倍。
+#+END_QUOTE
+
+ODM、ORM 这些重型抽象加载了大量你用不到的功能。换成直接写查询 + 轻量数据结构，内存立减。
+
+跨语言的对照：
+- *Java* ：Hibernate 是出了名的内存大户。很多高并发场景下，项目改用 MyBatis（半自动 ORM）或直接 JDBC + POJO，内存占用显著下降
+- *Python* 的 ~__slots__~ 本质是告诉解释器"这个类不需要动态属性字典"，每个实例省掉一个 ~dict~ 的开销。类似思路在 *Go* 里是 struct（没有继承开销），在 *C* 里是固定布局的结构体
+- *Ruby on Rails* 的 Active Record 也是类似的 ORM 开销问题，纯 SQL 查询 + Plain Ruby Objects 是对应的轻量替代
+- *Emacs* 的包选择：用 ~vertico~ + ~consult~ （基于内置的 ~completing-read~ ）替代 ~ivy~ 或 ~helm~ （各自带一套完整的补全框架），功能相当但内存 footprint 小得多
+
+本质：你引入的每个抽象层都有内存成本。如果一个功能只需要查询和映射，就不需要完整的对象关系映射器。
+
+* 原则三：重操作隔离到短命进程
+
+#+BEGIN_QUOTE
+搜索索引服务从 708MB 暴降到 22MB——把索引逻辑移到 subprocess，跑 30 秒就退出，内存全部释放。
+#+END_QUOTE
+
+长时间运行的主进程应该尽量轻。偶尔才执行的重量级任务放到子进程中，干完就退出。操作系统会回收整个进程的内存，不需要你手动管理。
+
+这个模式无处不在：
+- *CI/CD* ：构建任务在独立容器或 VM 中运行，完成后销毁
+- *Kubernetes* 的 Job 资源：跑完自动清理
+- *PostgreSQL* 的并行查询：fork 子进程处理，完成后回收
+- *Elasticsearch* 的 merge 操作：在独立线程中合并 segment，避免影响主查询路径
+- *Claude Code* 的子代理模式：主代理把代码搜索、审查等重操作委托给独立子代理执行。子代理有自己的上下文窗口，可以自由探索代码库而不会撑大主代理的上下文。任务完成后子代理的上下文全部释放，主代理只保留结果摘要
+- *Emacs* 的 ~async.el~ 和 ~emacs --batch~ ：编译包（ ~async-bytecomp~ ）、执行耗时计算都放在子进程中完成，主 Emacs 不受影响
+
+本质：进程是操作系统提供的最干净的内存隔离和回收机制。比手动释放对象、触发 GC 更可靠。
+
+* 原则四：延迟加载——不用就不付钱
+
+#+BEGIN_QUOTE
+~import boto3~ 吃 25MB， ~import pandas~ 吃 44MB， ~import matplotlib~ 吃 17MB。把它们从文件顶部移到函数内部，只有调用时才加载。
+#+END_QUOTE
+
+延迟加载（lazy loading）是最朴素的内存优化：不为还没用到的东西分配资源。
+
+各语言都有自己的延迟加载手段：
+- *Go* 的 ~sync.Once~ ：确保初始化只执行一次，且只在首次访问时触发
+- *Java* 的类加载器：类在首次使用时才加载（虽然现代框架经常打破这个假设）
+- *C++* 的延迟计算（lazy evaluation）：表达式只在结果被需要时才求值
+- *Python 3.15* 的 PEP 810（Explicit lazy imports）将引入原生 lazy import，到时候不用手动把 import 塞进函数
+- *Emacs* 的 ~autoload~ 是最成熟的延迟加载机制之一。通过 ~;;;###autoload~ 注释标记函数，Emacs 启动时只加载一个 autoload 文件（函数名 → 文件路径的映射），直到真正调用该函数时才加载整个包。~use-package~ 的 ~:defer t~ 和 ~:commands~ 就是对 ~autoload~ 的封装。这是 Emacs 启动优化的核心手段
+
+本质：资源的获取时机应该是"第一次需要的时候"，而不是"程序启动的时候"。启动时加载所有依赖是最简单但不经济的做法。
+
+* 原则五：能放磁盘的就不放内存
+
+#+BEGIN_QUOTE
+把 markdown 缓存从内存搬到 diskcache，用少量 I/O 延迟换取内存空间。
+#+END_QUOTE
+
+内存是最贵的存储层。如果数据的访问频率不高、延迟要求不苛刻，磁盘缓存完全够用。
+
+经典的存储分层思想：
+- *SQLite* 被很多项目当作"磁盘上的缓存"使用——比纯文件灵活，比 Redis 轻
+- *mmap* ：让操作系统决定哪些页留在内存、哪些换出到磁盘，不需要自己管理缓存淘汰
+- *Redis* 本身也支持磁盘持久化，而且很多人用 Redis 的 AOF/RDB 做的就是"内存放热数据、磁盘放全量数据"
+- 浏览器的 HTTP 缓存：内存缓存（disk cache 和 memory cache 分层）
+
+本质：不是所有数据都需要一直待在内存里。根据访问频率和延迟容忍度选择存储层，是系统设计的基本功。
+
+* 一句话总结
+
+| 原则 | 一句话 |
+|---+---|
+| 减少代码副本数 | 并发不等于并行，用单进程并发替代多进程并行 |
+| 用最轻的工具 | 引入的每个抽象层都有内存成本 |
+| 重操作隔离到短命进程 | 进程是操作系统提供的最干净的内存回收机制 |
+| 延迟加载 | 不用就不付钱 |
+| 能放磁盘就不放内存 | 根据访问频率和延迟容忍度选存储层 |
