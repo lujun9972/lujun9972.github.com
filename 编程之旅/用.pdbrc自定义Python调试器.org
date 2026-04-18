@@ -1,0 +1,44 @@
+#+TITLE: 用 .pdbrc 自定义 Python 调试器
+#+AUTHOR: lujun9972
+#+TAGS: python, pdb, debugging
+#+DATE: [2026-04-18 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天才知道 Python 调试器 PDB 可以通过 =~/.pdbrc= 文件自定义——在文件里定义 alias，就能在调试时直接调用。
+
+=.pdbrc= 的格式要求如下：
+
+- 文件位置： =~/.pdbrc= （全局）或项目目录下的 =.pdbrc= （局部）
+- 它 *不是* Python 代码，是 PDB 自己的命令格式，每行就是一个 PDB 命令
+- alias 语法： =alias 名称 命令内容= ，用 =%1= 、 =%2= 等引用参数
+- 多条命令用 =;;= 连接，但 *必须写在一行里*
+- alias 中 =import= 引入的变量会泄漏到当前作用域，需要手动 =del= 清理
+
+Trey Hunner 在他的[[https://treyhunner.com/2026/04/customizing-pdb-with-pdbrc/][文章]]中分享了一套实用的 alias 配置：
+
+
+#+BEGIN_SRC python
+# dir obj: 打印非双下划线的属性和方法
+alias dir print(*(f"%1.{n} = {v!r}" for n, v in __import__('inspect').getmembers(%1) if not n.startswith("__")), sep="\n")
+
+# attrs obj: 只打印非方法的数据属性
+alias attrs import inspect as __i ;; print(*(f"%1.{n} = {v!r}" for n, v in __i.getmembers(%1, lambda v: not __i.isroutine(v)) if not n.startswith("__")), sep="\n") ;; del __i
+
+# vars obj: 只打印实例变量（要求对象有 __dict__）
+alias vars print(*(f"%1.{k} = {v!r}" for k, v in vars(%1).items()), sep="\n")
+
+# src obj: 打印类/函数的源文件、行号和代码
+alias src import inspect as __i;; print(f"{__i.getsourcefile(%1)} on line {__i.getsourcelines(%1)[1]}:\n{''.join(__i.getsource(%1))}") ;; del __i
+
+# loc: 打印当前帧的局部变量
+alias loc print(*(f"{name} = {value!r}" for name, value in vars().items() if not name.startswith("__")), sep="\n")
+#+END_SRC
+
+这 5 个 alias 的效果：
+
+- =dir obj= 比 =dir(obj)= 输出更友好，逐行以 ~obj.attr = repr~ 格式打印
+- =attrs obj= 过滤掉方法，只留数据属性
+- =vars obj= 只显示实例变量（ =__dict__= 中的）
+- =src obj.method= 直接查看方法的源码位置和内容
+- =loc= 列出当前作用域所有局部变量
