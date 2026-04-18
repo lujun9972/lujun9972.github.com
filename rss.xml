@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 18 Apr 2026 14:29:15 UTC</pubDate>
-    <lastBuildDate>Sat, 18 Apr 2026 14:29:15 UTC</lastBuildDate>
+    <pubDate>Sat, 18 Apr 2026 15:13:43 UTC</pubDate>
+    <lastBuildDate>Sat, 18 Apr 2026 15:13:43 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -174,86 +174,107 @@ alias loc print(*(f&quot;{name} = {value!r}&quot; for name, value in vars().item
 <guid>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</guid>
 </item>
 <item>
-<title>读：Cutting Python Web App Memory Over 31%</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/读：cutting-python-web-app-memory-over-31%/index.html</link>
-<description>原文：[[https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/][Cutting Python Web App Memory Over 31%]]
+<title>降低程序内存的五个原则</title>
+<link>https://lujun9972.github.io/blog/2026/04/18/降低程序内存的五个原则/index.html</link>
+<description>Michael Kennedy 在 [[https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/][Cutting Python Web App Memory Over 31%]] 中把两个 Python Web 应用的内存从 1988MB 砍到 472MB。他的具体做法是五个手段：async worker、Raw+DC 数据库模式、子进程隔离 import、重型库延迟导入、缓存搬到磁盘。
 
-Michael Kennedy 用五种手段将 Talk Python 系列应用的内存占用砍掉了 3.2GB。两个核心应用的总内存从 1988MB 降到 472MB。
+剥掉 Python 的外壳，这五个手段背后是五个通用的内存优化原则。
 
-* async worker 替代多进程 worker
-
-传统部署方式是 web garden：一个编排器 + 多个 worker 进程。每个 worker 都要加载完整的应用和依赖，内存随 worker 数线性增长。
-
-如果 Web 框架和数据库访问层都支持 async，就能切成单 worker 模式。所有请求通过协程交错执行，一个 worker 就够了。
+* 原则一：减少代码副本数
 
 #+BEGIN_QUOTE
-Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，单这一步就省了 542MB。
+Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，省了 542MB。
 #+END_QUOTE
 
-需要两件事配合：
-- Web 框架改用 async 版本（原文用了 Quart，即 async Flask）
-- 数据库访问层支持 async（原文把 MongoEngine ODM 换成了 Raw + DC 模式）
+每个进程都要加载完整的应用代码和第三方依赖。两个 worker 意味着两份副本。如果能让一个进程通过并发（而非并行）处理所有请求，代码只需要加载一次。
 
-* Raw + DC 数据库模式替代 ODM
+这不是 Python 独有的思路：
+- *Nginx* 默认启用多个 worker 进程，但如果机器内存紧张，配成单 worker + 事件驱动也能跑
+- *Java* 从 thread-per-request（每个线程栈占几百 KB 到 1MB）转向 reactive 模型（Netty、WebFlux），逻辑类似——减少并发单元的资源开销
+- *Go* 的 goroutine 天然共享地址空间，初始栈只有 2-8KB，不需要为每个并发任务复制进程
+- *Emacs* 的 daemon 模式：一个 ~emacs --daemon~ 进程加载所有配置和包，多个 ~emacsclient~ 共享同一个实例，不需要每个终端窗口都启动一个完整的 Emacs
 
-ODM（Object-Document Mapper）方便但吃内存。原文把 MongoEngine 替换为：
-- *Raw* ：直接写数据库查询
-- *DC* ：用带 ~__slots__~ 的 dataclass 存结果
+本质：并发不等于并行。用并发模型替代多进程并行，消除代码和依赖的重复加载。
+
+* 原则二：用最轻的工具
 
 #+BEGIN_QUOTE
-每个 worker 省了 100MB，两个 worker 共省 200MB。附带效果：请求吞吐量翻了接近一倍。
+把 MongoEngine ODM 替换为 raw query + 带 ~__slots__~ 的 dataclass，每个 worker 省 100MB，吞吐量还翻倍。
 #+END_QUOTE
 
-* 子进程隔离 import（708MB → 22MB）
+ODM、ORM 这些重型抽象加载了大量你用不到的功能。换成直接写查询 + 轻量数据结构，内存立减。
 
-这是最惊艳的一招。搜索索引守护进程启动就吃 200MB，为什么？因为 import 链。
+跨语言的对照：
+- *Java* ：Hibernate 是出了名的内存大户。很多高并发场景下，项目改用 MyBatis（半自动 ORM）或直接 JDBC + POJO，内存占用显著下降
+- *Python* 的 ~__slots__~ 本质是告诉解释器&quot;这个类不需要动态属性字典&quot;，每个实例省掉一个 ~dict~ 的开销。类似思路在 *Go* 里是 struct（没有继承开销），在 *C* 里是固定布局的结构体
+- *Ruby on Rails* 的 Active Record 也是类似的 ORM 开销问题，纯 SQL 查询 + Plain Ruby Objects 是对应的轻量替代
+- *Emacs* 的包选择：用 ~vertico~ + ~consult~ （基于内置的 ~completing-read~ ）替代 ~ivy~ 或 ~helm~ （各自带一套完整的补全框架），功能相当但内存 footprint 小得多
 
-Python 的 import 是传递的：你 ~import A~ ，A 内部 ~import B~ ，B 内部 ~import C~ ……很快整个应用和所有第三方依赖全加载进来了。守护进程只需要定时跑索引任务，其余时间空转，但 import 链把 178000 行代码的应用全拉进了内存。
+本质：你引入的每个抽象层都有内存成本。如果一个功能只需要查询和映射，就不需要完整的对象关系映射器。
 
-解法：把索引逻辑移到独立文件，用 ~subprocess~ 调用。索引进程跑 30 秒就退出，内存和 import 全部释放。
+* 原则三：重操作隔离到短命进程
 
 #+BEGIN_QUOTE
-搜索索引服务从 708MB 暴降到 22MB——32 倍的差距。
+搜索索引服务从 708MB 暴降到 22MB——把索引逻辑移到 subprocess，跑 30 秒就退出，内存全部释放。
 #+END_QUOTE
 
-* 重型库延迟导入
+长时间运行的主进程应该尽量轻。偶尔才执行的重量级任务放到子进程中，干完就退出。操作系统会回收整个进程的内存，不需要你手动管理。
 
-有些库平时很少用，但 import 就吃一大块内存：
+这个模式无处不在：
+- *CI/CD* ：构建任务在独立容器或 VM 中运行，完成后销毁
+- *Kubernetes* 的 Job 资源：跑完自动清理
+- *PostgreSQL* 的并行查询：fork 子进程处理，完成后回收
+- *Elasticsearch* 的 merge 操作：在独立线程中合并 segment，避免影响主查询路径
+- *Claude Code* 的子代理模式：主代理把代码搜索、审查等重操作委托给独立子代理执行。子代理有自己的上下文窗口，可以自由探索代码库而不会撑大主代理的上下文。任务完成后子代理的上下文全部释放，主代理只保留结果摘要
+- *Emacs* 的 ~async.el~ 和 ~emacs --batch~ ：编译包（ ~async-bytecomp~ ）、执行耗时计算都放在子进程中完成，主 Emacs 不受影响
 
-| 库 | 内存开销 |
+本质：进程是操作系统提供的最干净的内存隔离和回收机制。比手动释放对象、触发 GC 更可靠。
+
+* 原则四：延迟加载——不用就不付钱
+
+#+BEGIN_QUOTE
+~import boto3~ 吃 25MB， ~import pandas~ 吃 44MB， ~import matplotlib~ 吃 17MB。把它们从文件顶部移到函数内部，只有调用时才加载。
+#+END_QUOTE
+
+延迟加载（lazy loading）是最朴素的内存优化：不为还没用到的东西分配资源。
+
+各语言都有自己的延迟加载手段：
+- *Go* 的 ~sync.Once~ ：确保初始化只执行一次，且只在首次访问时触发
+- *Java* 的类加载器：类在首次使用时才加载（虽然现代框架经常打破这个假设）
+- *C++* 的延迟计算（lazy evaluation）：表达式只在结果被需要时才求值
+- *Python 3.15* 的 PEP 810（Explicit lazy imports）将引入原生 lazy import，到时候不用手动把 import 塞进函数
+- *Emacs* 的 ~autoload~ 是最成熟的延迟加载机制之一。通过 ~;;;###autoload~ 注释标记函数，Emacs 启动时只加载一个 autoload 文件（函数名 → 文件路径的映射），直到真正调用该函数时才加载整个包。~use-package~ 的 ~:defer t~ 和 ~:commands~ 就是对 ~autoload~ 的封装。这是 Emacs 启动优化的核心手段
+
+本质：资源的获取时机应该是&quot;第一次需要的时候&quot;，而不是&quot;程序启动的时候&quot;。启动时加载所有依赖是最简单但不经济的做法。
+
+* 原则五：能放磁盘的就不放内存
+
+#+BEGIN_QUOTE
+把 markdown 缓存从内存搬到 diskcache，用少量 I/O 延迟换取内存空间。
+#+END_QUOTE
+
+内存是最贵的存储层。如果数据的访问频率不高、延迟要求不苛刻，磁盘缓存完全够用。
+
+经典的存储分层思想：
+- *SQLite* 被很多项目当作&quot;磁盘上的缓存&quot;使用——比纯文件灵活，比 Redis 轻
+- *mmap* ：让操作系统决定哪些页留在内存、哪些换出到磁盘，不需要自己管理缓存淘汰
+- *Redis* 本身也支持磁盘持久化，而且很多人用 Redis 的 AOF/RDB 做的就是&quot;内存放热数据、磁盘放全量数据&quot;
+- 浏览器的 HTTP 缓存：内存缓存（disk cache 和 memory cache 分层）
+
+本质：不是所有数据都需要一直待在内存里。根据访问频率和延迟容忍度选择存储层，是系统设计的基本功。
+
+* 一句话总结
+
+| 原则 | 一句话 |
 |---+---|
-| ~import boto3~ | 25MB |
-| ~import matplotlib~ | 17MB |
-| ~import pandas~ | 44MB |
-
-PEP 8 要求 import 放在文件顶部，但这里的代价是每次启动都加载这些庞然大物。解法是违背 PEP 8，把 import 放到实际使用它的函数内部：
-
-#+BEGIN_SRC python
-def generate_usage_report():
-    import matplotlib
-    import pandas
-
-    # 只有调用这个函数时才会加载这些库
-#+END_SRC
-
-配合 worker 进程的 TTL（定期重启），即使偶尔触发这些 import，内存也会被回收。
-
-Python 3.15 的 PEP 810 会引入原生的 lazy import，到时候就不用手动做这件事了。
-
-* 缓存从内存搬到磁盘
-
-把中小型缓存（比如反复使用的 markdown 片段）从内存移到 =diskcache= 。牺牲一点速度换取内存空间。
-
-* 最终效果
-
-| 应用 | 优化前 | 优化后 | 降幅 |
-|---+---+---+---|
-| Talk Python Training | 1280MB | 450MB | 1.8x |
-| 搜索索引守护进程 | 708MB | 22MB | 32x |
-| *合计* | *1988MB* | *472MB* | *3.2x* |
+| 减少代码副本数 | 并发不等于并行，用单进程并发替代多进程并行 |
+| 用最轻的工具 | 引入的每个抽象层都有内存成本 |
+| 重操作隔离到短命进程 | 进程是操作系统提供的最干净的内存回收机制 |
+| 延迟加载 | 不用就不付钱 |
+| 能放磁盘就不放内存 | 根据访问频率和延迟容忍度选存储层 |
 </description>
 <pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/读：cutting-python-web-app-memory-over-31%/index.html</guid>
+<guid>https://lujun9972.github.io/blog/2026/04/18/降低程序内存的五个原则/index.html</guid>
 </item>
 <item>
 <title>ANSI 转义码的标准化现状</title>

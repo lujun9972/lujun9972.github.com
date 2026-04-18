@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>降低程序内存的五个原则 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Python, 性能优化, 内存, 通用原则" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">降低程序内存的五个原则</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org993d99c">原则一：减少代码副本数</a></li>
+<li><a href="#org25d2205">原则二：用最轻的工具</a></li>
+<li><a href="#orgc187930">原则三：重操作隔离到短命进程</a></li>
+<li><a href="#orge2e15ce">原则四：延迟加载——不用就不付钱</a></li>
+<li><a href="#org8ed1d58">原则五：能放磁盘的就不放内存</a></li>
+<li><a href="#org35061a6">一句话总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Michael Kennedy 在 <a href="https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/">Cutting Python Web App Memory Over 31%</a> 中把两个 Python Web 应用的内存从 1988MB 砍到 472MB。他的具体做法是五个手段：async worker、Raw+DC 数据库模式、子进程隔离 import、重型库延迟导入、缓存搬到磁盘。
+</p>
+
+<p>
+剥掉 Python 的外壳，这五个手段背后是五个通用的内存优化原则。
+</p>
+
+<div id="outline-container-org993d99c" class="outline-2">
+<h2 id="org993d99c">原则一：减少代码副本数</h2>
+<div class="outline-text-2" id="text-org993d99c">
+<blockquote>
+<p>
+Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，省了 542MB。
+</p>
+</blockquote>
+
+<p>
+每个进程都要加载完整的应用代码和第三方依赖。两个 worker 意味着两份副本。如果能让一个进程通过并发（而非并行）处理所有请求，代码只需要加载一次。
+</p>
+
+<p>
+这不是 Python 独有的思路：
+</p>
+<ul class="org-ul">
+<li><b>Nginx</b> 默认启用多个 worker 进程，但如果机器内存紧张，配成单 worker + 事件驱动也能跑</li>
+<li><b>Java</b> 从 thread-per-request（每个线程栈占几百 KB 到 1MB）转向 reactive 模型（Netty、WebFlux），逻辑类似——减少并发单元的资源开销</li>
+<li><b>Go</b> 的 goroutine 天然共享地址空间，初始栈只有 2-8KB，不需要为每个并发任务复制进程</li>
+<li><b>Emacs</b> 的 daemon 模式：一个 <code>emacs --daemon</code> 进程加载所有配置和包，多个 <code>emacsclient</code> 共享同一个实例，不需要每个终端窗口都启动一个完整的 Emacs</li>
+</ul>
+
+<p>
+本质：并发不等于并行。用并发模型替代多进程并行，消除代码和依赖的重复加载。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org25d2205" class="outline-2">
+<h2 id="org25d2205">原则二：用最轻的工具</h2>
+<div class="outline-text-2" id="text-org25d2205">
+<blockquote>
+<p>
+把 MongoEngine ODM 替换为 raw query + 带 <code>__slots__</code> 的 dataclass，每个 worker 省 100MB，吞吐量还翻倍。
+</p>
+</blockquote>
+
+<p>
+ODM、ORM 这些重型抽象加载了大量你用不到的功能。换成直接写查询 + 轻量数据结构，内存立减。
+</p>
+
+<p>
+跨语言的对照：
+</p>
+<ul class="org-ul">
+<li><b>Java</b> ：Hibernate 是出了名的内存大户。很多高并发场景下，项目改用 MyBatis（半自动 ORM）或直接 JDBC + POJO，内存占用显著下降</li>
+<li><b>Python</b> 的 <code>__slots__</code> 本质是告诉解释器"这个类不需要动态属性字典"，每个实例省掉一个 <code>dict</code> 的开销。类似思路在 <b>Go</b> 里是 struct（没有继承开销），在 <b>C</b> 里是固定布局的结构体</li>
+<li><b>Ruby on Rails</b> 的 Active Record 也是类似的 ORM 开销问题，纯 SQL 查询 + Plain Ruby Objects 是对应的轻量替代</li>
+<li><b>Emacs</b> 的包选择：用 <code>vertico</code> + <code>consult</code> （基于内置的 <code>completing-read</code> ）替代 <code>ivy</code> 或 <code>helm</code> （各自带一套完整的补全框架），功能相当但内存 footprint 小得多</li>
+</ul>
+
+<p>
+本质：你引入的每个抽象层都有内存成本。如果一个功能只需要查询和映射，就不需要完整的对象关系映射器。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc187930" class="outline-2">
+<h2 id="orgc187930">原则三：重操作隔离到短命进程</h2>
+<div class="outline-text-2" id="text-orgc187930">
+<blockquote>
+<p>
+搜索索引服务从 708MB 暴降到 22MB——把索引逻辑移到 subprocess，跑 30 秒就退出，内存全部释放。
+</p>
+</blockquote>
+
+<p>
+长时间运行的主进程应该尽量轻。偶尔才执行的重量级任务放到子进程中，干完就退出。操作系统会回收整个进程的内存，不需要你手动管理。
+</p>
+
+<p>
+这个模式无处不在：
+</p>
+<ul class="org-ul">
+<li><b>CI/CD</b> ：构建任务在独立容器或 VM 中运行，完成后销毁</li>
+<li><b>Kubernetes</b> 的 Job 资源：跑完自动清理</li>
+<li><b>PostgreSQL</b> 的并行查询：fork 子进程处理，完成后回收</li>
+<li><b>Elasticsearch</b> 的 merge 操作：在独立线程中合并 segment，避免影响主查询路径</li>
+<li><b>Claude Code</b> 的子代理模式：主代理把代码搜索、审查等重操作委托给独立子代理执行。子代理有自己的上下文窗口，可以自由探索代码库而不会撑大主代理的上下文。任务完成后子代理的上下文全部释放，主代理只保留结果摘要</li>
+<li><b>Emacs</b> 的 <code>async.el</code> 和 <code>emacs --batch</code> ：编译包（ <code>async-bytecomp</code> ）、执行耗时计算都放在子进程中完成，主 Emacs 不受影响</li>
+</ul>
+
+<p>
+本质：进程是操作系统提供的最干净的内存隔离和回收机制。比手动释放对象、触发 GC 更可靠。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge2e15ce" class="outline-2">
+<h2 id="orge2e15ce">原则四：延迟加载——不用就不付钱</h2>
+<div class="outline-text-2" id="text-orge2e15ce">
+<blockquote>
+<p>
+<code>import boto3</code> 吃 25MB， <code>import pandas</code> 吃 44MB， <code>import matplotlib</code> 吃 17MB。把它们从文件顶部移到函数内部，只有调用时才加载。
+</p>
+</blockquote>
+
+<p>
+延迟加载（lazy loading）是最朴素的内存优化：不为还没用到的东西分配资源。
+</p>
+
+<p>
+各语言都有自己的延迟加载手段：
+</p>
+<ul class="org-ul">
+<li><b>Go</b> 的 <code>sync.Once</code> ：确保初始化只执行一次，且只在首次访问时触发</li>
+<li><b>Java</b> 的类加载器：类在首次使用时才加载（虽然现代框架经常打破这个假设）</li>
+<li><b>C++</b> 的延迟计算（lazy evaluation）：表达式只在结果被需要时才求值</li>
+<li><b>Python 3.15</b> 的 PEP 810（Explicit lazy imports）将引入原生 lazy import，到时候不用手动把 import 塞进函数</li>
+<li><b>Emacs</b> 的 <code>autoload</code> 是最成熟的延迟加载机制之一。通过 <code>;;;###autoload</code> 注释标记函数，Emacs 启动时只加载一个 autoload 文件（函数名 → 文件路径的映射），直到真正调用该函数时才加载整个包。~use-package~ 的 <code>:defer t</code> 和 <code>:commands</code> 就是对 <code>autoload</code> 的封装。这是 Emacs 启动优化的核心手段</li>
+</ul>
+
+<p>
+本质：资源的获取时机应该是"第一次需要的时候"，而不是"程序启动的时候"。启动时加载所有依赖是最简单但不经济的做法。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8ed1d58" class="outline-2">
+<h2 id="org8ed1d58">原则五：能放磁盘的就不放内存</h2>
+<div class="outline-text-2" id="text-org8ed1d58">
+<blockquote>
+<p>
+把 markdown 缓存从内存搬到 diskcache，用少量 I/O 延迟换取内存空间。
+</p>
+</blockquote>
+
+<p>
+内存是最贵的存储层。如果数据的访问频率不高、延迟要求不苛刻，磁盘缓存完全够用。
+</p>
+
+<p>
+经典的存储分层思想：
+</p>
+<ul class="org-ul">
+<li><b>SQLite</b> 被很多项目当作"磁盘上的缓存"使用——比纯文件灵活，比 Redis 轻</li>
+<li><b>mmap</b> ：让操作系统决定哪些页留在内存、哪些换出到磁盘，不需要自己管理缓存淘汰</li>
+<li><b>Redis</b> 本身也支持磁盘持久化，而且很多人用 Redis 的 AOF/RDB 做的就是"内存放热数据、磁盘放全量数据"</li>
+<li>浏览器的 HTTP 缓存：内存缓存（disk cache 和 memory cache 分层）</li>
+</ul>
+
+<p>
+本质：不是所有数据都需要一直待在内存里。根据访问频率和延迟容忍度选择存储层，是系统设计的基本功。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org35061a6" class="outline-2">
+<h2 id="org35061a6">一句话总结</h2>
+<div class="outline-text-2" id="text-org35061a6">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">原则</th>
+<th scope="col" class="org-left">一句话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">减少代码副本数</td>
+<td class="org-left">并发不等于并行，用单进程并发替代多进程并行</td>
+</tr>
+
+<tr>
+<td class="org-left">用最轻的工具</td>
+<td class="org-left">引入的每个抽象层都有内存成本</td>
+</tr>
+
+<tr>
+<td class="org-left">重操作隔离到短命进程</td>
+<td class="org-left">进程是操作系统提供的最干净的内存回收机制</td>
+</tr>
+
+<tr>
+<td class="org-left">延迟加载</td>
+<td class="org-left">不用就不付钱</td>
+</tr>
+
+<tr>
+<td class="org-left">能放磁盘就不放内存</td>
+<td class="org-left">根据访问频率和延迟容忍度选存储层</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-18</span>
+    <span class="post-info">2026-04-18</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/性能优化">性能优化</a> : <a href="../../../../../tags/内存">内存</a> : <a href="../../../../../tags/通用原则">通用原则</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ji2d0xgz3t5e1hglkxahxjjmia &lt;dot&gt; gx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
