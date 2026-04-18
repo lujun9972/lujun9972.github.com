@@ -1,0 +1,56 @@
+#+TITLE: TIL: repeat-mode 省去重复按键前缀
+#+AUTHOR: lujun9972
+#+TAGS: Emacs, 快捷键, Emacs28, TIL
+#+DATE: [2026-04-18 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+按 ~C-x o C-x o C-x o~ 切换窗口，或者 ~C-x { C-x { C-x {~ 缩小窗口——每次都要重复前缀，很烦。
+
+Emacs 28 内置的 ~repeat-mode~ 可以在首次按键后省掉前缀，只按最后一个键就行：
+
+#+BEGIN_SRC emacs-lisp
+(repeat-mode 1)
+#+END_SRC
+
+开启后，~C-x o o o~ 就能连续切换窗口，~C-x { { {~ 连续缩小。
+
+* 内置支持的命令
+
+Emacs 自带了一批 repeat map，开箱即用：
+
+| 首次按键 | 后续按键 | 效果 |
+|---+---+---|
+| ~C-x o~ | ~o~ | 切换窗口 |
+| ~C-x {~ / ~C-x }~ | ~{~ / ~}~ | 水平缩小/扩大窗口 |
+| ~C-x ^~ | ~^~ | 垂直扩大窗口 |
+| ~C-x u~ | ~u~ | 撤销 |
+| ~C-x <left>~ / ~C-x <right>~ | ~<left>~ / ~<right>~ | 切换 buffer |
+| ~M-g n~ / ~M-g p~ | ~n~ / ~p~ | 跳转下一个/上一个错误 |
+
+按了不在 repeat map 里的键，重复状态自动结束。
+
+也可以设置超时自动退出：
+
+#+BEGIN_SRC emacs-lisp
+(setq repeat-exit-timeout 5) ;; 5 秒无操作自动退出
+#+END_SRC
+
+* 自定义 repeat map
+
+以 expreg（expand-region）为例，实现 ~C-= = = -~ 即三次展开再一次收缩：
+
+#+BEGIN_SRC emacs-lisp
+(defvar expreg-repeat-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map "=" #'expreg-expand)
+    (define-key map "-" #'expreg-contract)
+    map))
+
+(put 'expreg-expand 'repeat-map 'expreg-repeat-map)
+(put 'expreg-contract 'repeat-map 'expreg-repeat-map)
+#+END_SRC
+
+模式很简单：创建 keymap，给命令设置 ~repeat-map~ symbol property。任何带这个属性的命令在首次调用后都会进入重复状态。
+
+原文：[[https://emacsredux.com/blog/2026/04/04/repeat-mode/][Repeat Mode: Stop Repeating Yourself]]
