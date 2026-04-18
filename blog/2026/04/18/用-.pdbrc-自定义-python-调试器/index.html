@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 .pdbrc 自定义 Python 调试器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="python, pdb, debugging" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 .pdbrc 自定义 Python 调试器</h1>
+<p>
+今天才知道 Python 调试器 PDB 可以通过 <code>~/.pdbrc</code> 文件自定义——在文件里定义 alias，就能在调试时直接调用。
+</p>
+
+<p>
+<code>.pdbrc</code> 的格式要求如下：
+</p>
+
+<ul class="org-ul">
+<li>文件位置： <code>~/.pdbrc</code> （全局）或项目目录下的 <code>.pdbrc</code> （局部）</li>
+<li>它 <b>不是</b> Python 代码，是 PDB 自己的命令格式，每行就是一个 PDB 命令</li>
+<li>alias 语法： <code>alias 名称 命令内容</code> ，用 <code>%1</code> 、 <code>%2</code> 等引用参数</li>
+<li>多条命令用 <code>;;</code> 连接，但 <b>必须写在一行里</b></li>
+<li>alias 中 <code>import</code> 引入的变量会泄漏到当前作用域，需要手动 <code>del</code> 清理</li>
+</ul>
+
+<p>
+Trey Hunner 在他的<a href="https://treyhunner.com/2026/04/customizing-pdb-with-pdbrc/">文章</a>中分享了一套实用的 alias 配置：
+</p>
+
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">dir obj: &#25171;&#21360;&#38750;&#21452;&#19979;&#21010;&#32447;&#30340;&#23646;&#24615;&#21644;&#26041;&#27861;
+</span>alias <span class="org-builtin">dir</span> <span class="org-builtin">print</span>(<span class="org-operator">*</span>(f<span class="org-string">"%1.</span>{n}<span class="org-string"> = </span>{v!r}<span class="org-string">"</span> <span class="org-keyword">for</span> n, v <span class="org-keyword">in</span> <span class="org-builtin">__import__</span>(<span class="org-string">'inspect'</span>).getmembers(<span class="org-operator">%</span>1) <span class="org-keyword">if</span> <span class="org-keyword">not</span> n.startswith(<span class="org-string">"__"</span>)), sep<span class="org-operator">=</span><span class="org-string">"</span><span class="org-constant">\n</span><span class="org-string">"</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">attrs obj: &#21482;&#25171;&#21360;&#38750;&#26041;&#27861;&#30340;&#25968;&#25454;&#23646;&#24615;
+</span>alias attrs <span class="org-keyword">import</span> inspect <span class="org-keyword">as</span> __i ;; <span class="org-builtin">print</span>(<span class="org-operator">*</span>(f<span class="org-string">"%1.</span>{n}<span class="org-string"> = </span>{v!r}<span class="org-string">"</span> <span class="org-keyword">for</span> n, v <span class="org-keyword">in</span> __i.getmembers(<span class="org-operator">%</span>1, <span class="org-keyword">lambda</span> v: <span class="org-keyword">not</span> __i.isroutine(v)) <span class="org-keyword">if</span> <span class="org-keyword">not</span> n.startswith(<span class="org-string">"__"</span>)), sep<span class="org-operator">=</span><span class="org-string">"</span><span class="org-constant">\n</span><span class="org-string">"</span>) ;; <span class="org-keyword">del</span> __i
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">vars obj: &#21482;&#25171;&#21360;&#23454;&#20363;&#21464;&#37327;&#65288;&#35201;&#27714;&#23545;&#35937;&#26377; __dict__&#65289;
+</span>alias <span class="org-builtin">vars</span> <span class="org-builtin">print</span>(<span class="org-operator">*</span>(f<span class="org-string">"%1.</span>{k}<span class="org-string"> = </span>{v!r}<span class="org-string">"</span> <span class="org-keyword">for</span> k, v <span class="org-keyword">in</span> <span class="org-builtin">vars</span>(<span class="org-operator">%</span>1).items()), sep<span class="org-operator">=</span><span class="org-string">"</span><span class="org-constant">\n</span><span class="org-string">"</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">src obj: &#25171;&#21360;&#31867;/&#20989;&#25968;&#30340;&#28304;&#25991;&#20214;&#12289;&#34892;&#21495;&#21644;&#20195;&#30721;
+</span>alias src <span class="org-keyword">import</span> inspect <span class="org-keyword">as</span> __i;; <span class="org-builtin">print</span>(f<span class="org-string">"</span>{__i.getsourcefile(<span class="org-operator">%</span>1)}<span class="org-string"> on line </span>{__i.getsourcelines(<span class="org-operator">%</span>1)[1]}<span class="org-string">:</span><span class="org-constant">\n</span>{''.join(__i.getsource(<span class="org-operator">%</span>1))}<span class="org-string">"</span>) ;; <span class="org-keyword">del</span> __i
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">loc: &#25171;&#21360;&#24403;&#21069;&#24103;&#30340;&#23616;&#37096;&#21464;&#37327;
+</span>alias loc <span class="org-builtin">print</span>(<span class="org-operator">*</span>(f<span class="org-string">"</span>{name}<span class="org-string"> = </span>{value!r}<span class="org-string">"</span> <span class="org-keyword">for</span> name, value <span class="org-keyword">in</span> <span class="org-builtin">vars</span>().items() <span class="org-keyword">if</span> <span class="org-keyword">not</span> name.startswith(<span class="org-string">"__"</span>)), sep<span class="org-operator">=</span><span class="org-string">"</span><span class="org-constant">\n</span><span class="org-string">"</span>)
+</pre>
+</div>
+
+<p>
+这 5 个 alias 的效果：
+</p>
+
+<ul class="org-ul">
+<li><code>dir obj</code> 比 <code>dir(obj)</code> 输出更友好，逐行以 <code>obj.attr = repr</code> 格式打印</li>
+<li><code>attrs obj</code> 过滤掉方法，只留数据属性</li>
+<li><code>vars obj</code> 只显示实例变量（ <code>__dict__</code> 中的）</li>
+<li><code>src obj.method</code> 直接查看方法的源码位置和内容</li>
+<li><code>loc</code> 列出当前作用域所有局部变量</li>
+</ul>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-18</span>
+    <span class="post-info">2026-04-18</span>
+    <a href="../../../../../tags/python">python</a> : <a href="../../../../../tags/pdb">pdb</a> : <a href="../../../../../tags/debugging">debugging</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ykpjs2xbt34uxgulnpvtw1u53f &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
