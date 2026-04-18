@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>为什么 Lisp 统治元编程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Lisp, 元编程, 宏, Emacs-Lisp, 编程语言" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">为什么 Lisp 统治元编程</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb97079e">数据说话</a></li>
+<li><a href="#orgf0ca352">根本原因：代码即数据</a></li>
+<li><a href="#orge9350d7">非 Lisp 语言的困境</a></li>
+<li><a href="#orgc3a6033">Emacs Lisp 中的实际威力</a></li>
+<li><a href="#orgf5d8ed7">为什么不是所有语言都走这条路</a></li>
+<li><a href="#org613652c">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+有人在 <a href="https://dev.to/redbar0n/meta-programming-and-macro-capabilities-of-various-languages-1hgd">DEV.to 上做了一张表</a>，按元编程和宏能力给 18 种语言打分（满分 19）。结果排名前六的语言里有五个是 Lisp 方言。
+</p>
+
+<p>
+这不是巧合。
+</p>
+
+<div id="outline-container-orgb97079e" class="outline-2">
+<h2 id="orgb97079e">数据说话</h2>
+<div class="outline-text-2" id="text-orgb97079e">
+<p>
+从评分表里提取 Lisp 系和非 Lisp 系的平均分：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-right" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类别</th>
+<th scope="col" class="org-right">语言数</th>
+<th scope="col" class="org-right">平均分</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Lisp 系（Racket、CL、Clojure、Arc、Coalton、Hackett、Scheme、Carp）</td>
+<td class="org-right">8</td>
+<td class="org-right">14.9</td>
+</tr>
+
+<tr>
+<td class="org-left">非 Lisp 系（Elixir、Julia、Nim、Rust、Scala、Ruby 等）</td>
+<td class="org-right">10</td>
+<td class="org-right">10.0</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Lisp 系语言在四个评分维度中，有三个维度碾压非 Lisp 系：运行时元编程、宏特性、生态中的宏工具。唯一的"弱项"是编译期能力——但这不是因为 Lisp 做不到，而是很多 Lisp 方言根本不需要编译期魔法，它在运行时就能做到同等甚至更多的事。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf0ca352" class="outline-2">
+<h2 id="orgf0ca352">根本原因：代码即数据</h2>
+<div class="outline-text-2" id="text-orgf0ca352">
+<p>
+Lisp 的核心优势只有一个：程序的源代码本身就是数据结构。
+</p>
+
+<p>
+一段 Elisp 代码 <code>(+ 1 2)</code> 在解析器看来就是一个列表，第一个元素是符号 <code>+</code> ，第二个是数字 <code>1</code> ，第三个是数字 <code>2</code> 。不需要额外的解析步骤，不需要 AST 转换，不需要语法糖展开——代码已经是数据了。
+</p>
+
+<p>
+这意味着 Lisp 宏可以直接操作代码，就像操作列表一样自然：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#23450;&#20041;&#19968;&#20010;&#23439;&#65306;&#35760;&#24405;&#34920;&#36798;&#24335;&#25191;&#34892;&#32791;&#26102;&#30340;&#23439;
+</span>(<span class="org-keyword">defmacro</span> <span class="org-function-name">with-timer</span> (<span class="org-type">&amp;rest</span> body)
+  `(<span class="org-keyword">let</span> ((start (current-time)))
+     ,@body
+     (message <span class="org-string">"Elapsed: %.2f seconds"</span>
+              (float-time (time-subtract (current-time) start)))))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#20351;&#29992;&#26102;&#23601;&#20687;&#26222;&#36890;&#35821;&#27861;
+</span>(with-timer
+  (sleep-for 1)
+  (message <span class="org-string">"done"</span>))
+</pre>
+</div>
+
+<pre class="example">
+Elapsed: 1.00 seconds
+</pre>
+
+
+<p>
+宏 <code>with-timer</code> 接收的是 <b>未求值的代码</b> ，不是值。它把代码当列表拼接，生成新的代码返回给求值器。整个过程不需要解析字符串、不需要构建 AST——因为输入本来就是列表。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge9350d7" class="outline-2">
+<h2 id="orge9350d7">非 Lisp 语言的困境</h2>
+<div class="outline-text-2" id="text-orge9350d7">
+<p>
+非 Lisp 语言要做同样的事，必须先解决一个问题：怎么把源代码变成可操作的数据？
+</p>
+
+<ul class="org-ul">
+<li><b>Rust</b> 的过程宏（procedural macro）需要先用 <code>syn</code> 库把 TokenStream 解析成 AST，操作完再用 <code>quote</code> 库生成 TokenStream。整个过程等价于"先解析，再操作，再序列化"</li>
+<li><b>C++</b> 的模板元编程在类型系统里做图灵完备的计算，代价是编译错误信息能塞满整个终端</li>
+<li><b>Python</b> 的装饰器只能包装函数，不能创造新的语法结构。想操纵 AST？得自己写 <code>import ast</code> 解析器</li>
+<li><b>Ruby</b> 是个有趣的反例。它以元编程著称—— <code>method_missing</code> 、 <code>define_method</code> 、 <code>class_eval</code> 让 Rails 之类的框架写出了极其优雅的 DSL。但它在评分表里只有 8 分（和 C++ 的 7 分差不多）。为什么？因为 Ruby 的元编程全部是运行时的：开放类、动态方法定义、幽灵方法。它不能创造新的语法结构，不能在编译期做代码变换。Ruby 的 DSL 能力来自语言的动态性，而非宏系统。原文章也指出：Ruby 的元编程评分和 C++ 接近，但没有人会认为 C++ 比 Ruby 更适合元编程——这说明纯运行时元编程的能力被评分表低估了，但也说明运行时元编程和编译期宏是两个不同维度</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter">## </span><span class="org-comment">Python &#30340;&#35013;&#39280;&#22120;&#65306;&#21482;&#33021;&#21253;&#35013;&#65292;&#19981;&#33021;&#21019;&#36896;&#26032;&#35821;&#27861;
+</span><span class="org-keyword">import</span> time
+
+<span class="org-keyword">def</span> <span class="org-function-name">with_timer</span>(func):
+    <span class="org-keyword">def</span> <span class="org-function-name">wrapper</span>(<span class="org-operator">*</span>args, <span class="org-operator">**</span>kwargs):
+        <span class="org-variable-name">start</span> <span class="org-operator">=</span> time.time()
+        <span class="org-variable-name">result</span> <span class="org-operator">=</span> func(<span class="org-operator">*</span>args, <span class="org-operator">**</span>kwargs)
+        <span class="org-builtin">print</span>(f<span class="org-string">"Elapsed: </span>{time.time() <span class="org-operator">-</span> start:.2f}<span class="org-string">s"</span>)
+        <span class="org-keyword">return</span> result
+    <span class="org-keyword">return</span> wrapper
+
+<span class="org-type">@with_timer</span>
+<span class="org-keyword">def</span> <span class="org-function-name">my_task</span>():
+    time.sleep(1)
+    <span class="org-builtin">print</span>(<span class="org-string">"done"</span>)
+</pre>
+</div>
+
+<p>
+装饰器能做到"在函数调用前后加逻辑"，但做不到"定义一种全新的控制流结构"。宏可以。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc3a6033" class="outline-2">
+<h2 id="orgc3a6033">Emacs Lisp 中的实际威力</h2>
+<div class="outline-text-2" id="text-orgc3a6033">
+<p>
+Emacs Lisp 可能是日常使用中最频繁接触 Lisp 宏的机会。Emacs 的很多核心功能就是宏实现的：
+</p>
+
+<ul class="org-ul">
+<li><code>dolist</code> 和 <code>dotimes</code> 都是宏，不是内置特殊形式。它们接收未求值的代码，展开成 <code>while</code> 循环。如果你需要一种新的迭代方式，可以自己写一个。</li>
+
+<li><code>cl-defstruct</code> 内部用宏生成构造函数、访问器、谓词函数。一个宏调用生成几十行代码。</li>
+
+<li><code>use-package</code> 整个就是一个宏驱动的 DSL。 <code>:init</code> 、 <code>:config</code> 、 <code>:bind</code> 这些"关键字"不是语言特性，是宏通过模式匹配识别的符号。</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">use-package &#30340; :bind &#20851;&#38190;&#23383;&#19981;&#26159;&#35821;&#35328;&#20869;&#32622;&#30340;&#35821;&#27861;
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">&#26159;&#23439;&#22312;&#23637;&#24320;&#26102;&#35782;&#21035; :bind &#31526;&#21495;&#24182;&#29983;&#25104; keymap &#20195;&#30721;
+</span>(<span class="org-keyword">use-package</span> magit
+  <span class="org-builtin">:bind</span> ((<span class="org-string">"C-x g"</span> . magit-status)))
+</pre>
+</div>
+
+<p>
+这就是 Lisp 宏的精髓：你可以用宏 <b>发明</b> 语言本身没有的语法。 <code>use-package</code> 的作者不需要修改 Elisp 解释器，只需要写一个宏。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf5d8ed7" class="outline-2">
+<h2 id="orgf5d8ed7">为什么不是所有语言都走这条路</h2>
+<div class="outline-text-2" id="text-orgf5d8ed7">
+<p>
+如果宏这么好，为什么大多数语言不采用 Lisp 风格的宏？
+</p>
+
+<p>
+答案和评分表里 C++ 和 Python 的低分一样：它们的语法不是数据。
+</p>
+
+<p>
+Lisp 的 S 表达式看起来"全是括号"，但这恰恰是它的元编程优势的来源——统一的语法结构意味着代码天然就是可操作的数据树。Python 的缩进、C++ 的花括号、Rust 的尖括号，每一种语法糖都在增加"从代码到数据"的转换成本。
+</p>
+
+<p>
+选择了一种"好看"的语法，就放弃了把代码当数据的能力。这不是审美问题，是结构性的取舍。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org613652c" class="outline-2">
+<h2 id="org613652c">小结</h2>
+<div class="outline-text-2" id="text-org613652c">
+<p>
+评分表的结论可以用一句话概括：元编程能力的上限取决于语言语法的数据化程度。Lisp 的 S 表达式是最彻底的"代码即数据"——没有语法糖的干扰，宏可以直接操作程序结构，而不需要先解析它。这就是为什么 18 种语言里 8 种是 Lisp 方言，而且它们占据了排行榜的前列。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-18</span>
+    <span class="post-info">2026-04-18</span>
+    <a href="../../../../../tags/lisp">Lisp</a> : <a href="../../../../../tags/元编程">元编程</a> : <a href="../../../../../tags/宏">宏</a> : <a href="../../../../../tags/emacs-lisp">Emacs-Lisp</a> : <a href="../../../../../tags/编程语言">编程语言</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ttja4a22qxoudbhvgfhlzoxued &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
