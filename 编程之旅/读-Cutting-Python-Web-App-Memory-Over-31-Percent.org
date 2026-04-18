@@ -1,0 +1,82 @@
+#+TITLE: 读：Cutting Python Web App Memory Over 31%
+#+AUTHOR: lujun9972
+#+TAGS: Python, 性能优化, 内存, async, Web
+#+DATE: [2026-04-18 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文：[[https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/][Cutting Python Web App Memory Over 31%]]
+
+Michael Kennedy 用五种手段将 Talk Python 系列应用的内存占用砍掉了 3.2GB。两个核心应用的总内存从 1988MB 降到 472MB。
+
+* async worker 替代多进程 worker
+
+传统部署方式是 web garden：一个编排器 + 多个 worker 进程。每个 worker 都要加载完整的应用和依赖，内存随 worker 数线性增长。
+
+如果 Web 框架和数据库访问层都支持 async，就能切成单 worker 模式。所有请求通过协程交错执行，一个 worker 就够了。
+
+#+BEGIN_QUOTE
+Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，单这一步就省了 542MB。
+#+END_QUOTE
+
+需要两件事配合：
+- Web 框架改用 async 版本（原文用了 Quart，即 async Flask）
+- 数据库访问层支持 async（原文把 MongoEngine ODM 换成了 Raw + DC 模式）
+
+* Raw + DC 数据库模式替代 ODM
+
+ODM（Object-Document Mapper）方便但吃内存。原文把 MongoEngine 替换为：
+- *Raw* ：直接写数据库查询
+- *DC* ：用带 ~__slots__~ 的 dataclass 存结果
+
+#+BEGIN_QUOTE
+每个 worker 省了 100MB，两个 worker 共省 200MB。附带效果：请求吞吐量翻了接近一倍。
+#+END_QUOTE
+
+* 子进程隔离 import（708MB → 22MB）
+
+这是最惊艳的一招。搜索索引守护进程启动就吃 200MB，为什么？因为 import 链。
+
+Python 的 import 是传递的：你 ~import A~ ，A 内部 ~import B~ ，B 内部 ~import C~ ……很快整个应用和所有第三方依赖全加载进来了。守护进程只需要定时跑索引任务，其余时间空转，但 import 链把 178000 行代码的应用全拉进了内存。
+
+解法：把索引逻辑移到独立文件，用 ~subprocess~ 调用。索引进程跑 30 秒就退出，内存和 import 全部释放。
+
+#+BEGIN_QUOTE
+搜索索引服务从 708MB 暴降到 22MB——32 倍的差距。
+#+END_QUOTE
+
+* 重型库延迟导入
+
+有些库平时很少用，但 import 就吃一大块内存：
+
+| 库 | 内存开销 |
+|---+---|
+| ~import boto3~ | 25MB |
+| ~import matplotlib~ | 17MB |
+| ~import pandas~ | 44MB |
+
+PEP 8 要求 import 放在文件顶部，但这里的代价是每次启动都加载这些庞然大物。解法是违背 PEP 8，把 import 放到实际使用它的函数内部：
+
+#+BEGIN_SRC python
+def generate_usage_report():
+    import matplotlib
+    import pandas
+
+    # 只有调用这个函数时才会加载这些库
+#+END_SRC
+
+配合 worker 进程的 TTL（定期重启），即使偶尔触发这些 import，内存也会被回收。
+
+Python 3.15 的 PEP 810 会引入原生的 lazy import，到时候就不用手动做这件事了。
+
+* 缓存从内存搬到磁盘
+
+把中小型缓存（比如反复使用的 markdown 片段）从内存移到 =diskcache= 。牺牲一点速度换取内存空间。
+
+* 最终效果
+
+| 应用 | 优化前 | 优化后 | 降幅 |
+|---+---+---+---|
+| Talk Python Training | 1280MB | 450MB | 1.8x |
+| 搜索索引守护进程 | 708MB | 22MB | 32x |
+| *合计* | *1988MB* | *472MB* | *3.2x* |
