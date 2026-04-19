@@ -1,0 +1,224 @@
+#+TITLE: PostgreSQL 索引：从基础到你可能不知道的高级用法
+#+AUTHOR: lujun9972
+#+TAGS: 数据库, PostgreSQL, 索引, SQL
+#+DATE: [2026-04-19 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+来源：[[https://jon.chrt.dev/2026/04/15/things-you-didnt-know-about-indexes.html][Things you didn't know about indexes]]
+
+* 索引是什么
+
+索引的核心思路就是*排序*。把数据按某个列排好序，查找时就能用二分法快速定位，不用逐条遍历。
+
+假设有一张宝可梦表：
+
+#+begin_src sql
+id   | name       | type_1   | type_2   | generation | is_legendary | base_attack
+-----+------------+----------+----------+------------+--------------+-------------
+1    | Bulbasaur  | Grass    | Poison   | 1          | false        | 49
+4    | Charmander | Fire     | NULL     | 1          | false        | 52
+25   | Pikachu    | Electric | NULL     | 1          | false        | 55
+150  | Mewtwo     | Psychic  | NULL     | 1          | true         | 110
+#+end_src
+
+没有索引时，查 Pikachu 意味着逐行读取 =name= 列做比较，这就是 *全表扫描* （full table scan）。四行无所谓，一千万行就是问题。全表扫描本身不慢——现代数据库每秒能扫几百万行——但它是 *线性的* ：数据翻倍，时间翻倍。索引查找则几乎不受数据量影响。
+
+给 =name= 加索引后，数据库得到一个按名字排序的结构，可以用二分查找定位：
+
+#+begin_src sql
+name          row
+------------+-----
+Bulbasaur   → 1
+Charmander  → 4
+Mewtwo      → 150
+Pikachu     → 25
+#+end_src
+
+Postgres 底层用 B-tree 实现，跟新华字典按拼音查字一个道理——排好序的东西，查找才快。
+
+* 索引的代价
+
+索引不是免费的。一句话概括：
+
+#+begin_quote
+读变快，写变慢。
+#+end_quote
+
+每次 =INSERT= 、 =UPDATE= 、 =DELETE= 都要同步更新索引——把新值插入排序结构的正确位置。多个索引就乘以多倍。
+
+其次，索引是实打实的数据结构，占磁盘空间，也要占缓存。一张表有八个索引，需要常驻缓存的数据就从一份变成九份。
+
+最后还有查询规划器。索引越多，规划器要权衡的方案越多，规划时间可能超过执行时间。
+
+* 为什么你的索引不生效
+
+加了索引却不走索引，通常掉进了以下陷阱。
+
+** 复合索引在乎顺序
+
+在宝可梦表上建 =type_1= 和 =type_2= 的复合索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (type_1, type_2);
+#+end_src
+
+这个索引对以下查询有效：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE type_1 = 'Water';
+SELECT * FROM pokemon WHERE type_1 = 'Water' AND type_2 = 'Flying';
+#+end_src
+
+但对这个查询无效：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE type_2 = 'Flying';
+#+end_src
+
+原因在索引的排序结构。复合索引 =(type_1, type_2)= 先按 =type_1= 排，再在每个 =type_1= 组内按 =type_2= 排：
+
+#+begin_src sql
+Bug      → Flying   → [Butterfree, Beedrill, ...]
+         → Poison   → [Venonat, Spinarak, ...]
+Electric → NULL     → [Pikachu, Raichu, ...]
+         → Flying   → [Zapdos, ...]
+Fire     → NULL     → [Charmander, Vulpix, ...]
+         → Flying   → [Charizard, Moltres, ...]
+Grass    → Poison   → [Bulbasaur, Oddish, ...]
+Water    → NULL     → [Squirtle, Psyduck, ...]
+         → Flying   → [Wingull, Pelipper, ...]
+         → Ground   → [Wooper, ...]
+#+end_src
+
+"Flying"散落在 Bug、Electric、Fire、Water 下面，没有统一入口。数据库无法跳到某个位置一次取完所有 Flying 记录。
+
+如果经常单独查 =type_2= ，就需要再加一个 =type_2= 的独立索引。
+
+** 函数会破坏索引
+
+不区分大小写的搜索很常见：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE lower(name) = 'pikachu';
+#+end_src
+
+=lower(name)= 看起来跟查 =name= 差不多，但索引是按 =name= 原始值排序的（Bulbasaur、Charmander...），不是按 =lower(name)= 排序的。数据库找不到现成的排序结构，只好回退全表扫描。
+
+这适用于任何包裹列的函数。只要比较的左边不是原始的索引列，索引就不参与。隐式类型转换也算—— =text= 和 =integer= 比较时会触发静默转换，效果等同于包了一层函数。
+
+解决办法是建函数索引（见下文）。
+
+** 用 EXPLAIN 诊断
+
+Postgres 提供了 =EXPLAIN= ，在任何 =SELECT= 前加上就能看到执行计划：
+
+#+begin_src sql
+EXPLAIN SELECT * FROM pokemon WHERE name = 'Pikachu';
+#+end_src
+
+#+begin_src sql
+Index Scan using pokemon_name_idx on pokemon
+  Index Cond: (name = 'Pikachu'::text)
+#+end_src
+
+=Index Scan= 说明走了索引。再看问题查询：
+
+#+begin_src sql
+EXPLAIN SELECT * FROM pokemon WHERE lower(name) = 'pikachu';
+#+end_src
+
+#+begin_src sql
+Seq Scan on pokemon
+  Filter: (lower(name) = 'pikachu'::text)
+#+end_src
+
+=Seq Scan= 就是全表扫描。加上 =ANALYZE= 可以拿到实际执行时间：
+
+#+begin_src sql
+EXPLAIN ANALYZE SELECT * FROM pokemon WHERE name = 'Pikachu';
+#+end_src
+
+* 三种你可能不知道的索引
+
+单列索引和复合索引覆盖了大部分场景，但 Postgres 还有几种特殊索引。
+
+** 函数索引（Functional Index）
+
+前面的 =lower(name)= 问题，解法是直接对表达式建索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (lower(name));
+#+end_src
+
+任何确定性、不可变表达式都可以索引：
+
+#+begin_src sql
+CREATE INDEX ON users ((created_at::date));
+CREATE INDEX ON pokemon ((base_attack * 2));
+#+end_src
+
+但要注意：如果频繁查 =lower(name)= ，也许该考虑直接把数据存成小写，而不是靠函数索引绕路。函数索引是手段，不是目的。
+
+** 部分索引（Partial Index）
+
+普通索引覆盖全表所有行。但如果只查其中一小部分，索引其余行就是浪费。
+
+宝可梦大约 1000 种，传说宝可梦只有约 80 种（不到 10%）。如果应用有个"显示所有传说宝可梦"的功能，建 =is_legendary= 和 =name= 的复合索引虽然能用，但索引里 920 条非传说记录纯粹是摆设。
+
+部分索引只包含满足条件的行：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (name) WHERE is_legendary = true;
+#+end_src
+
+索引从 1000 条缩减到 80 条。查 =WHERE is_legendary = true= 走索引，查 =WHERE is_legendary = false= 走全表扫描——正好，因为 false 匹配几乎所有行，索引帮不上忙。
+
+另一个典型场景是软删除：
+
+#+begin_src sql
+CREATE INDEX ON users (email) WHERE deleted_at IS NULL;
+#+end_src
+
+软删除的行几乎不会被查询，不把它们排除出索引只是白占空间。
+
+** 覆盖索引（Covering Index）
+
+数据库用索引找到行后，还要去表中取查询需要的其他列——两次查找。但如果索引里已经包含了查询需要的所有列，就不需要访问表了。这就是覆盖索引，在 =EXPLAIN= 中显示为 =Index Only Scan= 。
+
+前面的部分索引恰好就是一个覆盖索引：
+
+#+begin_src sql
+SELECT name FROM pokemon WHERE is_legendary = true;
+#+end_src
+
+索引在 =name= 上，查询也只要 =name= ，全部命中。
+
+也可以用 =INCLUDE= 显式构建覆盖索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (name) INCLUDE (base_attack);
+#+end_src
+
+这样以下查询可以纯索引完成：
+
+#+begin_src sql
+SELECT name, base_attack FROM pokemon WHERE name = 'Pikachu';
+#+end_src
+
+为什么不直接把 =base_attack= 放进索引列？因为索引列是用来排序和搜索的。把 =base_attack= 加进索引列意味着每次写入都要按 =(name, base_attack)= 排序，但你从来不按 =base_attack= 搜索，这排序就是白做的。 =INCLUDE= 的意思是"带上这列，但别排序"。
+
+=INCLUDE= 更实际的用途有两个：
+
+1. 数据类型不支持 B-tree 操作符的列（如 =box= 类型），不能作为索引键列，但可以 =INCLUDE=
+2. 唯一索引中附加列而不改变唯一性语义： =CREATE UNIQUE INDEX ON users (email) INCLUDE (user_id)= 只在 =email= 上强制唯一，同时覆盖需要 =user_id= 的查询
+
+* 小结
+
+- 索引让读变快，但写变慢、占空间、增加规划开销
+- 复合索引按左前缀匹配，跳过首列的查询不生效
+- 函数（包括隐式转换）包裹索引列会导致索引失效
+- 用 =EXPLAIN= 诊断， =Index Scan= 走索引， =Seq Scan= 全表扫描
+- 函数索引、部分索引、覆盖索引是应对特殊场景的利器
+
+原文推荐了 [[https://use-the-index-luke.com/][Use The Index, Luke]] 作为深入学习资料。
