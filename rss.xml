@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 19 Apr 2026 12:20:16 UTC</pubDate>
-    <lastBuildDate>Sun, 19 Apr 2026 12:20:16 UTC</lastBuildDate>
+    <pubDate>Sun, 19 Apr 2026 14:05:12 UTC</pubDate>
+    <lastBuildDate>Sun, 19 Apr 2026 14:05:12 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -229,6 +229,373 @@ c = command(emacsclient -e &#39;(my-toggle-dark-mode)&#39;)
 </description>
 <pubDate>2026-04-19</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</guid>
+</item>
+<item>
+<title>一条命令让本地开发用上 HTTPS —— slim 工具介绍</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/一条命令让本地开发用上-https-——-slim-工具介绍/index.html</link>
+<description>* 本地开发 HTTPS 的痛点
+
+做本地 Web 开发时，你可能经常看到浏览器提示&quot;您的连接不是私密连接&quot;。这不影响开发，但会带来两个问题：
+
+1. *开发体验差* — 每次打开页面都要点&quot;继续前往&quot;
+2. *功能受限* — 很多浏览器 API 只在 HTTPS（安全来源）下可用：
+   - Service Worker（PWA 开发必备）
+   - Geolocation API
+   - Clipboard API
+   - Camera / Microphone (=getUserMedia=)
+   - HTTP/2（浏览器只在 TLS 上协商 HTTP/2）
+   - Secure Cookies（带 =Secure= 标志的 Cookie 只在 HTTPS 下发送）
+
+传统做法是手动生成自签名证书、添加到系统信任库、改 =/etc/hosts= 、配反向代理——第一次折腾半小时，之后每次都嫌麻烦。
+
+* slim 是什么
+
+[[https://github.com/kamranahmedse/slim][slim]] 是一个 Go 写的轻量级反向代理和本地域名管理器。一条命令搞定上述所有事情：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000
+#+END_SRC
+
+执行后，项目通过 =https://myapp.test= 访问，有合法证书，无浏览器警告。支持 HTTP/2、WebSocket、HMR（热模块替换），Next.js、Vite 等开发服务器开箱即用。
+
+* 工作原理
+
+=slim start= 第一次运行时自动完成四件事：
+
+1. *证书颁发机构（CA）* — 生成本地根 CA，注册到系统信任库（Linux CA store 或 macOS Keychain）。之后每个域名按需签发叶子证书，通过 SNI 提供。
+2. *反向代理* — 启动后台守护进程，用 Go 内置的 =httputil.ReverseProxy= ，把 HTTPS 流量从域名转发到本地开发服务器的端口。
+3. *本地 DNS* — 在 =/etc/hosts= 中添加条目，让域名解析到 =127.0.0.1= ，不需要额外的 DNS 服务器。
+4. *端口转发* — 用 iptables（Linux）或 pfctl（macOS）把 80/443 端口重定向到 10080/10443，代理进程不需要 root 权限。
+
+* 安装
+
+一行命令安装：
+
+#+BEGIN_SRC shell
+curl -sL https://slim.sh/install.sh | sh
+#+END_SRC
+
+安装前可以先审查脚本内容：在浏览器中打开 =https://slim.sh/install.sh= 查看源码。
+
+确认安装成功：
+
+#+BEGIN_SRC shell
+slim --version
+#+END_SRC
+
+* 实际使用
+
+假设你的开发服务器运行在 3000 端口，启动 slim：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000
+#+END_SRC
+
+第一次运行时，slim 会生成根 CA、注册系统信任库、为 =myapp.test= 签发证书、更新 =/etc/hosts= 、启动后台代理。
+
+打开浏览器访问 =https://myapp.test= ，项目通过 HTTPS 加载，证书有效，没有警告。
+
+*Note:* slim 默认使用 =.test= 域名。不要用 =.local= —— 它保留给 mDNS 使用，在 macOS/Linux 上可能导致 DNS 解析缓慢或不一致。 =.test= 是 RFC 2606 专门为本地开发保留的域名。
+
+* 日常管理
+
+查看所有活跃域名：
+
+#+BEGIN_SRC shell
+slim list
+#+END_SRC
+
+停止指定域名：
+
+#+BEGIN_SRC shell
+slim stop myapp
+#+END_SRC
+
+完全卸载（删除 CA、证书、hosts 条目、端口转发规则、配置文件）：
+
+#+BEGIN_SRC shell
+slim uninstall
+#+END_SRC
+
+诊断检查：
+
+#+BEGIN_SRC shell
+slim doctor
+#+END_SRC
+
+启动时的有用选项：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000 --log verbose  # 详细日志（记录每个请求）
+slim start myapp --port 3000 --log quiet    # 静默模式
+slim start myapp --port 3000 --wait         # 等待上游端口就绪后再开始代理
+#+END_SRC
+
+所有运行时数据在 =~/.slim/= 目录下。需要手动检查或备份证书时去那里。
+
+* 为什么本地开发需要 HTTPS
+
+即使不考虑浏览器警告，本地开发环境应该尽量接近生产环境。以下功能在 HTTP 下行为不同或完全不工作：
+
+| API / 功能 | HTTPS 下的行为 | HTTP 下的行为 |
+|------------|---------------|--------------|
+| Service Worker | 正常注册和运行 | 无法注册 (除 =localhost= 外) |
+| Geolocation | 需要用户授权后可用 | 直接被拒绝 |
+| Clipboard API | 读写剪贴板 | 不可用 |
+| Camera / Microphone | =getUserMedia= 正常工作 | 被浏览器阻止 |
+| HTTP/2 | 正常协商 | 不支持（浏览器只在 TLS 上用 HTTP/2） |
+| Secure Cookies | 正常设置和发送 | 永远不会被发送 |
+
+如果你的项目依赖这些功能，在 HTTP 下测试的结果和生产环境不一致。slim 让本地 HTTPS 变得几乎零成本。
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/一条命令让本地开发用上-https-——-slim-工具介绍/index.html</guid>
+</item>
+<item>
+<title>用 fsck 检查和修复 Linux 文件系统</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/用-fsck-检查和修复-linux-文件系统/index.html</link>
+<description>来源：[[https://www.tecmint.com/fsck-repair-file-system-errors-in-linux/][How to Use fsck to Check and Repair Linux Filesystem Errors]]
+
+* 基础知识
+
+** fsck 是什么
+
+=fsck= （File System Consistency Check）是 Linux 内置的文件系统检查和修复工具，类似 Windows 的 =chkdsk= 。它可以开机时自动运行，也可以由管理员手动执行。
+
+=fsck= 会根据文件系统类型调用对应的后端检查程序—— =ext2/3/4= 调用 =e2fsck= ， =xfs= 调用 =fsck.xfs= ， =vfat= 调用 =fsck.vfat= 。
+
+** 什么时候需要跑 fsck
+
+- 系统无法启动，掉进 emergency/rescue mode
+- 读写文件时出现 I/O 错误
+- 硬盘、U 盘、SD 卡行为异常
+- 异常关机后（断电、kernel panic、强制重启）
+- 内核日志中出现文件系统损坏信息
+
+** 确认文件系统类型
+
+跑 =fsck= 前先确认分区的文件系统类型：
+
+#+begin_src shell
+lsblk -f
+#+end_src
+
+或者指定分区：
+
+#+begin_src shell
+blkid /dev/sdb1
+#+end_src
+
+* 使用方法
+
+** 基本检查（交互式）
+
+逐个错误提示确认：
+
+#+begin_src shell
+fsck /dev/sdb1
+#+end_src
+
+** 自动修复
+
+对所有修复提示自动回答&quot;是&quot;，适合生产环境自动化：
+
+#+begin_src shell
+fsck -y /dev/sdb1
+#+end_src
+
+** 干跑（不修改任何东西）
+
+只看 =fsck= 会做什么，不改数据：
+
+#+begin_src shell
+fsck -N /dev/sdb1
+#+end_src
+
+生产环境建议先干跑，确认没问题再真正执行。
+
+** 强制检查
+
+文件系统标记为&quot;干净&quot;时 =fsck= 默认跳过。用 =-f= 强制检查：
+
+#+begin_src shell
+fsck -f /dev/sdb1
+#+end_src
+
+** 检查所有文件系统（跳过根分区）
+
+=-A= 读取 =/etc/fstab= 中的所有文件系统， =-R= 跳过根分区：
+
+#+begin_src shell
+fsck -AR -y
+#+end_src
+
+** 带进度条的详细输出
+
+#+begin_src shell
+fsck -C -V /dev/sdb1
+#+end_src
+
+大容量磁盘检查时有用。
+
+** 指定文件系统类型
+
+#+begin_src shell
+fsck -t ext4 /dev/sdb1
+#+end_src
+
+** 检查根分区
+
+根分区挂载着没法直接 =fsck= ，有三种方法。
+
+方法一，在根目录创建标记文件，下次启动时自动检查：
+
+#+begin_src shell
+touch /forcefsck
+reboot
+#+end_src
+
+完成后标记文件会被自动删除。注意：基于 systemd 的系统（RHEL 7+、Ubuntu 16.04+）可能不支持 =forcefsck= ，用下面的方法。
+
+方法二，用 =tune2fs= 把挂载计数设为 1，下次启动时触发 =fsck= （ext4）：
+
+#+begin_src shell
+tune2fs -C 1 /dev/sda1
+#+end_src
+
+方法三，进入救援模式手动操作：
+
+1. 重启，启动时按住 Shift 进入 GRUB 菜单
+2. 选择&quot;Advanced options&quot;
+3. 选择对应内核的&quot;Recovery mode&quot;
+4. 在恢复菜单中选择&quot;fsck&quot;
+5. 提示重新挂载根文件系统时选&quot;Yes&quot;
+6. 完成后选择&quot;Resume&quot;继续正常启动
+
+** LVM 和软件 RAID
+
+LVM 逻辑卷需要先停用再检查：
+
+#+begin_src shell
+lvdisplay
+lvchange -an /dev/vg_data/lv_data
+fsck -y /dev/vg_data/lv_data
+lvchange -ay /dev/vg_data/lv_data
+#+end_src
+
+RAID 阵列先确认状态正常再检查。降级阵列应先重建，不要直接 =fsck= ：
+
+#+begin_src shell
+cat /proc/mdstat
+fsck -y /dev/md0
+#+end_src
+
+** 定期自动检查
+
+用 =tune2fs= 设置定期检查（ext4）：
+
+基于时间（每 6 个月）：
+
+#+begin_src shell
+tune2fs -i 6m /dev/sda1
+#+end_src
+
+基于挂载次数（每 30 次）：
+
+#+begin_src shell
+tune2fs -c 30 /dev/sda1
+#+end_src
+
+查看当前设置：
+
+#+begin_src shell
+tune2fs -l /dev/sda1 | grep -E &quot;Mount count|Maximum mount|Check interval|Last checked&quot;
+#+end_src
+
+** 查看 fsck 日志
+
+#+begin_src shell
+# RHEL/CentOS/Rocky
+grep -i fsck /var/log/messages
+
+# Ubuntu/Debian
+grep -i fsck /var/log/syslog
+
+# systemd journal（当前启动）
+journalctl -b | grep -i fsck
+#+end_src
+
+* 注意事项
+
+** 绝对不要在挂载的分区上跑 fsck
+
+在已挂载的分区上运行 =fsck= 会导致严重的数据损坏。先检查分区是否已挂载：
+
+#+begin_src shell
+mount | grep /dev/sdb
+#+end_src
+
+如果已挂载，先卸载：
+
+#+begin_src shell
+umount /dev/sdb1
+#+end_src
+
+如果卸载失败，提示&quot;target is busy&quot;，说明有进程在使用这个分区。用 =lsof= 找出是哪些进程：
+
+#+begin_src shell
+lsof /dev/sdb1
+#+end_src
+
+找到占用进程后，停掉或关闭它们，再重新 =umount= 。如果进程不好停（比如某个后台服务），可以用懒卸载：
+
+#+begin_src shell
+umount -l /dev/sdb1
+#+end_src
+
+懒卸载会立刻把挂载点从文件系统命名空间中移除（新进程看不到这个挂载点了），但实际卸载要等所有占用进程释放后才完成。这样做的好处是你不需要一个个去停进程，但风险是：在所有进程释放之前， =fsck= 仍然无法安全执行。所以用懒卸载后，要等一会儿确认设备真的卸载了（ =mount | grep /dev/sdb= 不再返回结果），再跑 =fsck= 。
+
+* 退出码说明
+
+=fsck= 执行完返回退出码，用 =echo $?= 查看：
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 未发现错误 |
+| 1 | 错误已修复 |
+| 2 | 建议重启系统 |
+| 4 | 错误未修复 |
+| 8 | 操作错误 |
+| 16 | 用法或语法错误 |
+| 32 | 用户取消检查 |
+| 128 | 共享库错误 |
+
+退出码可以叠加。比如退出码 3 即错误已修复（1）+ 需要重启（2）。
+
+在脚本中应该捕获退出码：
+
+#+begin_src shell :tangle no
+fsck -y /dev/sdb1
+EXIT_CODE=$?
+if [ $EXIT_CODE -ge 4 ]; then
+    echo &quot;ALERT: 文件系统错误无法修复 /dev/sdb1&quot; | mail -s &quot;fsck Alert&quot; admin@example.com
+fi
+#+end_src
+
+* 常用选项速查
+
+| 命令 | 说明 |
+|------|------|
+| =fsck /dev/sdb1= | 交互式检查 |
+| =fsck -y /dev/sdb1= | 自动修复 |
+| =fsck -N /dev/sdb1= | 干跑（不修改） |
+| =fsck -f /dev/sdb1= | 强制检查 |
+| =fsck -AR -y= | 检查所有文件系统（跳过根分区） |
+| =fsck -C -V /dev/sdb1= | 带进度条的详细输出 |
+| =fsck -t ext4 -A -y= | 只检查 ext4 文件系统 |
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/用-fsck-检查和修复-linux-文件系统/index.html</guid>
 </item>
 <item>
 <title>排查Linux进程&quot;卡死&quot;实战：从strace到gdb全流程</title>
@@ -599,6 +966,230 @@ bash 的变量（包括数组）存储在堆内存中，所以我们从堆区域
 <guid>https://lujun9972.github.io/blog/2026/04/19/排查linux进程&quot;卡死&quot;实战：从strace到gdb全流程/index.html</guid>
 </item>
 <item>
+<title>PostgreSQL 索引：从基础到你可能不知道的高级用法</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/postgresql-索引：从基础到你可能不知道的高级用法/index.html</link>
+<description>来源：[[https://jon.chrt.dev/2026/04/15/things-you-didnt-know-about-indexes.html][Things you didn&#39;t know about indexes]]
+
+* 索引是什么
+
+索引的核心思路就是*排序*。把数据按某个列排好序，查找时就能用二分法快速定位，不用逐条遍历。
+
+假设有一张宝可梦表：
+
+#+begin_src sql
+id   | name       | type_1   | type_2   | generation | is_legendary | base_attack
+-----+------------+----------+----------+------------+--------------+-------------
+1    | Bulbasaur  | Grass    | Poison   | 1          | false        | 49
+4    | Charmander | Fire     | NULL     | 1          | false        | 52
+25   | Pikachu    | Electric | NULL     | 1          | false        | 55
+150  | Mewtwo     | Psychic  | NULL     | 1          | true         | 110
+#+end_src
+
+没有索引时，查 Pikachu 意味着逐行读取 =name= 列做比较，这就是 *全表扫描* （full table scan）。四行无所谓，一千万行就是问题。全表扫描本身不慢——现代数据库每秒能扫几百万行——但它是 *线性的* ：数据翻倍，时间翻倍。索引查找则几乎不受数据量影响。
+
+给 =name= 加索引后，数据库得到一个按名字排序的结构，可以用二分查找定位：
+
+#+begin_src sql
+name          row
+------------+-----
+Bulbasaur   → 1
+Charmander  → 4
+Mewtwo      → 150
+Pikachu     → 25
+#+end_src
+
+Postgres 底层用 B-tree 实现，跟新华字典按拼音查字一个道理——排好序的东西，查找才快。
+
+* 索引的代价
+
+索引不是免费的。一句话概括：
+
+#+begin_quote
+读变快，写变慢。
+#+end_quote
+
+每次 =INSERT= 、 =UPDATE= 、 =DELETE= 都要同步更新索引——把新值插入排序结构的正确位置。多个索引就乘以多倍。
+
+其次，索引是实打实的数据结构，占磁盘空间，也要占缓存。一张表有八个索引，需要常驻缓存的数据就从一份变成九份。
+
+最后还有查询规划器。索引越多，规划器要权衡的方案越多，规划时间可能超过执行时间。
+
+* 为什么你的索引不生效
+
+加了索引却不走索引，通常掉进了以下陷阱。
+
+** 复合索引在乎顺序
+
+在宝可梦表上建 =type_1= 和 =type_2= 的复合索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (type_1, type_2);
+#+end_src
+
+这个索引对以下查询有效：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE type_1 = &#39;Water&#39;;
+SELECT * FROM pokemon WHERE type_1 = &#39;Water&#39; AND type_2 = &#39;Flying&#39;;
+#+end_src
+
+但对这个查询无效：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE type_2 = &#39;Flying&#39;;
+#+end_src
+
+原因在索引的排序结构。复合索引 =(type_1, type_2)= 先按 =type_1= 排，再在每个 =type_1= 组内按 =type_2= 排：
+
+#+begin_src sql
+Bug      → Flying   → [Butterfree, Beedrill, ...]
+         → Poison   → [Venonat, Spinarak, ...]
+Electric → NULL     → [Pikachu, Raichu, ...]
+         → Flying   → [Zapdos, ...]
+Fire     → NULL     → [Charmander, Vulpix, ...]
+         → Flying   → [Charizard, Moltres, ...]
+Grass    → Poison   → [Bulbasaur, Oddish, ...]
+Water    → NULL     → [Squirtle, Psyduck, ...]
+         → Flying   → [Wingull, Pelipper, ...]
+         → Ground   → [Wooper, ...]
+#+end_src
+
+&quot;Flying&quot;散落在 Bug、Electric、Fire、Water 下面，没有统一入口。数据库无法跳到某个位置一次取完所有 Flying 记录。
+
+如果经常单独查 =type_2= ，就需要再加一个 =type_2= 的独立索引。
+
+** 函数会破坏索引
+
+不区分大小写的搜索很常见：
+
+#+begin_src sql
+SELECT * FROM pokemon WHERE lower(name) = &#39;pikachu&#39;;
+#+end_src
+
+=lower(name)= 看起来跟查 =name= 差不多，但索引是按 =name= 原始值排序的（Bulbasaur、Charmander...），不是按 =lower(name)= 排序的。数据库找不到现成的排序结构，只好回退全表扫描。
+
+这适用于任何包裹列的函数。只要比较的左边不是原始的索引列，索引就不参与。隐式类型转换也算—— =text= 和 =integer= 比较时会触发静默转换，效果等同于包了一层函数。
+
+解决办法是建函数索引（见下文）。
+
+** 用 EXPLAIN 诊断
+
+Postgres 提供了 =EXPLAIN= ，在任何 =SELECT= 前加上就能看到执行计划：
+
+#+begin_src sql
+EXPLAIN SELECT * FROM pokemon WHERE name = &#39;Pikachu&#39;;
+#+end_src
+
+#+begin_src sql
+Index Scan using pokemon_name_idx on pokemon
+  Index Cond: (name = &#39;Pikachu&#39;::text)
+#+end_src
+
+=Index Scan= 说明走了索引。再看问题查询：
+
+#+begin_src sql
+EXPLAIN SELECT * FROM pokemon WHERE lower(name) = &#39;pikachu&#39;;
+#+end_src
+
+#+begin_src sql
+Seq Scan on pokemon
+  Filter: (lower(name) = &#39;pikachu&#39;::text)
+#+end_src
+
+=Seq Scan= 就是全表扫描。加上 =ANALYZE= 可以拿到实际执行时间：
+
+#+begin_src sql
+EXPLAIN ANALYZE SELECT * FROM pokemon WHERE name = &#39;Pikachu&#39;;
+#+end_src
+
+* 三种你可能不知道的索引
+
+单列索引和复合索引覆盖了大部分场景，但 Postgres 还有几种特殊索引。
+
+** 函数索引（Functional Index）
+
+前面的 =lower(name)= 问题，解法是直接对表达式建索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (lower(name));
+#+end_src
+
+任何确定性、不可变表达式都可以索引：
+
+#+begin_src sql
+CREATE INDEX ON users ((created_at::date));
+CREATE INDEX ON pokemon ((base_attack * 2));
+#+end_src
+
+但要注意：如果频繁查 =lower(name)= ，也许该考虑直接把数据存成小写，而不是靠函数索引绕路。函数索引是手段，不是目的。
+
+** 部分索引（Partial Index）
+
+普通索引覆盖全表所有行。但如果只查其中一小部分，索引其余行就是浪费。
+
+宝可梦大约 1000 种，传说宝可梦只有约 80 种（不到 10%）。如果应用有个&quot;显示所有传说宝可梦&quot;的功能，建 =is_legendary= 和 =name= 的复合索引虽然能用，但索引里 920 条非传说记录纯粹是摆设。
+
+部分索引只包含满足条件的行：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (name) WHERE is_legendary = true;
+#+end_src
+
+索引从 1000 条缩减到 80 条。查 =WHERE is_legendary = true= 走索引，查 =WHERE is_legendary = false= 走全表扫描——正好，因为 false 匹配几乎所有行，索引帮不上忙。
+
+另一个典型场景是软删除：
+
+#+begin_src sql
+CREATE INDEX ON users (email) WHERE deleted_at IS NULL;
+#+end_src
+
+软删除的行几乎不会被查询，不把它们排除出索引只是白占空间。
+
+** 覆盖索引（Covering Index）
+
+数据库用索引找到行后，还要去表中取查询需要的其他列——两次查找。但如果索引里已经包含了查询需要的所有列，就不需要访问表了。这就是覆盖索引，在 =EXPLAIN= 中显示为 =Index Only Scan= 。
+
+前面的部分索引恰好就是一个覆盖索引：
+
+#+begin_src sql
+SELECT name FROM pokemon WHERE is_legendary = true;
+#+end_src
+
+索引在 =name= 上，查询也只要 =name= ，全部命中。
+
+也可以用 =INCLUDE= 显式构建覆盖索引：
+
+#+begin_src sql
+CREATE INDEX ON pokemon (name) INCLUDE (base_attack);
+#+end_src
+
+这样以下查询可以纯索引完成：
+
+#+begin_src sql
+SELECT name, base_attack FROM pokemon WHERE name = &#39;Pikachu&#39;;
+#+end_src
+
+为什么不直接把 =base_attack= 放进索引列？因为索引列是用来排序和搜索的。把 =base_attack= 加进索引列意味着每次写入都要按 =(name, base_attack)= 排序，但你从来不按 =base_attack= 搜索，这排序就是白做的。 =INCLUDE= 的意思是&quot;带上这列，但别排序&quot;。
+
+=INCLUDE= 更实际的用途有两个：
+
+1. 数据类型不支持 B-tree 操作符的列（如 =box= 类型），不能作为索引键列，但可以 =INCLUDE=
+2. 唯一索引中附加列而不改变唯一性语义： =CREATE UNIQUE INDEX ON users (email) INCLUDE (user_id)= 只在 =email= 上强制唯一，同时覆盖需要 =user_id= 的查询
+
+* 小结
+
+- 索引让读变快，但写变慢、占空间、增加规划开销
+- 复合索引按左前缀匹配，跳过首列的查询不生效
+- 函数（包括隐式转换）包裹索引列会导致索引失效
+- 用 =EXPLAIN= 诊断， =Index Scan= 走索引， =Seq Scan= 全表扫描
+- 函数索引、部分索引、覆盖索引是应对特殊场景的利器
+
+原文推荐了 [[https://use-the-index-luke.com/][Use The Index, Luke]] 作为深入学习资料。
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/postgresql-索引：从基础到你可能不知道的高级用法/index.html</guid>
+</item>
+<item>
 <title>用 .pdbrc 自定义 Python 调试器</title>
 <link>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</link>
 <description>今天才知道 Python 调试器 PDB 可以通过 =~/.pdbrc= 文件自定义——在文件里定义 alias，就能在调试时直接调用。
@@ -872,307 +1463,6 @@ Lisp 的 S 表达式看起来&quot;全是括号&quot;，但这恰恰是它的元
 </description>
 <pubDate>2026-04-18</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/18/为什么-lisp-统治元编程/index.html</guid>
-</item>
-<item>
-<title>降低程序内存的五个原则</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/降低程序内存的五个原则/index.html</link>
-<description>Michael Kennedy 在 [[https://mkennedy.codes/posts/cutting-python-web-app-memory-over-31-percent/][Cutting Python Web App Memory Over 31%]] 中把两个 Python Web 应用的内存从 1988MB 砍到 472MB。他的具体做法是五个手段：async worker、Raw+DC 数据库模式、子进程隔离 import、重型库延迟导入、缓存搬到磁盘。
-
-剥掉 Python 的外壳，这五个手段背后是五个通用的内存优化原则。
-
-* 原则一：减少代码副本数
-
-#+BEGIN_QUOTE
-Talk Python Training 从 2 个 worker（1280MB）切到 1 个 async worker，省了 542MB。
-#+END_QUOTE
-
-每个进程都要加载完整的应用代码和第三方依赖。两个 worker 意味着两份副本。如果能让一个进程通过并发（而非并行）处理所有请求，代码只需要加载一次。
-
-这不是 Python 独有的思路：
-- *Nginx* 默认启用多个 worker 进程，但如果机器内存紧张，配成单 worker + 事件驱动也能跑
-- *Java* 从 thread-per-request（每个线程栈占几百 KB 到 1MB）转向 reactive 模型（Netty、WebFlux），逻辑类似——减少并发单元的资源开销
-- *Go* 的 goroutine 天然共享地址空间，初始栈只有 2-8KB，不需要为每个并发任务复制进程
-- *Emacs* 的 daemon 模式：一个 ~emacs --daemon~ 进程加载所有配置和包，多个 ~emacsclient~ 共享同一个实例，不需要每个终端窗口都启动一个完整的 Emacs
-
-本质：并发不等于并行。用并发模型替代多进程并行，消除代码和依赖的重复加载。
-
-* 原则二：用最轻的工具
-
-#+BEGIN_QUOTE
-把 MongoEngine ODM 替换为 raw query + 带 ~__slots__~ 的 dataclass，每个 worker 省 100MB，吞吐量还翻倍。
-#+END_QUOTE
-
-ODM、ORM 这些重型抽象加载了大量你用不到的功能。换成直接写查询 + 轻量数据结构，内存立减。
-
-跨语言的对照：
-- *Java* ：Hibernate 是出了名的内存大户。很多高并发场景下，项目改用 MyBatis（半自动 ORM）或直接 JDBC + POJO，内存占用显著下降
-- *Python* 的 ~__slots__~ 本质是告诉解释器&quot;这个类不需要动态属性字典&quot;，每个实例省掉一个 ~dict~ 的开销。类似思路在 *Go* 里是 struct（没有继承开销），在 *C* 里是固定布局的结构体
-- *Ruby on Rails* 的 Active Record 也是类似的 ORM 开销问题，纯 SQL 查询 + Plain Ruby Objects 是对应的轻量替代
-- *Emacs* 的包选择：用 ~vertico~ + ~consult~ （基于内置的 ~completing-read~ ）替代 ~ivy~ 或 ~helm~ （各自带一套完整的补全框架），功能相当但内存 footprint 小得多
-
-本质：你引入的每个抽象层都有内存成本。如果一个功能只需要查询和映射，就不需要完整的对象关系映射器。
-
-* 原则三：重操作隔离到短命进程
-
-#+BEGIN_QUOTE
-搜索索引服务从 708MB 暴降到 22MB——把索引逻辑移到 subprocess，跑 30 秒就退出，内存全部释放。
-#+END_QUOTE
-
-长时间运行的主进程应该尽量轻。偶尔才执行的重量级任务放到子进程中，干完就退出。操作系统会回收整个进程的内存，不需要你手动管理。
-
-这个模式无处不在：
-- *CI/CD* ：构建任务在独立容器或 VM 中运行，完成后销毁
-- *Kubernetes* 的 Job 资源：跑完自动清理
-- *PostgreSQL* 的并行查询：fork 子进程处理，完成后回收
-- *Elasticsearch* 的 merge 操作：在独立线程中合并 segment，避免影响主查询路径
-- *Claude Code* 的子代理模式：主代理把代码搜索、审查等重操作委托给独立子代理执行。子代理有自己的上下文窗口，可以自由探索代码库而不会撑大主代理的上下文。任务完成后子代理的上下文全部释放，主代理只保留结果摘要
-- *Emacs* 的 ~async.el~ 和 ~emacs --batch~ ：编译包（ ~async-bytecomp~ ）、执行耗时计算都放在子进程中完成，主 Emacs 不受影响
-
-本质：进程是操作系统提供的最干净的内存隔离和回收机制。比手动释放对象、触发 GC 更可靠。
-
-* 原则四：延迟加载——不用就不付钱
-
-#+BEGIN_QUOTE
-~import boto3~ 吃 25MB， ~import pandas~ 吃 44MB， ~import matplotlib~ 吃 17MB。把它们从文件顶部移到函数内部，只有调用时才加载。
-#+END_QUOTE
-
-延迟加载（lazy loading）是最朴素的内存优化：不为还没用到的东西分配资源。
-
-各语言都有自己的延迟加载手段：
-- *Go* 的 ~sync.Once~ ：确保初始化只执行一次，且只在首次访问时触发
-- *Java* 的类加载器：类在首次使用时才加载（虽然现代框架经常打破这个假设）
-- *C++* 的延迟计算（lazy evaluation）：表达式只在结果被需要时才求值
-- *Python 3.15* 的 PEP 810（Explicit lazy imports）将引入原生 lazy import，到时候不用手动把 import 塞进函数
-- *Emacs* 的 ~autoload~ 是最成熟的延迟加载机制之一。通过 ~;;;###autoload~ 注释标记函数，Emacs 启动时只加载一个 autoload 文件（函数名 → 文件路径的映射），直到真正调用该函数时才加载整个包。~use-package~ 的 ~:defer t~ 和 ~:commands~ 就是对 ~autoload~ 的封装。这是 Emacs 启动优化的核心手段
-
-本质：资源的获取时机应该是&quot;第一次需要的时候&quot;，而不是&quot;程序启动的时候&quot;。启动时加载所有依赖是最简单但不经济的做法。
-
-* 原则五：能放磁盘的就不放内存
-
-#+BEGIN_QUOTE
-把 markdown 缓存从内存搬到 diskcache，用少量 I/O 延迟换取内存空间。
-#+END_QUOTE
-
-内存是最贵的存储层。如果数据的访问频率不高、延迟要求不苛刻，磁盘缓存完全够用。
-
-经典的存储分层思想：
-- *SQLite* 被很多项目当作&quot;磁盘上的缓存&quot;使用——比纯文件灵活，比 Redis 轻
-- *mmap* ：让操作系统决定哪些页留在内存、哪些换出到磁盘，不需要自己管理缓存淘汰
-- *Redis* 本身也支持磁盘持久化，而且很多人用 Redis 的 AOF/RDB 做的就是&quot;内存放热数据、磁盘放全量数据&quot;
-- 浏览器的 HTTP 缓存：内存缓存（disk cache 和 memory cache 分层）
-
-本质：不是所有数据都需要一直待在内存里。根据访问频率和延迟容忍度选择存储层，是系统设计的基本功。
-
-* 一句话总结
-
-| 原则 | 一句话 |
-|---+---|
-| 减少代码副本数 | 并发不等于并行，用单进程并发替代多进程并行 |
-| 用最轻的工具 | 引入的每个抽象层都有内存成本 |
-| 重操作隔离到短命进程 | 进程是操作系统提供的最干净的内存回收机制 |
-| 延迟加载 | 不用就不付钱 |
-| 能放磁盘就不放内存 | 根据访问频率和延迟容忍度选存储层 |
-</description>
-<pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/降低程序内存的五个原则/index.html</guid>
-</item>
-<item>
-<title>ANSI 转义码的标准化现状</title>
-<link>https://lujun9972.github.io/blog/2026/04/17/ansi-转义码的标准化现状/index.html</link>
-<description>终端之所以能显示彩色文字、响应鼠标、复制到剪贴板，都是靠 ANSI 转义码实现的。但转义码到底有没有标准？为什么有时候不生效？
-Julia Evans 的这篇博文([[https://jvns.ca/blog/2025/03/07/escape-code-standards/][Standards for ANSI escape codes]]) 梳理了转义码的标准化现状：有哪些标准、标准之间是什么关系、终端应用开发者面临什么选择。
-
-* 什么是转义码
-
-你在终端里按左方向键时，终端发送的其实是 =^[[D= —— 这就是一个转义码。它的第一个字符是&quot;Escape&quot;字符，通常写作 =ESC= 、 =\x1b= 、 =\E= 、 =\033= 或 =^[= 。
-
-转义码是终端模拟器与终端中运行的程序之间的通信方式，分为两类：
-
-1. *输入码* ：终端模拟器发送的，比如左方向键 =ESC[D= ， Ctrl+左方向键 =ESC[1;5D= ，鼠标点击 =ESC[M :3=
-2. *输出码* ：程序输出的，用于改变文字颜色、移动光标、清屏、隐藏光标、复制到剪贴板、设置窗口标题等
-
-可以在终端中直接体验：
-
-#+BEGIN_SRC bash
-echo -e &quot;\033[31m这是红色文字\033[0m&quot;
-echo -e &quot;\033[5;10H把光标移到第5行第10列&quot;
-echo -e &quot;\033]0;新窗口标题\007&quot;
-#+END_SRC
-
-#+RESULTS:
-
-那么这些转义码有标准吗？有，但标准不止一个，而且没有一个能覆盖所有场景。
-
-* ECMA-48
-
-最早的转义码标准是 [[https://ecma-international.org/wp-content/uploads/ECMA-48_5th_edition_june_1991.pdf][ECMA-48]] ，最早发布于 1976 年。它做了两件事：
-
-1. 定义了转义码的通用 *格式* ，比如 CSI 序列（ =ESC[= + 内容）和 OSC 序列（ =ESC]= + 内容）
-2. 定义了具体的转义码，比如&quot;光标左移&quot;是 =ESC[D= ，&quot;文字变红&quot;是 =ESC[31m=
-
-ECMA-48 的格式是可扩展的，允许后续定义更多转义码。但很多今天常用的转义码并不在其中——比如 vim、htop、tmux 中常用的鼠标操作，ECMA-48 就没有定义。
-
-ECMA-48 覆盖不到的部分，被另一个来源填补了。
-
-* xterm 控制序列
-
-有些广泛使用的转义码不在 ECMA-48 中：
-
-- 启用鼠标报告（你在终端的哪里点击了？）
-- bracketed paste（你粘贴了文本还是手动输入的？）
-- OSC 52（终端应用用来复制文本到系统剪贴板）
-
-这些功能大多源自 xterm，记录在 [[https://invisible-island.net/xterm/ctlseqs/ctlseqs.html][XTerm Control Sequences]] 文档中，并被其他终端模拟器广泛实现。这个列表严格来说不是标准，但 xterm 极具影响力，因此成了事实标准。
-
-OSC 52 是个特别实用的例子。OSC 是 =ESC]= 开头的转义码大类（Operating System Command），52 是&quot;剪贴板操作&quot;的编号。它的格式是 =ESC]52;c;&lt;base64编码的文本&gt;ESC\= ，其中 =c= 表示 system clipboard（还有 =p= 表示 primary selection）。
-
-远程服务器上的程序本来无法访问你本地的剪贴板，但通过 OSC 52，程序发出转义序列，你的终端模拟器收到后把内容写入本地剪贴板。Vim、tmux 等工具都支持配置 OSC 52。
-
-#+BEGIN_SRC bash
-printf &quot;\033]52;c;%s\007&quot; &quot;$(echo -n &#39;要复制的文本&#39; | base64)&quot;
-#+END_SRC
-
-#+RESULTS:
-
-* terminfo 数据库
-
-上世纪 80 年代，终端之间对转义码支持的差异非常大。为了应对这个问题，出现了 =terminfo= 数据库，记录各种终端支持的转义码。
-
-=terminfo= 的标准叫 [[https://publications.opengroup.org/c243-1][X/Open Curses]] ，定义了数据库格式和访问数据库的 C 库接口（curses）。
-
-你可以查看系统上所有终端的&quot;清屏&quot;转义码：
-
-#+BEGIN_SRC bash
-for term in $(toe -a | awk &#39;{print $1}&#39;)
-do
-  echo &quot;$term&quot;
-  infocmp -1 -T &quot;$term&quot; 2&gt;/dev/null | grep &#39;clear=&#39; | sed &#39;s/clear=//g;s/,//g&#39;
-done
-#+END_SRC
-
-#+RESULTS:
-
-现代系统上的 =terminfo= 数据库由 =ncurses= 管理。
-
-有了标准（ECMA-48、xterm）和适配层（terminfo），终端应用开发者面前的问题是：到底该用哪个？
-
-* 程序该不该用 terminfo
-
-终端应用处理转义码有两种主要策略：
-
-1. 使用 =terminfo= 数据库，根据 =TERM= 环境变量决定使用哪些转义码（Fish 采用这种方式）
-2. 确定一组&quot;通用&quot;转义码，硬编码到程序中
-
-选择策略 2 的项目不少：kakoune、python-prompt-toolkit、linenoise、libvaxis、chalk 等。
-
-为什么有人不用 =terminfo= 呢？一位 Fish 维护者的 [[https://twoot.site/@bean/113056942625234032][长文吐槽]] 值得一看，核心观点是： =terminfo= 的工作在过去极其重要，但现在已经不是了。
-
-但 =terminfo= 在 2025 年仍有支持者，理由也站得住脚：
-
-- 有人期望通过 =TERM= 环境变量控制程序行为（比如 =TERM=dumb= ），在后 =terminfo= 时代没有标准替代方案
-- 终端之间的差异虽然比 80 年代小了，但远没有消失：图形终端、Linux 帧缓冲控制台、串口控制台、Emacs shell 模式等各有不同
-- 没有标准定义什么是&quot;通用&quot;转义码集合，有些程序使用的转义码其实并不够通用
-
-那如果走策略 2，这个&quot;通用集合&quot;到底是什么？目前看来是以下三者的交集：
-
-- VT100 支持的码（部分已不适用于现代终端）
-- ECMA-48 定义的码（同样有部分过时）
-- xterm 支持的码（并非全部被广泛支持）
-
-实际上可能最终还是&quot;找出用户最常用的终端模拟器，然后在那些终端上测试&quot;——跟 Web 开发者决定用哪些 CSS 特性一样。
-
-Web 有 [[https://caniuse.com/][Can I use]] 和 [[https://web-platform-dx.github.io/web-features/][Baseline]] 这样的兼容性参考，终端没有对应的工具。 =terminfo= 理论上应该扮演这个角色，但新终端功能的加入经常要等 10 年以上，严重限制了它的实用性。
-
-这种困境并非终端独有——Web 也经历过类似的问题。
-
-* terminfo 与 User Agent 检测
-
-=ncurses= 用 =TERM= 环境变量决定转义码的方式，跟 Web 服务器根据浏览器 User Agent 返回不同版本的网页很像。
-
-结果也类似——iTerm2 把自己报告为 =xterm-256color= ，就像 Safari 的 User Agent 是一串以 =Mozilla/5.0= 开头的字符串。两者都是在绕过不够好的检测机制。
-
-Web 最终放弃了 User Agent 检测，转向标准化。但终端领域比 Web 碎片化更严重，资金也更少，能否走同样的路还不好说。
-
-* 为什么这很重要
-
-有人说 Unix 终端&quot;过时了&quot;。如果我们能建立更清晰的标准体系（像 Web 那样），终端模拟器开发者就能更容易地构建新功能，终端应用的作者也能更自信地采用这些功能。
-
-标准化不容易——ECMA-48 诞生近 50 年了，我们还没走到终点。但 HTML/CSS/JS 曾经也非常混乱，现在好多了。也许终端也有希望。
-
-如果你想深入了解，这些文档值得一读：
-
-- [[https://man7.org/linux/man-pages/man4/console_codes.4.html][Linux console_codes 手册页]]：Linux 支持的转义码
-- [[https://vt100.net/docs/vt100-ug/chapter3.html][VT100 用户手册]]：VT100 处理转义码和控制序列的方式
-- [[https://sw.kovidgoyal.net/kitty/keyboard-protocol/][kitty 键盘协议]]：新一代终端的键盘处理方案
-- [[https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda][OSC 8]]：终端中的超链接（及 [[https://github.com/Alhadis/OSC8-Adoption?tab=readme-ov-file][采用情况]] ）
-- [[https://github.com/tmux/tmux/blob/882fb4d295deb3e4b803eb444915763305114e4f/tools/ansicode.txt][tmux 的 ANSI 标准摘要]]
-- [[https://iterm2.com/feature-reporting/][iTerm 的终端特性报告规范]]
-- Sixel 图形
-</description>
-<pubDate>2026-04-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/17/ansi-转义码的标准化现状/index.html</guid>
-</item>
-<item>
-<title>终端程序的潜规则</title>
-<link>https://lujun9972.github.io/blog/2026/04/17/终端程序的潜规则/index.html</link>
-<description>
-终端里发生的一切，归四个角色管：操作系统、shell、终端模拟器、你正在运行的程序。前三个的行为基本可预测，有些还被 POSIX 标准化了。但第四个——你正在运行的程序——就说不准了。
-
-奇怪的是，终端程序的行为虽然没什么正式标准，却出奇地一致。Julia Evans　的这篇文章（[[https://jvns.ca/blog/2024/11/26/terminal-rules/][&quot;Rules&quot; that terminal programs follow]]） 总结了终端程序普遍遵循的几条不成文&quot;规则&quot;，这里按退出机制、输入编辑、输出规范三类进行重新整理。
-
-* 退出机制
-
-终端程序大体分三类：非交互式（如 =cat= 、 =find= ）、TUI（如 =less= 、 =htop= ）、REPL（如 =python3= 、 =bash= ）。每类有自己的退出约定。
-
-非交互程序：Ctrl-C 退出。这其实是因为程序如果不注册 =SIGINT= 信号处理器，默认就会被 Ctrl-C 杀掉。所以这是一条&quot;保持默认行为&quot;的规则。
-
-TUI：按 =q= 退出。 =less= 、 =htop= 这类全屏界面的程序，按 =q= 就会退出。例外是 =tmux= 和文本编辑器——按 =q= 退出在它们身上没有意义。
-
-REPL：空行上按 Ctrl-D 退出。在&quot;cooked mode&quot;下，操作系统在空行上按 Ctrl-D 会发送 EOF。大多数 REPL（sqlite3、python3、fish、bash）虽然不用 cooked mode，但都手动实现了这个行为来模拟默认效果。Julia Evans 原以为这是&quot;终端物理定律&quot;，直到看到各输入库（readline、prompt-toolkit）都需要单独实现才意识到并非如此。Erlang 的 REPL 就不遵守这条。
-
-注意：Ctrl-C 对交互程序的作用不同——它的作用是中断当前操作（比如 =python3= 中正在执行的代码、 =less= 中的搜索），而不是退出程序。
-
-* 输入编辑
-
-几乎所有终端程序都 *隐约* 遵守 readline 快捷键约定，即使它们并不真的用 readline 库。ipython、atuin、fzf、zsh、fish、tmux 的命令行都各自实现了 Ctrl-E（行尾）、Ctrl-A（行首）、Ctrl-U（删除整行）、Ctrl-Y（粘贴）等快捷键。
-
-其中 Ctrl-W（删除上一个词）的遵守率最高——几乎每个非编辑器程序都支持。原因跟 Ctrl-C 一样：cooked mode 下操作系统默认就是这么处理的，程序只是模仿默认行为。
-
-例外有两类：
-- =git= 、 =cat= 、 =nc= 等程序只支持最基本的编辑（退格、Ctrl-W、Ctrl-U），没有完整的行编辑
-- 文本编辑器各有各的编辑体系
-
-* 输出规范
-
-不用超过 16 种颜色。终端程序很少使用 16 种 ANSI 基础色以外的颜色。原因是用 hex 码指定颜色很容易跟用户的背景色冲突——比如 =#EEEEEE= 在白色背景上几乎看不见。而基础 16 色，用户一般已经在终端模拟器里调好了。
-
-文本编辑器是主要例外，比如 Helix 默认用紫色背景——但编辑器不算&quot;核心&quot;程序，用户不喜欢可以换主题。
-
-管道中禁用颜色。大多数程序在输出到管道时会关闭颜色和格式化。比如 =rg blah= 在终端中高亮匹配，但 =rg blah | cat= 不会。 =ls --color=auto= 也一样：终端中用颜色，管道中不用。
-
-如果你想强制保留颜色，可以用 =unbuffer= 欺骗程序让它以为自己在终端中。 =unbuffer= 来自 =expect= 包，原理是用伪终端（pty）包裹程序的输出，让程序以为自己连着真正的终端：
-
-#+BEGIN_SRC bash
-unbuffer rg blah | less -R
-# 或者用程序自带的参数，效果一样
-rg --color=always blah | less -R
-#+END_SRC
-
-#+RESULTS:
-
-=-= 表示 stdin/stdout。给程序传 =-= 代替文件名，它就会从 stdin 读或往 stdout 写。比如在 Linux 上：
-
-#+BEGIN_SRC bash
-xclip -o | black - | xclip -i
-#+END_SRC
-
-#+RESULTS:
-
-这条规则只要适用就会被实现，但并非所有程序都支持。
-
-</description>
-<pubDate>2026-04-17</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/17/终端程序的潜规则/index.html</guid>
 </item>
 </channel>
 </rss>

@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 fsck 检查和修复 Linux 文件系统 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Linux, fsck, 文件系统, 系统管理" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 fsck 检查和修复 Linux 文件系统</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org62bde92">基础知识</a>
+<ul>
+<li><a href="#orgd3b2a48">fsck 是什么</a></li>
+<li><a href="#orgcc59c16">什么时候需要跑 fsck</a></li>
+<li><a href="#orgd6d3a31">确认文件系统类型</a></li>
+</ul>
+</li>
+<li><a href="#org1fafcc5">使用方法</a>
+<ul>
+<li><a href="#org46da8f7">基本检查（交互式）</a></li>
+<li><a href="#org2df2ae6">自动修复</a></li>
+<li><a href="#org1b53b64">干跑（不修改任何东西）</a></li>
+<li><a href="#orgd1b1a1f">强制检查</a></li>
+<li><a href="#org318f14c">检查所有文件系统（跳过根分区）</a></li>
+<li><a href="#org4d2c1de">带进度条的详细输出</a></li>
+<li><a href="#org0605b7e">指定文件系统类型</a></li>
+<li><a href="#orgc0463ea">检查根分区</a></li>
+<li><a href="#org64f152d">LVM 和软件 RAID</a></li>
+<li><a href="#org180cbd1">定期自动检查</a></li>
+<li><a href="#orgf5bdc6d">查看 fsck 日志</a></li>
+</ul>
+</li>
+<li><a href="#orge90c127">注意事项</a>
+<ul>
+<li><a href="#org3a88bd2">绝对不要在挂载的分区上跑 fsck</a></li>
+</ul>
+</li>
+<li><a href="#org2da3942">退出码说明</a></li>
+<li><a href="#org1e01cbe">常用选项速查</a></li>
+</ul>
+</div>
+</div>
+<p>
+来源：<a href="https://www.tecmint.com/fsck-repair-file-system-errors-in-linux/">How to Use fsck to Check and Repair Linux Filesystem Errors</a>
+</p>
+
+<div id="outline-container-org62bde92" class="outline-2">
+<h2 id="org62bde92">基础知识</h2>
+<div class="outline-text-2" id="text-org62bde92">
+</div>
+<div id="outline-container-orgd3b2a48" class="outline-3">
+<h3 id="orgd3b2a48">fsck 是什么</h3>
+<div class="outline-text-3" id="text-orgd3b2a48">
+<p>
+<code>fsck</code> （File System Consistency Check）是 Linux 内置的文件系统检查和修复工具，类似 Windows 的 <code>chkdsk</code> 。它可以开机时自动运行，也可以由管理员手动执行。
+</p>
+
+<p>
+<code>fsck</code> 会根据文件系统类型调用对应的后端检查程序—— <code>ext2/3/4</code> 调用 <code>e2fsck</code> ， <code>xfs</code> 调用 <code>fsck.xfs</code> ， <code>vfat</code> 调用 <code>fsck.vfat</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcc59c16" class="outline-3">
+<h3 id="orgcc59c16">什么时候需要跑 fsck</h3>
+<div class="outline-text-3" id="text-orgcc59c16">
+<ul class="org-ul">
+<li>系统无法启动，掉进 emergency/rescue mode</li>
+<li>读写文件时出现 I/O 错误</li>
+<li>硬盘、U 盘、SD 卡行为异常</li>
+<li>异常关机后（断电、kernel panic、强制重启）</li>
+<li>内核日志中出现文件系统损坏信息</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgd6d3a31" class="outline-3">
+<h3 id="orgd6d3a31">确认文件系统类型</h3>
+<div class="outline-text-3" id="text-orgd6d3a31">
+<p>
+跑 <code>fsck</code> 前先确认分区的文件系统类型：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">lsblk -f
+</pre>
+</div>
+
+<p>
+或者指定分区：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">blkid /dev/sdb1
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1fafcc5" class="outline-2">
+<h2 id="org1fafcc5">使用方法</h2>
+<div class="outline-text-2" id="text-org1fafcc5">
+</div>
+<div id="outline-container-org46da8f7" class="outline-3">
+<h3 id="org46da8f7">基本检查（交互式）</h3>
+<div class="outline-text-3" id="text-org46da8f7">
+<p>
+逐个错误提示确认：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck /dev/sdb1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2df2ae6" class="outline-3">
+<h3 id="org2df2ae6">自动修复</h3>
+<div class="outline-text-3" id="text-org2df2ae6">
+<p>
+对所有修复提示自动回答"是"，适合生产环境自动化：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck -y /dev/sdb1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1b53b64" class="outline-3">
+<h3 id="org1b53b64">干跑（不修改任何东西）</h3>
+<div class="outline-text-3" id="text-org1b53b64">
+<p>
+只看 <code>fsck</code> 会做什么，不改数据：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck -N /dev/sdb1
+</pre>
+</div>
+
+<p>
+生产环境建议先干跑，确认没问题再真正执行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd1b1a1f" class="outline-3">
+<h3 id="orgd1b1a1f">强制检查</h3>
+<div class="outline-text-3" id="text-orgd1b1a1f">
+<p>
+文件系统标记为"干净"时 <code>fsck</code> 默认跳过。用 <code>-f</code> 强制检查：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck -f /dev/sdb1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org318f14c" class="outline-3">
+<h3 id="org318f14c">检查所有文件系统（跳过根分区）</h3>
+<div class="outline-text-3" id="text-org318f14c">
+<p>
+<code>-A</code> 读取 <code>/etc/fstab</code> 中的所有文件系统， <code>-R</code> 跳过根分区：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck -AR -y
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4d2c1de" class="outline-3">
+<h3 id="org4d2c1de">带进度条的详细输出</h3>
+<div class="outline-text-3" id="text-org4d2c1de">
+<div class="org-src-container">
+<pre class="src src-shell">fsck -C -V /dev/sdb1
+</pre>
+</div>
+
+<p>
+大容量磁盘检查时有用。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0605b7e" class="outline-3">
+<h3 id="org0605b7e">指定文件系统类型</h3>
+<div class="outline-text-3" id="text-org0605b7e">
+<div class="org-src-container">
+<pre class="src src-shell">fsck -t ext4 /dev/sdb1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc0463ea" class="outline-3">
+<h3 id="orgc0463ea">检查根分区</h3>
+<div class="outline-text-3" id="text-orgc0463ea">
+<p>
+根分区挂载着没法直接 <code>fsck</code> ，有三种方法。
+</p>
+
+<p>
+方法一，在根目录创建标记文件，下次启动时自动检查：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">touch /forcefsck
+reboot
+</pre>
+</div>
+
+<p>
+完成后标记文件会被自动删除。注意：基于 systemd 的系统（RHEL 7+、Ubuntu 16.04+）可能不支持 <code>forcefsck</code> ，用下面的方法。
+</p>
+
+<p>
+方法二，用 <code>tune2fs</code> 把挂载计数设为 1，下次启动时触发 <code>fsck</code> （ext4）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tune2fs -C 1 /dev/sda1
+</pre>
+</div>
+
+<p>
+方法三，进入救援模式手动操作：
+</p>
+
+<ol class="org-ol">
+<li>重启，启动时按住 Shift 进入 GRUB 菜单</li>
+<li>选择"Advanced options"</li>
+<li>选择对应内核的"Recovery mode"</li>
+<li>在恢复菜单中选择"fsck"</li>
+<li>提示重新挂载根文件系统时选"Yes"</li>
+<li>完成后选择"Resume"继续正常启动</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org64f152d" class="outline-3">
+<h3 id="org64f152d">LVM 和软件 RAID</h3>
+<div class="outline-text-3" id="text-org64f152d">
+<p>
+LVM 逻辑卷需要先停用再检查：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">lvdisplay
+lvchange -an /dev/vg_data/lv_data
+fsck -y /dev/vg_data/lv_data
+lvchange -ay /dev/vg_data/lv_data
+</pre>
+</div>
+
+<p>
+RAID 阵列先确认状态正常再检查。降级阵列应先重建，不要直接 <code>fsck</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/mdstat
+fsck -y /dev/md0
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org180cbd1" class="outline-3">
+<h3 id="org180cbd1">定期自动检查</h3>
+<div class="outline-text-3" id="text-org180cbd1">
+<p>
+用 <code>tune2fs</code> 设置定期检查（ext4）：
+</p>
+
+<p>
+基于时间（每 6 个月）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tune2fs -i 6m /dev/sda1
+</pre>
+</div>
+
+<p>
+基于挂载次数（每 30 次）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tune2fs -c 30 /dev/sda1
+</pre>
+</div>
+
+<p>
+查看当前设置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">tune2fs -l /dev/sda1 | grep -E <span class="org-string">"Mount count|Maximum mount|Check interval|Last checked"</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf5bdc6d" class="outline-3">
+<h3 id="orgf5bdc6d">查看 fsck 日志</h3>
+<div class="outline-text-3" id="text-orgf5bdc6d">
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">RHEL/CentOS/Rocky
+</span>grep -i fsck /var/log/messages
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">Ubuntu/Debian
+</span>grep -i fsck /var/log/syslog
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">systemd journal&#65288;&#24403;&#21069;&#21551;&#21160;&#65289;
+</span>journalctl -b | grep -i fsck
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge90c127" class="outline-2">
+<h2 id="orge90c127">注意事项</h2>
+<div class="outline-text-2" id="text-orge90c127">
+</div>
+<div id="outline-container-org3a88bd2" class="outline-3">
+<h3 id="org3a88bd2">绝对不要在挂载的分区上跑 fsck</h3>
+<div class="outline-text-3" id="text-org3a88bd2">
+<p>
+在已挂载的分区上运行 <code>fsck</code> 会导致严重的数据损坏。先检查分区是否已挂载：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mount | grep /dev/sdb
+</pre>
+</div>
+
+<p>
+如果已挂载，先卸载：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">umount /dev/sdb1
+</pre>
+</div>
+
+<p>
+如果卸载失败，提示"target is busy"，说明有进程在使用这个分区。用 <code>lsof</code> 找出是哪些进程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">lsof /dev/sdb1
+</pre>
+</div>
+
+<p>
+找到占用进程后，停掉或关闭它们，再重新 <code>umount</code> 。如果进程不好停（比如某个后台服务），可以用懒卸载：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">umount -l /dev/sdb1
+</pre>
+</div>
+
+<p>
+懒卸载会立刻把挂载点从文件系统命名空间中移除（新进程看不到这个挂载点了），但实际卸载要等所有占用进程释放后才完成。这样做的好处是你不需要一个个去停进程，但风险是：在所有进程释放之前， <code>fsck</code> 仍然无法安全执行。所以用懒卸载后，要等一会儿确认设备真的卸载了（ <code>mount | grep /dev/sdb</code> 不再返回结果），再跑 <code>fsck</code> 。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2da3942" class="outline-2">
+<h2 id="org2da3942">退出码说明</h2>
+<div class="outline-text-2" id="text-org2da3942">
+<p>
+<code>fsck</code> 执行完返回退出码，用 <code>echo $?</code> 查看：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">退出码</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">未发现错误</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">错误已修复</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">建议重启系统</td>
+</tr>
+
+<tr>
+<td class="org-right">4</td>
+<td class="org-left">错误未修复</td>
+</tr>
+
+<tr>
+<td class="org-right">8</td>
+<td class="org-left">操作错误</td>
+</tr>
+
+<tr>
+<td class="org-right">16</td>
+<td class="org-left">用法或语法错误</td>
+</tr>
+
+<tr>
+<td class="org-right">32</td>
+<td class="org-left">用户取消检查</td>
+</tr>
+
+<tr>
+<td class="org-right">128</td>
+<td class="org-left">共享库错误</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+退出码可以叠加。比如退出码 3 即错误已修复（1）+ 需要重启（2）。
+</p>
+
+<p>
+在脚本中应该捕获退出码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fsck -y /dev/sdb1
+<span class="org-variable-name">EXIT_CODE</span>=$<span class="org-variable-name">?</span>
+<span class="org-keyword">if</span> [ $<span class="org-variable-name">EXIT_CODE</span> -ge 4 ]; <span class="org-keyword">then</span>
+    <span class="org-builtin">echo</span> <span class="org-string">"ALERT: &#25991;&#20214;&#31995;&#32479;&#38169;&#35823;&#26080;&#27861;&#20462;&#22797; /dev/sdb1"</span> | mail -s <span class="org-string">"fsck Alert"</span> admin@example.com
+<span class="org-keyword">fi</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1e01cbe" class="outline-2">
+<h2 id="org1e01cbe">常用选项速查</h2>
+<div class="outline-text-2" id="text-org1e01cbe">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">命令</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>fsck /dev/sdb1</code></td>
+<td class="org-left">交互式检查</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -y /dev/sdb1</code></td>
+<td class="org-left">自动修复</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -N /dev/sdb1</code></td>
+<td class="org-left">干跑（不修改）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -f /dev/sdb1</code></td>
+<td class="org-left">强制检查</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -AR -y</code></td>
+<td class="org-left">检查所有文件系统（跳过根分区）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -C -V /dev/sdb1</code></td>
+<td class="org-left">带进度条的详细输出</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>fsck -t ext4 -A -y</code></td>
+<td class="org-left">只检查 ext4 文件系统</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-19</span>
+    <span class="post-info">2026-04-19</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/fsck">fsck</a> : <a href="../../../../../tags/文件系统">文件系统</a> : <a href="../../../../../tags/系统管理">系统管理</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ij2jkqmulqeufa1vphb0chwb5a &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
