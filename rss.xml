@@ -4,10 +4,378 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 18 Apr 2026 15:30:46 UTC</pubDate>
-    <lastBuildDate>Sat, 18 Apr 2026 15:30:46 UTC</lastBuildDate>
+    <pubDate>Sun, 19 Apr 2026 03:52:27 UTC</pubDate>
+    <lastBuildDate>Sun, 19 Apr 2026 03:52:27 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>排查Linux进程&quot;卡死&quot;实战：从strace到gdb全流程</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/排查linux进程&quot;卡死&quot;实战：从strace到gdb全流程/index.html</link>
+<description>* 故障现象
+
+某天，我在 Orange Pi 上跑了一个批量处理 URL 的脚本，用 =claude= CLI 把网上的文章自动转成知识卡片。脚本跑了一晚上，第二天发现它好像&quot;卡住了&quot;——终端没有任何输出，进度也不再推进。
+
+怎么确认它真的卡住了、又卡在哪里呢？下面是完整的排查过程。
+
+* 排查过程
+
+** 用 strace 查看进程在干什么
+
+=strace= 是 Linux 下排查进程问题的神器，它能追踪一个进程正在调用的所有系统调用（system call）。系统调用是程序向内核请求服务的接口，比如读文件、写网络数据、等待定时器等。
+
+先用 =ps= 找到卡住的进程 PID，然后 attach 上去：
+
+#+begin_src shell
+  sudo strace -f -p 169047 -o /tmp/169047.log
+#+end_src
+
+- =-f= ：追踪子进程和子线程
+- =-p 169047= ：attach 到 PID 为 169047 的进程
+- =-o /tmp/169047.log= ：将输出写入日志文件
+
+等了几秒钟后按 =Ctrl+C= 停止，然后查看日志。
+
+** 分析 strace 输出
+
+日志有 7049 行，初看很吓人，但关键是找到规律。先看前面几行：
+
+#+begin_example
+169080 read(16,  &lt;unfinished ...&gt;
+169059 epoll_pwait2(13,  &lt;unfinished ...&gt;
+169047 epoll_pwait2(4,  &lt;unfinished ...&gt;
+169048 futex(...) = -1 ETIMEDOUT (Connection timed out)
+...
+#+end_example
+
+每一行的格式是： =线程ID 系统调用(参数) = 返回值=
+
+这里有多个不同的数字（169047、169048、169049……），它们是什么？同一个进程可以有多个 *线程* ，每个线程有自己的 ID（TID），但它们共享同一个进程的内存和文件描述符。
+
+*** 初步归类
+
+过滤掉重复的 =sched_yield= （让出 CPU）和 =futex= （线程同步）后，我发现了这些有意义的操作：
+
+| 线程                | 系统调用                           | 含义                         |
+|---------------------+------------------------------------+------------------------------|
+| *169047* （主线程） | =epoll_pwait2(4, [], ...)= 反复超时返回空 | 事件循环在等事件，但什么都没来 |
+| *169080*            | =read(16, ...)= 从第1行卡到最后一行       | 一直阻塞在读操作上           |
+| *169049-169053*     | 大量 =sched_yield=                  | 工作线程在空转               |
+| *169059*            | =epoll_pwait2(13, ...)= 周期性返回事件   | 有事件到来，但……             |
+| *169057-169061*     | 周期性 =statx= 检查 .git 文件        | 正常的文件监控轮询           |
+
+主线程 169047 在做事件循环（event loop）：等事件 → 超时 → 检查一些状态 → 回去继续等。epoll 每次返回的都是空数组 =[]= ，说明主事件循环上 *没有事件就绪* 。
+
+线程 169080 从日志开始到结束一直卡在 =read(16, ...)= 上，从未返回。看到 =read()= 阻塞，我的第一反应是： *这个进程大概在等网络响应* 。毕竟它是一个调用 API 的程序， =read()= 卡住最常见的原因就是网络请求发了出去，但服务端的响应迟迟没到。但这个猜测对不对呢？
+
+#+BEGIN_QUOTE
+*小知识：什么是文件描述符（fd）？*
+
+在 Linux 中，所有 I/O 操作都通过文件描述符进行。打开一个文件、建立一个网络连接、创建一个管道，都会得到一个 fd。它就是一个整数编号（0=标准输入，1=标准输出，2=标准错误，3 以上由程序自己分配）。
+
+fd 不仅对应普通文件，还可以对应网络 socket、管道、定时器、inotify 实例等。知道了 fd 的编号，不等于知道它的类型——我们需要到 =/proc= 文件系统中去查看。
+#+END_QUOTE
+
+** 确认 fd 16 的类型：不是网络 socket
+
+#+begin_src shell
+  ls -la /proc/169047/fd/16
+#+end_src
+
+输出：
+
+#+begin_example
+lr-x------ 1 orangepi orangepi 64 /proc/169047/fd/16 -&gt; anon_inode:inotify
+#+end_example
+
+fd 16 是一个 *inotify* 实例！inotify 是 Linux 的文件系统事件监控机制，用来监听文件变化（比如文件被修改、创建、删除）。 =read()= 在 inotify 上阻塞是 *设计上就是这样的* ——它只在有文件变化时才返回数据，没有变化时阻塞等待是天经地义的事。
+
+但是，一个 inotify 线程阻塞，并不能解释整个进程&quot;卡住&quot;的现象。这个线程只是一个后台的文件监控器，它的职责就是安静地等文件变化。进程之所以&quot;卡住&quot;，是因为它无法完成自己的核心任务——处理 URL。所以 fd 16 不是故障原因，我需要继续找。
+
+** 转向线程 169059：epoll fd 13 只收到定时器事件
+
+strace 日志中，线程 169059 也在做一个 =epoll_pwait2= 。单独提取它的记录：
+
+#+begin_src shell
+  grep &#39;169059&#39; /tmp/169047.log
+#+end_src
+
+输出：
+
+#+begin_example
+169059 epoll_pwait2(13,  &lt;unfinished ...&gt;
+169059 &lt;... epoll_pwait2 resumed&gt;[{events=EPOLLIN, data=...}], ...) = 1
+169059 read(14, &quot;\1\0\0\0\0\0\0\0&quot;, 8)  = 8
+169059 epoll_pwait2(13,  &lt;unfinished ...&gt;
+169059 &lt;... epoll_pwait2 resumed&gt;[{events=EPOLLIN, data=...}], ...) = 1
+169059 read(14, &quot;\1\0\0\0\0\0\0\0&quot;, 8)  = 8
+169059 epoll_pwait2(13,  &lt;unfinished ...&gt;
+...（重复多次）
+#+end_example
+
+线程 169059 在反复做一件事： =epoll_pwait2(13, ...)= → 返回 1 个事件 → =read(14, ...)= → 回到 =epoll_wait= 。
+
+注意一个规律：每次 epoll 返回后，线程读的都是 *fd 14* （后面可以看到这是个定时器）。也就是说，线程在重复等待 epoll fd 13 上的事件。那 epoll fd 13 到底监控了哪些 fd？我们需要查两样东西：进程的完整 fd 列表（搞清楚每个 fd 是什么），以及 epoll fd 13 的监控清单（搞清楚它在等谁的数据）。
+
+** 查看 fd 全貌和 epoll 监控清单
+
+先看进程一共有哪些文件描述符：
+
+#+begin_src shell
+  ls -la /proc/169047/fd/
+#+end_src
+
+输出中能看到的 fd 类型包括：
+
+| fd          | 类型                   | 说明                     |
+|-------------+------------------------+--------------------------|
+| 0           | /dev/pts/1             | 标准输入（终端）         |
+| 1, 2, 11, 12 | pipe                 | 管道（stdout/stderr 重定向） |
+| 3, 9        | /dev/urandom           | 随机数生成器             |
+| 4           | anon_inode:[eventpoll] | 主事件循环的 epoll 实例  |
+| 5, 7, 8     | anon_inode:[timerfd]   | 定时器                   |
+| 6           | anon_inode:[eventfd]   | 事件通知                 |
+| 10          | /proc/169047/statm     | 进程内存统计             |
+| 13, 32      | anon_inode:[eventpoll] | 另外两个 epoll 实例      |
+| 16          | anon_inode:inotify     | 文件系统监控             |
+| *28*        | *socket:[616763]*      | *唯一的网络 socket！*    |
+
+进程里有三个 epoll 实例（fd 4、fd 13、fd 32）。查看 epoll fd 13 的监控清单：
+
+#+begin_src shell
+  cat /proc/169047/fdinfo/13
+#+end_src
+
+输出：
+
+#+begin_example
+tfd:       28 events:       19 data:2611c3c00a0    ← 网络 socket
+tfd:       15 events: 80000019 data:2611c0a0100    ← eventfd
+tfd:       14 events:       19 data:2611c0a00c0    ← timerfd
+#+end_example
+
+=/proc/PID/fdinfo/EPOLL_FD= 中的 =tfd= 字段就是被监控的目标 fd 编号。epoll fd 13 同时监控了三个 fd：fd 28（网络 socket）、fd 15（eventfd）、fd 14（定时器）。
+
+strace 中只看到 fd 14（定时器）触发，fd 28 和 fd 15 都没有。但 fd 15 不触发并不奇怪——它是一个 *eventfd* ，这是一种线程间内部通知机制，只有当其他线程主动往里写数据时才会触发。如果内部没有需要通知的事情，它安静待着是正常的。
+
+而 fd 28 就不同了。它是 *网络 socket* ，是进程与外部世界通信的唯一通道。这个进程是 =claude= CLI，它向 API 服务器发出了请求，正在等响应。socket 长时间不触发，意味着服务端的响应数据迟迟没到——这才是进程&quot;卡住&quot;的根本原因。
+
+** 检查网络连接状态
+
+找到了网络 socket fd 28，它的 inode 号是 616763。接下来要搞清楚这个 socket 连接的是谁、状态如何。
+
+*** 从 /proc/net/tcp 找到连接详情
+
+=/proc/net/tcp= 文件列出了系统所有 TCP 连接。我们需要从中找到 inode 为 616763 的那一条：
+
+#+begin_src shell
+  cat /proc/169047/net/tcp
+#+end_src
+
+输出很长，但关键的一行是：
+
+#+begin_example
+sl  local_address    rem_address   st tx_queue:rx_queue ... inode  ...
+13: 191FA8C0:CF72   33551777:01BB 01 00000000:00000000  ... 616763 ...
+#+end_example
+
+inode 616763 匹配上了！但 =local_address= 和 =rem_address= 都是十六进制，怎么看懂？
+
+*** 解码 /proc/net/tcp 的地址格式
+
+=/proc/net/tcp= 中的地址格式是 =IP地址:端口= ，其中 IP 地址是 *十六进制、小端序* 编码的。以远端地址 =33551777:01BB= 为例：
+
+#+begin_example
+远端 IP:   33551777 → 每 2 位拆成一个字节: 33 55 17 77 → 反转字节序: 77 17 55 33 → 119.23.85.51
+远端端口:  01BB → 十六进制转十进制 → 443 (即 HTTPS)
+#+end_example
+
+同理，解码本地地址 =191FA8C0:CF72= ：
+
+#+begin_example
+本地 IP:   191FA8C0 → 19 1F A8 C0 → 反转: C0 A8 1F 19 → 192.168.31.25
+本地端口:  CF72 → 53106
+#+end_example
+
+所以这个连接是：本机 =192.168.31.25:53106= → 远端 =119.23.85.51:443=
+
+#+BEGIN_QUOTE
+*小知识：为什么要反转字节序？*
+
+=/proc/net/tcp= 中的 IP 地址使用 *网络字节序* （大端序）存储，但在 x86/ARM 等 *小端序* 机器上，内核为了存储效率，按小端序输出十六进制。所以 =33551777= 实际上是 =0x77175533= 的小端序表示，对应 IP =119.23.85.51= 。
+
+简单记忆： *把十六进制字符串每两位切一刀，然后倒着拼回去，再转成十进制 IP* 。
+#+END_QUOTE
+
+*** 用 ss 查看连接的详细状态
+
+拿到了远端 IP 后，用 =ss= 命令查看这个连接的详细信息：
+
+#+begin_src shell
+  ss -ti dst 119.23.85.51
+#+end_src
+
+- =-t= ：只显示 TCP 连接
+- =-i= ：显示详细信息（RTT、超时、收发字节数等）
+- =dst 119.23.85.51= ：只看连接到这个 IP 的
+
+输出中最关键的字段：
+
+#+begin_example
+ESTAB  0  0  192.168.31.25:53106  119.23.85.51:https
+  bytes_sent:2114416  bytes_acked:2114417
+  bytes_received:586087
+  lastsnd:10621788  lastrcv:10621508
+#+end_example
+
+解读：
+
+| 指标               | 值                          | 含义                           |
+|--------------------+-----------------------------+--------------------------------|
+| 状态               | ESTABLISHED                 | TCP 连接看起来还活着           |
+| bytes_sent / bytes_acked | ~2MB / ~2MB         | 请求已完整发送并被服务端确认   |
+| bytes_received     | ~572KB                      | 收到了部分响应                 |
+| *lastsnd*          | *10,621,788 ms ≈ 2.95 小时* | *最后一次发送数据是近 3 小时前* |
+| *lastrcv*          | *10,621,508 ms ≈ 2.95 小时* | *最后一次接收数据也是近 3 小时前* |
+
+*** 真相大白：TCP 半死连接
+
+连接的状态是 ESTABLISHED，但近 3 小时没有任何数据流动。这说明：
+
+1. 进程发送了约 2MB 的 API 请求（完整到达服务端）
+2. 服务端回了约 572KB 数据后，传输中断了
+3. 中间的网络设备（NAT/防火墙）可能丢弃了这个长时间空闲连接的状态
+4. 由于没收到 TCP RST 或 FIN，进程端以为连接还活着，一直在等
+
+这就是经典的 *TCP 半死连接* （half-open connection）问题。TCP 本身不会因为长时间无数据就主动关闭连接（除非开启了 TCP keepalive），如果应用层也没有设置读取超时，进程就会 *无限期等待* 。
+
+* 恢复过程
+
+** 问题 1：能不能安全 kill？
+
+在决定 kill 之前，需要了解进程之间的关系：
+
+#+begin_src shell
+  ps -ef --forest | grep -A5 url-to-cards
+#+end_src
+
+#+begin_example
+bash url-to-cards.sh (138905)        ← 主脚本
+  └── bash (169046)                  ← command substitution 子 shell
+      └── claude (169047)            ← 卡住的 claude 进程
+#+end_example
+
+脚本开头设置了 =set -euo pipefail= ， =set -e= 会让脚本在任何命令返回非零时立即退出。但脚本中有这样的写法：
+
+#+begin_src shell
+  output=$(claude ...) || true
+  #                    ^^^^^^^^
+#+end_src
+
+=|| true= 的作用是：即使 claude 命令失败，表达式整体也会返回成功（ =true= 的返回值是 0）。这样 =set -e= 就不会触发，脚本不会退出。
+
+所以，kill 掉卡住的 claude 进程（169047）后：
+
+1. claude 收到信号退出
+2. 子 shell 也退出（非零）
+3. =|| true= 兜住错误
+4. 脚本继续处理下一个 URL
+
+** 问题 2：原始 URL 列表丢失了
+
+脚本读取的 URL 文件 =/tmp/feed2mail.urls.txt= 已经被另一个程序覆盖了，原始内容丢失了。但 bash 进程（138905）启动时已经把 URL 列表读进了内存中的 =urls= 数组。
+
+** 用 gdb 从进程内存恢复数据
+
+=gdb= （GNU Debugger）虽然主要用来调试程序，但也能 attach 到运行中的进程，读取它的内存。
+
+#+begin_src shell
+  # 先找到堆内存的地址范围
+  cat /proc/138905/maps | grep heap
+  # 输出: aaaaec588000-aaaaec60c000 rw-p ... [heap]
+
+  # 用 gdb 导出堆内存
+  sudo gdb -batch -p 138905 \
+    -ex &#39;dump memory /tmp/bash_heap.bin 0xaaaaec588000 0xaaaaec60c000&#39; \
+    -ex &#39;detach&#39;
+
+  # 从导出的内存中搜索 URL
+  strings /tmp/bash_heap.bin | grep -oE &#39;https?://[^[:space:]&gt;&quot;]+&#39; | sort -u
+#+end_src
+
+- =dump memory= ：将指定地址范围的内存写入文件
+- =strings= ：从二进制数据中提取可打印字符串
+- =grep -oE &#39;https?://...&#39;= ：用正则匹配 URL
+- =sort -u= ：去重排序
+
+成功恢复了 *189 个 URL* ！
+
+#+BEGIN_QUOTE
+*小知识：为什么要从堆（heap）恢复？*
+
+进程的内存分为多个区域：
+- *代码段（text）* ：存放程序指令
+- *数据段（data）* ：存放全局变量
+- *堆（heap）* ：动态分配的内存（bash 变量存在这里）
+- *栈（stack）* ：函数调用栈
+
+bash 的变量（包括数组）存储在堆内存中，所以我们从堆区域提取数据。
+#+END_QUOTE
+
+* 总结
+
+** 排查流程回顾
+
+#+begin_example
+进程卡住了
+  │
+  ├─ 1. strace -f 看进程在做什么系统调用
+  │     → 发现多个线程：主线程 epoll 空转，线程 169080 read 阻塞，线程 169059 epoll 周期触发
+  │
+  ├─ 2. ls -la /proc/PID/fd/16 看 fd 16 指向什么
+  │     → 是 inotify（文件监控），阻塞是正常行为，排除
+  │
+  ├─ 3. 回到 strace，细看线程 169059
+  │     → epoll_pwait2(13) 每次返回后都读 fd 14（定时器），从不读 fd 28（网络 socket）
+  │
+  ├─ 4. cat /proc/PID/fdinfo/13 确认 epoll 监控清单
+  │     → epoll fd 13 监控了 fd 28（网络 socket），但 socket 从未触发事件
+  │
+  ├─ 5. ss -ti 查看网络连接状态
+  │     → lastsnd/lastrcv 约 3 小时前 → TCP 半死连接
+  │
+  ├─ 6. 分析代码确认 kill 安全（|| true 兜底）
+  │
+  └─ 7. gdb dump memory 恢复丢失的数据
+        → 从堆内存中提取出 189 个 URL
+#+end_example
+
+** 工具速查
+
+| 工具                       | 用途                         | 示例                             |
+|----------------------------+------------------------------+----------------------------------|
+| =strace -f -p PID=         | 追踪进程的系统调用           | 看进程卡在哪个 syscall           |
+| =ls -la /proc/PID/fd/=     | 查看进程打开的所有文件描述符 | 确认 fd 是 socket、pipe 还是 inotify |
+| =cat /proc/PID/fdinfo/N=   | 查看 fd 的详细信息           | 看 epoll 监控了哪些 fd           |
+| =cat /proc/PID/maps=       | 查看进程内存布局             | 找到堆地址范围                   |
+| =ss -ti=                   | 查看 TCP 连接详情            | 看 RTT、超时、最后收发时间       |
+| =ps -ef --forest=          | 查看进程树                   | 理解父子进程关系                 |
+| =gdb -batch -p PID=        | attach 到运行中的进程        | 导出内存、查看变量               |
+
+* 反思与改进
+
+这次事件暴露了几个可以改进的地方：
+
+1. *应用层超时* ：claude CLI 应该给 API 请求设置合理的读取超时（如 5-10 分钟），避免死连接无限挂起
+2. *TCP keepalive* ：开启 TCP keepalive 可以让内核自动检测死连接
+3. *脚本健壮性* ：可以在脚本中为每个 claude 调用加上 =timeout= 命令：
+   #+begin_src shell
+     timeout 600 claude -p ...  # 最多等 10 分钟
+   #+end_src
+4. *URL 文件保护* ：脚本应该在读入 URL 后立即备份，或者用管道传递而非依赖临时文件
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/排查linux进程&quot;卡死&quot;实战：从strace到gdb全流程/index.html</guid>
+</item>
 <item>
 <title>TIL: repeat-mode 省去重复按键前缀</title>
 <link>https://lujun9972.github.io/blog/2026/04/18/til-repeat-mode-省去重复按键前缀/index.html</link>
@@ -1076,98 +1444,6 @@ Peter 说的&quot;下一个 prompt 取决于我当前看到了什么&quot;，翻
 </description>
 <pubDate>2026-04-16</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/16/ai越强越辣鸡？控制论说这是必然的/index.html</guid>
-</item>
-<item>
-<title>AI 越强越需要你盯着——反馈循环实操指南</title>
-<link>https://lujun9972.github.io/blog/2026/04/16/ai-越强越需要你盯着——反馈循环实操指南/index.html</link>
-<description>原文：[[https://www.jdon.com/91433-ai-human-taste-feedback-loop.html][OpenClaw之父：AI越强越辣鸡？人类审美与反馈循环才是核心控制系统]]
-
-* 一个反直觉的事实
-
-Peter Steinberger（OpenClaw 的创造者）说了一句扎心的话：你可以让 AI 一整晚疯狂写代码，CPU 跑得滚烫，第二天早上醒来一看，得到的是一坨终极版的流水垃圾。
-
-原因很简单：AI 到目前为止还没有&quot;审美&quot;这个东西。
-
-很多人以为 AI 输出差是因为它还不够聪明。但真相恰恰相反——AI 已经够聪明了，聪明到它能在错误的道路上跑得飞快，然后把一堆结构完整但灵魂空洞的东西堆到你面前。这种&quot;高质量垃圾&quot;比低质量垃圾更可怕，因为它看起来好像是对的，让你一开始很难发现问题。
-
-AI 本质上是一个超级听话的执行器。它没有内置的审美闭环，没有长期的价值判断系统。它唯一能做的，就是拼命放大你输入的方向。输入模糊，它放大模糊；输入混乱，它放大混乱。
-
-* 为什么 AI 会制造&quot;高级垃圾&quot;
-
-Peter 用了一个很形象的词来形容 AI： *spiky smart* ——浑身是刺的聪明。
-
-AI 在某些点上极度聪明，可以写出一个优雅到让人想哭的函数。但与此同时，它可能在整体架构上犯一个连初级程序员都不会犯的基础错误。这种&quot;局部极强，整体不稳&quot;的结构会制造一个诡异的结果：每个碎片都让你觉得不错，但拼在一起就像精神分裂——哪里都不对劲。
-
-背后的原因是 AI 缺乏全局目标约束。它不会主动停下来问自己：我现在做的事情，是不是在逼近一个更好的最终结果？它只是在机械地响应你当前输入的每一个字，尽可能把当前这一步做得漂亮。
-
-一旦你作为人类没有给出清晰的方向引导，AI 就会进入&quot;局部最优循环&quot;——每一步都做到了当前条件下的最好，但这些局部最好的步骤叠加在一起，整体方向越来越偏，最后彻底跑题。第一轮偏差一点你不纠正，第二轮 AI 就在偏差的基础上继续优化。三四轮之后，你得到一个结构极其精致、逻辑极其严密、但主题完全错误的庞然大物。
-
-* 反馈循环的五步法
-
-Peter 揭示了一个关键原则： *下一个 prompt 取决于你当前看到了什么、感受到了什么、思考了什么* 。
-
-这句话定义了真正有效的人机协作方式。把它拆解成五个连续的动作：
-
-** 第一步：生成
-
-写一个足够启动的 prompt，让 AI 先动起来。不要试图写一个完美的 prompt——这世界上不存在完美的 prompt。你只需要一个能跑起来的、大概差不多的版本。它的作用不是直接拿去用，而是给你一个初始结果来观察。
-
-** 第二步：观察
-
-拿到初始结果之后，认真看。不是扫一眼，是认认真真地看。找问题，找漏洞，找不对劲的地方。这一步是整个系统的心脏，你不能跳过它，不能敷衍它。
-
-** 第三步：判断
-
-决定这个结果里哪些部分是对的，哪些是错的，哪些需要保留，哪些需要扔掉。这就是 Peter 说的 *taste* ——不是&quot;你喜欢红色还是蓝色&quot;这种个人偏好，而是面对一堆代码、一篇文章、一个设计方案时，你能不能立刻判断出哪个结构更合理、哪个方向更正确。
-
-** 第四步：调整
-
-基于你的判断，修改你的 prompt。发现了什么问题，就针对那个问题去改。不要一次改十个问题，一次只改一个最关键的。然后让 AI 再生成下一轮结果。
-
-** 第五步：再生成
-
-让 AI 根据新的 prompt 输出下一个版本。然后回到第二步，重新开始观察。
-
-这五个动作连在一起形成一个循环。每一次循环，你都在让结果变得更好一点。AI 扮演的角色是&quot;超级快速试错器&quot;，你扮演的角色是&quot;方向判断器&quot;。
-
-很多人只用了一次&quot;生成&quot;就结束了。写了一版 prompt，AI 给了一版结果，看了一眼觉得还行就收工。他们没有进入循环，只走了第一步就以为到了终点。
-
-* 两个致命陷阱
-
-** 陷阱一：Prompt 迷信
-
-整个 AI 圈蔓延着一种迷信：只要把需求写得足够详细、足够全面，AI 就能一次性给完美结果。
-
-这个想法从根本上误解了创造的本质。创造不是一个从完整输入到完美输出的线性过程，而是一个从模糊到清晰的演化过程。你不可能跳过演化本身，直接拿到最终结果。
-
-当你试图一次性描述所有需求时，你在做一个危险的假设：你假设自己已经百分之百理解了目标。但绝大多数复杂项目在刚开始的时候，你自己都是一头雾水。你写下的每一条&quot;要求&quot;，其实都是拍脑袋想出来的未经检验的猜测。AI 不会告诉你猜测是错的，它只会把这些猜测当成圣旨，以最高效率执行一个错误的指令。
-
-真正的解法不是写更长的 prompt，而是换一种工作方式——把 AI 当成可以反复对话、反复调整的协作伙伴。
-
-** 陷阱二：代理陷阱（Agentic Trap）
-
-Peter 提出了 *agentic trap* 的概念：你在过程还没有稳定的时候，就把控制权彻底交给了 AI。
-
-一开始你还参与一下，写写 prompt，看看结果，然后觉得差不多了就让 AI 自己跑完剩下的所有工作。这看起来是在节省时间，本质上是在主动放弃方向控制权。
-
-问题在复杂项目里尤其明显。前期只要稍微偏一点点——偏了一度角——后期跑出去一公里之后，你就偏出去几十米了。AI 不会停下来问&quot;这样对吗&quot;，它会继续沿着错误的路狂奔，跑得比你还快。等你终于发现问题的时候，AI 已经生成了上千个文件、几万行代码、几十个相互依赖的模块。想回头修正最初的小偏差，需要推翻一大半已经完成的工作。
-
-关键问题从来不是&quot;用不用 agent&quot;，而是&quot;什么时候放手&quot;。在系统的目标和路径还没有完全清晰之前，你一步都不能离开驾驶座。
-
-* 你的核心角色
-
-整个讨论最终落在一个词上： *taste* 。
-
-这不是&quot;审美&quot;两个字能概括的。它是一种综合判断力——在复杂情境下分辨好坏对错的能力。面对一堆代码，你能不能立刻判断出哪个结构更合理；面对一篇文章，你能不能感知到哪个表达更清晰；面对一个方案，你能不能识别出哪个方向更正确。
-
-AI 目前完全没有这种能力。它可以学习海量数据，模仿所有已知模式，但它不知道什么是&quot;好&quot;，只知道什么是&quot;常见&quot;。常见不等于好，多数人认同不等于正确。
-
-所以 AI 永远需要一个外部的评估系统来给它提供判断标准。这个外部系统就是你。你必须成为那个说&quot;这个不行，那个可以&quot;的人。一旦你失去了主动判断的能力和习惯，AI 再强也没有任何意义——因为你已经无法区分好坏了。
-
-AI 放大能力，人类决定方向。两者结合成一个不断运转的循环系统：不断生成，不断判断，不断调整。这个过程本身就是你作为创造者的核心工作。
-</description>
-<pubDate>2026-04-16</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/16/ai-越强越需要你盯着——反馈循环实操指南/index.html</guid>
 </item>
 </channel>
 </rss>
