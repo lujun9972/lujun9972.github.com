@@ -4,10 +4,232 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 19 Apr 2026 03:52:27 UTC</pubDate>
-    <lastBuildDate>Sun, 19 Apr 2026 03:52:27 UTC</lastBuildDate>
+    <pubDate>Sun, 19 Apr 2026 12:20:16 UTC</pubDate>
+    <lastBuildDate>Sun, 19 Apr 2026 12:20:16 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>Prot 的 Emacs 配置哲学</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/prot-的-emacs-配置哲学/index.html</link>
+<description>Sacha Chua 在她的 [[https://sachachua.com/blog/2026/04/ye16-sacha-and-prot-talk-emacs/][Yay Emacs 第 16 期]] 直播中和 Prot 聊了 Emacs 配置管理的话题。Prot 分享了他组织配置的几条原则，这些原则不仅适用于他自己的 =prot-= 系列包，对任何想把 Emacs 配置打理得井井有条的人都有参考价值。
+
+* 小函数，频使用
+
+Prot 反复强调一个理念：把频繁执行的操作封装成小函数，绑定到快捷键上。
+
+这听起来显而易见，但实际做起来需要养成习惯——每当你发现自己重复执行某个命令序列时，就该考虑写个函数了。Prot 自己的配置里充满了这类小函数，每个只做一件事，但因为用得频繁，节省的时间累积起来很可观。
+
+Sacha 对此的回应是考虑在 header line 上轮播显示常用操作的提示，这样不需要记忆所有快捷键。实现思路很简单：
+
+#+begin_src emacs-lisp
+(defvar my-header-line-tips
+  &#39;(&quot;C-c a → agenda&quot; &quot;C-c c → capture&quot; &quot;C-c t → todo&quot; &quot;C-c s → schedule&quot;)
+  &quot;Header line 中轮播显示的快捷键提示。&quot;)
+
+(defvar my-header-line-tip-index 0
+  &quot;当前显示的提示索引。&quot;)
+
+(defun my-rotate-header-line-tip ()
+  &quot;切换到下一条提示。&quot;
+  (setq my-header-line-tip-index
+        (% (1+ my-header-line-tip-index) (length my-header-line-tips)))
+  (force-mode-line-update))
+
+;; 追加到 header line 末尾，不覆盖原有内容
+(setq-default header-line-format
+              (list (default-value &#39;header-line-format)
+                    &#39;(:eval (format &quot; 💡 %s&quot;
+                                    (nth my-header-line-tip-index
+                                         my-header-line-tips)))))
+
+;; 每 10 秒切换一条提示
+(run-at-time t 10 #&#39;my-rotate-header-line-tip)
+#+end_src
+
+* 统一命名前缀
+
+Sacha 在这次直播中提到，她把所有函数从 =my-= 前缀重命名为 =sacha-= 。Prot 用 =prot-= 。好处有两个：
+
+1. *避免命名冲突* — =my-= 太常见，复制别人的代码时容易覆盖同名函数
+2. *标识来源* — 看到 =sacha-org-capture-= 或 =prot-window-= 就知道这个函数来自谁的配置
+
+#+begin_src emacs-lisp
+;; 不好的做法：用通用的 my- 前缀
+(defun my-org-capture-region ...)
+
+;; 好的做法：用自己的标识做前缀
+(defun sacha-org-capture-region-contents-with-metadata (start end parg)
+  ...)
+#+end_src
+
+* defcustom 替代 defvar
+
+当代码可能被别人使用时，Prot 建议用 =defcustom= 替代 =defvar= 。
+
+#+begin_src emacs-lisp
+;; 用 defvar 定义变量，别人只能改源码
+(defvar my-indent-width 2 &quot;Default indentation width.&quot;)
+
+;; 用 defcustom 定义变量，别人可以通过 Customize 接口修改
+(defcustom my-indent-width 2
+  &quot;Default indentation width.&quot;
+  :type &#39;integer
+  :group &#39;convenience)
+#+end_src
+
+区别在于 =defcustom= 让用户通过 =M-x customize-variable= 或 =use-package= 的 =:custom= 关键字来修改，不需要直接编辑你的代码。如果你的配置是公开的，或者你写了可能被别人复制的代码，这个习惯尤其重要。
+
+* autoload 延迟加载 + docstring 注明来源
+
+从别人配置中复制代码是个常见做法，但如何管理这些&quot;外来&quot;代码？Sacha 的策略是：
+
+1. *优先用 autoload* — 如果只需要别人配置中的少量函数，不要把整个文件加载进来。在函数定义前加 =;;;###autoload= 注解，然后在你的配置中用 =use-package= 的 =:commands= 引用：
+
+#+begin_src emacs-lisp
+;; 别人的文件中（加 autoload 注解）
+;;;###autoload
+(defun prot-comment-timestamp-keyword ()
+  &quot;Insert timestamp keyword in comment.&quot;
+  ...)
+
+;; 你的配置中（只注册命令，不加载整个文件）
+(use-package prot-comment
+  :load-path &quot;~/vendor/prot-dotfiles/emacs/.emacs.d/prot-lisp&quot;
+  :commands (prot-comment-timestamp-keyword)
+  :bind
+  (:map prog-mode-map
+        (&quot;C-x M-;&quot; . prot-comment-timestamp-keyword)))
+#+end_src
+
+关键在 =:commands= — 它告诉 use-package 只注册这个命令名，真正调用时才加载文件。没有 =:commands= ，=use-package= 会在启动时加载整个 =:load-path= 下的文件。
+
+2. *在 docstring 中注明来源* — 如果 autoload 不行，至少在函数文档里写清楚出处：
+
+#+begin_src emacs-lisp
+;;;###autoload
+(defun sacha-org-capture-region-contents-with-metadata (start end parg)
+  &quot;Write selected text between START and END to currently clocked `org-mode&#39; entry.
+
+With PARG, kill the content instead.
+If there is no clocked task, create it as a new note in my inbox instead.
+
+From https://takeonrules.com/2022/10/16/adding-another-function-to-sacha-workflow/,
+modified slightly so that it creates a new entry if we are not currently clocked in.&quot;
+  (interactive &quot;r\nP&quot;)
+  (let ((text (sacha-org-region-contents-get-with-metadata start end)))
+    (if (car parg)
+        (kill-new text)
+      (org-capture-string (concat &quot;-----\n&quot; text)
+                          (if (org-clocking-p) &quot;c&quot; &quot;r&quot;)))))
+#+end_src
+
+这样做的好处是：将来想检查上游是否有更新时，直接从 docstring 里找 URL 就行。
+
+* 重写代码适应自己的风格
+
+Prot 的做法看起来费时间：他不直接复制粘贴别人的代码，而是重写成自己的命名规范和代码风格。
+
+但 Prot 的逻辑是：如果你不理解这段代码到能重写的程度，你就不应该把它放进自己的配置。重写的过程本身就是理解的过程。而且，长期来看，风格统一的配置比东拼西凑的配置更容易维护。
+
+* 小结
+
+这五条原则构成了一个完整的配置管理思路：
+
+- =小函数 + 快捷键= 解决 *效率* 问题
+- =命名前缀= 解决 *冲突* 问题
+- =defcustom= 解决 *可定制性* 问题
+- =autoload + 来源标注= 解决 *依赖管理* 问题
+- =重写适应风格= 解决 *长期维护* 问题
+
+不用一次全做，从其中一条开始，逐步养成习惯就好。
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/prot-的-emacs-配置哲学/index.html</guid>
+</item>
+<item>
+<title>TIL: 从直播对谈中学到的三个 Emacs 技巧</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</link>
+<description>来源：[[https://sachachua.com/blog/2026/04/ye16-sacha-and-prot-talk-emacs/][YE16: Sacha and Prot talk Emacs]]
+
+* qrencode：在 Emacs 里生成 QR 码
+
+=qrencode= 包能把任意字符串渲染成字符画 QR 码，直接显示在 Emacs buffer 里。Sacha 用它在直播时显示 URL，观众用手机扫码就能打开链接，不用暂停视频手打地址。
+
+#+begin_src emacs-lisp
+;; 安装
+(use-package qrencode
+  :ensure t)
+
+;; 生成 QR 码并插入当前 buffer
+(qrencode-region (point-min) (point-max))
+;; 或者指定字符串
+(insert (qrencode-string &quot;https://sachachua.com&quot;))
+#+end_src
+
+生成的 QR 码是用字符方块拼成的，不是图片。可以直接在终端里使用。
+
+* helpful + elisp-demos：增强 Emacs Lisp 文档体验
+
+=helpful= 是 =describe-function= 和 =describe-variable= 的增强替代品，显示更多信息（源码、调用位置、引用）。 =elisp-demos= 则在帮助 buffer 中注入函数用法示例。
+
+#+begin_src emacs-lisp
+;; 安装
+(use-package helpful
+  :ensure t
+  :bind
+  ((&quot;C-h f&quot; . helpful-callable)
+   (&quot;C-h v&quot; . helpful-variable)
+   (&quot;C-h k&quot; . helpful-key)))
+
+(use-package elisp-demos
+  :ensure t
+  :after helpful
+  :config
+  (advice-add &#39;helpful-update :after #&#39;elisp-demos-advice-helpful-update))
+#+end_src
+
+装完之后 =C-h f mapcar= 就能看到 =mapcar= 的实际用法示例，而不是只有干巴巴的函数签名。
+
+* keyd + emacsclient：系统级快捷键
+
+=keyd= 是 Linux 下的键盘重映射守护进程，配置文件放在 =~/.config/keyd/default.conf= 。它能把按键的长按变成修饰键——比如长按空格变成 Super 键，短按还是空格。配合 =emacsclient= 可以实现系统级的快捷键触发 Emacs 命令。
+
+整体思路分三步：
+
+1. Emacs 中定义命令
+2. keyd 中定义按键映射，用 =command()= 直接调用 emacsclient
+3. 长按空格 + 按对应键即可触发
+
+#+begin_src emacs-lisp
+;; Step 1: 在 Emacs 中定义一个通过 emacsclient 调用的命令
+(defun my-toggle-dark-mode ()
+  &quot;切换深色/浅色主题。&quot;
+  (interactive)
+  (if (eq (car custom-enabled-themes) &#39;modus-operandi)
+      (load-theme &#39;modus-vivendi t)
+    (load-theme &#39;modus-operandi t)))
+#+end_src
+
+#+begin_src conf :tangle no
+# ~/.config/keyd/default.conf
+
+[ids]
+*
+
+[main]
+# 短按空格 = 空格，长按空格 = 激活 layer 层
+space = overload(space, layer)
+
+[layer]
+# 长按空格 + c → 直接运行 emacsclient 命令
+c = command(emacsclient -e &#39;(my-toggle-dark-mode)&#39;)
+#+end_src
+
+这样长按空格再按 =c= ，即使焦点不在 Emacs 窗口上，也能切换主题。keyd 的 =command()= 直接调用系统命令，不需要额外的快捷键管理工具。
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</guid>
+</item>
 <item>
 <title>排查Linux进程&quot;卡死&quot;实战：从strace到gdb全流程</title>
 <link>https://lujun9972.github.io/blog/2026/04/19/排查linux进程&quot;卡死&quot;实战：从strace到gdb全流程/index.html</link>
@@ -377,6 +599,50 @@ bash 的变量（包括数组）存储在堆内存中，所以我们从堆区域
 <guid>https://lujun9972.github.io/blog/2026/04/19/排查linux进程&quot;卡死&quot;实战：从strace到gdb全流程/index.html</guid>
 </item>
 <item>
+<title>用 .pdbrc 自定义 Python 调试器</title>
+<link>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</link>
+<description>今天才知道 Python 调试器 PDB 可以通过 =~/.pdbrc= 文件自定义——在文件里定义 alias，就能在调试时直接调用。
+
+=.pdbrc= 的格式要求如下：
+
+- 文件位置： =~/.pdbrc= （全局）或项目目录下的 =.pdbrc= （局部）
+- 它 *不是* Python 代码，是 PDB 自己的命令格式，每行就是一个 PDB 命令
+- alias 语法： =alias 名称 命令内容= ，用 =%1= 、 =%2= 等引用参数
+- 多条命令用 =;;= 连接，但 *必须写在一行里*
+- alias 中 =import= 引入的变量会泄漏到当前作用域，需要手动 =del= 清理
+
+Trey Hunner 在他的[[https://treyhunner.com/2026/04/customizing-pdb-with-pdbrc/][文章]]中分享了一套实用的 alias 配置：
+
+
+#+BEGIN_SRC python
+# dir obj: 打印非双下划线的属性和方法
+alias dir print(*(f&quot;%1.{n} = {v!r}&quot; for n, v in __import__(&#39;inspect&#39;).getmembers(%1) if not n.startswith(&quot;__&quot;)), sep=&quot;\n&quot;)
+
+# attrs obj: 只打印非方法的数据属性
+alias attrs import inspect as __i ;; print(*(f&quot;%1.{n} = {v!r}&quot; for n, v in __i.getmembers(%1, lambda v: not __i.isroutine(v)) if not n.startswith(&quot;__&quot;)), sep=&quot;\n&quot;) ;; del __i
+
+# vars obj: 只打印实例变量（要求对象有 __dict__）
+alias vars print(*(f&quot;%1.{k} = {v!r}&quot; for k, v in vars(%1).items()), sep=&quot;\n&quot;)
+
+# src obj: 打印类/函数的源文件、行号和代码
+alias src import inspect as __i;; print(f&quot;{__i.getsourcefile(%1)} on line {__i.getsourcelines(%1)[1]}:\n{&#39;&#39;.join(__i.getsource(%1))}&quot;) ;; del __i
+
+# loc: 打印当前帧的局部变量
+alias loc print(*(f&quot;{name} = {value!r}&quot; for name, value in vars().items() if not name.startswith(&quot;__&quot;)), sep=&quot;\n&quot;)
+#+END_SRC
+
+这 5 个 alias 的效果：
+
+- =dir obj= 比 =dir(obj)= 输出更友好，逐行以 ~obj.attr = repr~ 格式打印
+- =attrs obj= 过滤掉方法，只留数据属性
+- =vars obj= 只显示实例变量（ =__dict__= 中的）
+- =src obj.method= 直接查看方法的源码位置和内容
+- =loc= 列出当前作用域所有局部变量
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</guid>
+</item>
+<item>
 <title>TIL: repeat-mode 省去重复按键前缀</title>
 <link>https://lujun9972.github.io/blog/2026/04/18/til-repeat-mode-省去重复按键前缀/index.html</link>
 <description>按 ~C-x o C-x o C-x o~ 切换窗口，或者 ~C-x { C-x { C-x {~ 缩小窗口——每次都要重复前缀，很烦。
@@ -606,50 +872,6 @@ Lisp 的 S 表达式看起来&quot;全是括号&quot;，但这恰恰是它的元
 </description>
 <pubDate>2026-04-18</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/18/为什么-lisp-统治元编程/index.html</guid>
-</item>
-<item>
-<title>用 .pdbrc 自定义 Python 调试器</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</link>
-<description>今天才知道 Python 调试器 PDB 可以通过 =~/.pdbrc= 文件自定义——在文件里定义 alias，就能在调试时直接调用。
-
-=.pdbrc= 的格式要求如下：
-
-- 文件位置： =~/.pdbrc= （全局）或项目目录下的 =.pdbrc= （局部）
-- 它 *不是* Python 代码，是 PDB 自己的命令格式，每行就是一个 PDB 命令
-- alias 语法： =alias 名称 命令内容= ，用 =%1= 、 =%2= 等引用参数
-- 多条命令用 =;;= 连接，但 *必须写在一行里*
-- alias 中 =import= 引入的变量会泄漏到当前作用域，需要手动 =del= 清理
-
-Trey Hunner 在他的[[https://treyhunner.com/2026/04/customizing-pdb-with-pdbrc/][文章]]中分享了一套实用的 alias 配置：
-
-
-#+BEGIN_SRC python
-# dir obj: 打印非双下划线的属性和方法
-alias dir print(*(f&quot;%1.{n} = {v!r}&quot; for n, v in __import__(&#39;inspect&#39;).getmembers(%1) if not n.startswith(&quot;__&quot;)), sep=&quot;\n&quot;)
-
-# attrs obj: 只打印非方法的数据属性
-alias attrs import inspect as __i ;; print(*(f&quot;%1.{n} = {v!r}&quot; for n, v in __i.getmembers(%1, lambda v: not __i.isroutine(v)) if not n.startswith(&quot;__&quot;)), sep=&quot;\n&quot;) ;; del __i
-
-# vars obj: 只打印实例变量（要求对象有 __dict__）
-alias vars print(*(f&quot;%1.{k} = {v!r}&quot; for k, v in vars(%1).items()), sep=&quot;\n&quot;)
-
-# src obj: 打印类/函数的源文件、行号和代码
-alias src import inspect as __i;; print(f&quot;{__i.getsourcefile(%1)} on line {__i.getsourcelines(%1)[1]}:\n{&#39;&#39;.join(__i.getsource(%1))}&quot;) ;; del __i
-
-# loc: 打印当前帧的局部变量
-alias loc print(*(f&quot;{name} = {value!r}&quot; for name, value in vars().items() if not name.startswith(&quot;__&quot;)), sep=&quot;\n&quot;)
-#+END_SRC
-
-这 5 个 alias 的效果：
-
-- =dir obj= 比 =dir(obj)= 输出更友好，逐行以 ~obj.attr = repr~ 格式打印
-- =attrs obj= 过滤掉方法，只留数据属性
-- =vars obj= 只显示实例变量（ =__dict__= 中的）
-- =src obj.method= 直接查看方法的源码位置和内容
-- =loc= 列出当前作用域所有局部变量
-</description>
-<pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</guid>
 </item>
 <item>
 <title>降低程序内存的五个原则</title>
@@ -951,499 +1173,6 @@ xclip -o | black - | xclip -i
 </description>
 <pubDate>2026-04-17</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/17/终端程序的潜规则/index.html</guid>
-</item>
-<item>
-<title>PARA Org-mode 测试配置</title>
-<link>https://lujun9972.github.io/blog/2026/04/15/para-org-mode-测试配置/index.html</link>
-<description>* 前置说明
-
-这份配置用于测试博文《AI 时代的 PARA 方法》中的 Org-mode PARA 实现。
-使用方式：
-
-1. 先执行 [[创建目录结构]] 中的 shell 代码块（=C-c C-c=）
-2. 将 [[Emacs 配置]] 中的代码加入你的 =init.el= 或 =*scratch*= buffer 执行
-3. 用 =M-x org-capture= 测试四个模板
-4. 用 =C-c C-w= (=org-refile=) 测试归档
-
-基础目录设为 =~/我的笔记= ，可按需修改 =org-para-base-dir= 。
-
-* 创建目录结构
-
-#+BEGIN_SRC shell :tangle (format &quot;/tmp/para-setup-%s.sh&quot; (user-login-name))
-PARA_DIR=&quot;$HOME/org&quot;
-
-# 创建 PARA 四层目录
-mkdir -p &quot;$PARA_DIR/projects/2026-博客重构&quot;
-mkdir -p &quot;$PARA_DIR/projects/2026-Anki插件开发&quot;
-mkdir -p &quot;$PARA_DIR/areas/健康&quot;
-mkdir -p &quot;$PARA_DIR/areas/财务&quot;
-mkdir -p &quot;$PARA_DIR/areas/职业&quot;
-mkdir -p &quot;$PARA_DIR/resources/emacs&quot;
-mkdir -p &quot;$PARA_DIR/resources/python&quot;
-mkdir -p &quot;$PARA_DIR/resources/linux&quot;
-mkdir -p &quot;$PARA_DIR/archives&quot;
-
-# 创建 inbox 文件（org-capture 目标）
-cat &gt; &quot;$PARA_DIR/projects/inbox.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: Projects Inbox
-#+FILETAGS: :project:
-
-,* Projects Inbox
-EOF
-
-cat &gt; &quot;$PARA_DIR/areas/inbox.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: Areas Inbox
-#+FILETAGS: :area:
-
-,* Areas Inbox
-EOF
-
-cat &gt; &quot;$PARA_DIR/resources/inbox.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: Resources Inbox
-#+FILETAGS: :resource:
-EOF
-
-# 创建 journal 文件
-touch &quot;$PARA_DIR/journal.org&quot;
-
-# 创建示例项目文件（供 org-refile 测试）
-cat &gt; &quot;$PARA_DIR/projects/2026-博客重构/index.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: 2026 博客重构
-#+FILETAGS: :project:
-
-,* TODO 重新设计博客首页
-  SCHEDULED: &lt;2026-04-20 日&gt;
-,* TODO 迁移到新的静态站点生成器
-,* DONE 梳理现有文章分类
-  CLOSED: [2026-04-10 四]
-EOF
-
-cat &gt; &quot;$PARA_DIR/projects/2026-Anki插件开发/index.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: 2026 Anki 插件开发
-#+FILETAGS: :project:
-
-,* TODO 调研 Anki 插件 API
-,* TODO 设计卡片模板系统
-,* INPROGRESS 编写核心功能代码
-EOF
-
-# 创建示例领域文件
-cat &gt; &quot;$PARA_DIR/areas/健康/index.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: 健康
-#+FILETAGS: :area:
-
-,* 每周运动目标：3 次
-,* 年度体检：每年 Q1
-,* TODO 预约牙科检查
-EOF
-
-cat &gt; &quot;$PARA_DIR/areas/财务/index.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: 财务
-#+FILETAGS: :area:
-
-,* TODO 完成 2025 年度报税
-  DEADLINE: &lt;2026-05-31 日&gt;
-,* 每月记账复盘
-EOF
-
-# 创建示例资源文件
-cat &gt; &quot;$PARA_DIR/resources/emacs/index.org&quot; &lt;&lt; &#39;EOF&#39;
-#+TITLE: Emacs 学习笔记
-#+FILETAGS: :resource:
-
-,* Org-mode 技巧
-,** 使用 columnview 生成任务报表
-,** org-roam 双向链接配置
-,* Elisp 常用模式
-,** advice-add / advice-remove
-,** defmacro 与 defun 的区别
-EOF
-
-echo &quot;PARA 目录结构创建完成：&quot;
-echo &quot;&quot;
-tree &quot;$PARA_DIR&quot; 2&gt;/dev/null || find &quot;$PARA_DIR&quot; -type f | sort
-#+END_SRC
-
-#+RESULTS:
-| PARA                | 目录结构创建完成： |                   |           |
-|                     |                    |                   |           |
-| /home/lujun9972/org |                    |                   |           |
-| ├──                 | archives           |                   |           |
-| ├──                 | areas              |                   |           |
-| │                   | ├──                | inbox.org         |           |
-| │                   | ├──                | 健康              |           |
-| │                   | │                  | └──               | index.org |
-| │                   | ├──                | 职业              |           |
-| │                   | └──                | 财务              |           |
-| │                   | └──                | index.org         |           |
-| ├──                 | journal.org        |                   |           |
-| ├──                 | projects           |                   |           |
-| │                   | ├──                | 2026-Anki插件开发 |           |
-| │                   | │                  | └──               | index.org |
-| │                   | ├──                | 2026-博客重构     |           |
-| │                   | │                  | └──               | index.org |
-| │                   | └──                | inbox.org         |           |
-| └──                 | resources          |                   |           |
-| ├──                 | emacs              |                   |           |
-| │                   | └──                | index.org         |           |
-| ├──                 | inbox.org          |                   |           |
-| ├──                 | linux              |                   |           |
-| └──                 | python             |                   |           |
-|                     |                    |                   |           |
-| 13                  | directories,       | 9                 | files     |
-
-* Emacs 配置
-
-#+BEGIN_SRC emacs-lisp :tangle (format &quot;/tmp/para-config-%s.el&quot; (user-login-name))
-;;; para-config.el --- PARA Org-mode 配置 -*- lexical-binding: t; -*-
-
-;; ============================================================
-;; 基础设置
-;; ============================================================
-
-(defvar org-para-base-dir &quot;~/org&quot;
-  &quot;PARA 方法的根目录。&quot;)
-
-;; ============================================================
-;; TODO 关键字：支持 INPROGRESS 等自定义状态
-;; ============================================================
-
-(setq org-todo-keywords
-      &#39;((sequence &quot;TODO(t)&quot; &quot;INPROGRESS(i)&quot; &quot;|&quot; &quot;DONE(d)&quot; &quot;CANCELLED(c)&quot;)))
-
-;; ============================================================
-;; org-capture 模板：快速捕获到 PARA 各层
-;; ============================================================
-
-(setq org-capture-templates
-      `((&quot;p&quot; &quot;Project - 项目任务&quot; entry
-         (file+headline ,(expand-file-name &quot;projects/inbox.org&quot; org-para-base-dir)
-                        &quot;Projects Inbox&quot;)
-         &quot;* TODO %?\n  %U\n  %a\n  %i&quot;
-         :empty-lines 1)
-
-        (&quot;a&quot; &quot;Area - 领域任务&quot; entry
-         (file+headline ,(expand-file-name &quot;areas/inbox.org&quot; org-para-base-dir)
-                        &quot;Areas Inbox&quot;)
-         &quot;* TODO %?\n  %U\n  %a\n  %i&quot;
-         :empty-lines 1)
-
-        (&quot;r&quot; &quot;Resource - 资源笔记&quot; entry
-         (file ,(expand-file-name &quot;resources/inbox.org&quot; org-para-base-dir))
-         &quot;* %? :resource:\n  %U\n  %i&quot;
-         :empty-lines 1)
-
-        (&quot;j&quot; &quot;Journal - 日记&quot; entry
-         (file+datetree ,(expand-file-name &quot;journal.org&quot; org-para-base-dir))
-         &quot;* %?\n  %U&quot;
-         :empty-lines 1)
-
-        ;; 便捷模板：带链接的选择式捕获
-        (&quot;c&quot; &quot;Capture with choice&quot; entry
-         (file+headline ,(expand-file-name &quot;projects/inbox.org&quot; org-para-base-dir)
-                        &quot;Projects Inbox&quot;)
-         &quot;* TODO %^{任务描述}\n  %U\n  %a\n  %i&quot;
-         :empty-lines 1)))
-
-;; ============================================================
-;; org-refile 目标：归档到 PARA 各文件
-;; ============================================================
-
-(setq org-refile-targets
-      `((,(expand-file-name &quot;projects/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;projects/**/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;areas/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;areas/**/*.org&quot; org-para-base-dir) :maxlevel . 2)
-        (,(expand-file-name &quot;resources/*.org&quot; org-para-base-dir) :maxlevel . 1)
-        (,(expand-file-name &quot;resources/**/*.org&quot; org-para-base-dir) :maxlevel . 1)
-        (,(expand-file-name &quot;archives/*.org&quot; org-para-base-dir) :maxlevel . 1)))
-
-(setq org-refile-use-outline-path &#39;file)
-(setq org-outline-path-complete-in-steps t)
-
-;; ============================================================
-;; org-agenda：PARA 视图
-;; ============================================================
-
-(setq org-agenda-files
-      (append
-       (directory-files-recursively (expand-file-name &quot;projects&quot; org-para-base-dir) &quot;\\.org$&quot;)
-       (directory-files-recursively (expand-file-name &quot;areas&quot; org-para-base-dir) &quot;\\.org$&quot;)))
-
-;; 自定义 agenda 视图：按 PARA 层级分组
-(setq org-agenda-custom-commands
-      &#39;((&quot;P&quot; &quot;PARA 视图&quot;
-         ((agenda &quot;&quot; ((org-agenda-span &#39;week)))
-          (todo &quot;TODO|INPROGRESS&quot;
-                ((org-agenda-overriding-header &quot;活跃项目任务&quot;)
-                 (org-agenda-files
-                  (directory-files-recursively
-                   (expand-file-name &quot;projects&quot; org-para-base-dir) &quot;\\.org$&quot;))))
-          (todo &quot;TODO&quot;
-                ((org-agenda-overriding-header &quot;领域维护任务&quot;)
-                 (org-agenda-files
-                  (directory-files-recursively
-                   (expand-file-name &quot;areas&quot; org-para-base-dir) &quot;\\.org$&quot;))))))
-        (&quot;p&quot; &quot;仅项目任务&quot;
-         todo &quot;TODO|INPROGRESS&quot;
-         ((org-agenda-overriding-header &quot;项目任务&quot;)
-          (org-agenda-files
-           (directory-files-recursively
-            (expand-file-name &quot;projects&quot; org-para-base-dir) &quot;\\.org$&quot;))))))
-
-;; ============================================================
-;; org-roam 集成（可选，需要安装 org-roam）
-;; ============================================================
-
-(with-eval-after-load &#39;org-roam
-  (setq org-roam-directory org-para-base-dir)
-
-  ;; 通过 filetags 区分 PARA 类别
-  ;; 在 org 文件头部添加: #+filetags: :project: 或 :area: 或 :resource: 或 :archive:
-  (setq org-roam-node-display-template
-        &quot;${tags:20} ${title:*}&quot;)
-
-  ;; 按类别过滤 org-roam 节点
-  (defun my/org-roam-filter-by-tag (tag)
-    &quot;返回一个过滤函数，只保留带有 TAG 的 org-roam 节点。&quot;
-    (lambda (node)
-      (member tag (org-roam-node-tags node))))
-
-  (defun my/org-roam-list-notes-by-tag (tag)
-    &quot;列出所有带有 TAG 的 org-roam 笔记文件路径。&quot;
-    (mapcar #&#39;org-roam-node-file
-            (seq-filter
-             (my/org-roam-filter-by-tag tag)
-             (org-roam-node-list))))
-
-  ;; 快捷命令：按 PARA 类别浏览笔记
-  (defun my/org-roam-find-project ()
-    &quot;查找或创建项目笔记。&quot;
-    (interactive)
-    (org-roam-node-find nil nil (my/org-roam-filter-by-tag &quot;project&quot;)))
-
-  (defun my/org-roam-find-area ()
-    &quot;查找或创建领域笔记。&quot;
-    (interactive)
-    (org-roam-node-find nil nil (my/org-roam-filter-by-tag &quot;area&quot;)))
-
-  (defun my/org-roam-find-resource ()
-    &quot;查找或创建资源笔记。&quot;
-    (interactive)
-    (org-roam-node-find nil nil (my/org-roam-filter-by-tag &quot;resource&quot;))))
-
-;; ============================================================
-;; 辅助函数：PARA 维护
-;; ============================================================
-
-(defun my/para-archive-project (project-file)
-  &quot;将一个完成的项目移到 archives 目录。
-PROJECT-FILE 是项目文件或目录的路径。&quot;
-  (interactive
-   (list (completing-read &quot;归档项目: &quot;
-                          (directory-files
-                           (expand-file-name &quot;projects&quot; org-para-base-dir)
-                           t directory-files-no-dot-files-regexp))))
-  (let* ((archive-dir (expand-file-name &quot;archives&quot; org-para-base-dir))
-         (project-name (file-name-nondirectory project-file))
-         (dest (expand-file-name project-name archive-dir)))
-    (rename-file project-file dest)
-    (message &quot;已归档: %s -&gt; %s&quot; project-name dest)))
-
-(defun my/para-show-stats ()
-  &quot;显示当前 PARA 各层的文件数量统计。&quot;
-  (interactive)
-  (let ((stats
-         (cl-loop for category in &#39;(&quot;projects&quot; &quot;areas&quot; &quot;resources&quot; &quot;archives&quot;)
-                  for dir = (expand-file-name category org-para-base-dir)
-                  for count = (length (directory-files-recursively dir &quot;\\.org$&quot;))
-                  collect (cons category count))))
-    (with-output-to-temp-buffer &quot;*PARA Stats*&quot;
-      (princ &quot;PARA 目录统计\n&quot;)
-      (princ (make-string 30 ?=)) (terpri)
-      (cl-loop for (cat . cnt) in stats
-               do (princ (format &quot;%-15s %d 个文件\n&quot; cat cnt)))
-      (terpri)
-      (princ (format &quot;总计: %d 个文件\n&quot;
-                     (cl-loop for (_ . cnt) in stats sum cnt))))))
-
-;; 快捷键绑定（可选）
-(global-set-key (kbd &quot;C-c p c&quot;) #&#39;org-capture)
-(global-set-key (kbd &quot;C-c p a&quot;) #&#39;org-agenda)
-(global-set-key (kbd &quot;C-c p s&quot;) #&#39;my/para-show-stats)
-(global-set-key (kbd &quot;C-c p A&quot;) #&#39;my/para-archive-project)
-
-(provide &#39;para-config)
-;;; para-config.el ends here
-#+END_SRC
-
-* 测试步骤
-
-** 1. 创建目录结构
-
-在 shell 中执行：
-
-#+BEGIN_SRC shell
-bash /tmp/para-setup-$(whoami).sh
-#+END_SRC
-
-或者在 org 文件中 =C-c C-c= 执行 [[创建目录结构]] 的代码块。
-
-** 2. 加载 Emacs 配置
-
-#+BEGIN_SRC emacs-lisp
-;; 方式一：直接加载
-(load &quot;/tmp/para-config-$(whoami).el&quot;)
-
-;; 方式二：在 *scratch* 中 eval-region
-#+END_SRC
-
-** 3. 测试 org-capture
-
-| 快捷键 | 模板 | 目标 |
-|--------|------|------|
-| =C-c p c= → =p= | Project 任务 | projects/inbox.org |
-| =C-c p c= → =a= | Area 任务 | areas/inbox.org |
-| =C-c p c= → =r= | Resource 笔记 | resources/inbox.org |
-| =C-c p c= → =j= | 日记 | journal.org |
-
-** 4. 测试 org-refile
-
-在任何 org 条目上按 =C-c C-w= (=org-refile=)，应该能看到：
-- projects 下的项目文件
-- areas 下的领域文件
-- resources 下的资源文件
-- archives 目录
-
-** 5. 测试 agenda 视图
-
-| 快捷键 | 视图 |
-|--------|------|
-| =C-c p a= → =P= | PARA 总览（按周 agenda + 项目任务 + 领域任务） |
-| =C-c p a= → =p= | 仅显示项目任务 |
-
-** 6. 测试统计
-
-=C-c p s= 显示各层文件数量。
-
-* 快捷键速查
-
-| 快捷键 | 功能 |
-|--------|------|
-| =C-c p c= | org-capture |
-| =C-c p a= | org-agenda |
-| =C-c p s= | PARA 统计 |
-| =C-c p A= | 归档项目 |
-| =C-c C-w= | org-refile（在任何 org 条目上） |
-</description>
-<pubDate>2026-04-16</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/15/para-org-mode-测试配置/index.html</guid>
-</item>
-<item>
-<title>AI越强越辣鸡？控制论说这是必然的</title>
-<link>https://lujun9972.github.io/blog/2026/04/16/ai越强越辣鸡？控制论说这是必然的/index.html</link>
-<description>原文：[[https://www.jdon.com/91433-ai-human-taste-feedback-loop.html][OpenClaw之父：AI越强越辣鸡？人类审美与反馈循环才是核心控制系统]]
-
-* 一个控制问题
-
-Peter Steinberger（OpenClaw 创造者）说了一句扎心的话：你可以让 AI 跑一整晚，CPU 滚烫，第二天醒来一看，得到的是一坨终极版的流水垃圾。
-
-很多人的第一反应是：AI 还不够聪明。但控制论告诉我们，这根本不是聪明不聪明的问题，而是 *系统结构* 的问题。一个没有反馈的执行器，不管多强大，都会偏离目标。这不是推测，这是数学。
-
-* 闭环系统：一个两百多年的老答案
-
-控制论（Cybernetics）这个词来自希腊语 =kybernētēs= ，意思是&quot;舵手&quot;。1948 年，Norbert Wiener 用它命名了一门研究&quot;通信与控制&quot;的学科。但闭环控制的思想远比这古老——1788 年 James Watt 的离心调速器就已经是经典的闭环系统。
-
-一个闭环控制系统有四个基本组件：
-
-1. *设定值（Setpoint）* ：你想要达到的目标状态
-2. *控制器（Controller）* ：计算当前输出与目标的差距，发出调整指令
-3. *被控对象（Plant）* ：执行指令、产生输出的部分
-4. *反馈（Feedback）* ：将实际输出测量回来，与设定值比较
-
-开环系统没有反馈环节。控制器发出指令后，不管实际结果如何，都不做修正。闭环系统则通过反馈不断比较&quot;实际&quot;和&quot;目标&quot;的差距，持续调整。
-
-关键区别：开环系统中的任何误差都会原样累积，没有任何机制可以纠正它。闭环系统通过反馈检测误差并修正，使系统收敛到目标。
-
-* 人机协作的控制论映射
-
-把人机协作放进控制论的框架，对应关系一目了然：
-
-| 控制论概念           | 人机协作中的对应                       |
-|----------------------+----------------------------------------|
-| 设定值（Setpoint）   | 你心中的目标——那个模糊但真实的审美判断 |
-| 控制器（Controller） | 你自己——观察、判断、发出新指令         |
-| 控制信号             | Prompt                                 |
-| 被控对象（Plant）    | AI——接收指令，生成输出                 |
-| 反馈信号             | 你对 AI 输出的观察和判断               |
-| 误差（Error）        | AI 输出与你期望之间的差距              |
-
-在这个模型里，AI 是被控对象，不是控制器。它是执行者，不是决策者。你才是那个计算误差、发出修正指令的控制器。
-
-* 开环 AI：失控的必然性
-
-所谓&quot;让 AI 一跑到底&quot;，在控制论里有一个精确的名字： *开环控制* 。
-
-你发出一个 prompt（控制信号），AI 生成输出（被控对象响应），然后你什么都不做。没有观察，没有判断，没有修正。这就是一个完整的开环系统。
-
-开环系统在什么条件下能正常工作？只有当：
-1. 你对被控对象的模型完全精确
-2. 没有任何外部扰动
-3. 初始条件完全已知
-
-这三个条件在 AI 使用中 *没有一个* 成立。你不完全了解 AI 的行为模式，prompt 的歧义性是持续存在的扰动，而你自己的需求在一开始往往是模糊的。
-
-所以开环地使用 AI，输出偏离目标是 *必然的* ，不是偶然的。AI 越强大，执行速度越快，偏离的速度就越快。这就是为什么&quot;AI 越强越辣鸡&quot;——不是 AI 退步了，是开环系统里执行器越强，偏离目标的灾难来得越快。
-
-* 正反馈陷阱：越跑越偏的数学原理
-
-Peter 提到的&quot;代理陷阱&quot;（Agentic Trap），在控制论中有一个对应物： *正反馈* 。
-
-正反馈不是&quot;好的反馈&quot;，而是把输出信号叠加到输入上，让偏差越来越大。音响系统里的啸叫就是正反馈——麦克风收到喇叭的声音，放大后再播出来，喇叭声音更大，麦克风收到更强的信号……几秒钟内就从正常音量变成刺耳的尖叫。
-
-代理陷阱的本质就是正反馈。AI 生成的输出偏离了一点，它把这个偏离的输出当作下一轮的参考基准，继续在偏移的基础上&quot;优化&quot;。每一轮的偏差都成为下一轮的起点，偏差不断叠加。偏了一度，跑一公里后就偏出去几十米。
-
-控制论对正反馈的结论很明确： *未经约束的正反馈必然导致系统发散* 。没有例外。
-
-* 闭环 AI：反馈如何收敛
-
-Peter 说的&quot;下一个 prompt 取决于我当前看到了什么&quot;，翻译成控制论语言就是： *根据误差信号调整控制量* 。
-
-这就是 *负反馈* ——把实际输出与目标的差距测量出来，用来减小下一轮的偏差。负反馈让系统稳定，这是两百多年来工程学的基本经验。
-
-在闭环的人机协作中：
-1. AI 生成一版输出
-2. 你观察，发现与目标的差距（计算误差）
-3. 你调整 prompt（发出新的控制信号）
-4. AI 基于新指令再次生成
-5. 回到第 2 步
-
-每一轮循环，误差都在缩小。不是因为 AI 更聪明了，而是因为你在持续修正方向。这个过程不需要你的初始目标完美——控制论的一个核心洞见是， *反馈可以补偿对初始条件的无知* 。你不需要一开始就知道精确的目标，只要持续测量误差并修正，系统就会收敛。
-
-这也解释了 prompt 迷信的根本问题。试图用一次性完美 prompt 解决所有问题，本质上是在用 *前馈*（feedforward）替代反馈。前馈有用，但它要求你对系统有完美的模型——而你没有。
-
-* 何时放手：稳定性判据
-
-控制论中有一个重要问题：什么时候系统可以脱离外部干预，自己稳定运行？
-
-答案是：当系统已经证明自己能稳定收敛，且外部条件不会发生大的变化时。对应到人机协作——只有当你通过多轮反馈确认了 AI 的输出方向已经锁定在正确轨道上，且后续任务的性质不会突变时，才可以考虑让 AI 自主执行一些重复性工作。
-
-在此之前，你一步都不能离开。不是因为你不够信任 AI，而是因为控制论告诉我们，一个尚未稳定的闭环系统如果切断反馈，会立刻退化为开环系统，收敛趋势中断，从当前状态重新开始漂移。
-
-* 总结
-
-从控制论的角度看，&quot;AI 越强越辣鸡&quot;不是一个悖论，而是一个必然：
-
-- 没有反馈的执行器，不管多强大，都会偏离目标——这是开环系统的本质
-- 把 AI 输出直接当作下一轮输入，偏差会指数级放大——这是正反馈的灾难
-- 通过持续观察和修正缩小误差——这是负反馈的收敛
-- 反馈可以补偿对初始条件的无知——所以你不需要完美的 prompt
-- 人的审美（taste）是这个系统的设定值来源——AI 没有它，就无法判断方向
-
-反馈不是 AI 使用的&quot;最佳实践&quot;，而是任何智能系统正常运转的 *必要条件* 。这不是 2026 年的新发现，这是两百多年来控制工程告诉我们的老道理。
-</description>
-<pubDate>2026-04-16</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/16/ai越强越辣鸡？控制论说这是必然的/index.html</guid>
 </item>
 </channel>
 </rss>
