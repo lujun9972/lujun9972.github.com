@@ -1,0 +1,84 @@
+#+TITLE: TIL: 从直播对谈中学到的三个 Emacs 技巧
+#+AUTHOR: lujun9972
+#+TAGS: Emacs, TIL, qrencode, helpful, keyd
+#+DATE: [2026-04-19 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+来源：[[https://sachachua.com/blog/2026/04/ye16-sacha-and-prot-talk-emacs/][YE16: Sacha and Prot talk Emacs]]
+
+* qrencode：在 Emacs 里生成 QR 码
+
+=qrencode= 包能把任意字符串渲染成字符画 QR 码，直接显示在 Emacs buffer 里。Sacha 用它在直播时显示 URL，观众用手机扫码就能打开链接，不用暂停视频手打地址。
+
+#+begin_src emacs-lisp
+;; 安装
+(use-package qrencode
+  :ensure t)
+
+;; 生成 QR 码并插入当前 buffer
+(qrencode-region (point-min) (point-max))
+;; 或者指定字符串
+(insert (qrencode-string "https://sachachua.com"))
+#+end_src
+
+生成的 QR 码是用字符方块拼成的，不是图片。可以直接在终端里使用。
+
+* helpful + elisp-demos：增强 Emacs Lisp 文档体验
+
+=helpful= 是 =describe-function= 和 =describe-variable= 的增强替代品，显示更多信息（源码、调用位置、引用）。 =elisp-demos= 则在帮助 buffer 中注入函数用法示例。
+
+#+begin_src emacs-lisp
+;; 安装
+(use-package helpful
+  :ensure t
+  :bind
+  (("C-h f" . helpful-callable)
+   ("C-h v" . helpful-variable)
+   ("C-h k" . helpful-key)))
+
+(use-package elisp-demos
+  :ensure t
+  :after helpful
+  :config
+  (advice-add 'helpful-update :after #'elisp-demos-advice-helpful-update))
+#+end_src
+
+装完之后 =C-h f mapcar= 就能看到 =mapcar= 的实际用法示例，而不是只有干巴巴的函数签名。
+
+* keyd + emacsclient：系统级快捷键
+
+=keyd= 是 Linux 下的键盘重映射守护进程，配置文件放在 =~/.config/keyd/default.conf= 。它能把按键的长按变成修饰键——比如长按空格变成 Super 键，短按还是空格。配合 =emacsclient= 可以实现系统级的快捷键触发 Emacs 命令。
+
+整体思路分三步：
+
+1. Emacs 中定义命令
+2. keyd 中定义按键映射，用 =command()= 直接调用 emacsclient
+3. 长按空格 + 按对应键即可触发
+
+#+begin_src emacs-lisp
+;; Step 1: 在 Emacs 中定义一个通过 emacsclient 调用的命令
+(defun my-toggle-dark-mode ()
+  "切换深色/浅色主题。"
+  (interactive)
+  (if (eq (car custom-enabled-themes) 'modus-operandi)
+      (load-theme 'modus-vivendi t)
+    (load-theme 'modus-operandi t)))
+#+end_src
+
+#+begin_src conf :tangle no
+# ~/.config/keyd/default.conf
+
+[ids]
+*
+
+[main]
+# 短按空格 = 空格，长按空格 = 激活 layer 层
+space = overload(space, layer)
+
+[layer]
+# 长按空格 + c → 直接运行 emacsclient 命令
+c = command(emacsclient -e '(my-toggle-dark-mode)')
+#+end_src
+
+这样长按空格再按 =c= ，即使焦点不在 Emacs 窗口上，也能切换主题。keyd 的 =command()= 直接调用系统命令，不需要额外的快捷键管理工具。

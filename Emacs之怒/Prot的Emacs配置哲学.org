@@ -1,0 +1,138 @@
+#+TITLE: Prot 的 Emacs 配置哲学
+#+AUTHOR: lujun9972
+#+TAGS: Emacs, 配置管理, 代码风格
+#+DATE: [2026-04-19 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Sacha Chua 在她的 [[https://sachachua.com/blog/2026/04/ye16-sacha-and-prot-talk-emacs/][Yay Emacs 第 16 期]] 直播中和 Prot 聊了 Emacs 配置管理的话题。Prot 分享了他组织配置的几条原则，这些原则不仅适用于他自己的 =prot-= 系列包，对任何想把 Emacs 配置打理得井井有条的人都有参考价值。
+
+* 小函数，频使用
+
+Prot 反复强调一个理念：把频繁执行的操作封装成小函数，绑定到快捷键上。
+
+这听起来显而易见，但实际做起来需要养成习惯——每当你发现自己重复执行某个命令序列时，就该考虑写个函数了。Prot 自己的配置里充满了这类小函数，每个只做一件事，但因为用得频繁，节省的时间累积起来很可观。
+
+Sacha 对此的回应是考虑在 header line 上轮播显示常用操作的提示，这样不需要记忆所有快捷键。实现思路很简单：
+
+#+begin_src emacs-lisp
+(defvar my-header-line-tips
+  '("C-c a → agenda" "C-c c → capture" "C-c t → todo" "C-c s → schedule")
+  "Header line 中轮播显示的快捷键提示。")
+
+(defvar my-header-line-tip-index 0
+  "当前显示的提示索引。")
+
+(defun my-rotate-header-line-tip ()
+  "切换到下一条提示。"
+  (setq my-header-line-tip-index
+        (% (1+ my-header-line-tip-index) (length my-header-line-tips)))
+  (force-mode-line-update))
+
+;; 追加到 header line 末尾，不覆盖原有内容
+(setq-default header-line-format
+              (list (default-value 'header-line-format)
+                    '(:eval (format " 💡 %s"
+                                    (nth my-header-line-tip-index
+                                         my-header-line-tips)))))
+
+;; 每 10 秒切换一条提示
+(run-at-time t 10 #'my-rotate-header-line-tip)
+#+end_src
+
+* 统一命名前缀
+
+Sacha 在这次直播中提到，她把所有函数从 =my-= 前缀重命名为 =sacha-= 。Prot 用 =prot-= 。好处有两个：
+
+1. *避免命名冲突* — =my-= 太常见，复制别人的代码时容易覆盖同名函数
+2. *标识来源* — 看到 =sacha-org-capture-= 或 =prot-window-= 就知道这个函数来自谁的配置
+
+#+begin_src emacs-lisp
+;; 不好的做法：用通用的 my- 前缀
+(defun my-org-capture-region ...)
+
+;; 好的做法：用自己的标识做前缀
+(defun sacha-org-capture-region-contents-with-metadata (start end parg)
+  ...)
+#+end_src
+
+* defcustom 替代 defvar
+
+当代码可能被别人使用时，Prot 建议用 =defcustom= 替代 =defvar= 。
+
+#+begin_src emacs-lisp
+;; 用 defvar 定义变量，别人只能改源码
+(defvar my-indent-width 2 "Default indentation width.")
+
+;; 用 defcustom 定义变量，别人可以通过 Customize 接口修改
+(defcustom my-indent-width 2
+  "Default indentation width."
+  :type 'integer
+  :group 'convenience)
+#+end_src
+
+区别在于 =defcustom= 让用户通过 =M-x customize-variable= 或 =use-package= 的 =:custom= 关键字来修改，不需要直接编辑你的代码。如果你的配置是公开的，或者你写了可能被别人复制的代码，这个习惯尤其重要。
+
+* autoload 延迟加载 + docstring 注明来源
+
+从别人配置中复制代码是个常见做法，但如何管理这些"外来"代码？Sacha 的策略是：
+
+1. *优先用 autoload* — 如果只需要别人配置中的少量函数，不要把整个文件加载进来。在函数定义前加 =;;;###autoload= 注解，然后在你的配置中用 =use-package= 的 =:commands= 引用：
+
+#+begin_src emacs-lisp
+;; 别人的文件中（加 autoload 注解）
+;;;###autoload
+(defun prot-comment-timestamp-keyword ()
+  "Insert timestamp keyword in comment."
+  ...)
+
+;; 你的配置中（只注册命令，不加载整个文件）
+(use-package prot-comment
+  :load-path "~/vendor/prot-dotfiles/emacs/.emacs.d/prot-lisp"
+  :commands (prot-comment-timestamp-keyword)
+  :bind
+  (:map prog-mode-map
+        ("C-x M-;" . prot-comment-timestamp-keyword)))
+#+end_src
+
+关键在 =:commands= — 它告诉 use-package 只注册这个命令名，真正调用时才加载文件。没有 =:commands= ，=use-package= 会在启动时加载整个 =:load-path= 下的文件。
+
+2. *在 docstring 中注明来源* — 如果 autoload 不行，至少在函数文档里写清楚出处：
+
+#+begin_src emacs-lisp
+;;;###autoload
+(defun sacha-org-capture-region-contents-with-metadata (start end parg)
+  "Write selected text between START and END to currently clocked `org-mode' entry.
+
+With PARG, kill the content instead.
+If there is no clocked task, create it as a new note in my inbox instead.
+
+From https://takeonrules.com/2022/10/16/adding-another-function-to-sacha-workflow/,
+modified slightly so that it creates a new entry if we are not currently clocked in."
+  (interactive "r\nP")
+  (let ((text (sacha-org-region-contents-get-with-metadata start end)))
+    (if (car parg)
+        (kill-new text)
+      (org-capture-string (concat "-----\n" text)
+                          (if (org-clocking-p) "c" "r")))))
+#+end_src
+
+这样做的好处是：将来想检查上游是否有更新时，直接从 docstring 里找 URL 就行。
+
+* 重写代码适应自己的风格
+
+Prot 的做法看起来费时间：他不直接复制粘贴别人的代码，而是重写成自己的命名规范和代码风格。
+
+但 Prot 的逻辑是：如果你不理解这段代码到能重写的程度，你就不应该把它放进自己的配置。重写的过程本身就是理解的过程。而且，长期来看，风格统一的配置比东拼西凑的配置更容易维护。
+
+* 小结
+
+这五条原则构成了一个完整的配置管理思路：
+
+- =小函数 + 快捷键= 解决 *效率* 问题
+- =命名前缀= 解决 *冲突* 问题
+- =defcustom= 解决 *可定制性* 问题
+- =autoload + 来源标注= 解决 *依赖管理* 问题
+- =重写适应风格= 解决 *长期维护* 问题
+
+不用一次全做，从其中一条开始，逐步养成习惯就好。
