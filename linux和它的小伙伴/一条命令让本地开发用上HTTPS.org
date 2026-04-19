@@ -1,0 +1,121 @@
+#+TITLE: 一条命令让本地开发用上 HTTPS —— slim 工具介绍
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴 slim HTTPS 本地开发
+#+DATE: [2026-04-19 六]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 本地开发 HTTPS 的痛点
+
+做本地 Web 开发时，你可能经常看到浏览器提示"您的连接不是私密连接"。这不影响开发，但会带来两个问题：
+
+1. *开发体验差* — 每次打开页面都要点"继续前往"
+2. *功能受限* — 很多浏览器 API 只在 HTTPS（安全来源）下可用：
+   - Service Worker（PWA 开发必备）
+   - Geolocation API
+   - Clipboard API
+   - Camera / Microphone (=getUserMedia=)
+   - HTTP/2（浏览器只在 TLS 上协商 HTTP/2）
+   - Secure Cookies（带 =Secure= 标志的 Cookie 只在 HTTPS 下发送）
+
+传统做法是手动生成自签名证书、添加到系统信任库、改 =/etc/hosts= 、配反向代理——第一次折腾半小时，之后每次都嫌麻烦。
+
+* slim 是什么
+
+[[https://github.com/kamranahmedse/slim][slim]] 是一个 Go 写的轻量级反向代理和本地域名管理器。一条命令搞定上述所有事情：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000
+#+END_SRC
+
+执行后，项目通过 =https://myapp.test= 访问，有合法证书，无浏览器警告。支持 HTTP/2、WebSocket、HMR（热模块替换），Next.js、Vite 等开发服务器开箱即用。
+
+* 工作原理
+
+=slim start= 第一次运行时自动完成四件事：
+
+1. *证书颁发机构（CA）* — 生成本地根 CA，注册到系统信任库（Linux CA store 或 macOS Keychain）。之后每个域名按需签发叶子证书，通过 SNI 提供。
+2. *反向代理* — 启动后台守护进程，用 Go 内置的 =httputil.ReverseProxy= ，把 HTTPS 流量从域名转发到本地开发服务器的端口。
+3. *本地 DNS* — 在 =/etc/hosts= 中添加条目，让域名解析到 =127.0.0.1= ，不需要额外的 DNS 服务器。
+4. *端口转发* — 用 iptables（Linux）或 pfctl（macOS）把 80/443 端口重定向到 10080/10443，代理进程不需要 root 权限。
+
+* 安装
+
+一行命令安装：
+
+#+BEGIN_SRC shell
+curl -sL https://slim.sh/install.sh | sh
+#+END_SRC
+
+安装前可以先审查脚本内容：在浏览器中打开 =https://slim.sh/install.sh= 查看源码。
+
+确认安装成功：
+
+#+BEGIN_SRC shell
+slim --version
+#+END_SRC
+
+* 实际使用
+
+假设你的开发服务器运行在 3000 端口，启动 slim：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000
+#+END_SRC
+
+第一次运行时，slim 会生成根 CA、注册系统信任库、为 =myapp.test= 签发证书、更新 =/etc/hosts= 、启动后台代理。
+
+打开浏览器访问 =https://myapp.test= ，项目通过 HTTPS 加载，证书有效，没有警告。
+
+*Note:* slim 默认使用 =.test= 域名。不要用 =.local= —— 它保留给 mDNS 使用，在 macOS/Linux 上可能导致 DNS 解析缓慢或不一致。 =.test= 是 RFC 2606 专门为本地开发保留的域名。
+
+* 日常管理
+
+查看所有活跃域名：
+
+#+BEGIN_SRC shell
+slim list
+#+END_SRC
+
+停止指定域名：
+
+#+BEGIN_SRC shell
+slim stop myapp
+#+END_SRC
+
+完全卸载（删除 CA、证书、hosts 条目、端口转发规则、配置文件）：
+
+#+BEGIN_SRC shell
+slim uninstall
+#+END_SRC
+
+诊断检查：
+
+#+BEGIN_SRC shell
+slim doctor
+#+END_SRC
+
+启动时的有用选项：
+
+#+BEGIN_SRC shell
+slim start myapp --port 3000 --log verbose  # 详细日志（记录每个请求）
+slim start myapp --port 3000 --log quiet    # 静默模式
+slim start myapp --port 3000 --wait         # 等待上游端口就绪后再开始代理
+#+END_SRC
+
+所有运行时数据在 =~/.slim/= 目录下。需要手动检查或备份证书时去那里。
+
+* 为什么本地开发需要 HTTPS
+
+即使不考虑浏览器警告，本地开发环境应该尽量接近生产环境。以下功能在 HTTP 下行为不同或完全不工作：
+
+| API / 功能 | HTTPS 下的行为 | HTTP 下的行为 |
+|------------|---------------|--------------|
+| Service Worker | 正常注册和运行 | 无法注册 (除 =localhost= 外) |
+| Geolocation | 需要用户授权后可用 | 直接被拒绝 |
+| Clipboard API | 读写剪贴板 | 不可用 |
+| Camera / Microphone | =getUserMedia= 正常工作 | 被浏览器阻止 |
+| HTTP/2 | 正常协商 | 不支持（浏览器只在 TLS 上用 HTTP/2） |
+| Secure Cookies | 正常设置和发送 | 永远不会被发送 |
+
+如果你的项目依赖这些功能，在 HTTP 下测试的结果和生产环境不一致。slim 让本地 HTTPS 变得几乎零成本。
