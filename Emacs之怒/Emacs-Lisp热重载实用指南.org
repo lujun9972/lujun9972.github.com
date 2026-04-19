@@ -1,0 +1,122 @@
+#+TITLE: Emacs Lisp 热重载实用指南
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒 Emacs-Lisp 热重载 开发
+#+DATE: [2026-04-19 六]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 问题
+
+Emacs 用户经常无意识地做一件事：修改 =init.el= 中的代码，求值，然后继续在同一个 Emacs 实例中工作。这就是 Lisp 的热重载——不需要重启进程，代码直接在运行中被替换。
+
+大部分时候这很顺畅。但有一个陷阱： =defvar= 、 =defcustom= 、 =defface= 在重新求值时 *不会* 更新已有的值。
+
+#+BEGIN_SRC elisp
+;; 第一次求值
+(defvar my-var "hello")  ;; my-var → "hello"
+
+;; 修改后重新求值
+(defvar my-var "world")  ;; my-var → 仍然是 "hello"！
+#+END_SRC
+
+这是故意这么设计的——加载库不应该覆盖用户的自定义值。但在开发包的时候，这个设计让人困惑：你改了默认值，重新求值，发现什么都没变。
+
+下面是从轻到重的五种解决方案。
+
+* 方法一：eval-defun（C-M-x）
+
+这是最常用的方法，也是最容易被忽略的： =eval-defun= （=C-M-x=）对 =defvar= 、 =defcustom= 、 =defface= 有特殊处理——它会 *无条件* 设置变量的值，不管这个变量是不是已经有值。
+
+#+BEGIN_SRC elisp
+(defvar my-var "new-value")
+#+END_SRC
+
+把光标放在这个 =defvar= 形式上，按 =C-M-x= ， =my-var= 就会被更新为 ="new-value"= 。
+
+注意： =eval-buffer= 和 =eval-region= *不会*这样做——它们遵守正常的 =defvar= 语义。只有 =eval-defun= 是例外。
+
+这是 Bozhidar Batsov 在开发 mode 时最常用的方法：只改了几个形式，就逐个 =C-M-x= 。
+
+* 方法二：setq（M-:）
+
+如果只需要快速重置一个变量：
+
+#+BEGIN_SRC elisp
+M-: (setq my-var "new-value")
+#+END_SRC
+
+简单粗暴，但只改变量值，不会触发其他代码的重新执行（比如函数定义、hooks 设置等都不会变）。适合临时调参数。
+
+* 方法三：load-file
+
+=M-x load-file= 从磁盘加载 =.el= 文件。跟 =require= 的区别是： =require= 发现 feature 已加载就会跳过， =load-file= 总是重新读取并求值文件。
+
+但 =load-file= 仍然遵守 =defvar= 语义——已绑定的变量不会被更新。它的优势在于可以加载非当前编辑的文件，比如包的依赖文件，或者没有 =provide= 形式的文件。
+
+* 方法四：unload-feature + require（干净重载）
+
+这是最彻底的非重启方案：
+
+#+BEGIN_SRC elisp
+;; 卸载 feature：移除它定义的变量、函数、hooks 等
+(unload-feature 'my-package)
+
+;; 重新加载
+(require 'my-package)
+#+END_SRC
+
+=unload-feature= 会把 feature 定义的一切都清掉，然后 =require= 从头加载。这最接近"干净的状态"。
+
+注意事项：
+
+- =unload-feature= 可能有副作用——如果 feature 添加了 hooks 或 advice，卸载时应该会清理，但并非所有包都正确实现了清理逻辑，可能出现残留的 hook 或 advice
+- 只对通过 =provide= / =require= 加载的 feature 有效；用 =load-file= 加载的文件没有 feature 可以卸载
+- 某些复杂的包不能干净地卸载，但大多数简单的 major mode 没问题
+
+可以绑一个快捷键方便开发时使用：
+
+#+BEGIN_SRC elisp
+(defun my-reload-package (package)
+  "Unload and reload PACKAGE."
+  (interactive "SReload package: ")
+  (unload-feature package)
+  (require package)
+  (message "Reloaded %s" package))
+#+END_SRC
+
+* 方法五：重启 Emacs
+
+终极方案。当其他方法都不管用，或者你改了太多东西、不信任当前运行时状态时，重启。
+
+有了 =desktop-save-mode= 或 session 管理器，重启的代价不大。Emacs 29+ 内置了 =restart-emacs= 命令，或者用 [[https://github.com/iqbalansari/restart-emacs][restart-emacs 包]]。
+
+* 别忘了重新激活 Mode
+
+无论用哪种方法重载了代码，还需要在已有 buffer 中重新激活 mode：
+
+#+BEGIN_SRC elisp
+M-x my-mode           ;; 重新运行 mode 函数，应用新的 keymap、hooks、font-lock 等
+#+END_SRC
+
+对于 minor mode，开关两次：
+
+#+BEGIN_SRC elisp
+M-x my-minor-mode     ;; 关闭
+M-x my-minor-mode     ;; 重新打开
+#+END_SRC
+
+不做这一步，已有 buffer 仍在跑旧代码——因为 mode 激活时会把 keymap、font-lock 规则、hooks 等设置为 buffer-local 的值，重新加载代码只更新了函数定义，并没有更新这些 buffer 里已经设好的局部值。
+
+* 推荐工作流
+
+Bozhidar Batsov 在开发 major mode 时的典型流程：
+
+1. 编辑源码
+2. =C-M-x= 逐个求值修改过的形式
+3. 切到测试 buffer， =M-x my-mode= 重新激活
+4. 如果状态不对， =unload-feature= + =require= 干净重载
+5. 改了 autoloads 或包元数据等根本性东西时才重启 Emacs
+
+大多数时候，前三步就够了。
+
+参考：[[https://emacsredux.com/blog/2026/03/25/reloading-emacs-lisp-code/][Reloading Emacs Lisp Code — Emacs Redux]]
