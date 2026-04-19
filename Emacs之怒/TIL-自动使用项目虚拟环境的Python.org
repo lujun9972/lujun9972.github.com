@@ -1,0 +1,36 @@
+#+TITLE: TIL: 自动使用项目虚拟环境的 Python
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒 TIL Python
+#+DATE: [2026-04-19 六]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+在 Emacs 里按 =C-c C-p= 打开 Python shell，默认用的是系统 Python。如果项目有虚拟环境，shell 里就找不到项目安装的包。
+
+Einar Mostad 写了一个函数，自动在项目目录中递归查找 Python 可执行文件，找到就用虚拟环境的，找不到就用系统的：
+
+#+BEGIN_SRC emacs-lisp
+(defun emo-python-virtualenv ()
+  "Sets the python shell to python from a virtual environment if one exists."
+  (when (project-current)
+    (let ((pythonpath
+           (nth 0 (directory-files-recursively
+                   (nth 2 (project-current))
+                   (if (eq system-type 'gnu/linux) "python$" "python.exe$")))))
+      (when (file-exists-p pythonpath)
+        (setq-local python-shell-interpreter pythonpath)))))
+#+END_SRC
+
+加到 =python-mode-hook= 上，每次打开 Python 文件时自动设置：
+
+#+BEGIN_SRC emacs-lisp
+(add-hook 'python-mode-hook 'emo-python-virtualenv)
+#+END_SRC
+
+三个关键点：
+
+1. ~directory-files-recursively~ 接受正则表达式，用 ="python$"= 匹配虚拟环境 =bin/= 目录下的 Python 可执行文件（不匹配 =python3= 、 =python-config= 等）
+2. ~project-current~ 返回当前项目信息， ~(nth 2 (project-current))~ 取项目根目录
+3. ~setq-local~ 把 =python-shell-interpreter= 设为 buffer-local，不影响其他 buffer
+
+参考：[[https://einar.codeberg.page/use-python-shell-from-virtual-environment-if-there-is-one-in-Emacs.html][Use python shell from virtual environment if there is one in Emacs]]
