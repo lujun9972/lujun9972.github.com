@@ -1,0 +1,246 @@
+#+TITLE: 用 fsck 检查和修复 Linux 文件系统
+#+AUTHOR: lujun9972
+#+TAGS: Linux, fsck, 文件系统, 系统管理
+#+DATE: [2026-04-19 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+来源：[[https://www.tecmint.com/fsck-repair-file-system-errors-in-linux/][How to Use fsck to Check and Repair Linux Filesystem Errors]]
+
+* 基础知识
+
+** fsck 是什么
+
+=fsck= （File System Consistency Check）是 Linux 内置的文件系统检查和修复工具，类似 Windows 的 =chkdsk= 。它可以开机时自动运行，也可以由管理员手动执行。
+
+=fsck= 会根据文件系统类型调用对应的后端检查程序—— =ext2/3/4= 调用 =e2fsck= ， =xfs= 调用 =fsck.xfs= ， =vfat= 调用 =fsck.vfat= 。
+
+** 什么时候需要跑 fsck
+
+- 系统无法启动，掉进 emergency/rescue mode
+- 读写文件时出现 I/O 错误
+- 硬盘、U 盘、SD 卡行为异常
+- 异常关机后（断电、kernel panic、强制重启）
+- 内核日志中出现文件系统损坏信息
+
+** 确认文件系统类型
+
+跑 =fsck= 前先确认分区的文件系统类型：
+
+#+begin_src shell
+lsblk -f
+#+end_src
+
+或者指定分区：
+
+#+begin_src shell
+blkid /dev/sdb1
+#+end_src
+
+* 使用方法
+
+** 基本检查（交互式）
+
+逐个错误提示确认：
+
+#+begin_src shell
+fsck /dev/sdb1
+#+end_src
+
+** 自动修复
+
+对所有修复提示自动回答"是"，适合生产环境自动化：
+
+#+begin_src shell
+fsck -y /dev/sdb1
+#+end_src
+
+** 干跑（不修改任何东西）
+
+只看 =fsck= 会做什么，不改数据：
+
+#+begin_src shell
+fsck -N /dev/sdb1
+#+end_src
+
+生产环境建议先干跑，确认没问题再真正执行。
+
+** 强制检查
+
+文件系统标记为"干净"时 =fsck= 默认跳过。用 =-f= 强制检查：
+
+#+begin_src shell
+fsck -f /dev/sdb1
+#+end_src
+
+** 检查所有文件系统（跳过根分区）
+
+=-A= 读取 =/etc/fstab= 中的所有文件系统， =-R= 跳过根分区：
+
+#+begin_src shell
+fsck -AR -y
+#+end_src
+
+** 带进度条的详细输出
+
+#+begin_src shell
+fsck -C -V /dev/sdb1
+#+end_src
+
+大容量磁盘检查时有用。
+
+** 指定文件系统类型
+
+#+begin_src shell
+fsck -t ext4 /dev/sdb1
+#+end_src
+
+** 检查根分区
+
+根分区挂载着没法直接 =fsck= ，有三种方法。
+
+方法一，在根目录创建标记文件，下次启动时自动检查：
+
+#+begin_src shell
+touch /forcefsck
+reboot
+#+end_src
+
+完成后标记文件会被自动删除。注意：基于 systemd 的系统（RHEL 7+、Ubuntu 16.04+）可能不支持 =forcefsck= ，用下面的方法。
+
+方法二，用 =tune2fs= 把挂载计数设为 1，下次启动时触发 =fsck= （ext4）：
+
+#+begin_src shell
+tune2fs -C 1 /dev/sda1
+#+end_src
+
+方法三，进入救援模式手动操作：
+
+1. 重启，启动时按住 Shift 进入 GRUB 菜单
+2. 选择"Advanced options"
+3. 选择对应内核的"Recovery mode"
+4. 在恢复菜单中选择"fsck"
+5. 提示重新挂载根文件系统时选"Yes"
+6. 完成后选择"Resume"继续正常启动
+
+** LVM 和软件 RAID
+
+LVM 逻辑卷需要先停用再检查：
+
+#+begin_src shell
+lvdisplay
+lvchange -an /dev/vg_data/lv_data
+fsck -y /dev/vg_data/lv_data
+lvchange -ay /dev/vg_data/lv_data
+#+end_src
+
+RAID 阵列先确认状态正常再检查。降级阵列应先重建，不要直接 =fsck= ：
+
+#+begin_src shell
+cat /proc/mdstat
+fsck -y /dev/md0
+#+end_src
+
+** 定期自动检查
+
+用 =tune2fs= 设置定期检查（ext4）：
+
+基于时间（每 6 个月）：
+
+#+begin_src shell
+tune2fs -i 6m /dev/sda1
+#+end_src
+
+基于挂载次数（每 30 次）：
+
+#+begin_src shell
+tune2fs -c 30 /dev/sda1
+#+end_src
+
+查看当前设置：
+
+#+begin_src shell
+tune2fs -l /dev/sda1 | grep -E "Mount count|Maximum mount|Check interval|Last checked"
+#+end_src
+
+** 查看 fsck 日志
+
+#+begin_src shell
+# RHEL/CentOS/Rocky
+grep -i fsck /var/log/messages
+
+# Ubuntu/Debian
+grep -i fsck /var/log/syslog
+
+# systemd journal（当前启动）
+journalctl -b | grep -i fsck
+#+end_src
+
+* 注意事项
+
+** 绝对不要在挂载的分区上跑 fsck
+
+在已挂载的分区上运行 =fsck= 会导致严重的数据损坏。先检查分区是否已挂载：
+
+#+begin_src shell
+mount | grep /dev/sdb
+#+end_src
+
+如果已挂载，先卸载：
+
+#+begin_src shell
+umount /dev/sdb1
+#+end_src
+
+如果卸载失败，提示"target is busy"，说明有进程在使用这个分区。用 =lsof= 找出是哪些进程：
+
+#+begin_src shell
+lsof /dev/sdb1
+#+end_src
+
+找到占用进程后，停掉或关闭它们，再重新 =umount= 。如果进程不好停（比如某个后台服务），可以用懒卸载：
+
+#+begin_src shell
+umount -l /dev/sdb1
+#+end_src
+
+懒卸载会立刻把挂载点从文件系统命名空间中移除（新进程看不到这个挂载点了），但实际卸载要等所有占用进程释放后才完成。这样做的好处是你不需要一个个去停进程，但风险是：在所有进程释放之前， =fsck= 仍然无法安全执行。所以用懒卸载后，要等一会儿确认设备真的卸载了（ =mount | grep /dev/sdb= 不再返回结果），再跑 =fsck= 。
+
+* 退出码说明
+
+=fsck= 执行完返回退出码，用 =echo $?= 查看：
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 未发现错误 |
+| 1 | 错误已修复 |
+| 2 | 建议重启系统 |
+| 4 | 错误未修复 |
+| 8 | 操作错误 |
+| 16 | 用法或语法错误 |
+| 32 | 用户取消检查 |
+| 128 | 共享库错误 |
+
+退出码可以叠加。比如退出码 3 即错误已修复（1）+ 需要重启（2）。
+
+在脚本中应该捕获退出码：
+
+#+begin_src shell :tangle no
+fsck -y /dev/sdb1
+EXIT_CODE=$?
+if [ $EXIT_CODE -ge 4 ]; then
+    echo "ALERT: 文件系统错误无法修复 /dev/sdb1" | mail -s "fsck Alert" admin@example.com
+fi
+#+end_src
+
+* 常用选项速查
+
+| 命令 | 说明 |
+|------|------|
+| =fsck /dev/sdb1= | 交互式检查 |
+| =fsck -y /dev/sdb1= | 自动修复 |
+| =fsck -N /dev/sdb1= | 干跑（不修改） |
+| =fsck -f /dev/sdb1= | 强制检查 |
+| =fsck -AR -y= | 检查所有文件系统（跳过根分区） |
+| =fsck -C -V /dev/sdb1= | 带进度条的详细输出 |
+| =fsck -t ext4 -A -y= | 只检查 ext4 文件系统 |
