@@ -4,10 +4,132 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 19 Apr 2026 14:05:12 UTC</pubDate>
-    <lastBuildDate>Sun, 19 Apr 2026 14:05:12 UTC</lastBuildDate>
+    <pubDate>Sun, 19 Apr 2026 14:29:45 UTC</pubDate>
+    <lastBuildDate>Sun, 19 Apr 2026 14:29:45 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>Emacs Lisp 热重载实用指南</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</link>
+<description>* 问题
+
+Emacs 用户经常无意识地做一件事：修改 =init.el= 中的代码，求值，然后继续在同一个 Emacs 实例中工作。这就是 Lisp 的热重载——不需要重启进程，代码直接在运行中被替换。
+
+大部分时候这很顺畅。但有一个陷阱： =defvar= 、 =defcustom= 、 =defface= 在重新求值时 *不会* 更新已有的值。
+
+#+BEGIN_SRC elisp
+;; 第一次求值
+(defvar my-var &quot;hello&quot;)  ;; my-var → &quot;hello&quot;
+
+;; 修改后重新求值
+(defvar my-var &quot;world&quot;)  ;; my-var → 仍然是 &quot;hello&quot;！
+#+END_SRC
+
+这是故意这么设计的——加载库不应该覆盖用户的自定义值。但在开发包的时候，这个设计让人困惑：你改了默认值，重新求值，发现什么都没变。
+
+下面是从轻到重的五种解决方案。
+
+* 方法一：eval-defun（C-M-x）
+
+这是最常用的方法，也是最容易被忽略的： =eval-defun= （=C-M-x=）对 =defvar= 、 =defcustom= 、 =defface= 有特殊处理——它会 *无条件* 设置变量的值，不管这个变量是不是已经有值。
+
+#+BEGIN_SRC elisp
+(defvar my-var &quot;new-value&quot;)
+#+END_SRC
+
+把光标放在这个 =defvar= 形式上，按 =C-M-x= ， =my-var= 就会被更新为 =&quot;new-value&quot;= 。
+
+注意： =eval-buffer= 和 =eval-region= *不会*这样做——它们遵守正常的 =defvar= 语义。只有 =eval-defun= 是例外。
+
+这是 Bozhidar Batsov 在开发 mode 时最常用的方法：只改了几个形式，就逐个 =C-M-x= 。
+
+* 方法二：setq（M-:）
+
+如果只需要快速重置一个变量：
+
+#+BEGIN_SRC elisp
+M-: (setq my-var &quot;new-value&quot;)
+#+END_SRC
+
+简单粗暴，但只改变量值，不会触发其他代码的重新执行（比如函数定义、hooks 设置等都不会变）。适合临时调参数。
+
+* 方法三：load-file
+
+=M-x load-file= 从磁盘加载 =.el= 文件。跟 =require= 的区别是： =require= 发现 feature 已加载就会跳过， =load-file= 总是重新读取并求值文件。
+
+但 =load-file= 仍然遵守 =defvar= 语义——已绑定的变量不会被更新。它的优势在于可以加载非当前编辑的文件，比如包的依赖文件，或者没有 =provide= 形式的文件。
+
+* 方法四：unload-feature + require（干净重载）
+
+这是最彻底的非重启方案：
+
+#+BEGIN_SRC elisp
+;; 卸载 feature：移除它定义的变量、函数、hooks 等
+(unload-feature &#39;my-package)
+
+;; 重新加载
+(require &#39;my-package)
+#+END_SRC
+
+=unload-feature= 会把 feature 定义的一切都清掉，然后 =require= 从头加载。这最接近&quot;干净的状态&quot;。
+
+注意事项：
+
+- =unload-feature= 可能有副作用——如果 feature 添加了 hooks 或 advice，卸载时应该会清理，但并非所有包都正确实现了清理逻辑，可能出现残留的 hook 或 advice
+- 只对通过 =provide= / =require= 加载的 feature 有效；用 =load-file= 加载的文件没有 feature 可以卸载
+- 某些复杂的包不能干净地卸载，但大多数简单的 major mode 没问题
+
+可以绑一个快捷键方便开发时使用：
+
+#+BEGIN_SRC elisp
+(defun my-reload-package (package)
+  &quot;Unload and reload PACKAGE.&quot;
+  (interactive &quot;SReload package: &quot;)
+  (unload-feature package)
+  (require package)
+  (message &quot;Reloaded %s&quot; package))
+#+END_SRC
+
+* 方法五：重启 Emacs
+
+终极方案。当其他方法都不管用，或者你改了太多东西、不信任当前运行时状态时，重启。
+
+有了 =desktop-save-mode= 或 session 管理器，重启的代价不大。Emacs 29+ 内置了 =restart-emacs= 命令，或者用 [[https://github.com/iqbalansari/restart-emacs][restart-emacs 包]]。
+
+* 别忘了重新激活 Mode
+
+无论用哪种方法重载了代码，还需要在已有 buffer 中重新激活 mode：
+
+#+BEGIN_SRC elisp
+M-x my-mode           ;; 重新运行 mode 函数，应用新的 keymap、hooks、font-lock 等
+#+END_SRC
+
+对于 minor mode，开关两次：
+
+#+BEGIN_SRC elisp
+M-x my-minor-mode     ;; 关闭
+M-x my-minor-mode     ;; 重新打开
+#+END_SRC
+
+不做这一步，已有 buffer 仍在跑旧代码——因为 mode 激活时会把 keymap、font-lock 规则、hooks 等设置为 buffer-local 的值，重新加载代码只更新了函数定义，并没有更新这些 buffer 里已经设好的局部值。
+
+* 推荐工作流
+
+Bozhidar Batsov 在开发 major mode 时的典型流程：
+
+1. 编辑源码
+2. =C-M-x= 逐个求值修改过的形式
+3. 切到测试 buffer， =M-x my-mode= 重新激活
+4. 如果状态不对， =unload-feature= + =require= 干净重载
+5. 改了 autoloads 或包元数据等根本性东西时才重启 Emacs
+
+大多数时候，前三步就够了。
+
+参考：[[https://emacsredux.com/blog/2026/03/25/reloading-emacs-lisp-code/][Reloading Emacs Lisp Code — Emacs Redux]]
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</guid>
+</item>
 <item>
 <title>Prot 的 Emacs 配置哲学</title>
 <link>https://lujun9972.github.io/blog/2026/04/19/prot-的-emacs-配置哲学/index.html</link>
@@ -229,6 +351,64 @@ c = command(emacsclient -e &#39;(my-toggle-dark-mode)&#39;)
 </description>
 <pubDate>2026-04-19</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</guid>
+</item>
+<item>
+<title>TIL: 自动使用项目虚拟环境的 Python</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/til-自动使用项目虚拟环境的-python/index.html</link>
+<description>在 Emacs 里按 =C-c C-p= 打开 Python shell，默认用的是系统 Python。如果项目有虚拟环境，shell 里就找不到项目安装的包。
+
+Einar Mostad 写了一个函数，自动在项目目录中递归查找 Python 可执行文件，找到就用虚拟环境的，找不到就用系统的：
+
+#+BEGIN_SRC emacs-lisp
+(defun emo-python-virtualenv ()
+  &quot;Sets the python shell to python from a virtual environment if one exists.&quot;
+  (when (project-current)
+    (let ((pythonpath
+           (nth 0 (directory-files-recursively
+                   (nth 2 (project-current))
+                   (if (eq system-type &#39;gnu/linux) &quot;python$&quot; &quot;python.exe$&quot;)))))
+      (when (file-exists-p pythonpath)
+        (setq-local python-shell-interpreter pythonpath)))))
+#+END_SRC
+
+加到 =python-mode-hook= 上，每次打开 Python 文件时自动设置：
+
+#+BEGIN_SRC emacs-lisp
+(add-hook &#39;python-mode-hook &#39;emo-python-virtualenv)
+#+END_SRC
+
+三个关键点：
+
+1. ~directory-files-recursively~ 接受正则表达式，用 =&quot;python$&quot;= 匹配虚拟环境 =bin/= 目录下的 Python 可执行文件（不匹配 =python3= 、 =python-config= 等）
+2. ~project-current~ 返回当前项目信息， ~(nth 2 (project-current))~ 取项目根目录
+3. ~setq-local~ 把 =python-shell-interpreter= 设为 buffer-local，不影响其他 buffer
+
+参考：[[https://einar.codeberg.page/use-python-shell-from-virtual-environment-if-there-is-one-in-Emacs.html][Use python shell from virtual environment if there is one in Emacs]]
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/til-自动使用项目虚拟环境的-python/index.html</guid>
+</item>
+<item>
+<title>TIL: 让 Help buffer 自动获得焦点</title>
+<link>https://lujun9972.github.io/blog/2026/04/19/til-让-help-buffer-自动获得焦点/index.html</link>
+<description>在 Emacs 里查看函数或变量的文档（ =C-h f= 、 =C-h v= 等），Help buffer 打开后焦点还留在原来的 buffer。想滚动内容、点击链接、或者按 =q= 退出，都得先 =C-x o= 切过去。
+
+一行配置解决：
+
+#+BEGIN_SRC emacs-lisp
+(setq help-window-select t)
+#+END_SRC
+
+启用后，Help buffer 一打开就自动获得焦点。用完按 =q= 直接关闭。
+
+Prot 在自己的配置里也启用了这个选项，原因是：用 Help 的频率比想象中高得多，每次打开都希望焦点在 Help buffer 里，启用后一次都没想过要焦点留在原 buffer。
+
+想先试试不改配置？在 =*scratch*= 里 eval 这行就行，立即生效。
+
+参考：[[https://emacsredux.com/blog/2026/04/07/stealing-from-the-best-emacs-configs/][Stealing from the Best Emacs Configs]]（Bozhidar Batsov 收集的 Emacs 配置技巧）
+</description>
+<pubDate>2026-04-19</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/19/til-让-help-buffer-自动获得焦点/index.html</guid>
 </item>
 <item>
 <title>一条命令让本地开发用上 HTTPS —— slim 工具介绍</title>
@@ -1232,237 +1412,6 @@ alias loc print(*(f&quot;{name} = {value!r}&quot; for name, value in vars().item
 </description>
 <pubDate>2026-04-19</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/18/用-.pdbrc-自定义-python-调试器/index.html</guid>
-</item>
-<item>
-<title>TIL: repeat-mode 省去重复按键前缀</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/til-repeat-mode-省去重复按键前缀/index.html</link>
-<description>按 ~C-x o C-x o C-x o~ 切换窗口，或者 ~C-x { C-x { C-x {~ 缩小窗口——每次都要重复前缀，很烦。
-
-Emacs 28 内置的 ~repeat-mode~ 可以在首次按键后省掉前缀，只按最后一个键就行：
-
-#+BEGIN_SRC emacs-lisp
-(repeat-mode 1)
-#+END_SRC
-
-开启后，~C-x o o o~ 就能连续切换窗口，~C-x { { {~ 连续缩小。
-
-* 内置支持的命令
-
-Emacs 自带了一批 repeat map，开箱即用：
-
-| 首次按键 | 后续按键 | 效果 |
-|---+---+---|
-| ~C-x o~ | ~o~ | 切换窗口 |
-| ~C-x {~ / ~C-x }~ | ~{~ / ~}~ | 水平缩小/扩大窗口 |
-| ~C-x ^~ | ~^~ | 垂直扩大窗口 |
-| ~C-x u~ | ~u~ | 撤销 |
-| ~C-x &lt;left&gt;~ / ~C-x &lt;right&gt;~ | ~&lt;left&gt;~ / ~&lt;right&gt;~ | 切换 buffer |
-| ~M-g n~ / ~M-g p~ | ~n~ / ~p~ | 跳转下一个/上一个错误 |
-
-按了不在 repeat map 里的键，重复状态自动结束。
-
-也可以设置超时自动退出：
-
-#+BEGIN_SRC emacs-lisp
-(setq repeat-exit-timeout 5) ;; 5 秒无操作自动退出
-#+END_SRC
-
-* 自定义 repeat map
-
-以 expreg（expand-region）为例，实现 ~C-= = = -~ 即三次展开再一次收缩：
-
-#+BEGIN_SRC emacs-lisp
-(defvar expreg-repeat-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map &quot;=&quot; #&#39;expreg-expand)
-    (define-key map &quot;-&quot; #&#39;expreg-contract)
-    map))
-
-(put &#39;expreg-expand &#39;repeat-map &#39;expreg-repeat-map)
-(put &#39;expreg-contract &#39;repeat-map &#39;expreg-repeat-map)
-#+END_SRC
-
-模式很简单：创建 keymap，给命令设置 ~repeat-map~ symbol property。任何带这个属性的命令在首次调用后都会进入重复状态。
-
-原文：[[https://emacsredux.com/blog/2026/04/04/repeat-mode/][Repeat Mode: Stop Repeating Yourself]]
-</description>
-<pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/til-repeat-mode-省去重复按键前缀/index.html</guid>
-</item>
-<item>
-<title>TIL: 用 read-extended-command-predicate 精简 M-x 候选列表</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/til-用-read-extended-command-predicate-精简-m-x-候选列表/index.html</link>
-<description>M-x 会列出所有命令，包括当前 buffer 用不上的。在 Python buffer 里看到 Org 命令、在 shell buffer 里看到 Magit 命令——都是噪音。
-
-Emacs 28 提供了一个变量来解决这个问题：
-
-#+BEGIN_SRC emacs-lisp
-(setq read-extended-command-predicate
-      #&#39;command-completion-default-include-p)
-#+END_SRC
-
-设置后，M-x 会隐藏那些声明了&quot;我不适用于当前 major mode&quot;的命令。没有声明的命令不受影响，照常显示。
-
-* 过滤原理
-
-~command-completion-default-include-p~ 检查两个东西：
-- 命令的 ~interactive~ 形式中声明的 mode 归属
-- 命令的 ~completion-predicate~ symbol property
-
-两者都没声明的命令被视为通用命令，不会被过滤。
-
-* 三个内置谓词
-
-Emacs 提供了三个过滤谓词，从宽松到严格：
-
-| 谓词 | 行为 |
-|---+---|
-| ~command-completion-default-include-p~ | 排除声明了&quot;属于其他 mode&quot;的命令，其余全显示 |
-| ~command-completion-using-modes-and-keymaps-p~ | 只显示当前 mode 的命令 + 有键绑定的命令 + ~customize-*~ 命令 |
-| ~command-completion-using-modes-p~ | 只显示声明了当前 mode 的命令，最严格 |
-
-建议从第一个开始，最安全。
-
-* 包作者如何声明 mode 归属
-
-在 ~interactive~ 形式中加上 mode 参数：
-
-#+BEGIN_SRC emacs-lisp
-(defun my-foo-command ()
-  &quot;Do something useful in foo-mode.&quot;
-  (interactive nil foo-mode)
-  ...)
-#+END_SRC
-
-~nil~ 是 interactive spec（无参数），~foo-mode~ 告诉 Emacs 这个命令只在 ~foo-mode~ 下有意义。适用于多个 mode 时，依次列出：
-
-#+BEGIN_SRC emacs-lisp
-(defun cider-eval-defun-at-point ()
-  &quot;Evaluate the top-level form at point.&quot;
-  (interactive nil clojure-mode clojure-ts-mode)
-  ...)
-#+END_SRC
-
-* 注意事项
-
-- 被过滤的命令并没有消失，只是不在补全列表里显示。输入完整命令名依然可以执行
-- 内置命令大多已经声明了 mode 归属，第三方包的覆盖程度参差不齐
-- 如果你用 Vertico，它的示例配置里已经有这行，只是被注释掉了，取消注释即可
-
-原文：[[https://emacsredux.com/blog/2026/04/04/read-extended-command-predicate/][Declutter M-x with read-extended-command-predicate]]
-</description>
-<pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/til-用-read-extended-command-predicate-精简-m-x-候选列表/index.html</guid>
-</item>
-<item>
-<title>为什么 Lisp 统治元编程</title>
-<link>https://lujun9972.github.io/blog/2026/04/18/为什么-lisp-统治元编程/index.html</link>
-<description>有人在 [[https://dev.to/redbar0n/meta-programming-and-macro-capabilities-of-various-languages-1hgd][DEV.to 上做了一张表]]，按元编程和宏能力给 18 种语言打分（满分 19）。结果排名前六的语言里有五个是 Lisp 方言。
-
-这不是巧合。
-
-* 数据说话
-
-从评分表里提取 Lisp 系和非 Lisp 系的平均分：
-
-| 类别 | 语言数 | 平均分 |
-|---+---+---|
-| Lisp 系（Racket、CL、Clojure、Arc、Coalton、Hackett、Scheme、Carp） | 8 | 14.9 |
-| 非 Lisp 系（Elixir、Julia、Nim、Rust、Scala、Ruby 等） | 10 | 10.0 |
-
-Lisp 系语言在四个评分维度中，有三个维度碾压非 Lisp 系：运行时元编程、宏特性、生态中的宏工具。唯一的&quot;弱项&quot;是编译期能力——但这不是因为 Lisp 做不到，而是很多 Lisp 方言根本不需要编译期魔法，它在运行时就能做到同等甚至更多的事。
-
-* 根本原因：代码即数据
-
-Lisp 的核心优势只有一个：程序的源代码本身就是数据结构。
-
-一段 Elisp 代码 =(+ 1 2)= 在解析器看来就是一个列表，第一个元素是符号 =+= ，第二个是数字 =1= ，第三个是数字 =2= 。不需要额外的解析步骤，不需要 AST 转换，不需要语法糖展开——代码已经是数据了。
-
-这意味着 Lisp 宏可以直接操作代码，就像操作列表一样自然：
-
-#+begin_src emacs-lisp
-;; 定义一个宏：记录表达式执行耗时的宏
-(defmacro with-timer (&amp;rest body)
-  `(let ((start (current-time)))
-     ,@body
-     (message &quot;Elapsed: %.2f seconds&quot;
-              (float-time (time-subtract (current-time) start)))))
-
-;; 使用时就像普通语法
-(with-timer
-  (sleep-for 1)
-  (message &quot;done&quot;))
-#+end_src
-
-#+RESULTS:
-: Elapsed: 1.00 seconds
-
-宏 =with-timer= 接收的是 *未求值的代码* ，不是值。它把代码当列表拼接，生成新的代码返回给求值器。整个过程不需要解析字符串、不需要构建 AST——因为输入本来就是列表。
-
-* 非 Lisp 语言的困境
-
-非 Lisp 语言要做同样的事，必须先解决一个问题：怎么把源代码变成可操作的数据？
-
-- *Rust* 的过程宏（procedural macro）需要先用 ~syn~ 库把 TokenStream 解析成 AST，操作完再用 ~quote~ 库生成 TokenStream。整个过程等价于&quot;先解析，再操作，再序列化&quot;
-- *C++* 的模板元编程在类型系统里做图灵完备的计算，代价是编译错误信息能塞满整个终端
-- *Python* 的装饰器只能包装函数，不能创造新的语法结构。想操纵 AST？得自己写 ~import ast~ 解析器
-- *Ruby* 是个有趣的反例。它以元编程著称—— ~method_missing~ 、 ~define_method~ 、 ~class_eval~ 让 Rails 之类的框架写出了极其优雅的 DSL。但它在评分表里只有 8 分（和 C++ 的 7 分差不多）。为什么？因为 Ruby 的元编程全部是运行时的：开放类、动态方法定义、幽灵方法。它不能创造新的语法结构，不能在编译期做代码变换。Ruby 的 DSL 能力来自语言的动态性，而非宏系统。原文章也指出：Ruby 的元编程评分和 C++ 接近，但没有人会认为 C++ 比 Ruby 更适合元编程——这说明纯运行时元编程的能力被评分表低估了，但也说明运行时元编程和编译期宏是两个不同维度
-
-#+begin_src python
-## Python 的装饰器：只能包装，不能创造新语法
-import time
-
-def with_timer(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        print(f&quot;Elapsed: {time.time() - start:.2f}s&quot;)
-        return result
-    return wrapper
-
-@with_timer
-def my_task():
-    time.sleep(1)
-    print(&quot;done&quot;)
-#+end_src
-
-装饰器能做到&quot;在函数调用前后加逻辑&quot;，但做不到&quot;定义一种全新的控制流结构&quot;。宏可以。
-
-* Emacs Lisp 中的实际威力
-
-Emacs Lisp 可能是日常使用中最频繁接触 Lisp 宏的机会。Emacs 的很多核心功能就是宏实现的：
-
-- ~dolist~ 和 ~dotimes~ 都是宏，不是内置特殊形式。它们接收未求值的代码，展开成 ~while~ 循环。如果你需要一种新的迭代方式，可以自己写一个。
-
-- ~cl-defstruct~ 内部用宏生成构造函数、访问器、谓词函数。一个宏调用生成几十行代码。
-
-- ~use-package~ 整个就是一个宏驱动的 DSL。 ~:init~ 、 ~:config~ 、 ~:bind~ 这些&quot;关键字&quot;不是语言特性，是宏通过模式匹配识别的符号。
-
-#+begin_src emacs-lisp
-;; use-package 的 :bind 关键字不是语言内置的语法
-;; 是宏在展开时识别 :bind 符号并生成 keymap 代码
-(use-package magit
-  :bind ((&quot;C-x g&quot; . magit-status)))
-#+end_src
-
-这就是 Lisp 宏的精髓：你可以用宏 *发明* 语言本身没有的语法。 ~use-package~ 的作者不需要修改 Elisp 解释器，只需要写一个宏。
-
-* 为什么不是所有语言都走这条路
-
-如果宏这么好，为什么大多数语言不采用 Lisp 风格的宏？
-
-答案和评分表里 C++ 和 Python 的低分一样：它们的语法不是数据。
-
-Lisp 的 S 表达式看起来&quot;全是括号&quot;，但这恰恰是它的元编程优势的来源——统一的语法结构意味着代码天然就是可操作的数据树。Python 的缩进、C++ 的花括号、Rust 的尖括号，每一种语法糖都在增加&quot;从代码到数据&quot;的转换成本。
-
-选择了一种&quot;好看&quot;的语法，就放弃了把代码当数据的能力。这不是审美问题，是结构性的取舍。
-
-* 小结
-
-评分表的结论可以用一句话概括：元编程能力的上限取决于语言语法的数据化程度。Lisp 的 S 表达式是最彻底的&quot;代码即数据&quot;——没有语法糖的干扰，宏可以直接操作程序结构，而不需要先解析它。这就是为什么 18 种语言里 8 种是 Lisp 方言，而且它们占据了排行榜的前列。
-</description>
-<pubDate>2026-04-18</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/18/为什么-lisp-统治元编程/index.html</guid>
 </item>
 </channel>
 </rss>
