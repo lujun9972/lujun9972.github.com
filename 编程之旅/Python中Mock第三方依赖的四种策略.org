@@ -1,0 +1,208 @@
+#+TITLE: Python Mock 第三方依赖的四种策略
+#+AUTHOR: lujun9972
+#+TAGS: Python, Testing, Mock, pytest
+#+DATE: [2026-04-20 日]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Sophie Koonin 在 localghost.dev 上写了一篇文章，以她的 Choirbot 项目（一个管理合唱团排练的 Slack bot）为例，展示了在 Jest 中 mock 四种不同类型的第三方依赖的方法。本文借鉴了她的思路，但把所有示例改写为 Python 版本——用 =unittest.mock= 和 =responses= 等 Python 工具实现同样的四种策略。每种策略针对不同的依赖接口特点：客户端类、工厂模式、数据库 ORM、HTTP 请求，从简单到复杂逐步展开。
+
+** 前置知识： =unittest.mock= 是什么
+
+=unittest.mock= 是 Python 标准库中专门用于测试时"替换真实对象"的模块。它的核心思路很简单：测试时你不想真的去调用 Slack API 或连接数据库，那就用一个"假的"对象来代替——这个假对象长得很像真的，但它不会产生任何副作用，你可以随意控制它的返回值、检查它被怎么调用了。
+
+本文用到的三个核心工具：
+
+- =MagicMock= ：万能替身。你访问它的任何属性、调用它的任何方法都不会报错，默认返回另一个 =MagicMock= 。你可以通过 =.return_value= 设置方法的返回值，通过 =.assert_called_once_with()= 验证方法是否被正确调用。
+- =patch= ：偷梁换柱器。它能在测试运行期间把代码中的某个类或函数替换成 =MagicMock= ，测试结束后自动恢复原样。用法通常是 =@patch('模块路径.对象名')= 装饰器。
+- =spec= 参数：给 =MagicMock= 加上约束。 =MagicMock(spec=SomeClass)= 创建的 mock 只能访问 =SomeClass= 中真实存在的方法，防止你拼错方法名却不报错。
+
+* 策略一： =patch + MagicMock= ——适用于客户端类
+
+如果你已经把第三方 SDK 封装成了自己的客户端类，最高效的 mock 方式不是去 mock 整个 SDK，而是 mock 你自己的客户端。Python 的 =unittest.mock.patch= 可以在测试运行时自动替换目标对象。
+
+#+begin_src python
+# src/slack_client.py
+class SlackClient:
+    def __init__(self, token):
+        self.token = token
+
+    def post_message(self, channel, text):
+        # 调用真正的 Slack API
+        ...
+
+    def get_reactions(self, channel, timestamp):
+        # 调用真正的 Slack API
+        ...
+#+end_src
+
+假设被测代码中有一个函数 =detect_raised_hand= ，它内部会实例化 =SlackClient= 并调用其方法：
+
+#+begin_src python
+# src/detector.py
+from src.slack_client import SlackClient
+
+def detect_raised_hand(channel, timestamp, token):
+    client = SlackClient(token)
+    reactions = client.get_reactions(channel, timestamp)
+    return any(r['name'] == 'raised_hands' for r in reactions['message']['reactions'])
+#+end_src
+
+在测试中用 =patch= 替换 =SlackClient= 类，被测代码内部的 =SlackClient(...)= 会自动返回 mock 实例：
+
+#+begin_src python
+# tests/test_detector.py
+from unittest.mock import patch
+from src.detector import detect_raised_hand
+
+@patch('src.detector.SlackClient')
+def test_detect_raised_hand(MockClient):
+    # MockClient 是替换后的 MagicMock 类
+    # MockClient.return_value 是"实例化"时返回的 mock 实例
+    client = MockClient.return_value
+    client.get_reactions.return_value = {
+        'ok': True,
+        'message': {
+            'reactions': [{'users': ['U123456'], 'name': 'raised_hands'}]
+        }
+    }
+
+    # 调用被测函数，它内部会创建 SlackClient 实例（实际得到 mock）
+    result = detect_raised_hand('C001', '1234567890.123456', 'xoxb-fake')
+    assert result is True
+    client.get_reactions.assert_called_once_with('C001', '1234567890.123456')
+#+end_src
+
+*关键点* ： =patch('src.detector.SlackClient')= patch 的是被测代码中的引用位置（即 =src.detector= 模块里的 =SlackClient= 名称），而非原始定义位置。这样被测代码内部执行 =SlackClient(token)= 时，实际得到的是 mock 实例。 =MockClient.return_value= 就是这个 mock 实例——每次"实例化"得到的都是同一个 mock 对象。你可以用 =return_value= 设置方法的返回值，用 =assert_called_once_with= 验证调用参数。
+
+* 策略二：辅助函数封装 mock 配置——适用于工厂模式的 SDK
+
+有些 SDK 使用工厂模式：调用一个函数后才返回客户端实例。比如 Google Sheets SDK 的用法是 =build('sheets', 'v4', credentials=creds)= ——每次调用 =build= 都返回一个新的服务对象。
+
+策略一能解决大部分场景，但遇到这种"深层链式调用 + 工厂函数"的库就麻烦了。 =build()= 返回的对象上有 =spreadsheets().values().batchGet().execute()= 这样的多层调用，手动一层一层设 =return_value= 非常繁琐。
+
+解决方法：写一个辅助函数，把 mock 的层级结构封装起来，每个测试只需传入不同的数据。
+
+#+begin_src python
+# tests/test_sheets.py
+from unittest.mock import MagicMock, patch
+from src.sheets import fetch_rehearsal_data
+
+def make_sheets_mock(batch_get_data):
+    """创建一个配置好的 Sheets 服务 mock"""
+    mock_service = MagicMock()
+    # 设置完整的调用链：service.spreadsheets().values().batchGet().execute()
+    mock_service.spreadsheets().values().batchGet().execute.return_value = {
+        'valueRanges': batch_get_data
+    }
+    return mock_service
+
+@patch('src.sheets.build')
+def test_cancelled_rehearsal(mock_build):
+    # 工厂函数 build() 返回我们配置好的 mock
+    mock_build.return_value = make_sheets_mock([
+        {'range': 'B1:I1', 'values': [['header1', 'header2']]},
+        {'range': 'B4:I4', 'values': [['Rehearsal cancelled', 'Run Through Title']]}
+    ])
+
+    result = fetch_rehearsal_data()
+    assert result[1]['values'][0][0] == 'Rehearsal cancelled'
+#+end_src
+
+为什么这个方法有效？因为 =MagicMock= 有个天然特性：访问任何不存在的属性都会自动返回一个新的 =MagicMock= 。所以 =mock.spreadsheets().values().batchGet()= 这条链上的每一层都是一个自动创建的 mock 对象，最终你在 =execute= 上设置的 =return_value= 会被正确返回。
+
+这比在 Jest 中用闭包变量 + setter 更直观——Python 的 mock 对象天然支持动态修改属性，不需要额外的 setter 函数来"穿透"工厂函数。
+
+* 策略三：仓储类封装——适用于数据库 ORM
+
+数据库 SDK 的 mock 难度最高，因为涉及查询构造器、连接管理、事务等复杂逻辑。直接 mock 数据库驱动往往会导致测试和实现细节强耦合——你改了查询写法，测试就挂了。
+
+更好的做法是给数据库操作封装一个"仓储类"（Repository），让业务代码只通过仓储类访问数据库。然后在测试中 mock 仓储类的方法。这样测试只关心输入输出，不关心内部查询细节。
+
+#+begin_src python
+# src/db.py
+class AttendanceRepo:
+    def __init__(self, db_client):
+        self.db = db_client
+
+    def get_attendance(self, team_id):
+        return self.db.collection(f'attendance-{team_id}').get()
+
+    def save_attendance(self, team_id, data):
+        self.db.collection(f'attendance-{team_id}').add(data)
+#+end_src
+
+在测试中直接 mock 仓储类，不需要碰数据库驱动：
+
+#+begin_src python
+# tests/test_attendance.py
+from unittest.mock import MagicMock
+from src.db import AttendanceRepo
+from src.attendance import AttendanceService
+
+def test_notify_installer_when_post_not_found():
+    repo = MagicMock(spec=AttendanceRepo)
+    repo.get_attendance.return_value = []  # 模拟空数据库
+
+    service = AttendanceService(repo=repo)
+    service.update_message(team_id='T001', token='xoxb-xxx')
+
+    repo.get_attendance.assert_called_once_with('T001')
+#+end_src
+
+=spec= 参数告诉 =MagicMock= 按照 =AttendanceRepo= 的接口创建 mock。好处是：如果你在 =AttendanceRepo= 上删除或重命名了某个方法，对应的测试会立即报错，而不是悄悄通过。
+
+如果你确实需要模拟完整的数据库行为（而不仅仅是 mock 方法调用），可以用专门的 mock 库：
+- SQLite：直接用内存数据库 =sqlite3.connect(':memory:')=
+- MongoDB：用 =mongomock= 库，它实现了完整的 MongoDB 接口
+- PostgreSQL：用 =testcontainers= 启动一个真实的临时 Docker 容器
+
+*策略三的核心思路* ：不是去 mock 底层数据库驱动的每个方法，而是把数据库访问抽象到一层，然后在测试中替换整个抽象层。这样即使以后换数据库（比如从 Firestore 换到 PostgreSQL），测试代码基本不用改。
+
+* 策略四： =responses= 拦截 HTTP 请求——适用于 REST API
+
+对于 =requests= 库发出的 HTTP 请求， =responses= 库能直接拦截并返回预设数据，不需要启动真实服务器。
+
+#+begin_src python
+# tests/test_holiday.py
+import responses
+from src.holiday import is_bank_holiday
+
+@responses.activate
+def test_is_bank_holiday():
+    responses.add(
+        responses.GET,
+        'https://www.gov.uk/bank-holidays.json',
+        json={
+            'england-and-wales': {
+                'events': [
+                    {'title': "New Year's Day", 'date': '2024-01-01', 'bunting': True}
+                ]
+            }
+        },
+        status=200
+    )
+
+    assert is_bank_holiday('2024-01-01') is True
+    assert is_bank_holiday('2024-01-02') is False
+#+end_src
+
+=responses.activate= 装饰器会在测试期间拦截所有 =requests.get/post/...= 调用。 =responses.add= 注册一条规则：当请求匹配指定的 URL 和方法时，返回预设的响应。
+
+需要注意， =responses= 只拦截 =requests= 库的调用。如果你用的是其他 HTTP 库，对应的选择不同：
+- =httpx= ：用 =respx= 库
+- =urllib= / 通用：用 =httpretty= 库
+- =aiohttp= （异步）：用 =aioresponses= 库
+
+* 四种策略的选择指南
+
+| 场景 | 推荐策略 | 核心工具 |
+|------+----------+----------|
+| 自己封装了客户端类 | 策略一 | =patch= + =MagicMock= |
+| SDK 有工厂函数和深层链式调用 | 策略二 | =MagicMock= 链 + 辅助函数 |
+| 数据库 ORM | 策略三 | 仓储类封装 + =spec= mock |
+| REST API（ =requests= ） | 策略四 | =responses= |
+
+选择的核心逻辑是看你要 mock 的依赖的 /接口形态/ ：如果是普通类的方法，策略一用 =patch= 就够了；如果 SDK 有工厂函数和深层链式调用，策略二用辅助函数封装 mock 配置；如果涉及数据库，最好先抽象出仓储层再用策略三；如果是标准 HTTP 请求，策略四用 =responses= 最省事。
+
+原文链接： [[https://localghost.dev/blog/different-ways-to-mock-third-party-integrations-in-jest/][Different ways to mock third-party integrations in Jest]]
