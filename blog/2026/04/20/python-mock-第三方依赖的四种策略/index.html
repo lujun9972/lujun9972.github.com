@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Python Mock 第三方依赖的四种策略 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Python, Testing, Mock, pytest" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Python Mock 第三方依赖的四种策略</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org3cba66f">前置知识： <code>unittest.mock</code> 是什么</a></li>
+</ul>
+</li>
+<li><a href="#org63b3430">策略一： <code>patch + MagicMock</code> ——适用于客户端类</a></li>
+<li><a href="#org26913f7">策略二：辅助函数封装 mock 配置——适用于工厂模式的 SDK</a></li>
+<li><a href="#org2d9a111">策略三：仓储类封装——适用于数据库 ORM</a></li>
+<li><a href="#orga2d0859">策略四： <code>responses</code> 拦截 HTTP 请求——适用于 REST API</a></li>
+<li><a href="#org4907d43">四种策略的选择指南</a></div>
+</div>
+<p>
+Sophie Koonin 在 localghost.dev 上写了一篇文章，以她的 Choirbot 项目（一个管理合唱团排练的 Slack bot）为例，展示了在 Jest 中 mock 四种不同类型的第三方依赖的方法。本文借鉴了她的思路，但把所有示例改写为 Python 版本——用 <code>unittest.mock</code> 和 <code>responses</code> 等 Python 工具实现同样的四种策略。每种策略针对不同的依赖接口特点：客户端类、工厂模式、数据库 ORM、HTTP 请求，从简单到复杂逐步展开。
+</p>
+
+<div id="outline-container-org3cba66f" class="outline-3">
+<h3 id="org3cba66f">前置知识： <code>unittest.mock</code> 是什么</h3>
+<div class="outline-text-3" id="text-org3cba66f">
+<p>
+<code>unittest.mock</code> 是 Python 标准库中专门用于测试时"替换真实对象"的模块。它的核心思路很简单：测试时你不想真的去调用 Slack API 或连接数据库，那就用一个"假的"对象来代替——这个假对象长得很像真的，但它不会产生任何副作用，你可以随意控制它的返回值、检查它被怎么调用了。
+</p>
+
+<p>
+本文用到的三个核心工具：
+</p>
+
+<ul class="org-ul">
+<li><code>MagicMock</code> ：万能替身。你访问它的任何属性、调用它的任何方法都不会报错，默认返回另一个 <code>MagicMock</code> 。你可以通过 <code>.return_value</code> 设置方法的返回值，通过 <code>.assert_called_once_with()</code> 验证方法是否被正确调用。</li>
+<li><code>patch</code> ：偷梁换柱器。它能在测试运行期间把代码中的某个类或函数替换成 <code>MagicMock</code> ，测试结束后自动恢复原样。用法通常是 <code>@patch('模块路径.对象名')</code> 装饰器。</li>
+<li><code>spec</code> 参数：给 <code>MagicMock</code> 加上约束。 <code>MagicMock(spec=SomeClass)</code> 创建的 mock 只能访问 <code>SomeClass</code> 中真实存在的方法，防止你拼错方法名却不报错。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org63b3430" class="outline-2">
+<h2 id="org63b3430">策略一： <code>patch + MagicMock</code> ——适用于客户端类</h2>
+<div class="outline-text-2" id="text-org63b3430">
+<p>
+如果你已经把第三方 SDK 封装成了自己的客户端类，最高效的 mock 方式不是去 mock 整个 SDK，而是 mock 你自己的客户端。Python 的 <code>unittest.mock.patch</code> 可以在测试运行时自动替换目标对象。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">src/slack_client.py
+</span><span class="org-keyword">class</span> <span class="org-type">SlackClient</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, token):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">token</span> <span class="org-operator">=</span> token
+
+    <span class="org-keyword">def</span> <span class="org-function-name">post_message</span>(<span class="org-keyword">self</span>, channel, text):
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#35843;&#29992;&#30495;&#27491;&#30340; Slack API
+</span>        ...
+
+    <span class="org-keyword">def</span> <span class="org-function-name">get_reactions</span>(<span class="org-keyword">self</span>, channel, timestamp):
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#35843;&#29992;&#30495;&#27491;&#30340; Slack API
+</span>        ...
+</pre>
+</div>
+
+<p>
+假设被测代码中有一个函数 <code>detect_raised_hand</code> ，它内部会实例化 <code>SlackClient</code> 并调用其方法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">src/detector.py
+</span><span class="org-keyword">from</span> src.slack_client <span class="org-keyword">import</span> SlackClient
+
+<span class="org-keyword">def</span> <span class="org-function-name">detect_raised_hand</span>(channel, timestamp, token):
+    <span class="org-variable-name">client</span> <span class="org-operator">=</span> SlackClient(token)
+    <span class="org-variable-name">reactions</span> <span class="org-operator">=</span> client.get_reactions(channel, timestamp)
+    <span class="org-keyword">return</span> <span class="org-builtin">any</span>(r[<span class="org-string">'name'</span>] <span class="org-operator">==</span> <span class="org-string">'raised_hands'</span> <span class="org-keyword">for</span> r <span class="org-keyword">in</span> reactions[<span class="org-string">'message'</span>][<span class="org-string">'reactions'</span>])
+</pre>
+</div>
+
+<p>
+在测试中用 <code>patch</code> 替换 <code>SlackClient</code> 类，被测代码内部的 <code>SlackClient(...)</code> 会自动返回 mock 实例：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">tests/test_detector.py
+</span><span class="org-keyword">from</span> unittest.mock <span class="org-keyword">import</span> patch
+<span class="org-keyword">from</span> src.detector <span class="org-keyword">import</span> detect_raised_hand
+
+<span class="org-type">@patch</span>(<span class="org-string">'src.detector.SlackClient'</span>)
+<span class="org-keyword">def</span> <span class="org-function-name">test_detect_raised_hand</span>(MockClient):
+    <span class="org-comment-delimiter"># </span><span class="org-comment">MockClient &#26159;&#26367;&#25442;&#21518;&#30340; MagicMock &#31867;
+</span>    <span class="org-comment-delimiter"># </span><span class="org-comment">MockClient.return_value &#26159;"&#23454;&#20363;&#21270;"&#26102;&#36820;&#22238;&#30340; mock &#23454;&#20363;
+</span>    <span class="org-variable-name">client</span> <span class="org-operator">=</span> MockClient.return_value
+    client.get_reactions.<span class="org-variable-name">return_value</span> <span class="org-operator">=</span> {
+        <span class="org-string">'ok'</span>: <span class="org-constant">True</span>,
+        <span class="org-string">'message'</span>: {
+            <span class="org-string">'reactions'</span>: [{<span class="org-string">'users'</span>: [<span class="org-string">'U123456'</span>], <span class="org-string">'name'</span>: <span class="org-string">'raised_hands'</span>}]
+        }
+    }
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#35843;&#29992;&#34987;&#27979;&#20989;&#25968;&#65292;&#23427;&#20869;&#37096;&#20250;&#21019;&#24314; SlackClient &#23454;&#20363;&#65288;&#23454;&#38469;&#24471;&#21040; mock&#65289;
+</span>    <span class="org-variable-name">result</span> <span class="org-operator">=</span> detect_raised_hand(<span class="org-string">'C001'</span>, <span class="org-string">'1234567890.123456'</span>, <span class="org-string">'xoxb-fake'</span>)
+    <span class="org-keyword">assert</span> result <span class="org-keyword">is</span> <span class="org-constant">True</span>
+    client.get_reactions.assert_called_once_with(<span class="org-string">'C001'</span>, <span class="org-string">'1234567890.123456'</span>)
+</pre>
+</div>
+
+<p>
+<b>关键点</b> ： <code>patch('src.detector.SlackClient')</code> patch 的是被测代码中的引用位置（即 <code>src.detector</code> 模块里的 <code>SlackClient</code> 名称），而非原始定义位置。这样被测代码内部执行 <code>SlackClient(token)</code> 时，实际得到的是 mock 实例。 <code>MockClient.return_value</code> 就是这个 mock 实例——每次"实例化"得到的都是同一个 mock 对象。你可以用 <code>return_value</code> 设置方法的返回值，用 <code>assert_called_once_with</code> 验证调用参数。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org26913f7" class="outline-2">
+<h2 id="org26913f7">策略二：辅助函数封装 mock 配置——适用于工厂模式的 SDK</h2>
+<div class="outline-text-2" id="text-org26913f7">
+<p>
+有些 SDK 使用工厂模式：调用一个函数后才返回客户端实例。比如 Google Sheets SDK 的用法是 <code>build('sheets', 'v4', credentials=creds)</code> ——每次调用 <code>build</code> 都返回一个新的服务对象。
+</p>
+
+<p>
+策略一能解决大部分场景，但遇到这种"深层链式调用 + 工厂函数"的库就麻烦了。 <code>build()</code> 返回的对象上有 <code>spreadsheets().values().batchGet().execute()</code> 这样的多层调用，手动一层一层设 <code>return_value</code> 非常繁琐。
+</p>
+
+<p>
+解决方法：写一个辅助函数，把 mock 的层级结构封装起来，每个测试只需传入不同的数据。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">tests/test_sheets.py
+</span><span class="org-keyword">from</span> unittest.mock <span class="org-keyword">import</span> MagicMock, patch
+<span class="org-keyword">from</span> src.sheets <span class="org-keyword">import</span> fetch_rehearsal_data
+
+<span class="org-keyword">def</span> <span class="org-function-name">make_sheets_mock</span>(batch_get_data):
+    <span class="org-doc">"""&#21019;&#24314;&#19968;&#20010;&#37197;&#32622;&#22909;&#30340; Sheets &#26381;&#21153; mock"""</span>
+    <span class="org-variable-name">mock_service</span> <span class="org-operator">=</span> MagicMock()
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622;&#23436;&#25972;&#30340;&#35843;&#29992;&#38142;&#65306;service.spreadsheets().values().batchGet().execute()
+</span>    mock_service.spreadsheets().values().batchGet().execute.return_value <span class="org-operator">=</span> {
+        <span class="org-string">'valueRanges'</span>: batch_get_data
+    }
+    <span class="org-keyword">return</span> mock_service
+
+<span class="org-type">@patch</span>(<span class="org-string">'src.sheets.build'</span>)
+<span class="org-keyword">def</span> <span class="org-function-name">test_cancelled_rehearsal</span>(mock_build):
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#24037;&#21378;&#20989;&#25968; build() &#36820;&#22238;&#25105;&#20204;&#37197;&#32622;&#22909;&#30340; mock
+</span>    mock_build.<span class="org-variable-name">return_value</span> <span class="org-operator">=</span> make_sheets_mock([
+        {<span class="org-string">'range'</span>: <span class="org-string">'B1:I1'</span>, <span class="org-string">'values'</span>: [[<span class="org-string">'header1'</span>, <span class="org-string">'header2'</span>]]},
+        {<span class="org-string">'range'</span>: <span class="org-string">'B4:I4'</span>, <span class="org-string">'values'</span>: [[<span class="org-string">'Rehearsal cancelled'</span>, <span class="org-string">'Run Through Title'</span>]]}
+    ])
+
+    <span class="org-variable-name">result</span> <span class="org-operator">=</span> fetch_rehearsal_data()
+    <span class="org-keyword">assert</span> result[1][<span class="org-string">'values'</span>][0][0] <span class="org-operator">==</span> <span class="org-string">'Rehearsal cancelled'</span>
+</pre>
+</div>
+
+<p>
+为什么这个方法有效？因为 <code>MagicMock</code> 有个天然特性：访问任何不存在的属性都会自动返回一个新的 <code>MagicMock</code> 。所以 <code>mock.spreadsheets().values().batchGet()</code> 这条链上的每一层都是一个自动创建的 mock 对象，最终你在 <code>execute</code> 上设置的 <code>return_value</code> 会被正确返回。
+</p>
+
+<p>
+这比在 Jest 中用闭包变量 + setter 更直观——Python 的 mock 对象天然支持动态修改属性，不需要额外的 setter 函数来"穿透"工厂函数。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2d9a111" class="outline-2">
+<h2 id="org2d9a111">策略三：仓储类封装——适用于数据库 ORM</h2>
+<div class="outline-text-2" id="text-org2d9a111">
+<p>
+数据库 SDK 的 mock 难度最高，因为涉及查询构造器、连接管理、事务等复杂逻辑。直接 mock 数据库驱动往往会导致测试和实现细节强耦合——你改了查询写法，测试就挂了。
+</p>
+
+<p>
+更好的做法是给数据库操作封装一个"仓储类"（Repository），让业务代码只通过仓储类访问数据库。然后在测试中 mock 仓储类的方法。这样测试只关心输入输出，不关心内部查询细节。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">src/db.py
+</span><span class="org-keyword">class</span> <span class="org-type">AttendanceRepo</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, db_client):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">db</span> <span class="org-operator">=</span> db_client
+
+    <span class="org-keyword">def</span> <span class="org-function-name">get_attendance</span>(<span class="org-keyword">self</span>, team_id):
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>.db.collection(f<span class="org-string">'attendance-</span>{team_id}<span class="org-string">'</span>).get()
+
+    <span class="org-keyword">def</span> <span class="org-function-name">save_attendance</span>(<span class="org-keyword">self</span>, team_id, data):
+        <span class="org-keyword">self</span>.db.collection(f<span class="org-string">'attendance-</span>{team_id}<span class="org-string">'</span>).add(data)
+</pre>
+</div>
+
+<p>
+在测试中直接 mock 仓储类，不需要碰数据库驱动：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">tests/test_attendance.py
+</span><span class="org-keyword">from</span> unittest.mock <span class="org-keyword">import</span> MagicMock
+<span class="org-keyword">from</span> src.db <span class="org-keyword">import</span> AttendanceRepo
+<span class="org-keyword">from</span> src.attendance <span class="org-keyword">import</span> AttendanceService
+
+<span class="org-keyword">def</span> <span class="org-function-name">test_notify_installer_when_post_not_found</span>():
+    <span class="org-variable-name">repo</span> <span class="org-operator">=</span> MagicMock(spec<span class="org-operator">=</span>AttendanceRepo)
+    repo.get_attendance.<span class="org-variable-name">return_value</span> <span class="org-operator">=</span> []  <span class="org-comment-delimiter"># </span><span class="org-comment">&#27169;&#25311;&#31354;&#25968;&#25454;&#24211;
+</span>
+    <span class="org-variable-name">service</span> <span class="org-operator">=</span> AttendanceService(repo<span class="org-operator">=</span>repo)
+    service.update_message(team_id<span class="org-operator">=</span><span class="org-string">'T001'</span>, token<span class="org-operator">=</span><span class="org-string">'xoxb-xxx'</span>)
+
+    repo.get_attendance.assert_called_once_with(<span class="org-string">'T001'</span>)
+</pre>
+</div>
+
+<p>
+<code>spec</code> 参数告诉 <code>MagicMock</code> 按照 <code>AttendanceRepo</code> 的接口创建 mock。好处是：如果你在 <code>AttendanceRepo</code> 上删除或重命名了某个方法，对应的测试会立即报错，而不是悄悄通过。
+</p>
+
+<p>
+如果你确实需要模拟完整的数据库行为（而不仅仅是 mock 方法调用），可以用专门的 mock 库：
+</p>
+<ul class="org-ul">
+<li>SQLite：直接用内存数据库 <code>sqlite3.connect(':memory:')</code></li>
+<li>MongoDB：用 <code>mongomock</code> 库，它实现了完整的 MongoDB 接口</li>
+<li>PostgreSQL：用 <code>testcontainers</code> 启动一个真实的临时 Docker 容器</li>
+</ul>
+
+<p>
+<b>策略三的核心思路</b> ：不是去 mock 底层数据库驱动的每个方法，而是把数据库访问抽象到一层，然后在测试中替换整个抽象层。这样即使以后换数据库（比如从 Firestore 换到 PostgreSQL），测试代码基本不用改。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga2d0859" class="outline-2">
+<h2 id="orga2d0859">策略四： <code>responses</code> 拦截 HTTP 请求——适用于 REST API</h2>
+<div class="outline-text-2" id="text-orga2d0859">
+<p>
+对于 <code>requests</code> 库发出的 HTTP 请求， <code>responses</code> 库能直接拦截并返回预设数据，不需要启动真实服务器。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">tests/test_holiday.py
+</span><span class="org-keyword">import</span> responses
+<span class="org-keyword">from</span> src.holiday <span class="org-keyword">import</span> is_bank_holiday
+
+<span class="org-type">@responses.activate</span>
+<span class="org-keyword">def</span> <span class="org-function-name">test_is_bank_holiday</span>():
+    responses.add(
+        responses.GET,
+        <span class="org-string">'https://www.gov.uk/bank-holidays.json'</span>,
+        json<span class="org-operator">=</span>{
+            <span class="org-string">'england-and-wales'</span>: {
+                <span class="org-string">'events'</span>: [
+                    {<span class="org-string">'title'</span>: <span class="org-string">"New Year's Day"</span>, <span class="org-string">'date'</span>: <span class="org-string">'2024-01-01'</span>, <span class="org-string">'bunting'</span>: <span class="org-constant">True</span>}
+                ]
+            }
+        },
+        status<span class="org-operator">=</span>200
+    )
+
+    <span class="org-keyword">assert</span> is_bank_holiday(<span class="org-string">'2024-01-01'</span>) <span class="org-keyword">is</span> <span class="org-constant">True</span>
+    <span class="org-keyword">assert</span> is_bank_holiday(<span class="org-string">'2024-01-02'</span>) <span class="org-keyword">is</span> <span class="org-constant">False</span>
+</pre>
+</div>
+
+<p>
+<code>responses.activate</code> 装饰器会在测试期间拦截所有 <code>requests.get/post/...</code> 调用。 <code>responses.add</code> 注册一条规则：当请求匹配指定的 URL 和方法时，返回预设的响应。
+</p>
+
+<p>
+需要注意， <code>responses</code> 只拦截 <code>requests</code> 库的调用。如果你用的是其他 HTTP 库，对应的选择不同：
+</p>
+<ul class="org-ul">
+<li><code>httpx</code> ：用 <code>respx</code> 库</li>
+<li><code>urllib</code> / 通用：用 <code>httpretty</code> 库</li>
+<li><code>aiohttp</code> （异步）：用 <code>aioresponses</code> 库</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org4907d43" class="outline-2">
+<h2 id="org4907d43">四种策略的选择指南</h2>
+<div class="outline-text-2" id="text-org4907d43">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">场景</th>
+<th scope="col" class="org-left">推荐策略</th>
+<th scope="col" class="org-left">核心工具</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">自己封装了客户端类</td>
+<td class="org-left">策略一</td>
+<td class="org-left"><code>patch</code> + <code>MagicMock</code></td>
+</tr>
+
+<tr>
+<td class="org-left">SDK 有工厂函数和深层链式调用</td>
+<td class="org-left">策略二</td>
+<td class="org-left"><code>MagicMock</code> 链 + 辅助函数</td>
+</tr>
+
+<tr>
+<td class="org-left">数据库 ORM</td>
+<td class="org-left">策略三</td>
+<td class="org-left">仓储类封装 + <code>spec</code> mock</td>
+</tr>
+
+<tr>
+<td class="org-left">REST API（ <code>requests</code> ）</td>
+<td class="org-left">策略四</td>
+<td class="org-left"><code>responses</code></td>
+</tr>
+</tbody>
+</table>
+
+<p>
+选择的核心逻辑是看你要 mock 的依赖的 <i>接口形态</i> ：如果是普通类的方法，策略一用 <code>patch</code> 就够了；如果 SDK 有工厂函数和深层链式调用，策略二用辅助函数封装 mock 配置；如果涉及数据库，最好先抽象出仓储层再用策略三；如果是标准 HTTP 请求，策略四用 <code>responses</code> 最省事。
+</p>
+
+<p>
+原文链接： <a href="https://localghost.dev/blog/different-ways-to-mock-third-party-integrations-in-jest/">Different ways to mock third-party integrations in Jest</a>
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-20</span>
+    <span class="post-info">2026-04-20</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/testing">Testing</a> : <a href="../../../../../tags/mock">Mock</a> : <a href="../../../../../tags/pytest">pytest</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
