@@ -4,10 +4,349 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 21 Apr 2026 14:22:21 UTC</pubDate>
-    <lastBuildDate>Tue, 21 Apr 2026 14:22:21 UTC</lastBuildDate>
+    <pubDate>Tue, 21 Apr 2026 23:39:38 UTC</pubDate>
+    <lastBuildDate>Tue, 21 Apr 2026 23:39:38 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>fcitx 启动后键盘输入卡顿的排查</title>
+<link>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</link>
+<description>* 故障现象
+
+某天，我发现启动 =fcitx= 后，整个键盘输入变得 *非常卡* ——敲一个键要等半秒甚至更久才有反应。但鼠标完全正常，丝毫不受影响。不启动 =fcitx= 就一切如常。
+
+键盘卡而鼠标没事，这个现象很诡异。直觉告诉我：一定是 =fcitx= 做了什么只影响键盘、不影响鼠标的事情。
+
+* 排查过程
+
+** 第一步：收集基础信息
+
+先搞清楚环境。我的系统是 Arch Linux，窗口管理器是 =awesome= ，显示服务器是 =Xorg= ， =fcitx= 版本是 4.2.9.9（fcitx4）。
+
+#+begin_src shell
+  uname -r
+  # 6.19.12-arch1-1
+
+  fcitx --version
+  # fcitx version: 4.2.9.9
+#+end_src
+
+然后运行 =fcitx= 自带的诊断工具：
+
+#+begin_src shell
+  DISPLAY=:0 fcitx-diagnose
+#+end_src
+
+诊断结果暴露了大量问题，下面列出关键部分并逐一说明。
+
+*** Fcitx 状态：DBus 通信断裂
+
+#+begin_example
+# Fcitx State:
+4.  `fcitx-remote`:
+
+    **Cannot connect to fcitx correctly.**
+
+5.  DBus interface:
+
+    **Cannot find DBus name `org.fcitx.Fcitx` owner.**
+
+    **Cannot find pid of DBus name `org.fcitx.Fcitx` owner.**
+#+end_example
+
+=fcitx-remote= 无法连接 =fcitx= ，DBus 总线上也找不到 =org.fcitx.Fcitx= 这个服务名。这意味着 =fcitx= 虽然进程在跑，但它 *没有成功注册到会话总线* 。
+
+更进一步，检查进程列表发现 =fcitx= 启动了一个 *私有的 dbus-daemon= ：
+
+#+begin_example
+  lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
+    --config-file /usr/share/fcitx/dbus/daemon.conf
+#+end_example
+
+正常情况下， =fcitx= 应该使用桌面会话的 DBus（ =/run/user/1000/bus= ），但它退而求其次启动了自己的私有 DBus 实例。这说明 =fcitx= 启动时会话总线不可用（或者地址不对）。私有总线意味着其他应用无法通过标准 DBus 接口与 =fcitx= 通信，输入法切换、状态同步等功能全部受影响。
+
+*** 前端模块：环境变量缺失
+
+#+begin_example
+# Frontends setup:
+## Xim:
+1.  `${XMODIFIERS}`:
+
+    **XMODIFIERS is not set**
+
+## Qt:
+1.  qt4 - `${QT4_IM_MODULE}`:
+
+    **Please set environment variable QT4_IM_MODULE ...**
+
+2.  qt5 - `${QT_IM_MODULE}`:
+
+    **Please set environment variable QT_IM_MODULE ...**
+
+## Gtk:
+1.  gtk - `${GTK_IM_MODULE}`:
+
+    **Please set environment variable GTK_IM_MODULE ...**
+#+end_example
+
+三个关键环境变量（ =XMODIFIERS= 、 =QT_IM_MODULE= 、 =GTK_IM_MODULE= ）全部未设置。不过这一条有 *误导性* ——我检查了 =~/.xinitrc= ，里面确实有设置这些变量，只是 =fcitx-diagnose= 运行所在的 shell 环境没继承到 X 会话的环境变量。所以这个问题的严重程度需要打个问号。
+
+#+BEGIN_QUOTE
+*小知识：为什么需要三个环境变量？*
+
+- =XMODIFIERS=@im=fcitx= ：告诉 *所有 X11 应用* 通过 XIM 协议连接输入法服务器。这是最底层的兼容方案，几乎所有 X 应用都支持。
+- =GTK_IM_MODULE=fcitx= ：让 *GTK 应用* 使用专门的 fcitx IM 模块，比 XIM 性能更好、体验更流畅（支持光标跟随、预编辑等）。
+- =QT_IM_MODULE=fcitx= ：同理，让 *Qt 应用* 使用专门的 fcitx IM 模块。
+
+三个变量的作用范围不同但互补： =XMODIFIERS= 是兜底方案， =GTK_IM_MODULE= 和 =QT_IM_MODULE= 是针对特定框架的优化方案。
+#+END_QUOTE
+
+*** crash.log：BadWindow 错误
+
+#+begin_example
+  3.  `~/.config/fcitx/log/crash.log`:
+
+      fcitx: BadWindow (invalid Window parameter)
+#+end_example
+
+=crash.log= 中记录了一次 =BadWindow= 错误。这是 X11 协议中的经典错误，表示 =fcitx= 尝试操作一个不存在或已销毁的窗口。这通常发生在窗口关闭时 =fcitx= 还没来得及清理对该窗口的引用。虽然未必直接导致卡顿，但说明 =fcitx= 的窗口管理与 X 服务器的状态存在不同步。
+
+*** 配置工具：GTK2 模块缺失
+
+#+begin_example
+# Fcitx Configure UI:
+2.  Config GUI for gtk2:
+
+    **Config GUI for gtk2 not found.**
+
+...
+
+## Gtk:
+1.  gtk - gtk-query-immodules:
+
+    **Failed to find fcitx in the output of `/usr/bin/gtk-query-immodules-2.0`**
+    **Cannot find fcitx im module for gtk 2.**
+#+end_example
+
+GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应用已经很少见了，而且如果 =XMODIFIERS= 设置正确，GTK2 应用仍可通过 XIM 协议使用输入法。
+
+*** Locale 警告
+
+#+begin_example
+3.  XIM for Emacs:
+
+    **Your LC_CTYPE is set to en_US.UTF-8 instead of one of zh, ja, ko.
+    You may not be able to use input method in emacs because of
+    an really old emacs bug that upstream refuse to fix for years.**
+#+end_example
+
+这是一个 Emacs 的古老 bug ：当 =LC_CTYPE= 不是中日韩 locale 时，Emacs 的 XIM 输入可能不工作。对我来说影响不大，因为我用的是 Emacs 内置的输入法支持，不走 XIM 。
+
+** 第二步：发现键盘设备被禁用
+
+排查过程中，我用 =xinput= 检查了键盘设备的状态，结果大吃一惊：
+
+#+begin_src shell
+  DISPLAY=:0 xinput list-props &quot;AT Translated Set 2 keyboard&quot;
+#+end_src
+
+输出中有一行：
+
+#+begin_example
+  Device Enabled (176):  0
+#+end_example
+
+=Device Enabled= 是 *0* ！物理键盘在 X 层面被 *禁用* 了！
+
+再看设备列表：
+
+#+begin_src shell
+  DISPLAY=:0 xinput list
+#+end_src
+
+#+begin_example
+  ⎡ Virtual core pointer                      id=2  [master pointer  (3)]
+  ⎜   ↳ Virtual core XTEST pointer            id=4  [slave  pointer  (2)]
+  ⎣ Virtual core keyboard                     id=3  [master keyboard (2)]
+      ↳ Virtual core XTEST keyboard           id=5  [slave  keyboard (3)]
+  ∼ AT Translated Set 2 keyboard              id=10 [floating slave]
+  ∼ ThinkPad Extra Buttons                    id=13 [floating slave]
+  ...
+#+end_example
+
+物理键盘前面的符号是 =~= （tilde），表示它是 *floating slave* ——一个浮动的、没有挂载到任何 master 设备上的从设备。正常情况下，物理键盘应该是 =↳= （attached slave），挂载在 master keyboard 下面。
+
+#+BEGIN_QUOTE
+*小知识：X11 的输入设备层级*
+
+X11 的输入设备分为三层：
+
+1. *Master 设备* ：虚拟的核心设备（master keyboard + master pointer），是应用程序看到的&quot;键盘&quot;和&quot;鼠标&quot;
+2. *Slave 设备* ：物理设备，attach 到 master 上，通过 master 将事件传递给应用程序
+3. *Floating slave* ：物理设备但 *没有* attach 到任何 master，事件走另一条路径
+
+当物理键盘变成 floating slave 且被禁用时，键盘事件只能通过更慢的回退路径（如 XIM 或 XKB 扩展）传递，这就是输入卡顿的原因。
+#+END_QUOTE
+
+** 第三步：临时修复——重新启用键盘
+
+我尝试了两个操作：
+
+#+begin_src shell
+  # 将键盘重新挂载到 master keyboard
+  DISPLAY=:0 xinput reattach 10 3
+
+  # 重新启用键盘设备
+  DISPLAY=:0 xinput enable &quot;AT Translated Set 2 keyboard&quot;
+#+end_src
+
+执行后确认：
+
+#+begin_example
+  Device Enabled (176):  1
+#+end_example
+
+键盘恢复了正常。这证实了： *键盘被禁用和分离就是卡顿的直接原因* 。
+
+** 第四步：定位根因——fcitx-xkb 插件
+
+为什么键盘会被禁用？回到 =fcitx-diagnose= 的输出，我注意到 =fcitx= 加载了大量插件：
+
+#+begin_example
+  Found 36 enabled addons:
+      fcitx-xkb
+      fcitx-xkbdbus
+      fcitx-x11
+      fcitx-xim
+      ...
+#+end_example
+
+其中 =fcitx-xkb= 和 =fcitx-xkbdbus= 这两个插件引起了我的注意。 =fcitx-xkb= 的功能是接管 X 的键盘布局管理（XKB），当它启动时会：
+
+1. 接管 XKB 布局控制权
+2. 可能禁用物理键盘设备
+3. 通过自己的管道处理键盘事件
+
+而鼠标走的是完全独立的 XInput 路径，不受 XKB 插件影响。这完美解释了&quot; *键盘卡而鼠标没事* &quot;的现象。
+
+同时，诊断还发现了 DBus 通信问题：
+
+#+begin_example
+  Cannot connect to fcitx correctly.
+  Cannot find DBus name org.fcitx.Fcitx owner.
+#+end_example
+
+=fcitx-remote= 也无法连接 =fcitx= ，说明 DBus 通信链路是断的。 =fcitx-xkbdbus= 插件需要通过 DBus 传递键盘状态，如果 DBus 通信断了，每次按键都可能在等待一个永远不会到来的 DBus 响应，进一步加剧延迟。
+
+*根因链条*
+
+#+begin_example
+  fcitx4 启动
+    → fcitx-xkb 插件接管 X 键盘布局
+      → 禁用/分离物理键盘设备
+        → 键盘事件走慢速回退路径
+          → 再叠加 DBus 通信断裂
+            → 每次按键都卡
+#+end_example
+
+* 解决方案
+
+问题的根源是 =fcitx4= 太老了（4.2.9.9），它的 XKB 集成有 bug。 =fcitx5= 已经完全重写了 XKB 管理模块，不会有这个问题。于是我决定直接升级。
+
+** 升级到 fcitx5
+
+#+begin_src shell
+  # 移除 fcitx4 所有包
+  sudo pacman -Rns fcitx fcitx-configtool fcitx-googlepinyin \
+    fcitx-mozc fcitx-qt4 fcitx-qt5 fcitx-qt6 fcitx-rime \
+    fcitx-sogoupinyin fcitx-sunpinyin
+#+end_src
+
+#+begin_src shell
+  # 安装 fcitx5 全家桶
+  sudo pacman -S fcitx5 fcitx5-configtool fcitx5-gtk fcitx5-qt \
+    fcitx5-chinese-addons fcitx5-mozc fcitx5-rime fcitx5-pinyin-zhwiki
+#+end_src
+
+** 更新环境变量
+
+=fcitx4= 和 =fcitx5= 的环境变量值不同，需要修改 =~/.xinitrc= ：
+
+#+begin_example
+  # 旧的 (fcitx4)
+  export GTK_IM_MODULE=fcitx
+  export QT_IM_MODULE=fcitx
+  export XMODIFIERS=&quot;@im=fcitx&quot;
+
+  # 新的 (fcitx5)
+  export GTK_IM_MODULE=fcitx5
+  export QT_IM_MODULE=fcitx5
+  export XMODIFIERS=&quot;@im=fcitx5&quot;
+#+end_example
+
+#+BEGIN_QUOTE
+*小知识：为什么环境变量值要改？*
+
+=GTK_IM_MODULE= 和 =QT_IM_MODULE= 告诉 GTK/Qt 应用加载哪个输入法模块。 =fcitx= 和 =fcitx5= 是两套独立的 IM 模块共享库，名字不同。如果环境变量还指向 =fcitx= ，应用会尝试加载一个已经不存在的 =im-fcitx.so= ，结果就是找不到输入法。
+#+END_QUOTE
+
+升级后重新登录 X 会话，一切正常，键盘输入丝般顺滑。
+
+* 输入法对照表
+
+升级过程中，输入法引擎也需要对应替换：
+
+| fcitx4 包             | fcitx5 包                | 说明             |
+|-----------------------+--------------------------+------------------|
+| =fcitx=               | =fcitx5=                 | 核心框架         |
+| =fcitx-configtool=    | =fcitx5-configtool=      | 图形配置工具     |
+| =fcitx-sunpinyin=     | =fcitx5-chinese-addons=  | 拼音（内置更优） |
+| =fcitx-sogoupinyin=   | =fcitx5-chinese-addons=  | 拼音（内置更优） |
+| =fcitx-googlepinyin=  | =fcitx5-chinese-addons=  | 拼音（内置更优） |
+| =fcitx-mozc=          | =fcitx5-mozc=            | 日文输入         |
+| =fcitx-rime=          | =fcitx5-rime=            | Rime 输入        |
+| =fcitx-qt5/6=         | =fcitx5-qt=              | Qt IM 模块       |
+| （无）                | =fcitx5-gtk=             | GTK IM 模块      |
+| （无）                | =fcitx5-pinyin-zhwiki=   | 维基百科词库     |
+
+值得一提的是， =fcitx-sogoupinyin= （搜狗拼音）没有 fcitx5 版本，但 =fcitx5-chinese-addons= 内置的拼音引擎带云拼音功能，体验不逊于搜狗。
+
+* 复盘
+
+** 排查思路
+
+这次排查的关键转折点是用 =xinput list-props= 检查物理键盘的状态。如果只停留在&quot; =fcitx= 导致卡顿&quot;的表面，可能会一直猜测是 =fcitx= 性能问题，而不会发现真正的原因是 =X11= 层面的设备被禁用了。
+
+整个排查过程遵循了一个核心原则： *先找根因，再动手修* 。
+
+#+begin_example
+  现象：键盘输入卡顿
+    │
+    ├─ 1. fcitx-diagnose 收集信息
+    │     → 发现 DBus 断裂、环境变量缺失等多个异常
+    │
+    ├─ 2. xinput list-props 检查键盘设备
+    │     → Device Enabled = 0，键盘被禁用！
+    │
+    ├─ 3. xinput list 看设备拓扑
+    │     → 物理键盘是 floating slave，未挂载到 master
+    │
+    ├─ 4. xinput enable + reattach 临时修复
+    │     → 卡顿消失，确认根因
+    │
+    └─ 5. 定位 fcitx-xkb 插件为罪魁祸首
+          → 升级到 fcitx5 彻底解决
+#+end_example
+
+** 经验教训
+
+1. *=xinput= 是排查 X11 键盘/鼠标问题的利器* ： =xinput list= 看设备拓扑， =xinput list-props= 看设备属性， =xinput enable/disable= 控制设备开关
+2. *输入法问题不一定在输入法层面* ：这次表面是 =fcitx= 的锅，实际上是 =fcitx= 的 XKB 插件把 X11 的设备搞乱了，根因在 X 输入子系统
+3. *老软件就该升级* ： =fcitx4= 已经停止维护， =fcitx5= 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上， clinging to 旧版本只会积累技术债
+</description>
+<pubDate>2026-04-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</guid>
+</item>
 <item>
 <title>用 Emacs 自动生成每周链接推荐</title>
 <link>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</link>
@@ -1086,90 +1425,6 @@ Prot 的做法看起来费时间：他不直接复制粘贴别人的代码，而
 </description>
 <pubDate>2026-04-19</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/19/prot-的-emacs-配置哲学/index.html</guid>
-</item>
-<item>
-<title>TIL: 从直播对谈中学到的三个 Emacs 技巧</title>
-<link>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</link>
-<description>来源：[[https://sachachua.com/blog/2026/04/ye16-sacha-and-prot-talk-emacs/][YE16: Sacha and Prot talk Emacs]]
-
-* qrencode：在 Emacs 里生成 QR 码
-
-=qrencode= 包能把任意字符串渲染成字符画 QR 码，直接显示在 Emacs buffer 里。Sacha 用它在直播时显示 URL，观众用手机扫码就能打开链接，不用暂停视频手打地址。
-
-#+begin_src emacs-lisp
-;; 安装
-(use-package qrencode
-  :ensure t)
-
-;; 生成 QR 码并插入当前 buffer
-(qrencode-region (point-min) (point-max))
-;; 或者指定字符串
-(insert (qrencode-string &quot;https://sachachua.com&quot;))
-#+end_src
-
-生成的 QR 码是用字符方块拼成的，不是图片。可以直接在终端里使用。
-
-* helpful + elisp-demos：增强 Emacs Lisp 文档体验
-
-=helpful= 是 =describe-function= 和 =describe-variable= 的增强替代品，显示更多信息（源码、调用位置、引用）。 =elisp-demos= 则在帮助 buffer 中注入函数用法示例。
-
-#+begin_src emacs-lisp
-;; 安装
-(use-package helpful
-  :ensure t
-  :bind
-  ((&quot;C-h f&quot; . helpful-callable)
-   (&quot;C-h v&quot; . helpful-variable)
-   (&quot;C-h k&quot; . helpful-key)))
-
-(use-package elisp-demos
-  :ensure t
-  :after helpful
-  :config
-  (advice-add &#39;helpful-update :after #&#39;elisp-demos-advice-helpful-update))
-#+end_src
-
-装完之后 =C-h f mapcar= 就能看到 =mapcar= 的实际用法示例，而不是只有干巴巴的函数签名。
-
-* keyd + emacsclient：系统级快捷键
-
-=keyd= 是 Linux 下的键盘重映射守护进程，配置文件放在 =~/.config/keyd/default.conf= 。它能把按键的长按变成修饰键——比如长按空格变成 Super 键，短按还是空格。配合 =emacsclient= 可以实现系统级的快捷键触发 Emacs 命令。
-
-整体思路分三步：
-
-1. Emacs 中定义命令
-2. keyd 中定义按键映射，用 =command()= 直接调用 emacsclient
-3. 长按空格 + 按对应键即可触发
-
-#+begin_src emacs-lisp
-;; Step 1: 在 Emacs 中定义一个通过 emacsclient 调用的命令
-(defun my-toggle-dark-mode ()
-  &quot;切换深色/浅色主题。&quot;
-  (interactive)
-  (if (eq (car custom-enabled-themes) &#39;modus-operandi)
-      (load-theme &#39;modus-vivendi t)
-    (load-theme &#39;modus-operandi t)))
-#+end_src
-
-#+begin_src conf :tangle no
-# ~/.config/keyd/default.conf
-
-[ids]
-*
-
-[main]
-# 短按空格 = 空格，长按空格 = 激活 layer 层
-space = overload(space, layer)
-
-[layer]
-# 长按空格 + c → 直接运行 emacsclient 命令
-c = command(emacsclient -e &#39;(my-toggle-dark-mode)&#39;)
-#+end_src
-
-这样长按空格再按 =c= ，即使焦点不在 Emacs 窗口上，也能切换主题。keyd 的 =command()= 直接调用系统命令，不需要额外的快捷键管理工具。
-</description>
-<pubDate>2026-04-19</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</guid>
 </item>
 </channel>
 </rss>
