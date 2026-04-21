@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 Emacs 自动生成每周链接推荐 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs之怒, org-mode, automation" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 Emacs 自动生成每周链接推荐</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc51e7e0">整体链条</a></li>
+<li><a href="#orgee13dfd">第一步：org-capture 收集链接</a></li>
+<li><a href="#orgca9d060">第二步：elisp 脚本生成博文</a></li>
+<li><a href="#org3c636e8">第三步：GitHub Actions 定时发布</a></li>
+<li><a href="#orga2d4dda">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://localghost.dev/blog/automated-weekly-links-posts-with-raindrop-io-and-eleventy/">Automated weekly links posts with raindrop.io and Eleventy</a>
+</p>
+
+<p>
+Sophie Koonin 在一篇博客中描述了她的自动化链接推荐方案：用 Raindrop.io（一个书签管理工具）收集链接，用 Eleventy（一个静态网站生成器）把链接渲染成博文，再用 GitHub Actions 每周日定时跑脚本，自动 commit 和发布。整条链路不需要手动操作，唯一要做的事就是平时看到好文章时随手收藏一下。
+</p>
+
+<p>
+这套方案的核心思路—— <b>把"每周手动发博文"拆解成"收集 → 生成 → 发布"三步自动化</b> ——并不依赖特定工具。下面我用 Emacs + Org-mode 重新实现同样的效果，因为我的博客本身就是用 EGO（Emacs Git Org，一个基于 Org-mode 的静态站点生成器）构建的。
+</p>
+
+<div id="outline-container-orgc51e7e0" class="outline-2">
+<h2 id="orgc51e7e0">整体链条</h2>
+<div class="outline-text-2" id="text-orgc51e7e0">
+<pre class="example">
+看到好文章 → org-capture 保存链接到 links.org
+                      ↓
+          GitHub Actions 每周日定时运行 elisp 脚本
+                      ↓
+         从 links.org 提取本周链接 → 生成 Org 博文
+                      ↓
+            自动 commit → 触发博客构建 → 发布
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgee13dfd" class="outline-2">
+<h2 id="orgee13dfd">第一步：org-capture 收集链接</h2>
+<div class="outline-text-2" id="text-orgee13dfd">
+<p>
+在博客仓库中创建一个 <code>links.org</code> 文件专门存放链接，然后配一个 org-capture 模板：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'org-capture-templates
+  '(<span class="org-string">"l"</span> <span class="org-string">"&#25910;&#38598;&#38142;&#25509;"</span> entry (file <span class="org-string">"~/blog/links.org"</span>)
+    <span class="org-string">"* %? %t\n  %x\n"</span> <span class="org-builtin">:empty-lines</span> 1))
+</pre>
+</div>
+
+<p>
+使用方法：在浏览器里复制 URL，切到 Emacs， <code>M-x org-capture</code> ，选 <code>l</code> ，输入链接标题， <code>C-c C-c</code> 保存。 <code>%t</code> 插入当天日期（ <code>&lt;2026-04-19 Sat&gt;</code> 格式）， <code>%x</code> 粘贴剪贴板中的 URL。
+</p>
+
+<p>
+收集到的内容示例：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* &#19968;&#31687;&#19981;&#38169;&#30340; Rust &#25945;&#31243; </span><span class="org-org-date">&lt;2026-04-19 Sat&gt;</span>
+  <span class="org-org-link"><a href="https://example.com/rust-tutorial">https://example.com/rust-tutorial</a></span>
+
+<span class="org-org-level-1">* Hacker News &#19978;&#20851;&#20110; Emacs &#30340;&#35752;&#35770; </span><span class="org-org-date">&lt;2026-04-20 Sun&gt;</span>
+  <span class="org-org-link"><a href="https://news.ycombinator.com/">https://news.ycombinator.com/</a></span>...
+  &#36825;&#31687;&#35752;&#35770;&#20018;&#37324;&#26377;&#20960;&#20010;&#20851;&#20110; tramp &#37197;&#32622;&#30340;&#22909;&#24314;&#35758;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgca9d060" class="outline-2">
+<h2 id="orgca9d060">第二步：elisp 脚本生成博文</h2>
+<div class="outline-text-2" id="text-orgca9d060">
+<p>
+接下来需要一个 elisp 函数，读取 <code>links.org</code> ，筛选出本周的链接，生成一篇 EGO 格式的博文。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my/generate-weekly-links-post</span> (links-file output-dir)
+  <span class="org-doc">"&#20174; LINKS-FILE &#25552;&#21462;&#26412;&#21608;&#38142;&#25509;&#65292;&#29983;&#25104;&#21338;&#25991;&#21040; OUTPUT-DIR."</span>
+  (<span class="org-keyword">interactive</span> <span class="org-string">"fLinks file: \nDOutput directory: "</span>)
+  (<span class="org-keyword">let*</span> ((today (format-time-string <span class="org-string">"%Y-%m-%d"</span>))
+         (today-prefix (format <span class="org-string">"&lt;%s"</span> today))
+         (week-ago-time (time-subtract (current-time) (days-to-time 7)))
+         (week-ago-prefix (format <span class="org-string">"&lt;%s"</span>
+                                  (format-time-string <span class="org-string">"%Y-%m-%d"</span> week-ago-time)))
+         links)
+    (<span class="org-keyword">with-temp-buffer</span>
+      (insert-file-contents links-file)
+      (goto-char (point-min))
+      (<span class="org-keyword">while</span> (re-search-forward
+              <span class="org-string">"^\\* </span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">.+?</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string"> </span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">&lt;[0-9]\\{</span><span class="org-string"><span class="org-variable-name">4\\</span></span><span class="org-string">}-[0-9]\\{</span><span class="org-string"><span class="org-variable-name">2\\</span></span><span class="org-string">}-[0-9]\\{</span><span class="org-string"><span class="org-variable-name">2\\</span></span><span class="org-string">} [</span><span class="org-string"><span class="org-negation-char">^</span></span><span class="org-string">&gt;]+&gt;</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string">"</span>
+              nil t)
+        (<span class="org-keyword">let*</span> ((title (match-string 1))
+               (ts (match-string 2))
+               (body-start (1+ (line-end-position)))
+               (body-end (<span class="org-keyword">save-excursion</span>
+                           (<span class="org-keyword">if</span> (re-search-forward <span class="org-string">"^\\*"</span> nil t)
+                               (1- (match-beginning 0))
+                             (point-max))))
+               (body (string-trim
+                      (buffer-substring-no-properties body-start body-end))))
+          (<span class="org-keyword">when</span> (<span class="org-keyword">and</span> (not (string&lt; ts week-ago-prefix))
+                     (string&lt; ts today-prefix))
+            (<span class="org-keyword">push</span> (list title body) links)))))
+    (<span class="org-keyword">when</span> links
+      (<span class="org-keyword">let</span> ((post-file (expand-file-name
+                        (format <span class="org-string">"&#27599;&#21608;&#38142;&#25509;&#25512;&#33616;-%s.org"</span> today) output-dir))
+            (links-count (length links)))
+        (<span class="org-keyword">with-temp-buffer</span>
+          (insert (format <span class="org-string">"#+TITLE: &#27599;&#21608;&#38142;&#25509;&#25512;&#33616; %s\n"</span> today))
+          (insert <span class="org-string">"#+AUTHOR: lujun9972\n"</span>)
+          (insert <span class="org-string">"#+TAGS: Emacs&#20043;&#24594;\n"</span>)
+          (insert (format <span class="org-string">"#+DATE: [%s %s]\n"</span>
+                          today (<span class="org-keyword">let</span> ((system-time-locale <span class="org-string">"zh_CN.utf-8"</span>))
+                                  (format-time-string <span class="org-string">"%a"</span>))))
+          (insert <span class="org-string">"#+LANGUAGE: zh-CN\n"</span>)
+          (insert <span class="org-string">"#+OPTIONS: H:6 num:nil toc:t \\n:nil ::t |:t ^:nil -:nil f:t *:t &lt;:nil\n\n"</span>)
+          (insert <span class="org-string">"&#26412;&#21608;&#25910;&#38598;&#30340;&#26377;&#24847;&#24605;&#30340;&#38142;&#25509;&#12290;\n\n"</span>)
+          (<span class="org-keyword">dolist</span> (link (nreverse links))
+            (<span class="org-keyword">let</span> ((title (nth 0 link))
+                  (body (nth 1 link)))
+              (<span class="org-keyword">if</span> (string-empty-p body)
+                  (insert (format <span class="org-string">"- %s\n"</span> title))
+                (insert (format <span class="org-string">"- %s\n  %s\n"</span> title body)))))
+          (write-file post-file)
+          (message <span class="org-string">"&#29983;&#25104;&#23436;&#27605;: %s (%d &#26465;&#38142;&#25509;)"</span> post-file links-count))))))
+</pre>
+</div>
+
+<p>
+函数逻辑：
+</p>
+
+<ol class="org-ol">
+<li>用正则匹配每个一级标题的时间戳（ <code>&lt;2026-04-19 Sat&gt;</code> 格式）</li>
+<li>用字符串比较筛选：日期 &gt;= 7 天前 且 &lt; 今天</li>
+<li>拼接成 EGO 格式的 Org 博文，写到博客目录</li>
+</ol>
+
+<p>
+字符串比较能正确工作的原因是时间戳格式为 <code>&lt;YYYY-MM-DD ...&gt;</code> ，日期部分在前面，字典序和日期序一致。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3c636e8" class="outline-2">
+<h2 id="org3c636e8">第三步：GitHub Actions 定时发布</h2>
+<div class="outline-text-2" id="text-org3c636e8">
+<p>
+在仓库中添加一个 workflow 文件（如 <code>.github/workflows/weekly-links.yml</code> ）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-variable-name">name</span>: <span class="org-string">"&#29983;&#25104;&#27599;&#21608;&#38142;&#25509;&#25512;&#33616;"</span>
+<span class="org-constant">on</span>:
+  <span class="org-variable-name">schedule</span>:
+    - <span class="org-variable-name">cron</span>: 0 10 * * 0  <span class="org-comment-delimiter"># </span><span class="org-comment">&#27599;&#21608;&#26085; UTC 10:00&#65288;&#21271;&#20140;&#26102;&#38388; 18:00&#65289;
+</span><span class="org-variable-name">jobs</span>:
+  <span class="org-variable-name">generate-links</span>:
+    <span class="org-variable-name">runs-on</span>: ubuntu-latest
+    <span class="org-variable-name">steps</span>:
+      - <span class="org-variable-name">uses</span>: actions/checkout@v4
+        <span class="org-variable-name">with</span>:
+          <span class="org-variable-name">ref</span>: source
+      - <span class="org-variable-name">name</span>: &#23433;&#35013; Emacs
+        <span class="org-variable-name">run</span>: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
+      - <span class="org-variable-name">name</span>: &#29983;&#25104;&#21338;&#25991;
+        <span class="org-variable-name">run</span>: |
+          <span class="org-string">emacs --batch -l generate_weekly_links.el</span>
+      - <span class="org-variable-name">uses</span>: stefanzweifel/git-auto-commit-action@v5
+        <span class="org-variable-name">with</span>:
+          <span class="org-variable-name">commit_message</span>: <span class="org-string">"&#27599;&#21608;&#38142;&#25509;&#25512;&#33616;"</span>
+</pre>
+</div>
+
+<p>
+其中 <code>generate_weekly_links.el</code> 就是上面的函数，末尾加一行调用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">generate_weekly_links.el &#8212; &#25918;&#22312;&#21338;&#23458;&#20179;&#24211;&#26681;&#30446;&#24405;
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">... &#20989;&#25968;&#23450;&#20041;&#21516;&#19978; ...
+</span>(my/generate-weekly-links-post <span class="org-string">"links.org"</span> <span class="org-string">"Emacs&#20043;&#24594;/"</span>)
+</pre>
+</div>
+
+<p>
+这个 workflow 往 <code>source</code> 分支 push 新博文，而现有的博客构建 workflow 已经在监听 <code>source</code> 分支的 push 事件，所以新博文会自动构建发布，不需要额外的部署步骤。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga2d4dda" class="outline-2">
+<h2 id="orga2d4dda">小结</h2>
+<div class="outline-text-2" id="text-orga2d4dda">
+<p>
+整个方案的精髓： <b>把一个需要坚持的习惯，拆解成"收集、生成、发布"三步自动化</b> 。你唯一需要做的就是看到好文章时随手 <code>org-capture</code> 一下。
+</p>
+
+<p>
+不管你用的是 Raindrop.io + Eleventy 还是 Emacs + EGO，思路都一样——找到你的"收集入口"，写一个"提取脚本"，再用 CI 的定时任务跑起来。工具不同，模式相同。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-21</span>
+    <span class="post-info">2026-04-21</span>
+    <a href="../../../../../tags/emacs之怒">Emacs之怒</a> : <a href="../../../../../tags/org-mode">org-mode</a> : <a href="../../../../../tags/automation">automation</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; vivxwfosngge1kbd0jgxbaewjb &lt;dot&gt; gx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

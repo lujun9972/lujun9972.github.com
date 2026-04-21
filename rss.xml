@@ -4,10 +4,163 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 21 Apr 2026 11:58:12 UTC</pubDate>
-    <lastBuildDate>Tue, 21 Apr 2026 11:58:12 UTC</lastBuildDate>
+    <pubDate>Tue, 21 Apr 2026 14:22:21 UTC</pubDate>
+    <lastBuildDate>Tue, 21 Apr 2026 14:22:21 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>用 Emacs 自动生成每周链接推荐</title>
+<link>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</link>
+<description>原文：[[https://localghost.dev/blog/automated-weekly-links-posts-with-raindrop-io-and-eleventy/][Automated weekly links posts with raindrop.io and Eleventy]]
+
+Sophie Koonin 在一篇博客中描述了她的自动化链接推荐方案：用 Raindrop.io（一个书签管理工具）收集链接，用 Eleventy（一个静态网站生成器）把链接渲染成博文，再用 GitHub Actions 每周日定时跑脚本，自动 commit 和发布。整条链路不需要手动操作，唯一要做的事就是平时看到好文章时随手收藏一下。
+
+这套方案的核心思路—— *把&quot;每周手动发博文&quot;拆解成&quot;收集 → 生成 → 发布&quot;三步自动化* ——并不依赖特定工具。下面我用 Emacs + Org-mode 重新实现同样的效果，因为我的博客本身就是用 EGO（Emacs Git Org，一个基于 Org-mode 的静态站点生成器）构建的。
+
+** 整体链条
+
+#+begin_src
+看到好文章 → org-capture 保存链接到 links.org
+                      ↓
+          GitHub Actions 每周日定时运行 elisp 脚本
+                      ↓
+         从 links.org 提取本周链接 → 生成 Org 博文
+                      ↓
+            自动 commit → 触发博客构建 → 发布
+#+end_src
+
+** 第一步：org-capture 收集链接
+
+在博客仓库中创建一个 =links.org= 文件专门存放链接，然后配一个 org-capture 模板：
+
+#+begin_src emacs-lisp
+(add-to-list &#39;org-capture-templates
+  &#39;(&quot;l&quot; &quot;收集链接&quot; entry (file &quot;~/blog/links.org&quot;)
+    &quot;* %? %t\n  %x\n&quot; :empty-lines 1))
+#+end_src
+
+使用方法：在浏览器里复制 URL，切到 Emacs， =M-x org-capture= ，选 =l= ，输入链接标题， =C-c C-c= 保存。 =%t= 插入当天日期（ =&lt;2026-04-19 Sat&gt;= 格式）， =%x= 粘贴剪贴板中的 URL。
+
+收集到的内容示例：
+
+#+begin_src org
+,* 一篇不错的 Rust 教程 &lt;2026-04-19 Sat&gt;
+  https://example.com/rust-tutorial
+
+,* Hacker News 上关于 Emacs 的讨论 &lt;2026-04-20 Sun&gt;
+  https://news.ycombinator.com/...
+  这篇讨论串里有几个关于 tramp 配置的好建议
+#+end_src
+
+** 第二步：elisp 脚本生成博文
+
+接下来需要一个 elisp 函数，读取 =links.org= ，筛选出本周的链接，生成一篇 EGO 格式的博文。
+
+#+begin_src emacs-lisp
+(defun my/generate-weekly-links-post (links-file output-dir)
+  &quot;从 LINKS-FILE 提取本周链接，生成博文到 OUTPUT-DIR.&quot;
+  (interactive &quot;fLinks file: \nDOutput directory: &quot;)
+  (let* ((today (format-time-string &quot;%Y-%m-%d&quot;))
+         (today-prefix (format &quot;&lt;%s&quot; today))
+         (week-ago-time (time-subtract (current-time) (days-to-time 7)))
+         (week-ago-prefix (format &quot;&lt;%s&quot;
+                                  (format-time-string &quot;%Y-%m-%d&quot; week-ago-time)))
+         links)
+    (with-temp-buffer
+      (insert-file-contents links-file)
+      (goto-char (point-min))
+      (while (re-search-forward
+              &quot;^\\* \\(.+?\\) \\(&lt;[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} [^&gt;]+&gt;\\)&quot;
+              nil t)
+        (let* ((title (match-string 1))
+               (ts (match-string 2))
+               (body-start (1+ (line-end-position)))
+               (body-end (save-excursion
+                           (if (re-search-forward &quot;^\\*&quot; nil t)
+                               (1- (match-beginning 0))
+                             (point-max))))
+               (body (string-trim
+                      (buffer-substring-no-properties body-start body-end))))
+          (when (and (not (string&lt; ts week-ago-prefix))
+                     (string&lt; ts today-prefix))
+            (push (list title body) links)))))
+    (when links
+      (let ((post-file (expand-file-name
+                        (format &quot;每周链接推荐-%s.org&quot; today) output-dir))
+            (links-count (length links)))
+        (with-temp-buffer
+          (insert (format &quot;#+TITLE: 每周链接推荐 %s\n&quot; today))
+          (insert &quot;#+AUTHOR: lujun9972\n&quot;)
+          (insert &quot;#+TAGS: Emacs之怒\n&quot;)
+          (insert (format &quot;#+DATE: [%s %s]\n&quot;
+                          today (let ((system-time-locale &quot;zh_CN.utf-8&quot;))
+                                  (format-time-string &quot;%a&quot;))))
+          (insert &quot;#+LANGUAGE: zh-CN\n&quot;)
+          (insert &quot;#+OPTIONS: H:6 num:nil toc:t \\n:nil ::t |:t ^:nil -:nil f:t *:t &lt;:nil\n\n&quot;)
+          (insert &quot;本周收集的有意思的链接。\n\n&quot;)
+          (dolist (link (nreverse links))
+            (let ((title (nth 0 link))
+                  (body (nth 1 link)))
+              (if (string-empty-p body)
+                  (insert (format &quot;- %s\n&quot; title))
+                (insert (format &quot;- %s\n  %s\n&quot; title body)))))
+          (write-file post-file)
+          (message &quot;生成完毕: %s (%d 条链接)&quot; post-file links-count))))))
+#+end_src
+
+函数逻辑：
+
+1. 用正则匹配每个一级标题的时间戳（ =&lt;2026-04-19 Sat&gt;= 格式）
+2. 用字符串比较筛选：日期 &gt;= 7 天前 且 &lt; 今天
+3. 拼接成 EGO 格式的 Org 博文，写到博客目录
+
+字符串比较能正确工作的原因是时间戳格式为 =&lt;YYYY-MM-DD ...&gt;= ，日期部分在前面，字典序和日期序一致。
+
+** 第三步：GitHub Actions 定时发布
+
+在仓库中添加一个 workflow 文件（如 =.github/workflows/weekly-links.yml= ）：
+
+#+begin_src yaml
+name: &quot;生成每周链接推荐&quot;
+on:
+  schedule:
+    - cron: 0 10 * * 0  # 每周日 UTC 10:00（北京时间 18:00）
+jobs:
+  generate-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source
+      - name: 安装 Emacs
+        run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
+      - name: 生成博文
+        run: |
+          emacs --batch -l generate_weekly_links.el
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: &quot;每周链接推荐&quot;
+#+end_src
+
+其中 =generate_weekly_links.el= 就是上面的函数，末尾加一行调用：
+
+#+begin_src emacs-lisp
+;; generate_weekly_links.el — 放在博客仓库根目录
+;; ... 函数定义同上 ...
+(my/generate-weekly-links-post &quot;links.org&quot; &quot;Emacs之怒/&quot;)
+#+end_src
+
+这个 workflow 往 =source= 分支 push 新博文，而现有的博客构建 workflow 已经在监听 =source= 分支的 push 事件，所以新博文会自动构建发布，不需要额外的部署步骤。
+
+** 小结
+
+整个方案的精髓： *把一个需要坚持的习惯，拆解成&quot;收集、生成、发布&quot;三步自动化* 。你唯一需要做的就是看到好文章时随手 =org-capture= 一下。
+
+不管你用的是 Raindrop.io + Eleventy 还是 Emacs + EGO，思路都一样——找到你的&quot;收集入口&quot;，写一个&quot;提取脚本&quot;，再用 CI 的定时任务跑起来。工具不同，模式相同。
+</description>
+<pubDate>2026-04-21</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</guid>
+</item>
 <item>
 <title>读：ASCII control characters in my terminal</title>
 <link>https://lujun9972.github.io/blog/2026/04/21/读：ascii-control-characters-in-my-terminal/index.html</link>
@@ -1017,42 +1170,6 @@ c = command(emacsclient -e &#39;(my-toggle-dark-mode)&#39;)
 </description>
 <pubDate>2026-04-19</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/19/til-从直播对谈中学到的三个-emacs-技巧/index.html</guid>
-</item>
-<item>
-<title>TIL: 自动使用项目虚拟环境的 Python</title>
-<link>https://lujun9972.github.io/blog/2026/04/19/til-自动使用项目虚拟环境的-python/index.html</link>
-<description>在 Emacs 里按 =C-c C-p= 打开 Python shell，默认用的是系统 Python。如果项目有虚拟环境，shell 里就找不到项目安装的包。
-
-Einar Mostad 写了一个函数，自动在项目目录中递归查找 Python 可执行文件，找到就用虚拟环境的，找不到就用系统的：
-
-#+BEGIN_SRC emacs-lisp
-(defun emo-python-virtualenv ()
-  &quot;Sets the python shell to python from a virtual environment if one exists.&quot;
-  (when (project-current)
-    (let ((pythonpath
-           (nth 0 (directory-files-recursively
-                   (nth 2 (project-current))
-                   (if (eq system-type &#39;gnu/linux) &quot;python$&quot; &quot;python.exe$&quot;)))))
-      (when (file-exists-p pythonpath)
-        (setq-local python-shell-interpreter pythonpath)))))
-#+END_SRC
-
-加到 =python-mode-hook= 上，每次打开 Python 文件时自动设置：
-
-#+BEGIN_SRC emacs-lisp
-(add-hook &#39;python-mode-hook &#39;emo-python-virtualenv)
-#+END_SRC
-
-三个关键点：
-
-1. ~directory-files-recursively~ 接受正则表达式，用 =&quot;python$&quot;= 匹配虚拟环境 =bin/= 目录下的 Python 可执行文件（不匹配 =python3= 、 =python-config= 等）
-2. ~project-current~ 返回当前项目信息， ~(nth 2 (project-current))~ 取项目根目录
-3. ~setq-local~ 把 =python-shell-interpreter= 设为 buffer-local，不影响其他 buffer
-
-参考：[[https://einar.codeberg.page/use-python-shell-from-virtual-environment-if-there-is-one-in-Emacs.html][Use python shell from virtual environment if there is one in Emacs]]
-</description>
-<pubDate>2026-04-19</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/19/til-自动使用项目虚拟环境的-python/index.html</guid>
 </item>
 </channel>
 </rss>
