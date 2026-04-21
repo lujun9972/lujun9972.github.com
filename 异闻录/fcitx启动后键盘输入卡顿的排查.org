@@ -1,9 +1,15 @@
 #+TITLE: fcitx 启动后键盘输入卡顿的排查
-#+AUTHOR: lujun9972
+#+AUTHOR: lujun9972, Claude
 #+TAGS: 异闻录,Linux,fcitx,X11,输入法
 #+DATE: [2026-04-22 二 22:50]
 #+LANGUAGE:  zh-CN
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 背景
+
+=fcitx= 是 Linux 下常用的输入法框架，用于在英文环境中输入中文、日文、韩文等语言。它的工作方式是"拦截"应用程序的键盘输入，在用户敲拼音时弹出候选词窗口，选中后把中文字符提交给应用程序。
+
+这个"拦截"机制意味着 =fcitx= 会插入到键盘事件的传递链路中。如果这条链路的某个环节出了问题，键盘输入就会受影响——而我遇到的就是这种情况。
 
 * 故障现象
 
@@ -49,6 +55,19 @@
 #+end_example
 
 =fcitx-remote= 无法连接 =fcitx= ，DBus 总线上也找不到 =org.fcitx.Fcitx= 这个服务名。这意味着 =fcitx= 虽然进程在跑，但它 *没有成功注册到会话总线* 。
+
+#+BEGIN_QUOTE
+*小知识：什么是 DBus？*
+
+DBus 是 Linux 桌面环境中的 *进程间通信* （IPC）机制。你可以把它想象成一个"内部公告栏"：各个程序在上面发布自己的服务，其他程序通过公告栏找到并调用这些服务。
+
+对 =fcitx= 来说，DBus 的作用包括：
+- 输入法切换通知（从中文切到英文）
+- 输入法状态查询（当前是中文还是英文模式？）
+- 配置变更同步（修改了快捷键后立即生效）
+
+如果 DBus 通信断了，这些操作要么失败，要么阻塞等待超时。
+#+END_QUOTE
 
 更进一步，检查进程列表发现 =fcitx= 启动了一个 *私有的 dbus-daemon= ：
 
@@ -138,7 +157,13 @@ GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应
 
 ** 第二步：发现键盘设备被禁用
 
-排查过程中，我用 =xinput= 检查了键盘设备的状态，结果大吃一惊：
+=fcitx-diagnose= 虽然暴露了很多问题，但没有一个能直接解释"为什么键盘卡"。我需要换个角度思考：
+
+- *键盘卡，鼠标没事* → 两种设备的处理路径不同
+- 在 X11 中，键盘和鼠标是 *独立的设备* ，各有各的事件传递管道
+- 如果 =fcitx= 只干扰了键盘的管道而没有干扰鼠标的，那问题一定出在键盘设备的 *X 层面配置* 上
+
+所以我用 =xinput= （X Input 扩展的命令行工具）来检查 X11 是怎么看待键盘设备的：
 
 #+begin_src shell
   DISPLAY=:0 xinput list-props "AT Translated Set 2 keyboard"
@@ -218,8 +243,16 @@ X11 的输入设备分为三层：
 其中 =fcitx-xkb= 和 =fcitx-xkbdbus= 这两个插件引起了我的注意。 =fcitx-xkb= 的功能是接管 X 的键盘布局管理（XKB），当它启动时会：
 
 1. 接管 XKB 布局控制权
-2. 可能禁用物理键盘设备
-3. 通过自己的管道处理键盘事件
+2. 通过自己的管道处理键盘事件
+
+它是怎么把物理键盘搞成 disabled + floating 的？我没有在源码中逐行确认，但推理链条很清楚：
+
+- =fcitx-xkb= 启动前：键盘正常（ =Device Enabled = 1= ，attached slave ）
+- =fcitx-xkb= 启动后：键盘被禁用且分离
+- 停止 =fcitx= 后手动 =xinput enable= + =reattach= ：键盘恢复正常
+- 鼠标设备完全不受影响（ =fcitx-xkb= 只管键盘布局，不管鼠标）
+
+三个事实指向同一个结论： *=fcitx-xkb= 在接管键盘布局时，错误地禁用并分离了物理键盘设备* 。
 
 而鼠标走的是完全独立的 XInput 路径，不受 XKB 插件影响。这完美解释了" *键盘卡而鼠标没事* "的现象。
 
@@ -232,7 +265,7 @@ X11 的输入设备分为三层：
 
 =fcitx-remote= 也无法连接 =fcitx= ，说明 DBus 通信链路是断的。 =fcitx-xkbdbus= 插件需要通过 DBus 传递键盘状态，如果 DBus 通信断了，每次按键都可能在等待一个永远不会到来的 DBus 响应，进一步加剧延迟。
 
-*根因链条*
+*** 根因链条
 
 #+begin_example
   fcitx4 启动
@@ -245,7 +278,12 @@ X11 的输入设备分为三层：
 
 * 解决方案
 
-问题的根源是 =fcitx4= 太老了（4.2.9.9），它的 XKB 集成有 bug。 =fcitx5= 已经完全重写了 XKB 管理模块，不会有这个问题。于是我决定直接升级。
+我选择了升级到 =fcitx5= ，因为 =fcitx4= 太老了（4.2.9.9），它的 XKB 集成有 bug。 =fcitx5= 已经完全重写了 XKB 管理模块，不会有这个问题。
+
+不过，如果你暂时不想升级，也有两个轻量的替代方案：
+
+1. *禁用 fcitx-xkb 插件* ：在 =~/.config/fcitx/conf/= 中创建 =fcitx-xkb.conf= ，设置 =Enabled=False= ，然后重启 =fcitx= 。代价是失去通过 =fcitx= 管理键盘布局的能力（如果你只用英文布局，无影响）。
+2. *在 .xinitrc 中加修复命令* ：在 =fcitx= 启动之后加一行 =xinput enable "AT Translated Set 2 keyboard"= ，强制重新启用键盘。
 
 ** 升级到 fcitx5
 
@@ -336,4 +374,4 @@ X11 的输入设备分为三层：
 
 1. *=xinput= 是排查 X11 键盘/鼠标问题的利器* ： =xinput list= 看设备拓扑， =xinput list-props= 看设备属性， =xinput enable/disable= 控制设备开关
 2. *输入法问题不一定在输入法层面* ：这次表面是 =fcitx= 的锅，实际上是 =fcitx= 的 XKB 插件把 X11 的设备搞乱了，根因在 X 输入子系统
-3. *老软件就该升级* ： =fcitx4= 已经停止维护， =fcitx5= 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上， clinging to 旧版本只会积累技术债
+3. *老软件就该升级* ： =fcitx4= 已经停止维护， =fcitx5= 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上，抱着旧版本不放只会积累技术债
