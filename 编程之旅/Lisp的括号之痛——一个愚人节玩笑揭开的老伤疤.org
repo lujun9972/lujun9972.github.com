@@ -1,0 +1,104 @@
+#+TITLE: Lisp 的括号之痛——一个愚人节玩笑揭开的老伤疤
+#+AUTHOR: lujun9972
+#+TAGS: Lisp, Clojure, 语法设计, 宏, 编程语言
+#+DATE: [2026-04-21 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+2026 年 4 月 1 日，Clojure 咨询公司 Flexiana [[https://flexiana.com/news/clojure/new-era-for-clojure-infix-syntax-3][发布了一篇文章]]，宣布开源一个叫 Infix 的库，让 Clojure 程序员可以用中缀运算符写数学表达式。
+
+#+begin_src clojure
+;; 以前这么写
+(+ (* a b) (/ c d))
+
+;; 有了 Infix 之后这么写
+(infix a * b + c / d)
+#+end_src
+
+代码是真的，测试是通过的，库已经上传到 GitHub。但他们特意选在愚人节发布，文章里到处是自嘲："The only day of the year when the Clojure community might forgive us"（一年中 Clojure 社区唯一可能原谅我们的日子）。
+
+这个玩笑之所以好笑，是因为它戳中了一个老伤疤：Lisp 的前缀表示法，到底算不算一个问题？
+
+* 前缀 vs 中缀：为什么新手总是被劝退
+
+绝大多数编程语言用的是中缀表示法——运算符写在两个操作数中间：
+
+#+begin_src text
+a * b + c / d
+#+end_src
+
+Lisp 家族用的是前缀表示法——函数（运算符）写在最前面，操作数跟在后面，整个表达式用括号包起来：
+
+#+begin_src clojure
+(+ (* a b) (/ c d))
+#+end_src
+
+前缀表示法有一个显而易见的好处：*一致性*。不管是加法、函数调用还是控制流，语法结构都一样—— =(operator arg1 arg2 ...)= 。没有运算符优先级的记忆负担，没有"乘法比加法先算"的歧义。
+
+但一致性不等于可读性。Flexiana 的文章里举了个真实的例子——一个定价规则：
+
+#+begin_src clojure
+(<= (count (:items order)) (* 2 (get-in config [:limits :base])))
+#+end_src
+
+换成人话就是："订单里的商品数量，是不是不超过配置里设的基础限制的两倍？" 同样的逻辑用中缀写：
+
+#+begin_src text
+count(items) <= 2 * config.limits.base
+#+end_src
+
+哪个更容易一眼看懂，不言自明。
+
+* Infix 库的技术实现：编译期的语法糖
+
+Flexiana 并不是第一个试图给 Lisp 加中缀语法的。历史上类似的尝试不少，但 Infix 的实现方式值得说说。
+
+它的核心是一个 *宏* （macro）。Lisp 宏和 C 语言的预处理器宏完全不是一回事——Lisp 宏操作的是代码本身（因为 Lisp 代码就是数据结构），在编译期把一种形式的表达式转换成另一种。
+
+Infix 用的是经典的 *Shunting Yard 算法*（调度场算法），由计算机科学家 Edsger Dijkstra 在 1961 年发明。这个算法能把中缀表达式（人类习惯的写法）转换成前缀或后缀表达式（机器容易处理的形式）。整个库只有大约 300 行代码，分四个命名空间：解析器、优先级表、编译器和公开 API。
+
+关键点在于：*转换发生在编译期，运行时零开销*。最终跑在 JVM 上的代码和你手写的前缀表达式完全一样。Infix 只改变了你 *写* 代码的方式，不改变代码 *跑* 起来的方式。
+
+除了基本的算术，Infix 还做了几件更激进的事：
+
+- *箭头 lambda* ：=(infix x => x * x + 1)= 替代 Clojure 的匿名函数语法 =#(+ (* % %) 1)=
+- *线程宏中缀化* ：把 Clojure 的 =->>= （thread-last）变成中缀操作符
+- *函数定义中缀化* ：=infix-defn= 让函数体里可以用中缀表达式
+- *提前返回* （guard clause）：在 =infix-defn= 里支持 =(return nil)= 形式的提前返回
+
+每一项都在试探 Clojure 社区的容忍底线。
+
+* 为什么 Lisp 社区对"中缀"这么敏感
+
+Flexiana 自己也承认这是"异端"（heresy），并且在文章里列出了反对中缀语法的经典论点：
+
+1. *S-expressions 是同像的* （homoiconic）——代码和数据长一模一样，你写的 =(+
+1 2)= 就是一个列表，和用代码构建的列表没有区别。这是 Lisp 宏系统的根基，也是 Lisp 最强大的特性
+2. *前缀表示法消除了歧义* ——不需要记住运算符优先级，不会因为优先级记错而产生 bug
+3. *运算符优先级本身就是 bug 来源* ——几乎所有 C 系语言的使用者都踩过优先级的坑
+
+这些论点都对。但它们回答的是"前缀表示法 *理论上* 更好"，而不是"前缀表示法 *实践中* 更好用"。
+
+Lisp 社区有一个长期存在的张力：语言设计者认为前缀表示法优越且一致，而大量普通程序员觉得前缀表示法难以阅读。Paul Graham 在《Beating the Averages》里把 Lisp 称为 Viaweb 的"秘密武器"——竞争对手看不懂他们的代码，也追不上他们的迭代速度。Lisp 的括号天然抬高了入门门槛，这到底是筛选还是障碍，取决于你站在哪一边。
+
+Flexiana 的文章里有句话很直白："We've all been in that meeting where a data scientist looks at =(+ (* a b) (/ c d))= and quietly opens a Python tab."（我们都经历过那种会议：数据科学家看到前缀表达式，默默打开了 Python 标签页。）
+
+这不仅是笑话。这是 Clojure 在数据科学领域几乎无法和 Python 竞争的原因之一。
+
+* 语法糖的价值：一个没有结论的争论
+
+Infix 库引发的争论，本质上是编程语言设计中一个永恒的问题：*语法糖到底有没有价值？*
+
+"语法糖"（syntactic sugar）指的是那些不增加语言表达能力、但让代码更好写的语法特性。反对者认为语法糖只是障眼法——它掩盖了语言的真相，让初学者以为语言是某种样子，实际上底层完全是另一回事。Python 的列表推导式、C# 的 LINQ、Kotlin 的作用域函数，都是语法糖的经典案例。
+
+支持者则认为，代码是写给人看的，不是写给机器看的。如果一种语法让代码更容易被更多人理解，那它就是有价值的——即使底层实现不变。
+
+Infix 库恰好站在这个争论的正中央：它 *不改变* Clojure 的任何语义，只改变表达式的书写形式。如果你认为语法糖有价值，那 Infix 就是合理的工具；如果你认为语法糖是技术债，那 Infix 就是用宏实现的自我欺骗。
+
+Flexiana 选在愚人节发布，也许正是因为他们自己也没有答案——他们只是在用玩笑的方式，把这个问题重新摆在所有人面前。
+
+* 后记
+
+我查了一下，[[https://github.com/Flexiana/infix][Infix 库]]确实存在于 GitHub 上，Apache-2.0 许可，代码简洁优雅。至于它到底是不是愚人节玩笑——Flexiana 在文章最后写道："The library is real. The tests pass. The macros expand."（库是真的。测试通过了。宏正确展开了。）
+
+至于你该不该用——这个问题留给你的良心。
