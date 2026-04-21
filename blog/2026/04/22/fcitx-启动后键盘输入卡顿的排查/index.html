@@ -6,7 +6,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge">
   <meta name="viewport"
         content="width=device-width, initial-scale=1, maximum-scale=5">
-  <meta name="author" content="lujun9972" />
+  <meta name="author" content="lujun9972, Claude" />
   <meta name="keywords" content="异闻录,Linux,fcitx,X11,输入法" />
   <meta name="theme-color" content="#FAFAF7">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -48,43 +48,61 @@
 <h2>&#30446;&#24405;</h2>
 <div id="text-table-of-contents" role="doc-toc">
 <ul>
-<li><a href="#org575f6a6">故障现象</a></li>
-<li><a href="#orgf9ff989">排查过程</a>
+<li><a href="#org806424e">背景</a></li>
+<li><a href="#org11eedef">故障现象</a></li>
+<li><a href="#org9901032">排查过程</a>
 <ul>
-<li><a href="#orgc919f9c">第一步：收集基础信息</a>
+<li><a href="#org07a97a0">第一步：收集基础信息</a>
 <ul>
-<li><a href="#orge4bfa31">Fcitx 状态：DBus 通信断裂</a></li>
-<li><a href="#org8df8fcd">前端模块：环境变量缺失</a></li>
-<li><a href="#orgf26514a">crash.log：BadWindow 错误</a></li>
-<li><a href="#org7a053a8">配置工具：GTK2 模块缺失</a></li>
-<li><a href="#orgdb4cf20">Locale 警告</a></li>
+<li><a href="#orgde1bdc9">Fcitx 状态：DBus 通信断裂</a></li>
+<li><a href="#org6f693ac">前端模块：环境变量缺失</a></li>
+<li><a href="#org3deebfe">crash.log：BadWindow 错误</a></li>
+<li><a href="#orgdf5816e">配置工具：GTK2 模块缺失</a></li>
+<li><a href="#org5b98807">Locale 警告</a></li>
 </ul>
 </li>
-<li><a href="#org6db18ab">第二步：发现键盘设备被禁用</a></li>
-<li><a href="#org86a4907">第三步：临时修复——重新启用键盘</a></li>
-<li><a href="#org57bc4f3">第四步：定位根因——fcitx-xkb 插件</a></li>
+<li><a href="#org0007b92">第二步：发现键盘设备被禁用</a></li>
+<li><a href="#org0bbba1d">第三步：临时修复——重新启用键盘</a></li>
+<li><a href="#orgb1444a0">第四步：定位根因——fcitx-xkb 插件</a>
+<ul>
+<li><a href="#org4ba8655">根因链条</a></li>
 </ul>
 </li>
-<li><a href="#orgbbe0e7c">解决方案</a>
-<ul>
-<li><a href="#org2d2a128">升级到 fcitx5</a></li>
-<li><a href="#org527da4a">更新环境变量</a></li>
 </ul>
 </li>
-<li><a href="#org2742a73">输入法对照表</a></li>
-<li><a href="#org02be9f5">复盘</a>
+<li><a href="#org2abee0a">解决方案</a>
 <ul>
-<li><a href="#org5dda6af">排查思路</a></li>
-<li><a href="#org2cd6f88">经验教训</a></li>
+<li><a href="#orgc3e8df8">升级到 fcitx5</a></li>
+<li><a href="#orgc104586">更新环境变量</a></li>
+</ul>
+</li>
+<li><a href="#org64abe85">输入法对照表</a></li>
+<li><a href="#org23601cb">复盘</a>
+<ul>
+<li><a href="#org72e05d3">排查思路</a></li>
+<li><a href="#org4d0276b">经验教训</a></li>
 </ul>
 </li>
 </ul>
 </div>
 </div>
 
-<div id="outline-container-org575f6a6" class="outline-2">
-<h2 id="org575f6a6">故障现象</h2>
-<div class="outline-text-2" id="text-org575f6a6">
+<div id="outline-container-org806424e" class="outline-2">
+<h2 id="org806424e">背景</h2>
+<div class="outline-text-2" id="text-org806424e">
+<p>
+<code>fcitx</code> 是 Linux 下常用的输入法框架，用于在英文环境中输入中文、日文、韩文等语言。它的工作方式是"拦截"应用程序的键盘输入，在用户敲拼音时弹出候选词窗口，选中后把中文字符提交给应用程序。
+</p>
+
+<p>
+这个"拦截"机制意味着 <code>fcitx</code> 会插入到键盘事件的传递链路中。如果这条链路的某个环节出了问题，键盘输入就会受影响——而我遇到的就是这种情况。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org11eedef" class="outline-2">
+<h2 id="org11eedef">故障现象</h2>
+<div class="outline-text-2" id="text-org11eedef">
 <p>
 某天，我发现启动 <code>fcitx</code> 后，整个键盘输入变得 <b>非常卡</b> ——敲一个键要等半秒甚至更久才有反应。但鼠标完全正常，丝毫不受影响。不启动 <code>fcitx</code> 就一切如常。
 </p>
@@ -95,13 +113,13 @@
 </div>
 </div>
 
-<div id="outline-container-orgf9ff989" class="outline-2">
-<h2 id="orgf9ff989">排查过程</h2>
-<div class="outline-text-2" id="text-orgf9ff989">
+<div id="outline-container-org9901032" class="outline-2">
+<h2 id="org9901032">排查过程</h2>
+<div class="outline-text-2" id="text-org9901032">
 </div>
-<div id="outline-container-orgc919f9c" class="outline-3">
-<h3 id="orgc919f9c">第一步：收集基础信息</h3>
-<div class="outline-text-3" id="text-orgc919f9c">
+<div id="outline-container-org07a97a0" class="outline-3">
+<h3 id="org07a97a0">第一步：收集基础信息</h3>
+<div class="outline-text-3" id="text-org07a97a0">
 <p>
 先搞清楚环境。我的系统是 Arch Linux，窗口管理器是 <code>awesome</code> ，显示服务器是 <code>Xorg</code> ， <code>fcitx</code> 版本是 4.2.9.9（fcitx4）。
 </p>
@@ -129,10 +147,10 @@ fcitx --version
 </p>
 </div>
 
-<div id="outline-container-orge4bfa31" class="outline-4">
-<h4 id="orge4bfa31">Fcitx 状态：DBus 通信断裂</h4>
-<div class="outline-text-4" id="text-orge4bfa31">
-<pre class="example" id="org7c79ad1">
+<div id="outline-container-orgde1bdc9" class="outline-4">
+<h4 id="orgde1bdc9">Fcitx 状态：DBus 通信断裂</h4>
+<div class="outline-text-4" id="text-orgde1bdc9">
+<pre class="example" id="orgac2d1a2">
 # Fcitx State:
 4.  `fcitx-remote`:
 
@@ -149,11 +167,34 @@ fcitx --version
 <code>fcitx-remote</code> 无法连接 <code>fcitx</code> ，DBus 总线上也找不到 <code>org.fcitx.Fcitx</code> 这个服务名。这意味着 <code>fcitx</code> 虽然进程在跑，但它 <b>没有成功注册到会话总线</b> 。
 </p>
 
+<blockquote>
+<p>
+<b>小知识：什么是 DBus？</b>
+</p>
+
+<p>
+DBus 是 Linux 桌面环境中的 <b>进程间通信</b> （IPC）机制。你可以把它想象成一个"内部公告栏"：各个程序在上面发布自己的服务，其他程序通过公告栏找到并调用这些服务。
+</p>
+
+<p>
+对 <code>fcitx</code> 来说，DBus 的作用包括：
+</p>
+<ul class="org-ul">
+<li>输入法切换通知（从中文切到英文）</li>
+<li>输入法状态查询（当前是中文还是英文模式？）</li>
+<li>配置变更同步（修改了快捷键后立即生效）</li>
+</ul>
+
+<p>
+如果 DBus 通信断了，这些操作要么失败，要么阻塞等待超时。
+</p>
+</blockquote>
+
 <p>
 更进一步，检查进程列表发现 <code>fcitx</code> 启动了一个 *私有的 dbus-daemon= ：
 </p>
 
-<pre class="example" id="org323d8e8">
+<pre class="example" id="org647b596">
 lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
   --config-file /usr/share/fcitx/dbus/daemon.conf
 </pre>
@@ -164,10 +205,10 @@ lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
 </div>
 </div>
 
-<div id="outline-container-org8df8fcd" class="outline-4">
-<h4 id="org8df8fcd">前端模块：环境变量缺失</h4>
-<div class="outline-text-4" id="text-org8df8fcd">
-<pre class="example" id="orgc0f39a9">
+<div id="outline-container-org6f693ac" class="outline-4">
+<h4 id="org6f693ac">前端模块：环境变量缺失</h4>
+<div class="outline-text-4" id="text-org6f693ac">
+<pre class="example" id="org0da9139">
 # Frontends setup:
 ## Xim:
 1.  `${XMODIFIERS}`:
@@ -211,10 +252,10 @@ lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
 </div>
 </div>
 
-<div id="outline-container-orgf26514a" class="outline-4">
-<h4 id="orgf26514a">crash.log：BadWindow 错误</h4>
-<div class="outline-text-4" id="text-orgf26514a">
-<pre class="example" id="org5261c6e">
+<div id="outline-container-org3deebfe" class="outline-4">
+<h4 id="org3deebfe">crash.log：BadWindow 错误</h4>
+<div class="outline-text-4" id="text-org3deebfe">
+<pre class="example" id="orga58d57a">
 3.  `~/.config/fcitx/log/crash.log`:
 
     fcitx: BadWindow (invalid Window parameter)
@@ -226,10 +267,10 @@ lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
 </div>
 </div>
 
-<div id="outline-container-org7a053a8" class="outline-4">
-<h4 id="org7a053a8">配置工具：GTK2 模块缺失</h4>
-<div class="outline-text-4" id="text-org7a053a8">
-<pre class="example" id="org4bf5753">
+<div id="outline-container-orgdf5816e" class="outline-4">
+<h4 id="orgdf5816e">配置工具：GTK2 模块缺失</h4>
+<div class="outline-text-4" id="text-orgdf5816e">
+<pre class="example" id="orgfd8ac07">
 # Fcitx Configure UI:
 2.  Config GUI for gtk2:
 
@@ -250,10 +291,10 @@ GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应
 </div>
 </div>
 
-<div id="outline-container-orgdb4cf20" class="outline-4">
-<h4 id="orgdb4cf20">Locale 警告</h4>
-<div class="outline-text-4" id="text-orgdb4cf20">
-<pre class="example" id="org756771a">
+<div id="outline-container-org5b98807" class="outline-4">
+<h4 id="org5b98807">Locale 警告</h4>
+<div class="outline-text-4" id="text-org5b98807">
+<pre class="example" id="orgbe676db">
 3.  XIM for Emacs:
 
     **Your LC_CTYPE is set to en_US.UTF-8 instead of one of zh, ja, ko.
@@ -268,11 +309,21 @@ GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应
 </div>
 </div>
 
-<div id="outline-container-org6db18ab" class="outline-3">
-<h3 id="org6db18ab">第二步：发现键盘设备被禁用</h3>
-<div class="outline-text-3" id="text-org6db18ab">
+<div id="outline-container-org0007b92" class="outline-3">
+<h3 id="org0007b92">第二步：发现键盘设备被禁用</h3>
+<div class="outline-text-3" id="text-org0007b92">
 <p>
-排查过程中，我用 <code>xinput</code> 检查了键盘设备的状态，结果大吃一惊：
+<code>fcitx-diagnose</code> 虽然暴露了很多问题，但没有一个能直接解释"为什么键盘卡"。我需要换个角度思考：
+</p>
+
+<ul class="org-ul">
+<li><b>键盘卡，鼠标没事</b> → 两种设备的处理路径不同</li>
+<li>在 X11 中，键盘和鼠标是 <b>独立的设备</b> ，各有各的事件传递管道</li>
+<li>如果 <code>fcitx</code> 只干扰了键盘的管道而没有干扰鼠标的，那问题一定出在键盘设备的 <b>X 层面配置</b> 上</li>
+</ul>
+
+<p>
+所以我用 <code>xinput</code> （X Input 扩展的命令行工具）来检查 X11 是怎么看待键盘设备的：
 </p>
 
 <div class="org-src-container">
@@ -284,7 +335,7 @@ GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应
 输出中有一行：
 </p>
 
-<pre class="example" id="org736baf4">
+<pre class="example" id="orgeca4da5">
 Device Enabled (176):  0
 </pre>
 
@@ -301,7 +352,7 @@ Device Enabled (176):  0
 </pre>
 </div>
 
-<pre class="example" id="org23188c1">
+<pre class="example" id="orge6a621a">
 ⎡ Virtual core pointer                      id=2  [master pointer  (3)]
 ⎜   ↳ Virtual core XTEST pointer            id=4  [slave  pointer  (2)]
 ⎣ Virtual core keyboard                     id=3  [master keyboard (2)]
@@ -337,9 +388,9 @@ X11 的输入设备分为三层：
 </div>
 </div>
 
-<div id="outline-container-org86a4907" class="outline-3">
-<h3 id="org86a4907">第三步：临时修复——重新启用键盘</h3>
-<div class="outline-text-3" id="text-org86a4907">
+<div id="outline-container-org0bbba1d" class="outline-3">
+<h3 id="org0bbba1d">第三步：临时修复——重新启用键盘</h3>
+<div class="outline-text-3" id="text-org0bbba1d">
 <p>
 我尝试了两个操作：
 </p>
@@ -357,7 +408,7 @@ X11 的输入设备分为三层：
 执行后确认：
 </p>
 
-<pre class="example" id="orgc87c2d7">
+<pre class="example" id="org510264c">
 Device Enabled (176):  1
 </pre>
 
@@ -367,14 +418,14 @@ Device Enabled (176):  1
 </div>
 </div>
 
-<div id="outline-container-org57bc4f3" class="outline-3">
-<h3 id="org57bc4f3">第四步：定位根因——fcitx-xkb 插件</h3>
-<div class="outline-text-3" id="text-org57bc4f3">
+<div id="outline-container-orgb1444a0" class="outline-3">
+<h3 id="orgb1444a0">第四步：定位根因——fcitx-xkb 插件</h3>
+<div class="outline-text-3" id="text-orgb1444a0">
 <p>
 为什么键盘会被禁用？回到 <code>fcitx-diagnose</code> 的输出，我注意到 <code>fcitx</code> 加载了大量插件：
 </p>
 
-<pre class="example" id="org3badafd">
+<pre class="example" id="org50d1cef">
 Found 36 enabled addons:
     fcitx-xkb
     fcitx-xkbdbus
@@ -389,9 +440,23 @@ Found 36 enabled addons:
 
 <ol class="org-ol">
 <li>接管 XKB 布局控制权</li>
-<li>可能禁用物理键盘设备</li>
 <li>通过自己的管道处理键盘事件</li>
 </ol>
+
+<p>
+它是怎么把物理键盘搞成 disabled + floating 的？我没有在源码中逐行确认，但推理链条很清楚：
+</p>
+
+<ul class="org-ul">
+<li><code>fcitx-xkb</code> 启动前：键盘正常（ <code>Device Enabled = 1</code> ，attached slave ）</li>
+<li><code>fcitx-xkb</code> 启动后：键盘被禁用且分离</li>
+<li>停止 <code>fcitx</code> 后手动 <code>xinput enable</code> + <code>reattach</code> ：键盘恢复正常</li>
+<li>鼠标设备完全不受影响（ <code>fcitx-xkb</code> 只管键盘布局，不管鼠标）</li>
+</ul>
+
+<p>
+三个事实指向同一个结论： <b><code>fcitx-xkb</code> 在接管键盘布局时，错误地禁用并分离了物理键盘设备</b> 。
+</p>
 
 <p>
 而鼠标走的是完全独立的 XInput 路径，不受 XKB 插件影响。这完美解释了" <b>键盘卡而鼠标没事</b> "的现象。
@@ -401,7 +466,7 @@ Found 36 enabled addons:
 同时，诊断还发现了 DBus 通信问题：
 </p>
 
-<pre class="example" id="org84473d6">
+<pre class="example" id="orge76f6e7">
 Cannot connect to fcitx correctly.
 Cannot find DBus name org.fcitx.Fcitx owner.
 </pre>
@@ -409,12 +474,12 @@ Cannot find DBus name org.fcitx.Fcitx owner.
 <p>
 <code>fcitx-remote</code> 也无法连接 <code>fcitx</code> ，说明 DBus 通信链路是断的。 <code>fcitx-xkbdbus</code> 插件需要通过 DBus 传递键盘状态，如果 DBus 通信断了，每次按键都可能在等待一个永远不会到来的 DBus 响应，进一步加剧延迟。
 </p>
+</div>
 
-<p>
-<b>根因链条</b>
-</p>
-
-<pre class="example" id="org7a24697">
+<div id="outline-container-org4ba8655" class="outline-4">
+<h4 id="org4ba8655">根因链条</h4>
+<div class="outline-text-4" id="text-org4ba8655">
+<pre class="example" id="orgf57df98">
 fcitx4 启动
   → fcitx-xkb 插件接管 X 键盘布局
     → 禁用/分离物理键盘设备
@@ -425,18 +490,28 @@ fcitx4 启动
 </div>
 </div>
 </div>
-
-<div id="outline-container-orgbbe0e7c" class="outline-2">
-<h2 id="orgbbe0e7c">解决方案</h2>
-<div class="outline-text-2" id="text-orgbbe0e7c">
-<p>
-问题的根源是 <code>fcitx4</code> 太老了（4.2.9.9），它的 XKB 集成有 bug。 <code>fcitx5</code> 已经完全重写了 XKB 管理模块，不会有这个问题。于是我决定直接升级。
-</p>
 </div>
 
-<div id="outline-container-org2d2a128" class="outline-3">
-<h3 id="org2d2a128">升级到 fcitx5</h3>
-<div class="outline-text-3" id="text-org2d2a128">
+<div id="outline-container-org2abee0a" class="outline-2">
+<h2 id="org2abee0a">解决方案</h2>
+<div class="outline-text-2" id="text-org2abee0a">
+<p>
+我选择了升级到 <code>fcitx5</code> ，因为 <code>fcitx4</code> 太老了（4.2.9.9），它的 XKB 集成有 bug。 <code>fcitx5</code> 已经完全重写了 XKB 管理模块，不会有这个问题。
+</p>
+
+<p>
+不过，如果你暂时不想升级，也有两个轻量的替代方案：
+</p>
+
+<ol class="org-ol">
+<li><b>禁用 fcitx-xkb 插件</b> ：在 <code>~/.config/fcitx/conf/</code> 中创建 <code>fcitx-xkb.conf</code> ，设置 <code>Enabled=False</code> ，然后重启 <code>fcitx</code> 。代价是失去通过 <code>fcitx</code> 管理键盘布局的能力（如果你只用英文布局，无影响）。</li>
+<li><b>在 .xinitrc 中加修复命令</b> ：在 <code>fcitx</code> 启动之后加一行 <code>xinput enable "AT Translated Set 2 keyboard"</code> ，强制重新启用键盘。</li>
+</ol>
+</div>
+
+<div id="outline-container-orgc3e8df8" class="outline-3">
+<h3 id="orgc3e8df8">升级到 fcitx5</h3>
+<div class="outline-text-3" id="text-orgc3e8df8">
 <div class="org-src-container">
 <pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#31227;&#38500; fcitx4 &#25152;&#26377;&#21253;
 </span>sudo pacman -Rns fcitx fcitx-configtool fcitx-googlepinyin <span class="org-sh-escaped-newline">\</span>
@@ -454,14 +529,14 @@ fcitx4 启动
 </div>
 </div>
 
-<div id="outline-container-org527da4a" class="outline-3">
-<h3 id="org527da4a">更新环境变量</h3>
-<div class="outline-text-3" id="text-org527da4a">
+<div id="outline-container-orgc104586" class="outline-3">
+<h3 id="orgc104586">更新环境变量</h3>
+<div class="outline-text-3" id="text-orgc104586">
 <p>
 <code>fcitx4</code> 和 <code>fcitx5</code> 的环境变量值不同，需要修改 <code>~/.xinitrc</code> ：
 </p>
 
-<pre class="example" id="org96a05b0">
+<pre class="example" id="org48b2258">
 # 旧的 (fcitx4)
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
@@ -490,9 +565,9 @@ export XMODIFIERS="@im=fcitx5"
 </div>
 </div>
 
-<div id="outline-container-org2742a73" class="outline-2">
-<h2 id="org2742a73">输入法对照表</h2>
-<div class="outline-text-2" id="text-org2742a73">
+<div id="outline-container-org64abe85" class="outline-2">
+<h2 id="org64abe85">输入法对照表</h2>
+<div class="outline-text-2" id="text-org64abe85">
 <p>
 升级过程中，输入法引擎也需要对应替换：
 </p>
@@ -583,13 +658,13 @@ export XMODIFIERS="@im=fcitx5"
 </div>
 </div>
 
-<div id="outline-container-org02be9f5" class="outline-2">
-<h2 id="org02be9f5">复盘</h2>
-<div class="outline-text-2" id="text-org02be9f5">
+<div id="outline-container-org23601cb" class="outline-2">
+<h2 id="org23601cb">复盘</h2>
+<div class="outline-text-2" id="text-org23601cb">
 </div>
-<div id="outline-container-org5dda6af" class="outline-3">
-<h3 id="org5dda6af">排查思路</h3>
-<div class="outline-text-3" id="text-org5dda6af">
+<div id="outline-container-org72e05d3" class="outline-3">
+<h3 id="org72e05d3">排查思路</h3>
+<div class="outline-text-3" id="text-org72e05d3">
 <p>
 这次排查的关键转折点是用 <code>xinput list-props</code> 检查物理键盘的状态。如果只停留在" <code>fcitx</code> 导致卡顿"的表面，可能会一直猜测是 <code>fcitx</code> 性能问题，而不会发现真正的原因是 <code>X11</code> 层面的设备被禁用了。
 </p>
@@ -598,7 +673,7 @@ export XMODIFIERS="@im=fcitx5"
 整个排查过程遵循了一个核心原则： <b>先找根因，再动手修</b> 。
 </p>
 
-<pre class="example" id="orgcfeb45a">
+<pre class="example" id="org0dd7547">
 现象：键盘输入卡顿
   │
   ├─ 1. fcitx-diagnose 收集信息
@@ -619,13 +694,13 @@ export XMODIFIERS="@im=fcitx5"
 </div>
 </div>
 
-<div id="outline-container-org2cd6f88" class="outline-3">
-<h3 id="org2cd6f88">经验教训</h3>
-<div class="outline-text-3" id="text-org2cd6f88">
+<div id="outline-container-org4d0276b" class="outline-3">
+<h3 id="org4d0276b">经验教训</h3>
+<div class="outline-text-3" id="text-org4d0276b">
 <ol class="org-ol">
 <li><b><code>xinput</code> 是排查 X11 键盘/鼠标问题的利器</b> ： <code>xinput list</code> 看设备拓扑， <code>xinput list-props</code> 看设备属性， <code>xinput enable/disable</code> 控制设备开关</li>
 <li><b>输入法问题不一定在输入法层面</b> ：这次表面是 <code>fcitx</code> 的锅，实际上是 <code>fcitx</code> 的 XKB 插件把 X11 的设备搞乱了，根因在 X 输入子系统</li>
-<li><b>老软件就该升级</b> ： <code>fcitx4</code> 已经停止维护， <code>fcitx5</code> 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上， clinging to 旧版本只会积累技术债</li>
+<li><b>老软件就该升级</b> ： <code>fcitx4</code> 已经停止维护， <code>fcitx5</code> 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上，抱着旧版本不放只会积累技术债</li>
 </ol>
 </div>
 </div>
@@ -639,7 +714,7 @@ export XMODIFIERS="@im=fcitx5"
     <span class="post-info">2026-04-22</span>
     <span class="post-info">2026-04-22</span>
     <a href="../../../../../tags/异闻录">异闻录</a> : <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/fcitx">fcitx</a> : <a href="../../../../../tags/x11">X11</a> : <a href="../../../../../tags/输入法">输入法</a>
-    <span class="post-info">lujun9972</span>
+    <span class="post-info">lujun9972, Claude</span>
   </div>
   <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
   <script src="../../../../../media/js/md5.min.js"></script>
@@ -673,7 +748,7 @@ export XMODIFIERS="@im=fcitx5"
   <footer class="footer">
     <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
     <p>
-      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; gexnsyh2vmnunk3efdqa0pb50d &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 4ycs3qhjnrouvgtwzijvqp0kib &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude</a>
       &middot;
       Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
       &middot;
