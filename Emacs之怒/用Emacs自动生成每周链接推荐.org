@@ -1,0 +1,153 @@
+#+TITLE: 用 Emacs 自动生成每周链接推荐
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒, org-mode, automation
+#+DATE: [2026-04-21 一]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文：[[https://localghost.dev/blog/automated-weekly-links-posts-with-raindrop-io-and-eleventy/][Automated weekly links posts with raindrop.io and Eleventy]]
+
+Sophie Koonin 在一篇博客中描述了她的自动化链接推荐方案：用 Raindrop.io（一个书签管理工具）收集链接，用 Eleventy（一个静态网站生成器）把链接渲染成博文，再用 GitHub Actions 每周日定时跑脚本，自动 commit 和发布。整条链路不需要手动操作，唯一要做的事就是平时看到好文章时随手收藏一下。
+
+这套方案的核心思路—— *把"每周手动发博文"拆解成"收集 → 生成 → 发布"三步自动化* ——并不依赖特定工具。下面我用 Emacs + Org-mode 重新实现同样的效果，因为我的博客本身就是用 EGO（Emacs Git Org，一个基于 Org-mode 的静态站点生成器）构建的。
+
+** 整体链条
+
+#+begin_src
+看到好文章 → org-capture 保存链接到 links.org
+                      ↓
+          GitHub Actions 每周日定时运行 elisp 脚本
+                      ↓
+         从 links.org 提取本周链接 → 生成 Org 博文
+                      ↓
+            自动 commit → 触发博客构建 → 发布
+#+end_src
+
+** 第一步：org-capture 收集链接
+
+在博客仓库中创建一个 =links.org= 文件专门存放链接，然后配一个 org-capture 模板：
+
+#+begin_src emacs-lisp
+(add-to-list 'org-capture-templates
+  '("l" "收集链接" entry (file "~/blog/links.org")
+    "* %? %t\n  %x\n" :empty-lines 1))
+#+end_src
+
+使用方法：在浏览器里复制 URL，切到 Emacs， =M-x org-capture= ，选 =l= ，输入链接标题， =C-c C-c= 保存。 =%t= 插入当天日期（ =<2026-04-19 Sat>= 格式）， =%x= 粘贴剪贴板中的 URL。
+
+收集到的内容示例：
+
+#+begin_src org
+,* 一篇不错的 Rust 教程 <2026-04-19 Sat>
+  https://example.com/rust-tutorial
+
+,* Hacker News 上关于 Emacs 的讨论 <2026-04-20 Sun>
+  https://news.ycombinator.com/...
+  这篇讨论串里有几个关于 tramp 配置的好建议
+#+end_src
+
+** 第二步：elisp 脚本生成博文
+
+接下来需要一个 elisp 函数，读取 =links.org= ，筛选出本周的链接，生成一篇 EGO 格式的博文。
+
+#+begin_src emacs-lisp
+(defun my/generate-weekly-links-post (links-file output-dir)
+  "从 LINKS-FILE 提取本周链接，生成博文到 OUTPUT-DIR."
+  (interactive "fLinks file: \nDOutput directory: ")
+  (let* ((today (format-time-string "%Y-%m-%d"))
+         (today-prefix (format "<%s" today))
+         (week-ago-time (time-subtract (current-time) (days-to-time 7)))
+         (week-ago-prefix (format "<%s"
+                                  (format-time-string "%Y-%m-%d" week-ago-time)))
+         links)
+    (with-temp-buffer
+      (insert-file-contents links-file)
+      (goto-char (point-min))
+      (while (re-search-forward
+              "^\\* \\(.+?\\) \\(<[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} [^>]+>\\)"
+              nil t)
+        (let* ((title (match-string 1))
+               (ts (match-string 2))
+               (body-start (1+ (line-end-position)))
+               (body-end (save-excursion
+                           (if (re-search-forward "^\\*" nil t)
+                               (1- (match-beginning 0))
+                             (point-max))))
+               (body (string-trim
+                      (buffer-substring-no-properties body-start body-end))))
+          (when (and (not (string< ts week-ago-prefix))
+                     (string< ts today-prefix))
+            (push (list title body) links)))))
+    (when links
+      (let ((post-file (expand-file-name
+                        (format "每周链接推荐-%s.org" today) output-dir))
+            (links-count (length links)))
+        (with-temp-buffer
+          (insert (format "#+TITLE: 每周链接推荐 %s\n" today))
+          (insert "#+AUTHOR: lujun9972\n")
+          (insert "#+TAGS: Emacs之怒\n")
+          (insert (format "#+DATE: [%s %s]\n"
+                          today (let ((system-time-locale "zh_CN.utf-8"))
+                                  (format-time-string "%a"))))
+          (insert "#+LANGUAGE: zh-CN\n")
+          (insert "#+OPTIONS: H:6 num:nil toc:t \\n:nil ::t |:t ^:nil -:nil f:t *:t <:nil\n\n")
+          (insert "本周收集的有意思的链接。\n\n")
+          (dolist (link (nreverse links))
+            (let ((title (nth 0 link))
+                  (body (nth 1 link)))
+              (if (string-empty-p body)
+                  (insert (format "- %s\n" title))
+                (insert (format "- %s\n  %s\n" title body)))))
+          (write-file post-file)
+          (message "生成完毕: %s (%d 条链接)" post-file links-count))))))
+#+end_src
+
+函数逻辑：
+
+1. 用正则匹配每个一级标题的时间戳（ =<2026-04-19 Sat>= 格式）
+2. 用字符串比较筛选：日期 >= 7 天前 且 < 今天
+3. 拼接成 EGO 格式的 Org 博文，写到博客目录
+
+字符串比较能正确工作的原因是时间戳格式为 =<YYYY-MM-DD ...>= ，日期部分在前面，字典序和日期序一致。
+
+** 第三步：GitHub Actions 定时发布
+
+在仓库中添加一个 workflow 文件（如 =.github/workflows/weekly-links.yml= ）：
+
+#+begin_src yaml
+name: "生成每周链接推荐"
+on:
+  schedule:
+    - cron: 0 10 * * 0  # 每周日 UTC 10:00（北京时间 18:00）
+jobs:
+  generate-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: source
+      - name: 安装 Emacs
+        run: sudo apt-get update && sudo apt-get install -y emacs-nox
+      - name: 生成博文
+        run: |
+          emacs --batch -l generate_weekly_links.el
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "每周链接推荐"
+#+end_src
+
+其中 =generate_weekly_links.el= 就是上面的函数，末尾加一行调用：
+
+#+begin_src emacs-lisp
+;; generate_weekly_links.el — 放在博客仓库根目录
+;; ... 函数定义同上 ...
+(my/generate-weekly-links-post "links.org" "Emacs之怒/")
+#+end_src
+
+这个 workflow 往 =source= 分支 push 新博文，而现有的博客构建 workflow 已经在监听 =source= 分支的 push 事件，所以新博文会自动构建发布，不需要额外的部署步骤。
+
+** 小结
+
+整个方案的精髓： *把一个需要坚持的习惯，拆解成"收集、生成、发布"三步自动化* 。你唯一需要做的就是看到好文章时随手 =org-capture= 一下。
+
+不管你用的是 Raindrop.io + Eleventy 还是 Emacs + EGO，思路都一样——找到你的"收集入口"，写一个"提取脚本"，再用 CI 的定时任务跑起来。工具不同，模式相同。
