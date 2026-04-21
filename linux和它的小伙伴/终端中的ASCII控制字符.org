@@ -1,0 +1,87 @@
+#+TITLE: 读：ASCII control characters in my terminal
+#+AUTHOR: lujun9972
+#+TAGS: Terminal, ASCII, Linux, stty
+#+DATE: [2026-04-21 二]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Julia Evans 写了一篇文章梳理终端中所有 33 个 ASCII 控制字符的作用。这些控制字符是你每天按 Ctrl-C 终止程序、按 Ctrl-Z 挂起进程、按 Ctrl-W 删一个词时实际发送的那些字节。本文是对她文章的解读。
+
+** 只有 33 个控制码
+
+ASCII 表的前 32 个位置（0-31）加上第 127 个位置，一共 33 个，留给"控制字符"——它们不对应可打印字符，而是表示某种控制动作。其中 26 个对应 =Ctrl-A= 到 =Ctrl-Z= ，另外 7 个对应 Ctrl 加上 =@= 、 =[= 、 =\= 、 =]= 、 =^= 、 =_= 、 =?= 。
+
+这意味着 =Ctrl-1= 、 =Ctrl-2= 这种组合在终端里根本不存在——按下 =Ctrl-1= 跟直接按 =1= 效果一样，因为 ASCII 没有为数字键预留控制码的位置。同样， =Ctrl+Shift+C= 也不是控制码，它由终端模拟器自己处理（用来复制），根本不会发送到终端里运行的程序。
+
+** 三层处理：谁来响应你的按键
+
+这 33 个控制码并不是统一由某一层处理的，而是分成了三股道：
+
+1. *OS 终端驱动*直接处理的：比如 =Ctrl-C= （发送 SIGINT 信号终止程序）、 =Ctrl-Z= （发送 SIGTSTP 挂起程序）、 =Ctrl-D= （发送 EOF）。这些按键按下后，OS 的终端驱动会直接拦截并产生相应动作，程序本身收不到这个字节。
+
+2. *readline 库*处理的：比如 =Ctrl-W= （删一个词）、 =Ctrl-U= （删整行）、 =Ctrl-R= （搜索历史命令）。这些在 bash、python REPL 等使用 readline 的程序中工作，但在 =cat= 这种不用 readline 的程序中就不起作用。
+
+3. *应用程序自己定义*的：比如 =Ctrl-X= 在一般终端程序里没有固定含义，但 Emacs 把它用作了大量快捷键的前缀。
+
+用 =stty -a= 可以看到 OS 终端驱动处理的所有控制码映射：
+
+#+begin_src shell
+stty -a
+#+end_src
+
+在我的机器上输出如下（只列出控制字符映射部分）：
+
+#+begin_src text
+intr = ^C; quit = ^\; erase = ^?; kill = ^U; eof = ^D; eol = <undef>;
+eol2 = <undef>; swtch = <undef>; start = ^Q; stop = ^S; susp = ^Z;
+rprnt = ^R; werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
+#+end_src
+
+这里 ~intr = ^C~ 表示 =Ctrl-C= 触发中断信号， ~erase = ^?~ 表示退格键（byte 127）触发删除字符， ~kill = ^U~ 表示清行， ~werase = ^W~ 表示删一个词。所有这些映射都可以通过 =stty= 命令修改——比如 =stty intr ^X= 可以把中断信号改到 =Ctrl-X= 上。不过实际上几乎没有人改这些映射，改了只会让自己在各种教程和问答里找不到北。
+
+** Ctrl-M 就是 Enter，Ctrl-I 就是 Tab
+
+这是一个容易让人困惑的设计： =Ctrl-M= 发送的字节值是 13，跟按 =Enter= 键完全一样； =Ctrl-I= 发送的字节值是 9，跟按 =Tab= 键完全一样。所以如果你想给终端程序设置 =Ctrl-M= 或 =Ctrl-I= 作为快捷键，会发现它们的效果跟 =Enter= 和 =Tab= 一样——因为从程序的角度看，收到的是同一个字节。
+
+这也解释了为什么很多终端程序（包括 bash 的 readline）的快捷键覆盖了 =Ctrl-A= 到 =Ctrl-Z= 的大部分，唯独跳过了 =Ctrl-I= 和 =Ctrl-M= ——不是故意这样设计的，而是这两个位置已经被 =Tab= 和 =Enter= 占了。
+
+** canonical 模式 vs noncanonical 模式
+
+=Ctrl-W= 和 =Ctrl-U= 的行为取决于终端当前处于哪种模式：
+
+- *canonical 模式*（规范模式）：OS 终端驱动负责行编辑。你按 =Backspace= 删字符、按 =Ctrl-W= 删词、按 =Ctrl-U= 清行，这些都是 OS 在缓冲区里处理的，程序只有在你按 =Enter= 之后才能看到整行输入。 =cat= 、 =grep= 等非交互程序通常用这种模式。
+
+- *noncanonical 模式*（原始模式）：OS 不做任何行编辑，每按一个键程序就立刻收到。 =Ctrl-W= 和 =Ctrl-U= 的删词、清行功能需要程序自己实现。bash、python REPL、vim 等交互式程序用这种模式。
+
+可以用 =strace= 观察一个程序设置了哪些终端模式：
+
+#+begin_src shell
+strace -tt -o /tmp/strace-out vim
+# 退出 vim 后：
+grep ioctl /tmp/strace-out | grep SET
+#+end_src
+
+你会看到 vim 启动时关闭了 =ISIG= （不再由 OS 处理信号）和 =ICANON= （关闭 canonical 模式），改为 raw 模式自己处理所有输入。vim 退出时又把这些设置恢复回去。
+
+** Backspace 的混乱历史
+
+按 =Backspace= 键时，终端到底发送哪个字节？这个问题居然没有统一答案：
+
+- 有些机器发 byte =127= （ASCII 名 =DEL= ）
+- 有些机器发 byte =8= （ASCII 名 =BS= ，Backspace）
+
+在 Linux 上， =Backspace= 键发送的是 byte =127= ，OS 终端驱动和 readline 都把它映射为"删除前一个字符"。 =Ctrl-H= 发送 byte =8= ，在 readline 里它的效果跟 =Backspace= 一样（都是删除一个字符），但在 =cat= 这种只用 canonical 模式的程序里， =Ctrl-H= 只会打印出 =^H= 而不会删字符——因为 canonical 模式只认识 =stty= 里 =erase= 设置的那个字节（127）。
+
+如果你的 =Backspace= 键行为异常（按了不删字符反而显示 =^H= ），原因就是你的终端发的是 byte =8= 而 =stty= 期望的是 byte =127= 。修复方法是 =stty erase ^H= ，把删除字符的映射从 127 改到 8。
+
+** Ctrl-S 冻屏之谜
+
+=Ctrl-S= 发送 byte =19= （ASCII 名 =XOFF= ），OS 终端驱动收到后会暂停向终端输出——这就是古老的"软件流控制"。在 90 年代的低速串口终端上这很有用（输出太快来不及看就按 =Ctrl-S= 暂停， =Ctrl-Q= 恢复），但今天几乎没人需要这个功能了。
+
+问题在于 =Ctrl-S= 这个按键被 XOFF 占了，导致 readline 无法用它做"前向搜索历史命令"（ =Ctrl-R= 是反向搜索， =Ctrl-S= 本应是正向搜索）。解决方法是用 =stty -ixon= 关闭软件流控制，这样 =Ctrl-S= 就不再触发 XOFF，而是被传给 readline 使用。
+
+** ASCII 名字可以忽略
+
+每个控制码在 ASCII 标准里都有一个正式名字，比如 byte =3= 叫 =ETX= （End of Text）、byte =26= 叫 =SUB= （Substitute）。但这些名字是为 1960 年代的电报机设计的——那个时代的 =ETX= 表示"报文结束"，跟今天终端里 =byte 3= 的作用（发送 SIGINT 终止程序）毫无关系。33 个控制码里，大约一半的 ASCII 名字跟它今天在终端中的功能对不上，所以不如直接忽略这些名字。
+
+原文链接： [[https://jvns.ca/blog/2024/10/31/ascii-control-characters/][ASCII control characters in my terminal]]
