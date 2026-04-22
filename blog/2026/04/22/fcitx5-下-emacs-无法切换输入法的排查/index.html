@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>fcitx5 下 Emacs 无法切换输入法的排查 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="异闻录,Linux,Emacs,fcitx5,X11,输入法" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">fcitx5 下 Emacs 无法切换输入法的排查</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb147ada">背景</a></li>
+<li><a href="#org173c8fa">故障现象</a></li>
+<li><a href="#org6816969">排查过程</a>
+<ul>
+<li><a href="#org46d9f75">第一步：检查环境变量</a></li>
+<li><a href="#orgc9bcb33">第二步：运行 fcitx5-diagnose</a></li>
+<li><a href="#org11e4971">第三步：发现 Emacs 是 systemd 服务启动的</a></li>
+<li><a href="#orgd37ef58">第四步：发现根因——XIM 服务器名称不匹配</a></li>
+<li><a href="#org3c77f3a">第五步：确认 Emacs 走的是 XIM 而非 GTK 模块</a></li>
+</ul>
+</li>
+<li><a href="#org4a09bbc">解决方案</a>
+<ul>
+<li><a href="#org6aa6a03">修改 emacs.service 中的 XMODIFIERS</a></li>
+<li><a href="#org3f9d430">重启 Emacs 服务</a></li>
+<li><a href="#orgb5c9ab4">恢复 .xinitrc</a></li>
+</ul>
+</li>
+<li><a href="#org22171e2">复盘</a>
+<ul>
+<li><a href="#orga147c23">根因链条</a></li>
+<li><a href="#org552bd02">走过的弯路</a></li>
+<li><a href="#orgc27b7f9">关键经验</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb147ada" class="outline-2">
+<h2 id="orgb147ada">背景</h2>
+<div class="outline-text-2" id="text-orgb147ada">
+<p>
+我之前从 fcitx4 升级到了 fcitx5，解决了键盘输入卡顿的问题（详见<a href="fcitx启动后键盘输入卡顿的排查.html">fcitx 启动后键盘输入卡顿的排查</a>）。升级后，普通应用（浏览器、终端等）都能正常切换输入法，唯独 <code>Emacs</code> 不行——按切换快捷键毫无反应，只能输入英文。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org173c8fa" class="outline-2">
+<h2 id="org173c8fa">故障现象</h2>
+<div class="outline-text-2" id="text-org173c8fa">
+<ul class="org-ul">
+<li>fcitx5 在其他应用（Firefox、终端等）中正常工作</li>
+<li>在 Emacs 中无法切换到中文输入法</li>
+<li>Emacs 是通过 <code>systemd user service</code> 以 daemon 模式启动的</li>
+<li>系统为 Arch Linux，Emacs 版本 31.0.50，使用 Lucid（Xaw）工具包</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org6816969" class="outline-2">
+<h2 id="org6816969">排查过程</h2>
+<div class="outline-text-2" id="text-org6816969">
+</div>
+<div id="outline-container-org46d9f75" class="outline-3">
+<h3 id="org46d9f75">第一步：检查环境变量</h3>
+<div class="outline-text-3" id="text-org46d9f75">
+<p>
+输入法框架依赖三个关键环境变量来告诉应用程序"该用哪个输入法"。我先检查了当前 shell 中的值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> <span class="org-string">"GTK_IM_MODULE=$GTK_IM_MODULE"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"QT_IM_MODULE=$QT_IM_MODULE"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"XMODIFIERS=$XMODIFIERS"</span>
+</pre>
+</div>
+
+<pre class="example" id="orgcc43ba2">
+GTK_IM_MODULE=fcitx5
+QT_IM_MODULE=fcitx5
+XMODIFIERS=@im=fcitx5
+</pre>
+
+<p>
+三个变量都有值，看起来没问题。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：这三个环境变量是干什么的？</b>
+</p>
+
+<p>
+Linux 下的应用程序通过三种不同的协议连接输入法：
+</p>
+
+<ol class="org-ol">
+<li><code>XMODIFIERS=@im=xxx</code> ：告诉 <b>所有 X11 应用</b> ，通过 XIM 协议连接名为 <code>xxx</code> 的输入法服务器。这是最古老的方案，几乎所有 X 应用都支持，但功能最基础。</li>
+<li><code>GTK_IM_MODULE=xxx</code> ：让 <b>GTK 应用</b> 加载专门的输入法模块，比 XIM 体验更好（支持光标跟随、预编辑文字等）。</li>
+<li><code>QT_IM_MODULE=xxx</code> ：同理，让 <b>Qt 应用</b> 加载专门的输入法模块。</li>
+</ol>
+
+<p>
+简单来说：=XMODIFIERS= 是万能兜底方案，=GTK_IM_MODULE= 和 <code>QT_IM_MODULE</code> 是各自框架的增强方案。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-orgc9bcb33" class="outline-3">
+<h3 id="orgc9bcb33">第二步：运行 fcitx5-diagnose</h3>
+<div class="outline-text-3" id="text-orgc9bcb33">
+<p>
+fcitx5 自带了一个诊断工具，可以自动检查各种常见配置问题：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">fcitx5-diagnose
+</pre>
+</div>
+
+<p>
+诊断结果里出现了多处警告：
+</p>
+
+<pre class="example" id="org17bf8ca">
+环境变量 XMODIFIERS 的值被设为了"@im=fcitx5"而不是"@im=fcitx"。
+请检查您是否在某个初始化文件中错误的设置了它的值。
+
+环境变量 GTK_IM_MODULE 的值被设为了"fcitx5"而不是"fcitx"。
+环境变量 QT_IM_MODULE 的值被设为了"fcitx5"而不是"fcitx"。
+</pre>
+
+<p>
+诊断工具建议把所有值从 <code>fcitx5</code> 改成 <code>fcitx</code> 。看起来很合理——虽然软件叫 <code>fcitx5</code> ，但输入法模块注册的名字可能不带版本号。
+</p>
+
+<p>
+于是我按建议修改了 <code>~/.xinitrc</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20462;&#25913;&#21069;
+</span><span class="org-builtin">export</span> <span class="org-variable-name">GTK_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">QT_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">XMODIFIERS</span>=<span class="org-string">"@im=fcitx5"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20462;&#25913;&#21518;
+</span><span class="org-builtin">export</span> <span class="org-variable-name">GTK_IM_MODULE</span>=fcitx
+<span class="org-builtin">export</span> <span class="org-variable-name">QT_IM_MODULE</span>=fcitx
+<span class="org-builtin">export</span> <span class="org-variable-name">XMODIFIERS</span>=<span class="org-string">"@im=fcitx"</span>
+</pre>
+</div>
+
+<p>
+但问题没有解决——Emacs 还是无法切换输入法。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：=.xinitrc= 是什么？</b>
+</p>
+
+<p>
+当你用 <code>startx</code> 命令启动图形界面时，=X 服务器= 会读取 <code>~/.xinitrc</code> 这个文件，执行里面的命令来初始化桌面环境。通常在里面设置环境变量、启动输入法、启动窗口管理器等。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org11e4971" class="outline-3">
+<h3 id="org11e4971">第三步：发现 Emacs 是 systemd 服务启动的</h3>
+<div class="outline-text-3" id="text-org11e4971">
+<p>
+我意识到一个关键问题：我的 Emacs 不是从 <code>.xinitrc</code> 启动的，而是通过 <code>systemd user service</code> 以 daemon 模式在后台运行的。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：Emacs daemon 模式</b>
+</p>
+
+<p>
+Emacs 可以以"守护进程"方式运行（=emacs --fg-daemon= 或 <code>emacs --daemon=），在后台常驻。之后用 =emacsclient</code> 连接到这个后台进程来打开窗口。好处是：
+</p>
+<ul class="org-ul">
+<li>启动速度极快（不用每次都重新加载配置）</li>
+<li>多个客户端共享同一个 Emacs 进程（状态、缓冲区等）</li>
+</ul>
+</blockquote>
+
+<p>
+这意味着 Emacs 的环境变量 <b>不来自 <code>.xinitrc</code></b> ，而是来自 systemd service 文件中的 <code>Environment</code> 配置。查看服务文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat ~/.config/systemd/user/emacs.service
+</pre>
+</div>
+
+<pre class="example" id="orgc21b0b6">
+[Service]
+Type=simple
+ExecStart=/usr/bin/emacs --fg-daemon
+Environment=... GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS="@im=fcitx" ...
+</pre>
+
+<p>
+果然！Emacs 的环境变量是独立的：
+</p>
+<ul class="org-ul">
+<li><code>GTK_IM_MODULE=fcitx</code></li>
+<li><code>QT_IM_MODULE=fcitx</code></li>
+<li><code>XMODIFIERS</code>"@im=fcitx"</li>
+</ul>
+
+<p>
+看起来都是正确的
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd37ef58" class="outline-3">
+<h3 id="orgd37ef58">第四步：发现根因——XIM 服务器名称不匹配</h3>
+<div class="outline-text-3" id="text-orgd37ef58">
+<p>
+既然 <code>.xinitrc</code> 和 <code>emacs.service</code> 都设了 <code>XMODIFIERS</code> ，那问题出在哪里？我检查了 fcitx5 实际注册到 X 服务器的 XIM 服务名称：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">xprop -root XIM_SERVERS
+</pre>
+</div>
+
+<pre class="example" id="orgbe3ef07">
+XIM_SERVERS(ATOM) = @server=fcitx5
+</pre>
+
+<p>
+然后检查 Emacs 进程实际的 <code>XMODIFIERS</code> 值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/$(<span class="org-sh-quoted-exec">pgrep -x emacs</span>)/environ | tr <span class="org-string">'\0'</span> <span class="org-string">'\n'</span> | grep XMODIFIERS
+</pre>
+</div>
+
+<pre class="example" id="orge30219a">
+XMODIFIERS=@im=fcitx
+</pre>
+
+<p>
+<b>找到根因了！</b>
+</p>
+
+<ul class="org-ul">
+<li>fcitx5 注册的 XIM 服务器名： <code>@server=fcitx5</code></li>
+<li>Emacs 的 <code>XMODIFIERS</code> 值： <code>@im=fcitx</code></li>
+</ul>
+
+<p>
+两者不匹配！XIM 协议要求 <code>XMODIFIERS</code> 的值必须和 XIM 服务器的注册名一致。Emacs 拿着 <code>@im=fcitx</code> 去找名为 <code>fcitx</code> 的 XIM 服务器，但实际注册的名字是 <code>fcitx5</code> ，当然找不到。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：XIM 协议的连接机制</b>
+</p>
+
+<p>
+XIM（X Input Method）是 X11 的输入法协议，工作流程是：
+</p>
+
+<ol class="org-ol">
+<li>输入法框架（如 fcitx5）启动后，在 X 服务器上注册一个 XIM 服务器，名字形如 <code>@server=fcitx5</code></li>
+<li>应用程序读取 <code>XMODIFIERS</code> 环境变量（如 =@im=fcitx5=）</li>
+<li>应用程序拿着这个名字去 X 服务器上查找对应的 XIM 服务器</li>
+<li>找到后建立连接，输入法就可以工作了</li>
+</ol>
+
+<p>
+如果 <code>XMODIFIERS</code> 的名字和 XIM 服务器注册的名字对不上，应用程序就找不到输入法服务器，输入法自然无法使用。
+</p>
+</blockquote>
+
+<p>
+这也说明 <code>fcitx5-diagnose</code> 的建议是 <b>误导</b> 的：它建议把 <code>XMODIFIERS</code> 改成 <code>@im=fcitx</code> ，但 fcitx5 的 XIM 服务器偏偏注册为 <code>fcitx5</code> 。对于通过 XIM 协议连接输入法的应用（比如使用 Lucid 工具包的 Emacs），这个建议反而是错的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3c77f3a" class="outline-3">
+<h3 id="org3c77f3a">第五步：确认 Emacs 走的是 XIM 而非 GTK 模块</h3>
+<div class="outline-text-3" id="text-org3c77f3a">
+<p>
+为了确认我的 Emacs 确实走 XIM 协议，我检查了 Emacs 的构建特性：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">emacs --batch --eval <span class="org-string">'(princ (format "%s\n" system-configuration-features))'</span>
+</pre>
+</div>
+
+<pre class="example" id="orga02945d">
+... X11 XDBE XIM XINPUT2 ... LUCID ...
+</pre>
+
+<p>
+关键信息：
+</p>
+<ul class="org-ul">
+<li><code>XIM</code> ——Emacs 支持 XIM 协议</li>
+<li><code>LUCID</code> ——Emacs 使用 Lucid（Xaw）工具包，不是 GTK</li>
+</ul>
+
+<p>
+Lucid 工具包不使用 <code>GTK_IM_MODULE</code> ，只走 XIM 协议。所以对 Emacs 来说，唯一重要的环境变量就是 <code>XMODIFIERS</code> ，而且它的值必须和 XIM 服务器注册名一致。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4a09bbc" class="outline-2">
+<h2 id="org4a09bbc">解决方案</h2>
+<div class="outline-text-2" id="text-org4a09bbc">
+<p>
+明确了根因后，修复很简单：
+</p>
+</div>
+
+<div id="outline-container-org6aa6a03" class="outline-3">
+<h3 id="org6aa6a03">修改 emacs.service 中的 XMODIFIERS</h3>
+<div class="outline-text-3" id="text-org6aa6a03">
+<p>
+将 <code>XMODIFIERS</code>"@im=fcitx"= 改为 <code>XMODIFIERS</code>"@im=fcitx5"= ：
+</p>
+
+<pre class="example" id="org22b10b8">
+# 修改前
+Environment=... XMODIFIERS="@im=fcitx" ...
+
+# 修改后
+Environment=... XMODIFIERS="@im=fcitx5" ...
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org3f9d430" class="outline-3">
+<h3 id="org3f9d430">重启 Emacs 服务</h3>
+<div class="outline-text-3" id="text-org3f9d430">
+<div class="org-src-container">
+<pre class="src src-shell">systemctl --user daemon-reload
+systemctl --user restart emacs
+</pre>
+</div>
+
+<p>
+修改后确认 Emacs 进程的环境变量已更新：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/$(<span class="org-sh-quoted-exec">pgrep -x emacs</span>)/environ | tr <span class="org-string">'\0'</span> <span class="org-string">'\n'</span> | grep XMODIFIERS
+<span class="org-comment-delimiter"># </span><span class="org-comment">XMODIFIERS=@im=fcitx5</span>
+</pre>
+</div>
+
+<p>
+重启后 Emacs 中顺利切换到中文输入法，问题解决。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb5c9ab4" class="outline-3">
+<h3 id="orgb5c9ab4">恢复 .xinitrc</h3>
+<div class="outline-text-3" id="text-orgb5c9ab4">
+<p>
+由于我的桌面环境也使用 fcitx5 ，且 fcitx5 的 XIM 服务器注册名为 <code>fcitx5</code> ，所以 <code>~/.xinitrc</code> 中的值保持为 <code>fcitx5</code> 是正确的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">export</span> <span class="org-variable-name">GTK_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">QT_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">XMODIFIERS</span>=<span class="org-string">"@im=fcitx5"</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org22171e2" class="outline-2">
+<h2 id="org22171e2">复盘</h2>
+<div class="outline-text-2" id="text-org22171e2">
+</div>
+<div id="outline-container-orga147c23" class="outline-3">
+<h3 id="orga147c23">根因链条</h3>
+<div class="outline-text-3" id="text-orga147c23">
+<pre class="example" id="orgfb953f3">
+fcitx5 注册 XIM 服务器名为 "@server=fcitx5"
+  → emacs.service 中 XMODIFIERS="@im=fcitx"
+    → 名称不匹配
+      → Emacs 通过 XIM 找不到输入法服务器
+        → 无法切换输入法
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org552bd02" class="outline-3">
+<h3 id="org552bd02">走过的弯路</h3>
+<div class="outline-text-3" id="text-org552bd02">
+<p>
+这次排查最大的弯路是 <b>轻信了 <code>fcitx5-diagnose</code> 的建议</b> 。它建议把所有环境变量从 <code>fcitx5</code> 改成 <code>fcitx</code> ，我照做了，但这反而让 XMODIFIERS 和 XIM 服务器名不匹配的问题更加恶化了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc27b7f9" class="outline-3">
+<h3 id="orgc27b7f9">关键经验</h3>
+<div class="outline-text-3" id="text-orgc27b7f9">
+<ol class="org-ol">
+<li><b><code>xprop -root XIM_SERVERS</code> 可以查看 XIM 服务器注册名</b> ：排查 XIM 问题时，先确认服务器叫什么名字，再和 <code>XMODIFIERS</code> 对比</li>
+<li><b>systemd 服务的环境变量是独立的</b> ：不继承 <code>.xinitrc</code> 或 shell 的环境，需要在 service 文件中单独设置。遇到服务启动的程序出问题时，用 <code>cat /proc/$PID/environ | tr '\0' '\n' | grep XXX</code> 检查实际的环境变量</li>
+<li><b>诊断工具的建议不一定全对</b> ：=fcitx5-diagnose= 的建议在大部分场景下是对的，但对于 XIM 这种特殊场景会给出错误建议。理解原理比盲目执行建议更重要</li>
+<li><b>Emacs 的工具包决定了它用什么输入法协议</b> ：Lucid 走 XIM（看 <code>XMODIFIERS</code> ），GTK 走 GTK IM Module（看 <code>GTK_IM_MODULE</code> ）。排查前先搞清楚 Emacs 用的什么工具包</li>
+</ol>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-22</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/异闻录">异闻录</a> : <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/fcitx5">fcitx5</a> : <a href="../../../../../tags/x11">X11</a> : <a href="../../../../../tags/输入法">输入法</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; dero1cfw3wfebphqhenihofxxf &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
