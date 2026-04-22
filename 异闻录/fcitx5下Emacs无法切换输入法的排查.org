@@ -1,0 +1,250 @@
+#+TITLE: fcitx5 下 Emacs 无法切换输入法的排查
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: 异闻录,Linux,Emacs,fcitx5,X11,输入法
+#+DATE: [2026-04-22 二 21:30]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 背景
+
+我之前从 fcitx4 升级到了 fcitx5，解决了键盘输入卡顿的问题（详见[[file:fcitx启动后键盘输入卡顿的排查.org][fcitx 启动后键盘输入卡顿的排查]]）。升级后，普通应用（浏览器、终端等）都能正常切换输入法，唯独 =Emacs= 不行——按切换快捷键毫无反应，只能输入英文。
+
+* 故障现象
+
+- fcitx5 在其他应用（Firefox、终端等）中正常工作
+- 在 Emacs 中无法切换到中文输入法
+- Emacs 是通过 =systemd user service= 以 daemon 模式启动的
+- 系统为 Arch Linux，Emacs 版本 31.0.50，使用 Lucid（Xaw）工具包
+
+* 排查过程
+
+** 第一步：检查环境变量
+
+输入法框架依赖三个关键环境变量来告诉应用程序"该用哪个输入法"。我先检查了当前 shell 中的值：
+
+#+begin_src shell
+  echo "GTK_IM_MODULE=$GTK_IM_MODULE"
+  echo "QT_IM_MODULE=$QT_IM_MODULE"
+  echo "XMODIFIERS=$XMODIFIERS"
+#+end_src
+
+#+begin_example
+  GTK_IM_MODULE=fcitx5
+  QT_IM_MODULE=fcitx5
+  XMODIFIERS=@im=fcitx5
+#+end_example
+
+三个变量都有值，看起来没问题。
+
+#+BEGIN_QUOTE
+*小知识：这三个环境变量是干什么的？*
+
+Linux 下的应用程序通过三种不同的协议连接输入法：
+
+1. =XMODIFIERS=@im=xxx= ：告诉 *所有 X11 应用* ，通过 XIM 协议连接名为 =xxx= 的输入法服务器。这是最古老的方案，几乎所有 X 应用都支持，但功能最基础。
+2. =GTK_IM_MODULE=xxx= ：让 *GTK 应用* 加载专门的输入法模块，比 XIM 体验更好（支持光标跟随、预编辑文字等）。
+3. =QT_IM_MODULE=xxx= ：同理，让 *Qt 应用* 加载专门的输入法模块。
+
+简单来说：=XMODIFIERS= 是万能兜底方案，=GTK_IM_MODULE= 和 =QT_IM_MODULE= 是各自框架的增强方案。
+#+END_QUOTE
+
+** 第二步：运行 fcitx5-diagnose
+
+fcitx5 自带了一个诊断工具，可以自动检查各种常见配置问题：
+
+#+begin_src shell
+  fcitx5-diagnose
+#+end_src
+
+诊断结果里出现了多处警告：
+
+#+begin_example
+  环境变量 XMODIFIERS 的值被设为了"@im=fcitx5"而不是"@im=fcitx"。
+  请检查您是否在某个初始化文件中错误的设置了它的值。
+
+  环境变量 GTK_IM_MODULE 的值被设为了"fcitx5"而不是"fcitx"。
+  环境变量 QT_IM_MODULE 的值被设为了"fcitx5"而不是"fcitx"。
+#+end_example
+
+诊断工具建议把所有值从 =fcitx5= 改成 =fcitx= 。看起来很合理——虽然软件叫 =fcitx5= ，但输入法模块注册的名字可能不带版本号。
+
+于是我按建议修改了 =~/.xinitrc= ：
+
+#+begin_src shell
+  # 修改前
+  export GTK_IM_MODULE=fcitx5
+  export QT_IM_MODULE=fcitx5
+  export XMODIFIERS="@im=fcitx5"
+
+  # 修改后
+  export GTK_IM_MODULE=fcitx
+  export QT_IM_MODULE=fcitx
+  export XMODIFIERS="@im=fcitx"
+#+end_src
+
+但问题没有解决——Emacs 还是无法切换输入法。
+
+#+BEGIN_QUOTE
+*小知识：=.xinitrc= 是什么？*
+
+当你用 =startx= 命令启动图形界面时，=X 服务器= 会读取 =~/.xinitrc= 这个文件，执行里面的命令来初始化桌面环境。通常在里面设置环境变量、启动输入法、启动窗口管理器等。
+#+END_QUOTE
+
+** 第三步：发现 Emacs 是 systemd 服务启动的
+
+我意识到一个关键问题：我的 Emacs 不是从 =.xinitrc= 启动的，而是通过 =systemd user service= 以 daemon 模式在后台运行的。
+
+#+BEGIN_QUOTE
+*小知识：Emacs daemon 模式*
+
+Emacs 可以以"守护进程"方式运行（=emacs --fg-daemon= 或 =emacs --daemon=），在后台常驻。之后用 =emacsclient= 连接到这个后台进程来打开窗口。好处是：
+- 启动速度极快（不用每次都重新加载配置）
+- 多个客户端共享同一个 Emacs 进程（状态、缓冲区等）
+#+END_QUOTE
+
+这意味着 Emacs 的环境变量 *不来自 =.xinitrc=* ，而是来自 systemd service 文件中的 =Environment= 配置。查看服务文件：
+
+#+begin_src shell
+  cat ~/.config/systemd/user/emacs.service
+#+end_src
+
+#+begin_example
+  [Service]
+  Type=simple
+  ExecStart=/usr/bin/emacs --fg-daemon
+  Environment=... GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS="@im=fcitx" ...
+#+end_example
+
+果然！Emacs 的环境变量是独立的：
+- =GTK_IM_MODULE=fcitx=
+- =QT_IM_MODULE=fcitx=
+- =XMODIFIERS="@im=fcitx"
+
+看起来都是正确的
+
+** 第四步：发现根因——XIM 服务器名称不匹配
+
+既然 =.xinitrc= 和 =emacs.service= 都设了 =XMODIFIERS= ，那问题出在哪里？我检查了 fcitx5 实际注册到 X 服务器的 XIM 服务名称：
+
+#+begin_src shell
+  xprop -root XIM_SERVERS
+#+end_src
+
+#+begin_example
+  XIM_SERVERS(ATOM) = @server=fcitx5
+#+end_example
+
+然后检查 Emacs 进程实际的 =XMODIFIERS= 值：
+
+#+begin_src shell
+  cat /proc/$(pgrep -x emacs)/environ | tr '\0' '\n' | grep XMODIFIERS
+#+end_src
+
+#+begin_example
+  XMODIFIERS=@im=fcitx
+#+end_example
+
+*找到根因了！*
+
+- fcitx5 注册的 XIM 服务器名： =@server=fcitx5=
+- Emacs 的 =XMODIFIERS= 值： =@im=fcitx=
+
+两者不匹配！XIM 协议要求 =XMODIFIERS= 的值必须和 XIM 服务器的注册名一致。Emacs 拿着 =@im=fcitx= 去找名为 =fcitx= 的 XIM 服务器，但实际注册的名字是 =fcitx5= ，当然找不到。
+
+#+BEGIN_QUOTE
+*小知识：XIM 协议的连接机制*
+
+XIM（X Input Method）是 X11 的输入法协议，工作流程是：
+
+1. 输入法框架（如 fcitx5）启动后，在 X 服务器上注册一个 XIM 服务器，名字形如 =@server=fcitx5=
+2. 应用程序读取 =XMODIFIERS= 环境变量（如 =@im=fcitx5=）
+3. 应用程序拿着这个名字去 X 服务器上查找对应的 XIM 服务器
+4. 找到后建立连接，输入法就可以工作了
+
+如果 =XMODIFIERS= 的名字和 XIM 服务器注册的名字对不上，应用程序就找不到输入法服务器，输入法自然无法使用。
+#+END_QUOTE
+
+这也说明 =fcitx5-diagnose= 的建议是 *误导* 的：它建议把 =XMODIFIERS= 改成 =@im=fcitx= ，但 fcitx5 的 XIM 服务器偏偏注册为 =fcitx5= 。对于通过 XIM 协议连接输入法的应用（比如使用 Lucid 工具包的 Emacs），这个建议反而是错的。
+
+** 第五步：确认 Emacs 走的是 XIM 而非 GTK 模块
+
+为了确认我的 Emacs 确实走 XIM 协议，我检查了 Emacs 的构建特性：
+
+#+begin_src shell
+  emacs --batch --eval '(princ (format "%s\n" system-configuration-features))'
+#+end_src
+
+#+begin_example
+  ... X11 XDBE XIM XINPUT2 ... LUCID ...
+#+end_example
+
+关键信息：
+- =XIM= ——Emacs 支持 XIM 协议
+- =LUCID= ——Emacs 使用 Lucid（Xaw）工具包，不是 GTK
+
+Lucid 工具包不使用 =GTK_IM_MODULE= ，只走 XIM 协议。所以对 Emacs 来说，唯一重要的环境变量就是 =XMODIFIERS= ，而且它的值必须和 XIM 服务器注册名一致。
+
+* 解决方案
+
+明确了根因后，修复很简单：
+
+** 修改 emacs.service 中的 XMODIFIERS
+
+将 =XMODIFIERS="@im=fcitx"= 改为 =XMODIFIERS="@im=fcitx5"= ：
+
+#+begin_example
+  # 修改前
+  Environment=... XMODIFIERS="@im=fcitx" ...
+
+  # 修改后
+  Environment=... XMODIFIERS="@im=fcitx5" ...
+#+end_example
+
+** 重启 Emacs 服务
+
+#+begin_src shell
+  systemctl --user daemon-reload
+  systemctl --user restart emacs
+#+end_src
+
+修改后确认 Emacs 进程的环境变量已更新：
+
+#+begin_src shell
+  cat /proc/$(pgrep -x emacs)/environ | tr '\0' '\n' | grep XMODIFIERS
+  # XMODIFIERS=@im=fcitx5
+#+end_src
+
+重启后 Emacs 中顺利切换到中文输入法，问题解决。
+
+** 恢复 .xinitrc
+
+由于我的桌面环境也使用 fcitx5 ，且 fcitx5 的 XIM 服务器注册名为 =fcitx5= ，所以 =~/.xinitrc= 中的值保持为 =fcitx5= 是正确的：
+
+#+begin_src shell
+  export GTK_IM_MODULE=fcitx5
+  export QT_IM_MODULE=fcitx5
+  export XMODIFIERS="@im=fcitx5"
+#+end_src
+
+* 复盘
+
+** 根因链条
+
+#+begin_example
+  fcitx5 注册 XIM 服务器名为 "@server=fcitx5"
+    → emacs.service 中 XMODIFIERS="@im=fcitx"
+      → 名称不匹配
+        → Emacs 通过 XIM 找不到输入法服务器
+          → 无法切换输入法
+#+end_example
+
+** 走过的弯路
+
+这次排查最大的弯路是 *轻信了 =fcitx5-diagnose= 的建议* 。它建议把所有环境变量从 =fcitx5= 改成 =fcitx= ，我照做了，但这反而让 XMODIFIERS 和 XIM 服务器名不匹配的问题更加恶化了。
+
+** 关键经验
+
+1. *=xprop -root XIM_SERVERS= 可以查看 XIM 服务器注册名* ：排查 XIM 问题时，先确认服务器叫什么名字，再和 =XMODIFIERS= 对比
+2. *systemd 服务的环境变量是独立的* ：不继承 =.xinitrc= 或 shell 的环境，需要在 service 文件中单独设置。遇到服务启动的程序出问题时，用 =cat /proc/$PID/environ | tr '\0' '\n' | grep XXX= 检查实际的环境变量
+3. *诊断工具的建议不一定全对* ：=fcitx5-diagnose= 的建议在大部分场景下是对的，但对于 XIM 这种特殊场景会给出错误建议。理解原理比盲目执行建议更重要
+4. *Emacs 的工具包决定了它用什么输入法协议* ：Lucid 走 XIM（看 =XMODIFIERS= ），GTK 走 GTK IM Module（看 =GTK_IM_MODULE= ）。排查前先搞清楚 Emacs 用的什么工具包
