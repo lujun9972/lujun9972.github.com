@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>ERT 测试交互命令的三种方式 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Emacs, ERT, 测试, elisp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">ERT 测试交互命令的三种方式</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge8bab1e">ert-simulate-keys：模拟 minibuffer 输入</a></li>
+<li><a href="#org3b4b8ec">ert-simulate-command：手动调用指定命令</a></li>
+<li><a href="#orgaf48d00">ert-play-keys：模拟真实的按键序列（Emacs 31 新增）</a></li>
+<li><a href="#org739d934">三种方式对比</a></li>
+</ul>
+</div>
+</div>
+<p>
+最近翻 Emacs 31 的 <a href="https://git.savannah.gnu.org/cgit/emacs.git/commit/etc/NEWS?id=3d822669eee7f6e685368b8a298b6f0924f382da">NEWS 文件</a> 时，看到一条新增：ERT 增加了 <code>ert-play-keys</code> 函数，专门用来模拟用户按键。ERT 本身就有 <code>ert-simulate-keys</code> 和 <code>ert-simulate-command</code> 两个类似工具，这个新的到底解决了什么老工具解决不了的问题？顺着 NEWS 里的线索去看 <a href="https://git.savannah.gnu.org/cgit/emacs.git/diff/lisp/emacs-lisp/ert-x.el?id=5b6fc8ebfcd6bce6a0e5fb7160ec7a2aeb561baf">源码</a> 和 <a href="https://git.savannah.gnu.org/cgit/emacs.git/diff/test/lisp/emacs-lisp/ert-x-tests.el?id=5b6fc8ebfcd6bce6a0e5fb7160ec7a2aeb561baf">测试文件</a> 后发现，这三个工具各有明确的适用场景，本文逐一介绍。
+</p>
+
+<p>
+<b><b>前置条件：</b></b> 这三个工具都在 <code>ert-x.el</code> 里，不在 <code>ert.el</code> 里。ERT 自 Emacs 24.1 起就是内置的，但只 <code>(require 'ert)</code> 是不够的，必须额外加载扩展库：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">ert-x</span>)
+</pre>
+</div>
+
+<p>
+<code>ert-simulate-keys</code> 和 <code>ert-simulate-command</code> 从 Emacs 24.1 就有了，而 <code>ert-play-keys</code> 是 Emacs 31 才新增的。
+</p>
+
+<div id="outline-container-orge8bab1e" class="outline-2">
+<h2 id="orge8bab1e">ert-simulate-keys：模拟 minibuffer 输入</h2>
+<div class="outline-text-2" id="text-orge8bab1e">
+<p>
+<code>ert-simulate-keys</code> 的原理是把按键事件注入到 <code>unread-command-events</code> 变量中，这样当被测代码调用 <code>read-from-minibuffer</code> 之类从命令事件队列读输入的函数时，就会读到我们预先塞进去的内容。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-simulate-keys-for-minibuffer</span> ()
+  <span class="org-doc">"ert-simulate-keys &#21487;&#20197;&#21521; read-from-minibuffer &#25552;&#20379;&#39044;&#35774;&#36755;&#20837;&#12290;"</span>
+  (ert-simulate-keys (listify-key-sequence <span class="org-string">"hello\n"</span>)
+    (should (string= (read-from-minibuffer <span class="org-string">"Input: "</span>) <span class="org-string">"hello"</span>))))
+</pre>
+</div>
+
+<p>
+但它的局限也很明显：它 <b>只能</b> 用于从 <code>unread-command-events</code> 读输入的函数。如果你想测试"用户按下某个键，触发了 keymap 里绑定的命令"这种场景， <code>ert-simulate-keys</code> 做不到——因为按键事件只是被塞进了 <code>unread-command-events</code> 变量，并没有一个命令循环在跑来消费它们。只有 <code>read-from-minibuffer</code> 这类函数会主动从 <code>unread-command-events</code> 取输入。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-simulate-keys-cannot-start-commands</span> ()
+  <span class="org-doc">"ert-simulate-keys &#26080;&#27861;&#21551;&#21160;&#25353;&#38190;&#21629;&#20196;&#8212;&#8212;&#20107;&#20214;&#21482;&#23384;&#22312; unread-command-events &#20013;&#12290;"</span>
+  (ert-with-test-buffer ()
+    (<span class="org-keyword">let</span> (command-ran)
+      (<span class="org-keyword">let*</span> ((map (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+                    (define-key map [?b]
+                                (<span class="org-keyword">lambda</span> ()
+                                  (<span class="org-keyword">interactive</span>)
+                                  (<span class="org-keyword">setq</span> command-ran t)))
+                    map))
+             (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20107;&#20214;&#34987;&#25918;&#20837; unread-command-events&#65292;&#20294;&#27809;&#26377;&#21629;&#20196;&#24490;&#29615;&#26469;&#22788;&#29702;&#23427;&#20204;
+</span>        (ert-simulate-keys (listify-key-sequence <span class="org-string">"b"</span>)
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">body &#37324;&#27809;&#26377;&#20989;&#25968;&#28040;&#36153;&#36825;&#20123;&#20107;&#20214;
+</span>          nil))
+      <span class="org-comment-delimiter">;; </span><span class="org-comment">?b &#30340; keymap &#32465;&#23450;&#27809;&#26377;&#34987;&#35302;&#21457;
+</span>      (should (eq command-ran nil)))))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3b4b8ec" class="outline-2">
+<h2 id="org3b4b8ec">ert-simulate-command：手动调用指定命令</h2>
+<div class="outline-text-2" id="text-org3b4b8ec">
+<p>
+<code>ert-simulate-command</code> 的思路完全不同：你不需要模拟按键，而是直接告诉它"我要调用这个命令，参数是这些"。它会模拟命令循环的行为——运行 <code>pre-command-hook</code> 、设置 <code>this-command</code> 、调用命令、运行 <code>post-command-hook</code> ——但不会经过 keymap 查找。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-simulate-command</span> ()
+  <span class="org-doc">"ert-simulate-command &#21487;&#20197;&#30452;&#25509;&#20197;&#20132;&#20114;&#26041;&#24335;&#35843;&#29992;&#21629;&#20196;&#12290;"</span>
+  (ert-with-test-buffer ()
+    (<span class="org-keyword">let</span> (hook-ran)
+      (<span class="org-keyword">let</span> ((pre-command-hook (list (<span class="org-keyword">lambda</span> () (<span class="org-keyword">setq</span> hook-ran t)))))
+        (ert-simulate-command
+         (list (<span class="org-keyword">lambda</span> (x)
+                 (<span class="org-keyword">interactive</span> (list <span class="org-string">"test input"</span>))
+                 (insert x)
+                 <span class="org-builtin">:ok</span>)
+               <span class="org-string">"test input"</span>)))
+      (should (eq hook-ran t)))
+    (should (string= <span class="org-string">"test input"</span> (buffer-substring (point-min) (point-max))))))
+</pre>
+</div>
+
+<p>
+注意 <code>ert-simulate-command</code> 有一个重要限制：命令 <b>不是</b> 通过 <code>call-interactively</code> 调用的。这意味着如果你的命令内部调用 <code>called-interactively-p</code> 来判断自己是不是被交互调用的，结果会是 <code>nil</code> 。下面这个测试展示了这个问题：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-simulate-command-not-call-interactively</span> ()
+  <span class="org-doc">"ert-simulate-command &#20013; called-interactively-p &#36820;&#22238; nil&#12290;"</span>
+  (<span class="org-keyword">let</span> (result)
+    (ert-simulate-command
+     (list (<span class="org-keyword">lambda</span> ()
+             (<span class="org-keyword">interactive</span>)
+             (<span class="org-keyword">setq</span> result (called-interactively-p 'any)))))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#19981;&#26159;&#36890;&#36807; call-interactively &#35843;&#29992;&#30340;&#65292;&#25152;&#20197;&#36820;&#22238; nil
+</span>    (should (eq result nil))))
+</pre>
+</div>
+
+<p>
+另外， <code>ert-simulate-command</code> 需要你明确知道要调用哪个命令。如果你需要测试"用户按下某个键之后发生了什么"（即经过 keymap 查找后的完整流程），它帮不上忙。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgaf48d00" class="outline-2">
+<h2 id="orgaf48d00">ert-play-keys：模拟真实的按键序列（Emacs 31 新增）</h2>
+<div class="outline-text-2" id="text-orgaf48d00">
+<p>
+Emacs 31 新增的 <code>ert-play-keys</code> 填补了上面两个工具留下的空白。它的实现只有一行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">ert-play-keys</span> (keys)
+  <span class="org-doc">"Play the key sequence KEYS as if it was user input."</span>
+  (funcall (kmacro keys)))
+</pre>
+</div>
+
+<p>
+它调用 <code>kmacro</code> 把按键序列当作键盘宏来执行。因为键盘宏走的是完整的命令循环路径——包括 keymap 查找、命令执行、hook 触发——所以它可以触发 keymap 绑定的命令，也能正确处理 <code>called-interactively-p</code> 。
+</p>
+
+<p>
+使用时需要配合 <code>ert-with-test-buffer</code> 的 <code>:selected t</code> 参数（或 <code>ert-with-buffer-selected</code> ），这会在临时窗口中选中 buffer，让按键序列能正确路由到目标 buffer：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-play-keys-triggers-keymap</span> ()
+  <span class="org-doc">"ert-play-keys &#21487;&#20197;&#35302;&#21457; keymap &#32465;&#23450;&#30340;&#21629;&#20196;&#12290;"</span>
+  (ert-with-test-buffer (<span class="org-builtin">:selected</span> t)
+    (<span class="org-keyword">let</span> (command-ran)
+      (<span class="org-keyword">let*</span> ((map (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+                   (define-key map [?b]
+                               (<span class="org-keyword">lambda</span> ()
+                                 (<span class="org-keyword">interactive</span>)
+                                 (<span class="org-keyword">setq</span> command-ran t)
+                                 (insert <span class="org-string">"ran"</span>)))
+                   map))
+            (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+        (ert-play-keys (vconcat [?b])))
+      (should (eq command-ran t))
+      (should (string= <span class="org-string">"ran"</span> (buffer-substring (point-min) (point-max)))))))
+</pre>
+</div>
+
+<p>
+<code>ert-play-keys</code> 还可以在一次调用中混合不同类型的输入——既有触发命令的按键，也有直接插入的文本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">ert-deftest</span> <span class="org-function-name">test-play-keys-mixed-input</span> ()
+  <span class="org-doc">"ert-play-keys &#21487;&#20197;&#28151;&#21512;&#25353;&#38190;&#21629;&#20196;&#21644;&#25991;&#26412;&#25554;&#20837;&#12290;"</span>
+  (ert-with-test-buffer (<span class="org-builtin">:selected</span> t)
+    (<span class="org-keyword">let*</span> ((map (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+                 (define-key map [?X]
+                             (<span class="org-keyword">lambda</span> ()
+                               (<span class="org-keyword">interactive</span>)
+                               (insert <span class="org-string">"[pressed-X]"</span>)))
+                 map))
+          (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+      <span class="org-comment-delimiter">;; </span><span class="org-comment">[?X] &#35302;&#21457; keymap &#21629;&#20196;&#65292;"hello" &#20316;&#20026;&#25991;&#26412;&#25554;&#20837;
+</span>      (ert-play-keys (vconcat [?X] <span class="org-string">"hello"</span>)))
+    (should (string= <span class="org-string">"[pressed-X]hello"</span>
+                     (buffer-substring (point-min) (point-max))))))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org739d934" class="outline-2">
+<h2 id="org739d934">三种方式对比</h2>
+<div class="outline-text-2" id="text-org739d934">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">特性</th>
+<th scope="col" class="org-left"><code>ert-simulate-keys</code></th>
+<th scope="col" class="org-left"><code>ert-simulate-command</code></th>
+<th scope="col" class="org-left"><code>ert-play-keys</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">触发 keymap 绑定</td>
+<td class="org-left">否</td>
+<td class="org-left">否</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">支持 <code>called-interactively-p</code></td>
+<td class="org-left">N/A</td>
+<td class="org-left">否</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">运行 <code>pre/post-command-hook</code></td>
+<td class="org-left">否</td>
+<td class="org-left">是</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">模拟文本插入</td>
+<td class="org-left">仅通过 minibuffer</td>
+<td class="org-left">需手动传参</td>
+<td class="org-left">是（直接输入）</td>
+</tr>
+
+<tr>
+<td class="org-left">使用方式</td>
+<td class="org-left">宏（包裹 body）</td>
+<td class="org-left">函数（传入命令）</td>
+<td class="org-left">函数（传入按键序列）</td>
+</tr>
+
+<tr>
+<td class="org-left">Emacs 版本</td>
+<td class="org-left">一直有</td>
+<td class="org-left">一直有</td>
+<td class="org-left">31+</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+简单来说：
+</p>
+<ul class="org-ul">
+<li>需要测试命令的 minibuffer 输入 → <code>ert-simulate-keys</code></li>
+<li>需要测试特定命令的执行效果（不需要经过 keymap） → <code>ert-simulate-command</code></li>
+<li>需要模拟用户真实按键操作 → <code>ert-play-keys</code></li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/ert">ERT</a> : <a href="../../../../../tags/测试">测试</a> : <a href="../../../../../tags/elisp">elisp</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 2rcsiae2t1tudb1w4nwqreichg &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

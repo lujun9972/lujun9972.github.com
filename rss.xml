@@ -4,10 +4,162 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 22 Apr 2026 16:25:56 UTC</pubDate>
-    <lastBuildDate>Wed, 22 Apr 2026 16:25:56 UTC</lastBuildDate>
+    <pubDate>Wed, 22 Apr 2026 23:41:02 UTC</pubDate>
+    <lastBuildDate>Wed, 22 Apr 2026 23:41:02 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>ERT 测试交互命令的三种方式</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/ert-测试交互命令的三种方式/index.html</link>
+<description>最近翻 Emacs 31 的 [[https://git.savannah.gnu.org/cgit/emacs.git/commit/etc/NEWS?id=3d822669eee7f6e685368b8a298b6f0924f382da][NEWS 文件]] 时，看到一条新增：ERT 增加了 =ert-play-keys= 函数，专门用来模拟用户按键。ERT 本身就有 =ert-simulate-keys= 和 =ert-simulate-command= 两个类似工具，这个新的到底解决了什么老工具解决不了的问题？顺着 NEWS 里的线索去看 [[https://git.savannah.gnu.org/cgit/emacs.git/diff/lisp/emacs-lisp/ert-x.el?id=5b6fc8ebfcd6bce6a0e5fb7160ec7a2aeb561baf][源码]] 和 [[https://git.savannah.gnu.org/cgit/emacs.git/diff/test/lisp/emacs-lisp/ert-x-tests.el?id=5b6fc8ebfcd6bce6a0e5fb7160ec7a2aeb561baf][测试文件]] 后发现，这三个工具各有明确的适用场景，本文逐一介绍。
+
+**前置条件：** 这三个工具都在 =ert-x.el= 里，不在 =ert.el= 里。ERT 自 Emacs 24.1 起就是内置的，但只 =(require &#39;ert)= 是不够的，必须额外加载扩展库：
+
+#+begin_src emacs-lisp
+(require &#39;ert-x)
+#+end_src
+
+=ert-simulate-keys= 和 =ert-simulate-command= 从 Emacs 24.1 就有了，而 =ert-play-keys= 是 Emacs 31 才新增的。
+
+* ert-simulate-keys：模拟 minibuffer 输入
+
+=ert-simulate-keys= 的原理是把按键事件注入到 =unread-command-events= 变量中，这样当被测代码调用 =read-from-minibuffer= 之类从命令事件队列读输入的函数时，就会读到我们预先塞进去的内容。
+
+#+begin_src emacs-lisp
+(ert-deftest test-simulate-keys-for-minibuffer ()
+  &quot;ert-simulate-keys 可以向 read-from-minibuffer 提供预设输入。&quot;
+  (ert-simulate-keys (listify-key-sequence &quot;hello\n&quot;)
+    (should (string= (read-from-minibuffer &quot;Input: &quot;) &quot;hello&quot;))))
+#+end_src
+
+但它的局限也很明显：它 *只能* 用于从 =unread-command-events= 读输入的函数。如果你想测试&quot;用户按下某个键，触发了 keymap 里绑定的命令&quot;这种场景， =ert-simulate-keys= 做不到——因为按键事件只是被塞进了 =unread-command-events= 变量，并没有一个命令循环在跑来消费它们。只有 =read-from-minibuffer= 这类函数会主动从 =unread-command-events= 取输入。
+
+#+begin_src emacs-lisp
+(ert-deftest test-simulate-keys-cannot-start-commands ()
+  &quot;ert-simulate-keys 无法启动按键命令——事件只存在 unread-command-events 中。&quot;
+  (ert-with-test-buffer ()
+    (let (command-ran)
+      (let* ((map (let ((map (make-sparse-keymap)))
+                    (define-key map [?b]
+                                (lambda ()
+                                  (interactive)
+                                  (setq command-ran t)))
+                    map))
+             (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+        ;; 事件被放入 unread-command-events，但没有命令循环来处理它们
+        (ert-simulate-keys (listify-key-sequence &quot;b&quot;)
+          ;; body 里没有函数消费这些事件
+          nil))
+      ;; ?b 的 keymap 绑定没有被触发
+      (should (eq command-ran nil)))))
+#+end_src
+
+* ert-simulate-command：手动调用指定命令
+
+=ert-simulate-command= 的思路完全不同：你不需要模拟按键，而是直接告诉它&quot;我要调用这个命令，参数是这些&quot;。它会模拟命令循环的行为——运行 =pre-command-hook= 、设置 =this-command= 、调用命令、运行 =post-command-hook= ——但不会经过 keymap 查找。
+
+#+begin_src emacs-lisp
+(ert-deftest test-simulate-command ()
+  &quot;ert-simulate-command 可以直接以交互方式调用命令。&quot;
+  (ert-with-test-buffer ()
+    (let (hook-ran)
+      (let ((pre-command-hook (list (lambda () (setq hook-ran t)))))
+        (ert-simulate-command
+         (list (lambda (x)
+                 (interactive (list &quot;test input&quot;))
+                 (insert x)
+                 :ok)
+               &quot;test input&quot;)))
+      (should (eq hook-ran t)))
+    (should (string= &quot;test input&quot; (buffer-substring (point-min) (point-max))))))
+#+end_src
+
+注意 =ert-simulate-command= 有一个重要限制：命令 *不是* 通过 =call-interactively= 调用的。这意味着如果你的命令内部调用 =called-interactively-p= 来判断自己是不是被交互调用的，结果会是 =nil= 。下面这个测试展示了这个问题：
+
+#+begin_src emacs-lisp
+(ert-deftest test-simulate-command-not-call-interactively ()
+  &quot;ert-simulate-command 中 called-interactively-p 返回 nil。&quot;
+  (let (result)
+    (ert-simulate-command
+     (list (lambda ()
+             (interactive)
+             (setq result (called-interactively-p &#39;any)))))
+    ;; 不是通过 call-interactively 调用的，所以返回 nil
+    (should (eq result nil))))
+#+end_src
+
+另外， =ert-simulate-command= 需要你明确知道要调用哪个命令。如果你需要测试&quot;用户按下某个键之后发生了什么&quot;（即经过 keymap 查找后的完整流程），它帮不上忙。
+
+* ert-play-keys：模拟真实的按键序列（Emacs 31 新增）
+
+Emacs 31 新增的 =ert-play-keys= 填补了上面两个工具留下的空白。它的实现只有一行：
+
+#+begin_src emacs-lisp
+(defun ert-play-keys (keys)
+  &quot;Play the key sequence KEYS as if it was user input.&quot;
+  (funcall (kmacro keys)))
+#+end_src
+
+它调用 =kmacro= 把按键序列当作键盘宏来执行。因为键盘宏走的是完整的命令循环路径——包括 keymap 查找、命令执行、hook 触发——所以它可以触发 keymap 绑定的命令，也能正确处理 =called-interactively-p= 。
+
+使用时需要配合 =ert-with-test-buffer= 的 =:selected t= 参数（或 =ert-with-buffer-selected= ），这会在临时窗口中选中 buffer，让按键序列能正确路由到目标 buffer：
+
+#+begin_src emacs-lisp
+(ert-deftest test-play-keys-triggers-keymap ()
+  &quot;ert-play-keys 可以触发 keymap 绑定的命令。&quot;
+  (ert-with-test-buffer (:selected t)
+    (let (command-ran)
+      (let* ((map (let ((map (make-sparse-keymap)))
+                   (define-key map [?b]
+                               (lambda ()
+                                 (interactive)
+                                 (setq command-ran t)
+                                 (insert &quot;ran&quot;)))
+                   map))
+            (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+        (ert-play-keys (vconcat [?b])))
+      (should (eq command-ran t))
+      (should (string= &quot;ran&quot; (buffer-substring (point-min) (point-max)))))))
+#+end_src
+
+=ert-play-keys= 还可以在一次调用中混合不同类型的输入——既有触发命令的按键，也有直接插入的文本：
+
+#+begin_src emacs-lisp
+(ert-deftest test-play-keys-mixed-input ()
+  &quot;ert-play-keys 可以混合按键命令和文本插入。&quot;
+  (ert-with-test-buffer (:selected t)
+    (let* ((map (let ((map (make-sparse-keymap)))
+                 (define-key map [?X]
+                             (lambda ()
+                               (interactive)
+                               (insert &quot;[pressed-X]&quot;)))
+                 map))
+          (minor-mode-map-alist (cons (cons t map) minor-mode-map-alist)))
+      ;; [?X] 触发 keymap 命令，&quot;hello&quot; 作为文本插入
+      (ert-play-keys (vconcat [?X] &quot;hello&quot;)))
+    (should (string= &quot;[pressed-X]hello&quot;
+                     (buffer-substring (point-min) (point-max))))))
+#+end_src
+
+* 三种方式对比
+
+| 特性 | =ert-simulate-keys= | =ert-simulate-command= | =ert-play-keys= |
+|------+---------------------+------------------------+-----------------|
+| 触发 keymap 绑定 | 否 | 否 | 是 |
+| 支持 =called-interactively-p= | N/A | 否 | 是 |
+| 运行 =pre/post-command-hook= | 否 | 是 | 是 |
+| 模拟文本插入 | 仅通过 minibuffer | 需手动传参 | 是（直接输入） |
+| 使用方式 | 宏（包裹 body） | 函数（传入命令） | 函数（传入按键序列） |
+| Emacs 版本 | 一直有 | 一直有 | 31+ |
+
+简单来说：
+- 需要测试命令的 minibuffer 输入 → =ert-simulate-keys=
+- 需要测试特定命令的执行效果（不需要经过 keymap） → =ert-simulate-command=
+- 需要模拟用户真实按键操作 → =ert-play-keys=
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/ert-测试交互命令的三种方式/index.html</guid>
+</item>
 <item>
 <title>Elisp 性能优化的六个实战教训</title>
 <link>https://lujun9972.github.io/blog/2026/04/22/elisp-性能优化的六个实战教训/index.html</link>
@@ -1360,84 +1512,6 @@ Anki 默认的 SM-2 算法给所有卡片相同的初始间隔。但章节难度
 </description>
 <pubDate>2026-04-20</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/20/一本书该&quot;线性读&quot;还是&quot;并行读&quot;/index.html</guid>
-</item>
-<item>
-<title>读 How to Monetize a Blog：一篇伪装成变现指南的讽刺文</title>
-<link>https://lujun9972.github.io/blog/2026/04/20/读-how-to-monetize-a-blog：一篇伪装成变现指南的讽刺文/index.html</link>
-<description>* 这篇&quot;教程&quot;在干什么
-
-[[https://modem.io/blog/blog-monetization/][How to Monetize a Blog]] 是 modem.io 上的一篇文章。乍一看，这是一篇博客变现指南——讲 CPM、CPA、广告网络、受众画像，跟你搜到的任何一篇&quot;如何靠博客赚钱&quot;没什么区别。
-
-但读完全文才发现，这是一篇精心设计的讽刺作品——它就是它所讽刺的那个东西。
-
-* 四层递进的讽刺手法
-
-** 第一层：正经教程的伪装
-
-文章开头非常像回事。它解释了 CPM（千次展示付费）和 CPA（按行动付费）的区别，介绍了广告网络的运作方式，甚至讨论了如何根据受众画像投放定向广告。这些内容本身是准确的，读起来就像一篇标准的 SEO 变现教程。
-
-这个伪装做得越逼真，后面的反转就越有力。
-
-** 第二层：荒诞的假广告
-
-从文章开头开始，就穿插着各种广告位。但仔细一看，这些广告卖的是：
-
-- &quot;虾探测器&quot;（ Shrimp detectors ）
-- &quot;定制塔罗牌&quot;
-- &quot;蛇油&quot;（ Literal Snake Oil——&quot;从真正的蛇身上现榨的油&quot; ）
-- &quot;药用盲盒&quot;（ Medicinal Loot Boxes——&quot;禁止医生入内&quot; ）
-- &quot;和三明治交朋友&quot;（ Befriend A Sandwich——&quot;你的法式蘸酱三明治知道宝藏在哪吗？&quot; ）
-
-每一则假广告的荒诞程度都在递增。而且这些广告和文章内容毫无关系——这本身就是一种讽刺：广告系统号称能精准匹配内容和广告，实际投放出来的东西根本和内容无关。
-
-** 第三层：作者自我拆穿
-
-写到大半的时候，作者突然摊牌了。他说：
-
-#+begin_quote
-this entire post is admittedly just meaningless fluff that I&#39;m not even proof-reading. It&#39;s all a thoughtless heap of words in disguise, an excuse to fill more ad space. And it is working!
-
-这整篇文章说实话就是毫无意义的填充物，我连校对都没做。这是一堆词的伪装，一个塞更多广告位的借口。而且它奏效了！
-#+end_quote
-
-然后他&quot;建议&quot;你可以用 AI 来写内容，或者干脆用 lorem ipsum（排版时用来占位置的假文字）来填充文章后半部分——因为只要前面的文字看起来像人写的，读者就不会注意到后面是机器生成的废话。这正是内容农场的真实操作：用廉价内容填充页面，只要能展示广告就行，内容本身毫无价值。
-
-这一层的巧妙之处在于：作者一边在做他正在批评的事（用废话填空间），一边告诉你他在这么做。你作为读者，明知被耍了，但广告已经展示在你面前了。
-
-** 第四层：文风崩塌
-
-最后几段，文章彻底放弃了教程的伪装。文风从幽默滑向了一种接近克苏鲁式的黑暗散文：
-
-#+begin_quote
-We invent new gods and we bury them in the same breath. We leave scars on the world like canyons carved from rivers of glass.
-
-我们在制造新的神，又在同一口气中埋葬它们。我们在世界上留下伤疤，像河流冲刷出的玻璃峡谷。
-#+end_quote
-
-然后是一段&quot;拆了建、建了拆&quot;无限重复的文本，最后以一片黑暗中蠕动的触须意象收尾。
-
-这个文风崩塌大概不是作者失控，而是一种有意的隐喻：当内容创作者完全被流量和广告驱动时，内容本身就会退化成这样的东西——没有意义、没有方向、无限循环。
-
-* 中国互联网的镜像
-
-这篇文章讽刺的是英文互联网的广告生态，但这些手法放在中国互联网上只会变本加厉。
-
-百度的搜索结果页，前几条永远是广告。公众号文章读着读着突然插入一条带货链接。短视频平台的内容越来越像广告，广告越来越像内容。B 站的弹幕里混着&quot;恰饭&quot;的辩解。我们每天消费的内容，有多少是真正为读者写的，又有多少是&quot;有意义的填充物&quot;？和这篇讽刺文里的做法相比，区别只在于：这些平台可不会自爆。
-
-modem.io 这篇文章最狠的地方在于，它没有用论述的方式告诉你&quot;广告正在毁掉互联网&quot;，而是让你亲身体验了一把——你读完了它，你的注意力被假广告收割了，然后文章告诉你：刚才经历的就是问题本身。
-
-* 为什么这篇讽刺有效
-
-好的讽刺不靠说理，靠的是让你读完之后回头一看，发现自己刚才的阅读体验本身就是被讽刺的对象。这篇文章做到了：
-
-1. *形式即内容* ——它用广告充斥的排版来讽刺广告充斥的互联网，读者不需要&quot;被说服&quot;，只需要&quot;经历一遍&quot;
-2. *诚实是最好的嘲讽* ——作者直接承认&quot;这篇文章就是垃圾&quot;，这种自曝比任何批评都尖锐
-3. *递进的荒诞感* ——从正经教程到假广告到自我拆穿到文风崩溃，每一层都把讽刺推得更深
-
-这种结构性的讽刺手法并不常见——大部分讽刺靠的是文字游戏和双关，而这篇文章让文章的结构本身成为了论点。
-</description>
-<pubDate>2026-04-20</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/20/读-how-to-monetize-a-blog：一篇伪装成变现指南的讽刺文/index.html</guid>
 </item>
 </channel>
 </rss>
