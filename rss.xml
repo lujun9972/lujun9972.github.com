@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 22 Apr 2026 01:27:40 UTC</pubDate>
-    <lastBuildDate>Wed, 22 Apr 2026 01:27:40 UTC</lastBuildDate>
+    <pubDate>Wed, 22 Apr 2026 06:12:11 UTC</pubDate>
+    <lastBuildDate>Wed, 22 Apr 2026 06:12:11 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -416,6 +416,93 @@ X11 的输入设备分为三层：
 </description>
 <pubDate>2026-04-22</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/22/til-早期网页的图片热区导航/index.html</guid>
+</item>
+<item>
+<title>读 Seeing the Whole System</title>
+<link>https://lujun9972.github.io/blog/2026/04/22/读-seeing-the-whole-system/index.html</link>
+<description>原文：[[https://dzone.com/articles/seeing-the-whole-system][Seeing the Whole System - DZone]]
+
+这篇 DZone 上的文章从一个事故应急响应的真实场景出发，讲透了可观测性（observability）领域最痛的问题：你的监控数据散落在四五个互不相干的系统里，出了事得靠人脑手动拼凑上下文。然后讲了 OpenTelemetry（简称 OTel）怎么从架构层面解决这个问题。
+
+* 你可能也经历过的事故现场
+
+事故响应进行到第 47 分钟，值班工程师已经开了 6 个浏览器 tab：Grafana 看基础设施指标，Splunk 搜应用日志，Jaeger 查链路追踪，还有一个 18 个月前谁搭的 Kibana 面板，还有一个团队 6 周前开通的 Datadog 试用版，但和其他系统完全没有打通。
+
+根因是一个下游依赖在高负载下开始出现响应超时，导致某个没配队列监控的服务队列出现堆积。线索分布在四个互不相干的系统里，工程师得用脑子手动关联。
+
+这个场景不是个例。大多数组织的监控工具链是这么长出来的：A 团队需要指标，上了 Prometheus；B 团队做链路追踪，选了 Jaeger；安全团队要日志聚合，部署了 ELK；新来的工程师喜欢 Datadog，自己开了个试用。每个决定单独看都没错，但最终结果是四五个互不相干的系统，各自只能看到环境的一部分。
+
+当故障跨系统边界传播时（尤其在微服务环境下，经常出现这样的故障），代价就很明显了：不同系统之间的追踪数据无法互通——比如 A 服务用了 Jaeger 埋点，B 服务用了 Datadog 埋点，两个服务的 trace 数据对不上；一个系统的日志时间戳和另一个系统的指标尖峰对不上，还得花时间排除到底是时区不同还是真实的因果顺序。
+
+* OpenTelemetry 是什么
+
+OTel 不是一个工具，而是一套规范（specification）+ API + SDK + Collector。它解决的核心问题是：让应用代码只管发射遥测数据，不关心数据发给哪个后端。
+
+具体来说：
+
+1. 应用代码通过 OTel SDK 埋点，数据通过 =OTLP= （OpenTelemetry Protocol）协议发送
+2. Collector 是一个独立的中间服务，负责接收、处理、路由遥测数据
+3. 切换后端（比如从 Jaeger 换成 Datadog）只需要改 Collector 配置，应用代码完全不用动
+
+#+BEGIN_SRC yaml :eval no
+# Collector 最小配置：一个接收器 + 一个处理器 + 一个导出器
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger]
+#+END_SRC
+
+在 OTel 成熟之前（核心组件大约在 2023 年才达到生产稳定性），给应用做可观测性埋点意味着绑定某个厂商的 agent 或 SDK。想从 A 厂商换到 B 厂商？需要改代码、换库、重新测试。OTel 的厂商无关的设计把这个成本降到了配置变更。
+
+* Collector：最容易用错的组件
+
+原文观察到团队对 Collector 有两种典型的误用：
+
+1. *用得太简单*：把 Collector 当透传管道，原样转发所有数据到后端，不做过滤、采样、富化。配置虽然集中了，但浪费了中间处理层的能力
+2. *过度复杂化*：一开始就往 5 个后端同时发数据，加上复杂的处理器链和多套采样策略。6 个月后没人能完整解释这个配置
+
+做得好的团队遵循一个模式：从一个 receiver、一个 processor、一两个 exporter 开始，逐步扩展。Collector 配置放 Git 里，变更走 code review。Collector 本身也当服务对待——有 owner、有 SLO、有值班轮换。
+
+一个实用的 Collector 模式是 *tail-based sampling* （尾部采样）：在源头全面埋点，在 Collector 层配置只把 10-15% 的 trace 发到昂贵的存储后端，但保留 100% 的错误和慢请求 trace。该看的问题一个不漏，但摄入成本大幅降低。
+
+* 关联查询：统一遥测最大的价值
+
+统一遥测标准最大的好处不是省钱或换后端方便，而是可以做关联查询——从一个指标异常，跳到解释它的 trace，再跳到定位具体操作的日志行。
+
+OTel 的 trace 上下文传播机制（即请求从 A 服务调到 B 服务时，自动把 trace ID 带过去）让这个关联变成自动的：同一个请求经过的每个服务都用同一个 trace ID 串起来：
+
+#+BEGIN_SRC text :eval no
+# traceparent header 格式：version-trace_id-parent_id-trace_flags
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+#+END_SRC
+
+如果你的日志也带着这个 trace ID （OTel 的日志埋点会处理），就可以从 trace 中的慢 span 直接跳到该 span 产生的日志行，在一个系统里完成。原文提到一个初级工程师用这种方式做了根因分析，值班负责人估计这在 OTel 迁移前要 40 分钟，实际只用了 9 分钟。
+
+* 还没有解决的问题
+
+- *自动埋点的局限*：OTel 的 auto-instrumentation 对标准 HTTP 调用、数据库查询、gRPC 很好用，但对自定义消息队列、遗留协议、内部框架仍然需要手动埋点——这部分工作很麻烦
+- *日志集成滞后*：trace 和 metric 在 OTel 中已经成熟稳定，但日志规范的 SDK 实现仍在追赶。原文建议的渐进策略是：先在现有日志输出中加上 trace ID 和 span ID，等运维图景更清晰后再迁移收集路径
+- *Collector 本身需要维护*：处理几十个服务的高基数遥测数据的 Collector 需要容量规划、故障分析、持续运维。不能当&quot;设好就忘&quot;的组件
+</description>
+<pubDate>2026-04-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/22/读-seeing-the-whole-system/index.html</guid>
 </item>
 <item>
 <title>用 Emacs 自动生成每周链接推荐</title>
@@ -1235,128 +1322,6 @@ def test_is_bank_holiday():
 </description>
 <pubDate>2026-04-20</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/20/python-mock-第三方依赖的四种策略/index.html</guid>
-</item>
-<item>
-<title>Emacs Lisp 热重载实用指南</title>
-<link>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</link>
-<description>* 问题
-
-Emacs 用户经常无意识地做一件事：修改 =init.el= 中的代码，求值，然后继续在同一个 Emacs 实例中工作。这就是 Lisp 的热重载——不需要重启进程，代码直接在运行中被替换。
-
-大部分时候这很顺畅。但有一个陷阱： =defvar= 、 =defcustom= 、 =defface= 在重新求值时 *不会* 更新已有的值。
-
-#+BEGIN_SRC elisp
-;; 第一次求值
-(defvar my-var &quot;hello&quot;)  ;; my-var → &quot;hello&quot;
-
-;; 修改后重新求值
-(defvar my-var &quot;world&quot;)  ;; my-var → 仍然是 &quot;hello&quot;！
-#+END_SRC
-
-这是故意这么设计的——加载库不应该覆盖用户的自定义值。但在开发包的时候，这个设计让人困惑：你改了默认值，重新求值，发现什么都没变。
-
-下面是从轻到重的五种解决方案。
-
-* 方法一：eval-defun（C-M-x）
-
-这是最常用的方法，也是最容易被忽略的： =eval-defun= （=C-M-x=）对 =defvar= 、 =defcustom= 、 =defface= 有特殊处理——它会 *无条件* 设置变量的值，不管这个变量是不是已经有值。
-
-#+BEGIN_SRC elisp
-(defvar my-var &quot;new-value&quot;)
-#+END_SRC
-
-把光标放在这个 =defvar= 形式上，按 =C-M-x= ， =my-var= 就会被更新为 =&quot;new-value&quot;= 。
-
-注意： =eval-buffer= 和 =eval-region= *不会*这样做——它们遵守正常的 =defvar= 语义。只有 =eval-defun= 是例外。
-
-这是 Bozhidar Batsov 在开发 mode 时最常用的方法：只改了几个形式，就逐个 =C-M-x= 。
-
-* 方法二：setq（M-:）
-
-如果只需要快速重置一个变量：
-
-#+BEGIN_SRC elisp
-M-: (setq my-var &quot;new-value&quot;)
-#+END_SRC
-
-简单粗暴，但只改变量值，不会触发其他代码的重新执行（比如函数定义、hooks 设置等都不会变）。适合临时调参数。
-
-* 方法三：load-file
-
-=M-x load-file= 从磁盘加载 =.el= 文件。跟 =require= 的区别是： =require= 发现 feature 已加载就会跳过， =load-file= 总是重新读取并求值文件。
-
-但 =load-file= 仍然遵守 =defvar= 语义——已绑定的变量不会被更新。它的优势在于可以加载非当前编辑的文件，比如包的依赖文件，或者没有 =provide= 形式的文件。
-
-* 方法四：unload-feature + require（干净重载）
-
-这是最彻底的非重启方案：
-
-#+BEGIN_SRC elisp
-;; 卸载 feature：移除它定义的变量、函数、hooks 等
-(unload-feature &#39;my-package)
-
-;; 重新加载
-(require &#39;my-package)
-#+END_SRC
-
-=unload-feature= 会把 feature 定义的一切都清掉，然后 =require= 从头加载。这最接近&quot;干净的状态&quot;。
-
-注意事项：
-
-- =unload-feature= 可能有副作用——如果 feature 添加了 hooks 或 advice，卸载时应该会清理，但并非所有包都正确实现了清理逻辑，可能出现残留的 hook 或 advice
-- 只对通过 =provide= / =require= 加载的 feature 有效；用 =load-file= 加载的文件没有 feature 可以卸载
-- 某些复杂的包不能干净地卸载，但大多数简单的 major mode 没问题
-
-可以绑一个快捷键方便开发时使用：
-
-#+BEGIN_SRC elisp
-(defun my-reload-package (package)
-  &quot;Unload and reload PACKAGE.&quot;
-  (interactive &quot;SReload package: &quot;)
-  (unload-feature package)
-  (require package)
-  (message &quot;Reloaded %s&quot; package))
-#+END_SRC
-
-* 方法五：重启 Emacs
-
-终极方案。当其他方法都不管用，或者你改了太多东西、不信任当前运行时状态时，重启。
-
-有了 =desktop-save-mode= 或 session 管理器，重启的代价不大。Emacs 29+ 内置了 =restart-emacs= 命令，或者用 [[https://github.com/iqbalansari/restart-emacs][restart-emacs 包]]。
-
-* 别忘了重新激活 Mode
-
-无论用哪种方法重载了代码，还需要在已有 buffer 中重新激活 mode：
-
-#+BEGIN_SRC elisp
-M-x my-mode           ;; 重新运行 mode 函数，应用新的 keymap、hooks、font-lock 等
-#+END_SRC
-
-对于 minor mode，开关两次：
-
-#+BEGIN_SRC elisp
-M-x my-minor-mode     ;; 关闭
-M-x my-minor-mode     ;; 重新打开
-#+END_SRC
-
-不做这一步，已有 buffer 仍在跑旧代码——因为 mode 激活时会把 keymap、font-lock 规则、hooks 等设置为 buffer-local 的值，重新加载代码只更新了函数定义，并没有更新这些 buffer 里已经设好的局部值。
-
-* 推荐工作流
-
-Bozhidar Batsov 在开发 major mode 时的典型流程：
-
-1. 编辑源码
-2. =C-M-x= 逐个求值修改过的形式
-3. 切到测试 buffer， =M-x my-mode= 重新激活
-4. 如果状态不对， =unload-feature= + =require= 干净重载
-5. 改了 autoloads 或包元数据等根本性东西时才重启 Emacs
-
-大多数时候，前三步就够了。
-
-参考：[[https://emacsredux.com/blog/2026/03/25/reloading-emacs-lisp-code/][Reloading Emacs Lisp Code — Emacs Redux]]
-</description>
-<pubDate>2026-04-19</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</guid>
 </item>
 </channel>
 </rss>
