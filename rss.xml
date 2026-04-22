@@ -4,10 +4,171 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Wed, 22 Apr 2026 06:48:13 UTC</pubDate>
-    <lastBuildDate>Wed, 22 Apr 2026 06:48:13 UTC</lastBuildDate>
+    <pubDate>Wed, 22 Apr 2026 16:11:14 UTC</pubDate>
+    <lastBuildDate>Wed, 22 Apr 2026 16:11:14 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>Elisp 性能优化的六个实战教训</title>
+<link>https://lujun9972.github.io/blog/2026/04/22/elisp-性能优化的六个实战教训/index.html</link>
+<description>有人用 Elisp 写了一个 Org-mode 静态站点生成器，处理 10000 篇博文的时间从 5 分半压到 1 分 15 秒，热重载单篇只需 7 毫秒。实现过程中踩过的坑和发现的优化技巧，对任何在 Emacs 里处理大量文件的人都有参考价值。本文提取其中的工程实践，用你能在自己项目里直接用的方式讲清楚。
+
+* 只解析你需要的东西
+
+Elisp 里解析 Org 文件的标准方式是调用 =org-element-parse-buffer= 。它的默认行为是完整解析整个 buffer——包括行内标记、链接、脚注，全部递归展开。
+
+但如果你只需要提取文件开头的标题和日期，完整解析就是巨大的浪费。 =org-element-parse-buffer= 接受一个可选的 =GRANULARITY= 参数：
+
+- =&#39;headline= :: 只解析标题结构
+- =&#39;greater-element= :: 不递归进入大元素内部，只解析顶层
+- =&#39;element= :: 解析所有元素但不解析行内对象
+- =&#39;object= :: 完整解析（默认）
+
+原文作者只需要标题和日期等元数据，把粒度从默认的 =&#39;object= 改成 =&#39;greater-element= ，单文件解析时间直接砍了一截。这不是微优化——对 10000 个文件来说，每个文件少解析几百个行内元素，累积效果显著。
+
+#+begin_src emacs-lisp
+;; 完整解析（慢）
+(org-element-parse-buffer)
+
+;; 只解析顶层元素（快得多）
+(org-element-parse-buffer &#39;greater-element t)
+#+end_src
+
+选择哪个粒度取决于你需要什么。提取元数据用 =&#39;greater-element= ，需要处理链接和行内标记才用 =&#39;object= 。
+
+* 别让 find-file-noselect 拖慢批量操作
+
+Emacs 有两种方式读取文件内容：
+
+1. =find-file-noselect= —— 正经打开文件，创建一个完整的 buffer
+2. =with-temp-buffer= + =insert-file-contents= —— 把文件内容塞进临时 buffer
+
+原文作者一开始选了 =find-file-noselect= ，觉得它更&quot;正确&quot;。然后用 Emacs 内置的性能分析器（ =M-x profiler-start= ）一看，发现这个函数吃掉了 13% 的 CPU。原因： =find-file-noselect= 会触发文件锁、版本控制查询、major-mode hook、org-persist 缓存写入等一系列交互式操作。对每个文件都来一遍，10000 个文件就是在重复 10000 次不必要的开销。
+
+#+begin_src emacs-lisp
+;; 慢：触发完整的 buffer 初始化流程
+(org-with-file-buffer filename
+  (org-element-parse-buffer &#39;greater-element t))
+
+;; 快：用临时 buffer 直接读内容
+(with-temp-buffer
+  (insert-file-contents filename)
+  (org-element-parse-buffer &#39;greater-element t))
+#+end_src
+
+切换到 =with-temp-buffer= 后，10000 篇博文的处理时间从 3 分 44 秒降到 1 分 15 秒。教训：批量处理文件时，用临时 buffer 而不是 =find-file-noselect= 。后者是为交互式编辑设计的，带着整套&quot;官僚系统&quot;。
+
+* 用 cl-progv 隔离全局状态
+
+Emacs 的状态管理建立在全局变量上—— =org-export-with-toc= 、 =org-html-link-home= 等都是全局变量。在同一个进程里处理多个 route 时，一个 route 设置的变量会&quot;泄漏&quot;到下一个 route。
+
+直觉上的做法是用 =let= 绑定：
+
+#+begin_src emacs-lisp
+(let ((org-export-with-toc t))
+  (opd-route ...))   ;; 这一步只是把 route 配置记下来
+
+;; 另一个 route
+(opd-route ...)
+
+(opd-export)         ;; 真正的导出在这里执行
+#+end_src
+
+问题是： =opd-route= 不会立即执行导出，它只是把 route 的配置（输入模式、输出路径、过滤器等）存到一个列表里。真正的 HTML 生成发生在 =opd-export= 被调用的时候——但那时 =let= 的作用域已经结束了， =org-export-with-toc= 的局部绑定已经不存在了。换句话说，你在一个 =let= 块里填了一张表单，但处理表单的人要等到 =let= 块结束之后才看它，那时候表单上写的&quot;特殊要求&quot;已经没人记得了。
+
+那能不能把 =opd-export= 放进 =let= 里？也不行，因为不同 route 需要*不同的*变量值——blog route 要目录（ =org-export-with-toc= 为 =t= ），RSS route 不要目录（ =nil= ）。 =opd-export= 一次执行所有 route，你没法在一个 =let= 里同时给不同 route 设不同的值。
+
+解决方案是用 =cl-progv= ，这个来自 Common Lisp 的宏可以在运行时动态绑定一组变量。每个 route 把自己的变量设置写在 =:env= 属性里，引擎处理到那个 route 时才临时绑定，处理完自动恢复：
+
+#+begin_src emacs-lisp
+(cl-progv
+    &#39;(org-export-with-toc org-html-link-home)  ;; 变量名列表
+    &#39;(nil &quot;http://localhost:8080&quot;)               ;; 对应的值列表
+  ;; 在这个作用域里，org-export-with-toc 为 nil
+  ;; org-html-link-home 为 &quot;http://localhost:8080&quot;
+  (org-export-as &#39;rss))
+#+end_src
+
+=cl-progv= 接受变量名列表和值列表，在执行 body 期间动态绑定这些变量，执行完后自动恢复。这比手动在每个 lambda 里 =let= 绑定更干净——你可以把变量配置做成数据，从 route 定义里传入，而不需要在每个导出函数里硬编码。
+
+* 让数据形状决定行为，而不是手动标记
+
+原文遇到一个问题：blog route 和 rss route 都匹配 =*.org= 文件，两者都在全局注册表里写入 URL，互相覆盖。最初的解法是加一个 =:canonical= 标记，手动指定哪个 route 有写入权限。
+
+后来发现根本不需要这个标记。关键是观察聚合（aggregate）后数据的形状：
+
+- 1:1 route（每个文件对应一个输出）：数据的顶层有 =abspath= 属性
+- 1:N route（多个文件聚合为一个输出，如 RSS）： =abspath= 藏在嵌套列表里
+
+#+begin_src emacs-lisp
+(defun opd--tree-has-abspath-p (tree path)
+  &quot;递归搜索 Lisp 树中是否包含 (abspath . PATH) 。&quot;
+  (cond
+   ((and (consp tree)
+         (eq (car tree) &#39;abspath)
+         (equal (cdr tree) path)) t)
+   ((consp tree)
+    (or (opd--tree-has-abspath-p (car tree) path)
+        (opd--tree-has-abspath-p (cdr tree) path)))
+   (t nil)))
+#+end_src
+
+用数据结构本身的特征来区分行为，而不是引入额外的标记。这是 duck typing 的思想：不问&quot;你是什么&quot;，而是看&quot;你长什么样&quot;。消除了一个配置项，也消除了用户忘记设置它导致的 bug。
+
+* 先 profile，再优化
+
+原文最有价值的教训之一：不要猜瓶颈在哪，用 Emacs 自带的性能分析器。
+
+#+begin_src emacs-lisp
+;; 启动 CPU profiler
+;; M-x profiler-start cpu
+
+;; 执行你的操作
+
+;; 查看报告
+;; M-x profiler-report
+#+end_src
+
+原文作者的直觉告诉他瓶颈在字符串模板处理上。profiler 显示真正的罪魁祸首是 =find-file-noselect= （13% CPU）和 =org-persist-write-all-buffer= （12% CPU）。直觉和数据的差距巨大。
+
+性能优化的正确顺序：
+
+1. 先写正确的代码
+2. 用 profiler 找到真正的瓶颈
+3. 只优化 profiler 指出的热点
+
+这个顺序对任何语言都适用，但在 Elisp 里尤其重要——因为 Elisp 的性能特征和直觉经常不一致。你以为慢的地方可能根本不是瓶颈，真正的热点藏在你不注意的地方。
+
+* 哈希表替代线性扫描
+
+当文件数量从几十个增长到几千个时，线性扫描列表的成本从可以忽略变成不可接受。原文的处理方式很直接：任何需要按文件名查找的场景，用哈希表代替列表。
+
+#+begin_src emacs-lisp
+;; 慢：线性扫描，O(n)
+(member target-file file-list)
+
+;; 快：哈希表查找，O(1)
+(gethash target-file file-hash-table)
+#+end_src
+
+原文在路由注册表（registry）、文件缓存（filecache）、依赖图（depcache）三个地方都用哈希表，消除了所有线性扫描。对于 10000 个文件的场景，这个差异是&quot;每个文件多查 10000 次&quot;和&quot;每个文件查 1 次&quot;的差距。
+
+这不是过早优化——当你的数据量明确会达到千级别时，选择哈希表是基本的数据结构选择，就像去超市买东西用购物袋而不是一趟趟用手捧。
+
+* 总结
+
+从这些优化中可以提炼出几条通用的 Elisp 工程原则：
+
+1. *用正确的工具做正确的事* —— 临时 buffer 读文件， =find-file-noselect= 留给交互式场景
+2. *只处理你需要的数据* —— =org-element-parse-buffer= 的粒度参数是个宝藏
+3. *用 profiler 驱动优化* —— 不要猜，让数据说话
+4. 用 =cl-progv= 隔离状态 —— 全局变量是 Emacs 的设计遗产， =cl-progv= 是在批量场景下控制它的有效手段
+5. *让数据形状驱动逻辑* —— duck typing 比手动标记更不容易出错
+6. *数据量大了就用哈希表* —— 这不是过早优化，是基本的数据结构选择
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/22/elisp-性能优化的六个实战教训/index.html</guid>
+</item>
 <item>
 <title>fcitx 启动后键盘输入卡顿的排查</title>
 <link>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</link>
@@ -1235,128 +1396,6 @@ def test_is_bank_holiday():
 </description>
 <pubDate>2026-04-20</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/20/python-mock-第三方依赖的四种策略/index.html</guid>
-</item>
-<item>
-<title>Emacs Lisp 热重载实用指南</title>
-<link>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</link>
-<description>* 问题
-
-Emacs 用户经常无意识地做一件事：修改 =init.el= 中的代码，求值，然后继续在同一个 Emacs 实例中工作。这就是 Lisp 的热重载——不需要重启进程，代码直接在运行中被替换。
-
-大部分时候这很顺畅。但有一个陷阱： =defvar= 、 =defcustom= 、 =defface= 在重新求值时 *不会* 更新已有的值。
-
-#+BEGIN_SRC elisp
-;; 第一次求值
-(defvar my-var &quot;hello&quot;)  ;; my-var → &quot;hello&quot;
-
-;; 修改后重新求值
-(defvar my-var &quot;world&quot;)  ;; my-var → 仍然是 &quot;hello&quot;！
-#+END_SRC
-
-这是故意这么设计的——加载库不应该覆盖用户的自定义值。但在开发包的时候，这个设计让人困惑：你改了默认值，重新求值，发现什么都没变。
-
-下面是从轻到重的五种解决方案。
-
-* 方法一：eval-defun（C-M-x）
-
-这是最常用的方法，也是最容易被忽略的： =eval-defun= （=C-M-x=）对 =defvar= 、 =defcustom= 、 =defface= 有特殊处理——它会 *无条件* 设置变量的值，不管这个变量是不是已经有值。
-
-#+BEGIN_SRC elisp
-(defvar my-var &quot;new-value&quot;)
-#+END_SRC
-
-把光标放在这个 =defvar= 形式上，按 =C-M-x= ， =my-var= 就会被更新为 =&quot;new-value&quot;= 。
-
-注意： =eval-buffer= 和 =eval-region= *不会*这样做——它们遵守正常的 =defvar= 语义。只有 =eval-defun= 是例外。
-
-这是 Bozhidar Batsov 在开发 mode 时最常用的方法：只改了几个形式，就逐个 =C-M-x= 。
-
-* 方法二：setq（M-:）
-
-如果只需要快速重置一个变量：
-
-#+BEGIN_SRC elisp
-M-: (setq my-var &quot;new-value&quot;)
-#+END_SRC
-
-简单粗暴，但只改变量值，不会触发其他代码的重新执行（比如函数定义、hooks 设置等都不会变）。适合临时调参数。
-
-* 方法三：load-file
-
-=M-x load-file= 从磁盘加载 =.el= 文件。跟 =require= 的区别是： =require= 发现 feature 已加载就会跳过， =load-file= 总是重新读取并求值文件。
-
-但 =load-file= 仍然遵守 =defvar= 语义——已绑定的变量不会被更新。它的优势在于可以加载非当前编辑的文件，比如包的依赖文件，或者没有 =provide= 形式的文件。
-
-* 方法四：unload-feature + require（干净重载）
-
-这是最彻底的非重启方案：
-
-#+BEGIN_SRC elisp
-;; 卸载 feature：移除它定义的变量、函数、hooks 等
-(unload-feature &#39;my-package)
-
-;; 重新加载
-(require &#39;my-package)
-#+END_SRC
-
-=unload-feature= 会把 feature 定义的一切都清掉，然后 =require= 从头加载。这最接近&quot;干净的状态&quot;。
-
-注意事项：
-
-- =unload-feature= 可能有副作用——如果 feature 添加了 hooks 或 advice，卸载时应该会清理，但并非所有包都正确实现了清理逻辑，可能出现残留的 hook 或 advice
-- 只对通过 =provide= / =require= 加载的 feature 有效；用 =load-file= 加载的文件没有 feature 可以卸载
-- 某些复杂的包不能干净地卸载，但大多数简单的 major mode 没问题
-
-可以绑一个快捷键方便开发时使用：
-
-#+BEGIN_SRC elisp
-(defun my-reload-package (package)
-  &quot;Unload and reload PACKAGE.&quot;
-  (interactive &quot;SReload package: &quot;)
-  (unload-feature package)
-  (require package)
-  (message &quot;Reloaded %s&quot; package))
-#+END_SRC
-
-* 方法五：重启 Emacs
-
-终极方案。当其他方法都不管用，或者你改了太多东西、不信任当前运行时状态时，重启。
-
-有了 =desktop-save-mode= 或 session 管理器，重启的代价不大。Emacs 29+ 内置了 =restart-emacs= 命令，或者用 [[https://github.com/iqbalansari/restart-emacs][restart-emacs 包]]。
-
-* 别忘了重新激活 Mode
-
-无论用哪种方法重载了代码，还需要在已有 buffer 中重新激活 mode：
-
-#+BEGIN_SRC elisp
-M-x my-mode           ;; 重新运行 mode 函数，应用新的 keymap、hooks、font-lock 等
-#+END_SRC
-
-对于 minor mode，开关两次：
-
-#+BEGIN_SRC elisp
-M-x my-minor-mode     ;; 关闭
-M-x my-minor-mode     ;; 重新打开
-#+END_SRC
-
-不做这一步，已有 buffer 仍在跑旧代码——因为 mode 激活时会把 keymap、font-lock 规则、hooks 等设置为 buffer-local 的值，重新加载代码只更新了函数定义，并没有更新这些 buffer 里已经设好的局部值。
-
-* 推荐工作流
-
-Bozhidar Batsov 在开发 major mode 时的典型流程：
-
-1. 编辑源码
-2. =C-M-x= 逐个求值修改过的形式
-3. 切到测试 buffer， =M-x my-mode= 重新激活
-4. 如果状态不对， =unload-feature= + =require= 干净重载
-5. 改了 autoloads 或包元数据等根本性东西时才重启 Emacs
-
-大多数时候，前三步就够了。
-
-参考：[[https://emacsredux.com/blog/2026/03/25/reloading-emacs-lisp-code/][Reloading Emacs Lisp Code — Emacs Redux]]
-</description>
-<pubDate>2026-04-19</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/19/emacs-lisp-热重载实用指南/index.html</guid>
 </item>
 </channel>
 </rss>

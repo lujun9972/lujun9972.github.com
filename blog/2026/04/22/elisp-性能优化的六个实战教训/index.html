@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Elisp 性能优化的六个实战教训 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="emacs, elisp, performance, org-mode" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Elisp 性能优化的六个实战教训</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga3753a9">只解析你需要的东西</a></li>
+<li><a href="#org37d5350">别让 find-file-noselect 拖慢批量操作</a></li>
+<li><a href="#org8f85bb5">用 cl-progv 隔离全局状态</a></li>
+<li><a href="#org9456b14">让数据形状决定行为，而不是手动标记</a></li>
+<li><a href="#org3ef7d9f">先 profile，再优化</a></li>
+<li><a href="#orgdc7c64d">哈希表替代线性扫描</a></li>
+<li><a href="#org0a349ef">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+有人用 Elisp 写了一个 Org-mode 静态站点生成器，处理 10000 篇博文的时间从 5 分半压到 1 分 15 秒，热重载单篇只需 7 毫秒。实现过程中踩过的坑和发现的优化技巧，对任何在 Emacs 里处理大量文件的人都有参考价值。本文提取其中的工程实践，用你能在自己项目里直接用的方式讲清楚。
+</p>
+
+<div id="outline-container-orga3753a9" class="outline-2">
+<h2 id="orga3753a9">只解析你需要的东西</h2>
+<div class="outline-text-2" id="text-orga3753a9">
+<p>
+Elisp 里解析 Org 文件的标准方式是调用 <code>org-element-parse-buffer</code> 。它的默认行为是完整解析整个 buffer——包括行内标记、链接、脚注，全部递归展开。
+</p>
+
+<p>
+但如果你只需要提取文件开头的标题和日期，完整解析就是巨大的浪费。 <code>org-element-parse-buffer</code> 接受一个可选的 <code>GRANULARITY</code> 参数：
+</p>
+
+<dl class="org-dl">
+<dt><code>'headline</code></dt><dd>只解析标题结构</dd>
+<dt><code>'greater-element</code></dt><dd>不递归进入大元素内部，只解析顶层</dd>
+<dt><code>'element</code></dt><dd>解析所有元素但不解析行内对象</dd>
+<dt><code>'object</code></dt><dd>完整解析（默认）</dd>
+</dl>
+
+<p>
+原文作者只需要标题和日期等元数据，把粒度从默认的 <code>'object</code> 改成 <code>'greater-element</code> ，单文件解析时间直接砍了一截。这不是微优化——对 10000 个文件来说，每个文件少解析几百个行内元素，累积效果显著。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#23436;&#25972;&#35299;&#26512;&#65288;&#24930;&#65289;
+</span>(org-element-parse-buffer)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#35299;&#26512;&#39030;&#23618;&#20803;&#32032;&#65288;&#24555;&#24471;&#22810;&#65289;
+</span>(org-element-parse-buffer 'greater-element t)
+</pre>
+</div>
+
+<p>
+选择哪个粒度取决于你需要什么。提取元数据用 <code>'greater-element</code> ，需要处理链接和行内标记才用 <code>'object</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org37d5350" class="outline-2">
+<h2 id="org37d5350">别让 find-file-noselect 拖慢批量操作</h2>
+<div class="outline-text-2" id="text-org37d5350">
+<p>
+Emacs 有两种方式读取文件内容：
+</p>
+
+<ol class="org-ol">
+<li><code>find-file-noselect</code> —— 正经打开文件，创建一个完整的 buffer</li>
+<li><code>with-temp-buffer</code> + <code>insert-file-contents</code> —— 把文件内容塞进临时 buffer</li>
+</ol>
+
+<p>
+原文作者一开始选了 <code>find-file-noselect</code> ，觉得它更"正确"。然后用 Emacs 内置的性能分析器（ <code>M-x profiler-start</code> ）一看，发现这个函数吃掉了 13% 的 CPU。原因： <code>find-file-noselect</code> 会触发文件锁、版本控制查询、major-mode hook、org-persist 缓存写入等一系列交互式操作。对每个文件都来一遍，10000 个文件就是在重复 10000 次不必要的开销。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#24930;&#65306;&#35302;&#21457;&#23436;&#25972;&#30340; buffer &#21021;&#22987;&#21270;&#27969;&#31243;
+</span>(org-with-file-buffer filename
+  (org-element-parse-buffer 'greater-element t))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#24555;&#65306;&#29992;&#20020;&#26102; buffer &#30452;&#25509;&#35835;&#20869;&#23481;
+</span>(<span class="org-keyword">with-temp-buffer</span>
+  (insert-file-contents filename)
+  (org-element-parse-buffer 'greater-element t))
+</pre>
+</div>
+
+<p>
+切换到 <code>with-temp-buffer</code> 后，10000 篇博文的处理时间从 3 分 44 秒降到 1 分 15 秒。教训：批量处理文件时，用临时 buffer 而不是 <code>find-file-noselect</code> 。后者是为交互式编辑设计的，带着整套"官僚系统"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8f85bb5" class="outline-2">
+<h2 id="org8f85bb5">用 cl-progv 隔离全局状态</h2>
+<div class="outline-text-2" id="text-org8f85bb5">
+<p>
+Emacs 的状态管理建立在全局变量上—— <code>org-export-with-toc</code> 、 <code>org-html-link-home</code> 等都是全局变量。在同一个进程里处理多个 route 时，一个 route 设置的变量会"泄漏"到下一个 route。
+</p>
+
+<p>
+直觉上的做法是用 <code>let</code> 绑定：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let</span> ((org-export-with-toc t))
+  (opd-route ...))   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#19968;&#27493;&#21482;&#26159;&#25226; route &#37197;&#32622;&#35760;&#19979;&#26469;
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21478;&#19968;&#20010; route
+</span>(opd-route ...)
+
+(opd-export)         <span class="org-comment-delimiter">;; </span><span class="org-comment">&#30495;&#27491;&#30340;&#23548;&#20986;&#22312;&#36825;&#37324;&#25191;&#34892;</span>
+</pre>
+</div>
+
+<p>
+问题是： <code>opd-route</code> 不会立即执行导出，它只是把 route 的配置（输入模式、输出路径、过滤器等）存到一个列表里。真正的 HTML 生成发生在 <code>opd-export</code> 被调用的时候——但那时 <code>let</code> 的作用域已经结束了， <code>org-export-with-toc</code> 的局部绑定已经不存在了。换句话说，你在一个 <code>let</code> 块里填了一张表单，但处理表单的人要等到 <code>let</code> 块结束之后才看它，那时候表单上写的"特殊要求"已经没人记得了。
+</p>
+
+<p>
+那能不能把 <code>opd-export</code> 放进 <code>let</code> 里？也不行，因为不同 route 需要*不同的*变量值——blog route 要目录（ <code>org-export-with-toc</code> 为 <code>t</code> ），RSS route 不要目录（ <code>nil</code> ）。 <code>opd-export</code> 一次执行所有 route，你没法在一个 <code>let</code> 里同时给不同 route 设不同的值。
+</p>
+
+<p>
+解决方案是用 <code>cl-progv</code> ，这个来自 Common Lisp 的宏可以在运行时动态绑定一组变量。每个 route 把自己的变量设置写在 <code>:env</code> 属性里，引擎处理到那个 route 时才临时绑定，处理完自动恢复：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-progv</span>
+    '(org-export-with-toc org-html-link-home)  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21464;&#37327;&#21517;&#21015;&#34920;
+</span>    '(nil <span class="org-string">"http://localhost:8080"</span>)               <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23545;&#24212;&#30340;&#20540;&#21015;&#34920;
+</span>  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#36825;&#20010;&#20316;&#29992;&#22495;&#37324;&#65292;org-export-with-toc &#20026; nil
+</span>  <span class="org-comment-delimiter">;; </span><span class="org-comment">org-html-link-home &#20026; "http://localhost:8080"
+</span>  (org-export-as 'rss))
+</pre>
+</div>
+
+<p>
+<code>cl-progv</code> 接受变量名列表和值列表，在执行 body 期间动态绑定这些变量，执行完后自动恢复。这比手动在每个 lambda 里 <code>let</code> 绑定更干净——你可以把变量配置做成数据，从 route 定义里传入，而不需要在每个导出函数里硬编码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9456b14" class="outline-2">
+<h2 id="org9456b14">让数据形状决定行为，而不是手动标记</h2>
+<div class="outline-text-2" id="text-org9456b14">
+<p>
+原文遇到一个问题：blog route 和 rss route 都匹配 <code>*.org</code> 文件，两者都在全局注册表里写入 URL，互相覆盖。最初的解法是加一个 <code>:canonical</code> 标记，手动指定哪个 route 有写入权限。
+</p>
+
+<p>
+后来发现根本不需要这个标记。关键是观察聚合（aggregate）后数据的形状：
+</p>
+
+<ul class="org-ul">
+<li>1:1 route（每个文件对应一个输出）：数据的顶层有 <code>abspath</code> 属性</li>
+<li>1:N route（多个文件聚合为一个输出，如 RSS）： <code>abspath</code> 藏在嵌套列表里</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">opd--tree-has-abspath-p</span> (tree path)
+  <span class="org-doc">"&#36882;&#24402;&#25628;&#32034; Lisp &#26641;&#20013;&#26159;&#21542;&#21253;&#21547; (abspath . PATH) &#12290;"</span>
+  (<span class="org-keyword">cond</span>
+   ((<span class="org-keyword">and</span> (consp tree)
+         (eq (car tree) 'abspath)
+         (equal (cdr tree) path)) <span class="org-warning">t)</span>
+   ((consp tree)
+    (<span class="org-keyword">or</span> (opd--tree-has-abspath-p (car tree) path)
+        (opd--tree-has-abspath-p (cdr tree) path)))
+   (t nil)))
+</pre>
+</div>
+
+<p>
+用数据结构本身的特征来区分行为，而不是引入额外的标记。这是 duck typing 的思想：不问"你是什么"，而是看"你长什么样"。消除了一个配置项，也消除了用户忘记设置它导致的 bug。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3ef7d9f" class="outline-2">
+<h2 id="org3ef7d9f">先 profile，再优化</h2>
+<div class="outline-text-2" id="text-org3ef7d9f">
+<p>
+原文最有价值的教训之一：不要猜瓶颈在哪，用 Emacs 自带的性能分析器。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#21551;&#21160; CPU profiler
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">M-x profiler-start cpu
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#25191;&#34892;&#20320;&#30340;&#25805;&#20316;
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#26597;&#30475;&#25253;&#21578;
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">M-x profiler-report</span>
+</pre>
+</div>
+
+<p>
+原文作者的直觉告诉他瓶颈在字符串模板处理上。profiler 显示真正的罪魁祸首是 <code>find-file-noselect</code> （13% CPU）和 <code>org-persist-write-all-buffer</code> （12% CPU）。直觉和数据的差距巨大。
+</p>
+
+<p>
+性能优化的正确顺序：
+</p>
+
+<ol class="org-ol">
+<li>先写正确的代码</li>
+<li>用 profiler 找到真正的瓶颈</li>
+<li>只优化 profiler 指出的热点</li>
+</ol>
+
+<p>
+这个顺序对任何语言都适用，但在 Elisp 里尤其重要——因为 Elisp 的性能特征和直觉经常不一致。你以为慢的地方可能根本不是瓶颈，真正的热点藏在你不注意的地方。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdc7c64d" class="outline-2">
+<h2 id="orgdc7c64d">哈希表替代线性扫描</h2>
+<div class="outline-text-2" id="text-orgdc7c64d">
+<p>
+当文件数量从几十个增长到几千个时，线性扫描列表的成本从可以忽略变成不可接受。原文的处理方式很直接：任何需要按文件名查找的场景，用哈希表代替列表。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#24930;&#65306;&#32447;&#24615;&#25195;&#25551;&#65292;O(n)
+</span>(member target-file file-list)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#24555;&#65306;&#21704;&#24076;&#34920;&#26597;&#25214;&#65292;O(1)
+</span>(gethash target-file file-hash-table)
+</pre>
+</div>
+
+<p>
+原文在路由注册表（registry）、文件缓存（filecache）、依赖图（depcache）三个地方都用哈希表，消除了所有线性扫描。对于 10000 个文件的场景，这个差异是"每个文件多查 10000 次"和"每个文件查 1 次"的差距。
+</p>
+
+<p>
+这不是过早优化——当你的数据量明确会达到千级别时，选择哈希表是基本的数据结构选择，就像去超市买东西用购物袋而不是一趟趟用手捧。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0a349ef" class="outline-2">
+<h2 id="org0a349ef">总结</h2>
+<div class="outline-text-2" id="text-org0a349ef">
+<p>
+从这些优化中可以提炼出几条通用的 Elisp 工程原则：
+</p>
+
+<ol class="org-ol">
+<li><b>用正确的工具做正确的事</b> —— 临时 buffer 读文件， <code>find-file-noselect</code> 留给交互式场景</li>
+<li><b>只处理你需要的数据</b> —— <code>org-element-parse-buffer</code> 的粒度参数是个宝藏</li>
+<li><b>用 profiler 驱动优化</b> —— 不要猜，让数据说话</li>
+<li>用 <code>cl-progv</code> 隔离状态 —— 全局变量是 Emacs 的设计遗产， <code>cl-progv</code> 是在批量场景下控制它的有效手段</li>
+<li><b>让数据形状驱动逻辑</b> —— duck typing 比手动标记更不容易出错</li>
+<li><b>数据量大了就用哈希表</b> —— 这不是过早优化，是基本的数据结构选择</li>
+</ol>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-22</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/emacs">emacs</a> : <a href="../../../../../tags/elisp">elisp</a> : <a href="../../../../../tags/performance">performance</a> : <a href="../../../../../tags/org-mode">org-mode</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; pwo0mwy1audufihm43azuoi0ja &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
