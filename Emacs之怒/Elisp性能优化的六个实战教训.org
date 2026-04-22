@@ -1,0 +1,161 @@
+#+TITLE: Elisp 性能优化的六个实战教训
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: emacs, elisp, performance, org-mode
+#+DATE: [2026-04-22 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有人用 Elisp 写了一个 Org-mode 静态站点生成器，处理 10000 篇博文的时间从 5 分半压到 1 分 15 秒，热重载单篇只需 7 毫秒。实现过程中踩过的坑和发现的优化技巧，对任何在 Emacs 里处理大量文件的人都有参考价值。本文提取其中的工程实践，用你能在自己项目里直接用的方式讲清楚。
+
+* 只解析你需要的东西
+
+Elisp 里解析 Org 文件的标准方式是调用 =org-element-parse-buffer= 。它的默认行为是完整解析整个 buffer——包括行内标记、链接、脚注，全部递归展开。
+
+但如果你只需要提取文件开头的标题和日期，完整解析就是巨大的浪费。 =org-element-parse-buffer= 接受一个可选的 =GRANULARITY= 参数：
+
+- ='headline= :: 只解析标题结构
+- ='greater-element= :: 不递归进入大元素内部，只解析顶层
+- ='element= :: 解析所有元素但不解析行内对象
+- ='object= :: 完整解析（默认）
+
+原文作者只需要标题和日期等元数据，把粒度从默认的 ='object= 改成 ='greater-element= ，单文件解析时间直接砍了一截。这不是微优化——对 10000 个文件来说，每个文件少解析几百个行内元素，累积效果显著。
+
+#+begin_src emacs-lisp
+;; 完整解析（慢）
+(org-element-parse-buffer)
+
+;; 只解析顶层元素（快得多）
+(org-element-parse-buffer 'greater-element t)
+#+end_src
+
+选择哪个粒度取决于你需要什么。提取元数据用 ='greater-element= ，需要处理链接和行内标记才用 ='object= 。
+
+* 别让 find-file-noselect 拖慢批量操作
+
+Emacs 有两种方式读取文件内容：
+
+1. =find-file-noselect= —— 正经打开文件，创建一个完整的 buffer
+2. =with-temp-buffer= + =insert-file-contents= —— 把文件内容塞进临时 buffer
+
+原文作者一开始选了 =find-file-noselect= ，觉得它更"正确"。然后用 Emacs 内置的性能分析器（ =M-x profiler-start= ）一看，发现这个函数吃掉了 13% 的 CPU。原因： =find-file-noselect= 会触发文件锁、版本控制查询、major-mode hook、org-persist 缓存写入等一系列交互式操作。对每个文件都来一遍，10000 个文件就是在重复 10000 次不必要的开销。
+
+#+begin_src emacs-lisp
+;; 慢：触发完整的 buffer 初始化流程
+(org-with-file-buffer filename
+  (org-element-parse-buffer 'greater-element t))
+
+;; 快：用临时 buffer 直接读内容
+(with-temp-buffer
+  (insert-file-contents filename)
+  (org-element-parse-buffer 'greater-element t))
+#+end_src
+
+切换到 =with-temp-buffer= 后，10000 篇博文的处理时间从 3 分 44 秒降到 1 分 15 秒。教训：批量处理文件时，用临时 buffer 而不是 =find-file-noselect= 。后者是为交互式编辑设计的，带着整套"官僚系统"。
+
+* 用 cl-progv 隔离全局状态
+
+Emacs 的状态管理建立在全局变量上—— =org-export-with-toc= 、 =org-html-link-home= 等都是全局变量。在同一个进程里处理多个 route 时，一个 route 设置的变量会"泄漏"到下一个 route。
+
+直觉上的做法是用 =let= 绑定：
+
+#+begin_src emacs-lisp
+(let ((org-export-with-toc t))
+  (opd-route ...))   ;; 这一步只是把 route 配置记下来
+
+;; 另一个 route
+(opd-route ...)
+
+(opd-export)         ;; 真正的导出在这里执行
+#+end_src
+
+问题是： =opd-route= 不会立即执行导出，它只是把 route 的配置（输入模式、输出路径、过滤器等）存到一个列表里。真正的 HTML 生成发生在 =opd-export= 被调用的时候——但那时 =let= 的作用域已经结束了， =org-export-with-toc= 的局部绑定已经不存在了。换句话说，你在一个 =let= 块里填了一张表单，但处理表单的人要等到 =let= 块结束之后才看它，那时候表单上写的"特殊要求"已经没人记得了。
+
+那能不能把 =opd-export= 放进 =let= 里？也不行，因为不同 route 需要*不同的*变量值——blog route 要目录（ =org-export-with-toc= 为 =t= ），RSS route 不要目录（ =nil= ）。 =opd-export= 一次执行所有 route，你没法在一个 =let= 里同时给不同 route 设不同的值。
+
+解决方案是用 =cl-progv= ，这个来自 Common Lisp 的宏可以在运行时动态绑定一组变量。每个 route 把自己的变量设置写在 =:env= 属性里，引擎处理到那个 route 时才临时绑定，处理完自动恢复：
+
+#+begin_src emacs-lisp
+(cl-progv
+    '(org-export-with-toc org-html-link-home)  ;; 变量名列表
+    '(nil "http://localhost:8080")               ;; 对应的值列表
+  ;; 在这个作用域里，org-export-with-toc 为 nil
+  ;; org-html-link-home 为 "http://localhost:8080"
+  (org-export-as 'rss))
+#+end_src
+
+=cl-progv= 接受变量名列表和值列表，在执行 body 期间动态绑定这些变量，执行完后自动恢复。这比手动在每个 lambda 里 =let= 绑定更干净——你可以把变量配置做成数据，从 route 定义里传入，而不需要在每个导出函数里硬编码。
+
+* 让数据形状决定行为，而不是手动标记
+
+原文遇到一个问题：blog route 和 rss route 都匹配 =*.org= 文件，两者都在全局注册表里写入 URL，互相覆盖。最初的解法是加一个 =:canonical= 标记，手动指定哪个 route 有写入权限。
+
+后来发现根本不需要这个标记。关键是观察聚合（aggregate）后数据的形状：
+
+- 1:1 route（每个文件对应一个输出）：数据的顶层有 =abspath= 属性
+- 1:N route（多个文件聚合为一个输出，如 RSS）： =abspath= 藏在嵌套列表里
+
+#+begin_src emacs-lisp
+(defun opd--tree-has-abspath-p (tree path)
+  "递归搜索 Lisp 树中是否包含 (abspath . PATH) 。"
+  (cond
+   ((and (consp tree)
+         (eq (car tree) 'abspath)
+         (equal (cdr tree) path)) t)
+   ((consp tree)
+    (or (opd--tree-has-abspath-p (car tree) path)
+        (opd--tree-has-abspath-p (cdr tree) path)))
+   (t nil)))
+#+end_src
+
+用数据结构本身的特征来区分行为，而不是引入额外的标记。这是 duck typing 的思想：不问"你是什么"，而是看"你长什么样"。消除了一个配置项，也消除了用户忘记设置它导致的 bug。
+
+* 先 profile，再优化
+
+原文最有价值的教训之一：不要猜瓶颈在哪，用 Emacs 自带的性能分析器。
+
+#+begin_src emacs-lisp
+;; 启动 CPU profiler
+;; M-x profiler-start cpu
+
+;; 执行你的操作
+
+;; 查看报告
+;; M-x profiler-report
+#+end_src
+
+原文作者的直觉告诉他瓶颈在字符串模板处理上。profiler 显示真正的罪魁祸首是 =find-file-noselect= （13% CPU）和 =org-persist-write-all-buffer= （12% CPU）。直觉和数据的差距巨大。
+
+性能优化的正确顺序：
+
+1. 先写正确的代码
+2. 用 profiler 找到真正的瓶颈
+3. 只优化 profiler 指出的热点
+
+这个顺序对任何语言都适用，但在 Elisp 里尤其重要——因为 Elisp 的性能特征和直觉经常不一致。你以为慢的地方可能根本不是瓶颈，真正的热点藏在你不注意的地方。
+
+* 哈希表替代线性扫描
+
+当文件数量从几十个增长到几千个时，线性扫描列表的成本从可以忽略变成不可接受。原文的处理方式很直接：任何需要按文件名查找的场景，用哈希表代替列表。
+
+#+begin_src emacs-lisp
+;; 慢：线性扫描，O(n)
+(member target-file file-list)
+
+;; 快：哈希表查找，O(1)
+(gethash target-file file-hash-table)
+#+end_src
+
+原文在路由注册表（registry）、文件缓存（filecache）、依赖图（depcache）三个地方都用哈希表，消除了所有线性扫描。对于 10000 个文件的场景，这个差异是"每个文件多查 10000 次"和"每个文件查 1 次"的差距。
+
+这不是过早优化——当你的数据量明确会达到千级别时，选择哈希表是基本的数据结构选择，就像去超市买东西用购物袋而不是一趟趟用手捧。
+
+* 总结
+
+从这些优化中可以提炼出几条通用的 Elisp 工程原则：
+
+1. *用正确的工具做正确的事* —— 临时 buffer 读文件， =find-file-noselect= 留给交互式场景
+2. *只处理你需要的数据* —— =org-element-parse-buffer= 的粒度参数是个宝藏
+3. *用 profiler 驱动优化* —— 不要猜，让数据说话
+4. 用 =cl-progv= 隔离状态 —— 全局变量是 Emacs 的设计遗产， =cl-progv= 是在批量场景下控制它的有效手段
+5. *让数据形状驱动逻辑* —— duck typing 比手动标记更不容易出错
+6. *数据量大了就用哈希表* —— 这不是过早优化，是基本的数据结构选择
