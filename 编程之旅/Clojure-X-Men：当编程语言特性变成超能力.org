@@ -1,0 +1,188 @@
+#+TITLE: Clojure X-Men：当编程语言特性变成超能力
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: clojure, programming, fp
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Carin Meier 在 2014 年写过一篇有趣的短文[fn:1]：假设有人天生拥有 Clojure 语言特性的超能力，他们会是什么样的人？原文只有故事没有代码。本文借用她的创意，为每个"超能力"补上真实的代码示例，看看这些特性到底在做什么。
+
+* Luke：看到无限的未来
+
+Luke 是个懒人，凡事能拖就拖。但他发现自己能看到未来——不是看到确定的某个画面，而是看到未来的所有可能性。虽然只能看到几毫秒之后的事，但这已经够了。
+
+他的超能力是 Clojure 的 *惰性求值*（lazy evaluation）。
+
+普通编程语言中，你要先造好一个完整的列表才能用它。比如生成一百万个数字，就得先把一百万个数字全部算出来放在内存里。Clojure 不一样——它给你一个"承诺"：你需要多少，我就算多少，你不需要的部分永远不算。
+
+#+begin_src clojure
+;; range 不加参数会生成无限序列
+;; 但因为惰性求值，它不会真的把无穷多个数字全算出来
+(take 5 (range))
+#+end_src
+
+#+begin_example
+(0 1 2 3 4)
+#+end_example
+
+=range= 返回的是一个无限序列的描述，不是真的把无穷多个数塞进内存。=take 5= 说"我只要前 5 个"，于是 Clojure 只算 5 个就停下来。你也可以对无限序列做变换：
+
+#+begin_src clojure
+(take 3 (map #(+ % 100) (range)))
+#+end_src
+
+#+begin_example
+(100 101 102)
+#+end_example
+
+=map= 把每个元素加 100，=take 3= 只取前 3 个。中间的无限序列从来没有被完整计算过。这就是 Luke 的能力——他不需要看到全部的未来，只需要看到眼前需要的那部分。
+
+* Spress：让万物开口说话
+
+Spress 五岁就发现自己的超能力：她能让任何东西"说话"。指着一桶水说"牛"，水桶就会"哞"叫。她不需要改造水桶本身，只需要定义一套新的行为规则，然后把规则套到任何东西上。
+
+她的超能力是 Clojure 的 *protocol*（协议）——解决"表达式问题"的机制。
+
+表达式问题是编程语言设计中的经典难题：你有一组数据类型和一组操作，想在不修改已有代码的前提下同时增加新的类型和新的操作。面向对象语言容易加新类型（写个子类），但加新操作（给已有类加新方法）很难。函数式语言反过来，容易加新操作（写个新函数），但加新类型很难。
+
+Clojure 的 protocol 让你两者都能做到：
+
+#+begin_src clojure
+;; 定义一个协议：speak（说话）
+(defprotocol Speak
+  (speak [this]))
+
+;; 给已有的 String 和 Number 类型扩展 speak 行为
+;; 不需要修改 String 或 Number 的源码
+(extend-protocol Speak
+  String
+  (speak [this] (str this " says: 喵"))
+  Number
+  (speak [this] (str this " says: 汪")))
+#+end_src
+
+#+begin_src clojure
+(speak "cat")
+;; => "cat says: 喵"
+
+(speak 42)
+;; => "42 says: 汪"
+#+end_src
+
+String 和 Number 是 Java/Clojure 内置的类型，你改不了它们的源码。但通过 =extend-protocol= ，你可以给它们加上 =speak= 行为，就像 Spress 给水桶加上了"哞"叫的能力一样。以后你还可以定义新的类型，也让它们实现 =Speak= 协议——新类型、新操作，互不干扰。
+
+* Multi：一心多用
+
+普通人看东西、听声音、感受触摸，这些感官输入最终都要排队进入意识——一个单线程的瓶颈。Multi 不一样，他的大脑能同时对所有感官输入做高级推理。结果就是，他反应超快，决策超聪明。
+
+他的超能力是 Clojure 的 *并发*（concurrency）。
+
+Clojure 提供了几种并发工具。最直观的是 =future= ：把一段代码丢到另一个线程去执行，当前线程继续干别的事，需要结果的时候再等它。
+
+#+begin_src clojure
+;; future 启动另一个线程执行
+(let [f (future (Thread/sleep 100) "来自未来的结果")]
+  ;; 在这里可以做别的事...
+  ;; 需要结果时用 @ 等待
+  @f)
+#+end_src
+
+#+begin_example
+"来自未来的结果"
+#+end_example
+
+如果你有一批计算任务，=pmap= （parallel map）能自动把它们分到多个核上并行执行：
+
+#+begin_src clojure
+;; pmap 像 map 一样工作，但自动并行
+(doall (pmap #(* % %) (range 1 6)))
+#+end_src
+
+#+begin_example
+(1 4 9 16 25)
+#+end_example
+
+=pmap= 把 5 个平方计算分配到多个线程上同时执行，比串行的 =map= 快。Clojure 的并发工具不只是这些, 比如：
++ =atom= 做原子更新
++ =core.async= 做消息传递
+核心思想都是为了让多核的能力为你所用，而不是被锁和竞态条件搞得焦头烂额。
+
+* Dot：跟异类说话
+
+Dot 天生跟动物亲近。走进森林，鹿和鸟会主动靠近。有次她被压在树下，一头熊走过来帮她搬开了木头。她能毫不费力地跟其他物种沟通。
+
+她的超能力是 Clojure 的 *Java 互操作*（interop）。
+
+Clojure 跑在 JVM 上，Java 生态里几百万个库就是她的"动物"。她不需要特殊的桥梁或适配器，直接用 Clojure 语法调 Java 方法：
+
+#+begin_src clojure
+;; 调用 Java 的 String.toUpperCase
+(.toUpperCase "hello clojure")
+#+end_src
+
+#+begin_example
+"HELLO CLOJURE"
+#+end_example
+
+#+begin_src clojure
+;; 读取 Java 的常量
+Math/PI
+#+end_src
+
+#+begin_example
+3.141592653589793
+#+end_example
+
+#+begin_src clojure
+;; 调用 Java 的系统方法
+(System/getProperty "java.version")
+#+end_src
+
+#+begin_example
+"21.0.10"
+#+end_example
+
+不用写适配层，不用写包装类，Clojure 调 Java 就像调自己人一样。反过来，Java 代码也能调用 Clojure 函数。两门语言之间没有隔阂——这就是 Dot 的天赋。
+
+* Bob：一眼看穿本质
+
+Bob 是 X-Men 的队长。他最大的能力是：面对任何复杂问题，他能立刻剥离掉不重要的细节，抓住核心。他从不被花哨的框架和设计模式迷惑，因为他知道，真正有力量的东西都是简单的。
+
+他的超能力是 Clojure 的 *极简哲学*（simplicity）。
+
+Clojure 的设计哲学是：能用数据解决的问题，就不要发明新概念。你不需要定义一个 Person 类，用 map 就行：
+
+#+begin_src clojure
+;; 不需要定义类，用 map 表示数据
+(def person {:name "Bob" :power "simplicity"})
+#+end_src
+
+#+begin_example
+{:name "Bob", :power "simplicity"}
+#+end_example
+
+#+begin_src clojure
+;; 用关键字当函数，直接取值
+(:name person)
+#+end_src
+
+#+begin_example
+"Bob"
+#+end_example
+
+#+begin_src clojure
+;; 需要加字段？assoc 一下
+(assoc person :age 30)
+#+end_src
+
+#+begin_example
+{:name "Bob", :power "simplicity", :age 30}
+#+end_example
+
+没有类定义，没有构造函数，没有 getter/setter，没有继承体系。一个 map 加几个通用函数（=assoc= 、=dissoc= 、=update= 、=merge=），就能完成绝大多数数据操作。Clojure 认为复杂性是敌人——语言应该帮你消除不必要的抽象，而不是制造更多的抽象。
+
+* 还可能有更多
+
+原文最后说：可能还有更多拥有 Clojure 超能力的人没被发现，我们只能希望他们被 Bob 找到，用力量做善事。现实中，Clojure 的特性远不止这五个,比如，宏（macro）、持久化数据结构（persistent data structure）、软件事务内存（STM）……每个都值得单独聊聊。但用超级英雄角色来理解编程语言特性，这个角度本身就挺有趣——把抽象的概念套上人格，比直接读文档容易记住得多。
+
+[fn:1] https://gigasquidsoftware.com/blog/2014/07/27/clojure-x-men/
