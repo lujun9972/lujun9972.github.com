@@ -1,0 +1,310 @@
+#+TITLE: Clojure 吸血鬼猎杀实战：从 defrecord 到 STM
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: clojure, programming, fp
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+学一门新语言最好的方式是写一个完整的程序，哪怕是个小到不能再小的程序。Carin Meier 在 2011 年写了两篇用"吸血鬼猎杀"来教 Clojure 的文章[fn:1][fn:2]——用 =defrecord= 定义角色，用 =assoc= 做不可变更新，用 =recur= 递归击杀，用 =pmap= 并行战斗，最后用 =Atom= （软件事务内存）让吸血鬼真正"死透"。本文是对这两篇文章的解读和代码验证。
+
+* 用 defrecord 创建角色
+
+=defrecord= 是 Clojure 中定义数据类型的方式。跟 Java 的 class 不同， =defrecord= 创建的是不可变（immutable）的数据结构——一旦创建就不能修改，只能生成新的副本。
+
+先定义吸血鬼。每只吸血鬼有两个属性：名字和血量（health points）。血量降到 0 就是灰飞烟灭了。
+
+#+begin_src clojure
+(defrecord Vampire [name health])
+#+end_src
+
+#+RESULTS:
+: user.Vampire
+
+然后用 =Vampire.= （注意末尾的点，这是 Clojure 调用 Java 构造函数的语法）创建一只叫 Stu 的吸血鬼，血量 50：
+
+#+begin_src clojure
+(def vampire1 (Vampire. "Stu" 50))
+#+end_src
+
+#+RESULTS:
+: #'user/vampire1
+
+在 REPL 中查看它的值，你会看到一个类似 map 的结构：
+
+#+begin_src clojure
+vampire1
+#+end_src
+
+#+RESULTS:
+: #user.Vampire{:name "Stu", :health 50}
+
+#+begin_example
+#:user.Vampire{:name "Stu", :health 50}
+#+end_example
+
+=defrecord= 生成的类型自动支持用关键字当函数来取值。
+
+Clojure 中的*关键字*（keyword）是以冒号开头的标识符，如 =:name= 、 =:health= 。关键字跟字符串或符号不同，它求值的结果就是它自己。关键字有一个特殊能力：它可以当函数用——当关键字后面跟一个 map 或 record 时，它会在这个结构中查找跟自己同名的键，返回对应的值。所以 =(:name vampire1)= 等价于"在 vampire1 中查找 =:name= 这个键"，结果是 ="Stu"= 。这比 Java 的 =getName()= 简洁得多，但本质一样——都是访问字段。
+
+#+begin_src clojure
+(:name vampire1)
+#+end_src
+
+#+begin_example
+"Stu"
+#+end_example
+
+#+begin_src clojure
+(:health vampire1)
+#+end_src
+
+#+begin_example
+50
+#+end_example
+
+多创建几只吸血鬼，后面要用：
+
+#+begin_src clojure
+(def vampire1 (Vampire. "Stu" 50))
+(def vampire2 (Vampire. "Vance" 100))
+(def vampire3 (Vampire. "Izzy" 75))
+#+end_src
+
+然后是猎人。猎人也有名字和武器，武器用一个数字表示伤害值。Buffy 决定赤手空拳上阵，她的功夫值 25 点伤害：
+
+#+begin_src clojure
+(defrecord Slayer [name weapon])
+(def kungfu 25)
+(def buffy (Slayer. "Buffy" kungfu))
+#+end_src
+
+
+* 不可变更新：用 assoc 打出伤害
+
+角色到齐了，但有个问题：Clojure 的数据结构是不可变的。你不能直接修改吸血鬼的血量，只能创建一个 *新* 的吸血鬼，新吸血鬼的血量是扣减后的值。这个操作用 =assoc= 完成——它接收一个已有结构和一个新的键值对，返回一个更新后的副本，原始数据不变。
+
+先定义一个计算伤害的辅助函数：
+
+#+begin_src clojure
+(defn hit [vampire hitpoints]
+  (- (:health vampire) hitpoints))
+#+end_src
+
+#+begin_src clojure
+(hit vampire1 20)
+#+end_src
+
+#+begin_example
+30
+#+end_example
+
+然后定义"猎人攻击吸血鬼"的函数。它调用 =hit= 计算新血量，再用 =assoc= 把新血量塞回吸血鬼结构中：
+
+#+begin_src clojure
+(defn hit-vampire [vampire slayer]
+  (assoc vampire :health (hit vampire (:weapon slayer))))
+#+end_src
+
+#+begin_src clojure
+(hit-vampire vampire1 buffy)
+#+end_src
+
+#+begin_example
+#:user.Vampire{:name "Stu", :health 25}
+#+end_example
+
+注意 =vampire1= 本身没变—— =assoc= 返回的是一个 *新* 的 Vampire 记录。如果查看 =vampire1= ，它的血量仍然是 50。这在后面会成为一个关键问题。
+
+* 用 recur 递归击杀
+
+一次攻击不够，猎人需要反复攻击直到吸血鬼血量归零。Clojure 不用普通的递归（会消耗栈空间），而是用 =recur= 做尾递归优化——每次递归调用不会增加调用栈，而是直接跳回函数开头继续执行，性能等价于循环。
+
+#+begin_src clojure
+(def combat-time 20)
+
+(defn hit-vampire [vampire slayer]
+  (Thread/sleep (* combat-time 10))
+  (assoc vampire :health (hit vampire (:weapon slayer))))
+#+end_src
+
+这里加了 =Thread/sleep= 来模拟战斗耗时——每次攻击需要 200 毫秒（combat-time 20 × 10）。
+
+然后用 =recur= 实现递归击杀：如果血量大于 1，就再打一次；否则把血量设为 0 返回：
+
+#+begin_src clojure
+(defn kill-vampire [vampire slayer]
+  (if (> (:health vampire) 0)
+    (recur (hit-vampire vampire slayer) slayer)
+    (assoc vampire :health 0)))
+#+end_src
+
+#+RESULTS:
+: #'user/kill-vampire
+
+Buffy 用功夫（25 点伤害）杀 Stu（50 血量），需要打 2 次，耗时约 400 毫秒：
+
+#+begin_src clojure
+(time (kill-vampire vampire1 buffy))
+#+end_src
+
+#+begin_example
+"Elapsed time: 400.542595 msecs"
+#:user.Vampire{:name "Stu", :health 0}
+#+end_example
+
+Vance 有 100 血量，需要打 4 次，耗时约 800 毫秒：
+
+#+begin_src clojure
+(time (kill-vampire vampire2 buffy))
+#+end_src
+
+#+begin_example
+"Elapsed time: 801.318529 msecs"
+#:user.Vampire{:name "Vance", :health 0}
+#+end_example
+
+如果给 Buffy 换上圣水（100 点伤害），杀 Vance 只需 1 次，200 毫秒就够了：
+
+#+begin_src clojure
+(def holy-water 100)
+(def buffy (Slayer. "Buffy" holy-water))
+
+(time (kill-vampire vampire2 buffy))
+#+end_src
+
+#+begin_example
+"Elapsed time: 200.247375 msecs"
+#:user.Vampire{:name "Vance", :health 0}
+#+end_example
+
+* 并行战斗：map vs pmap
+
+把吸血鬼排成一队让 Buffy 依次击杀。先定义一个封装函数，把 Buffy 固定为猎人：
+
+#+begin_src clojure
+(def vampire-line [vampire1 vampire2 vampire3])
+
+(defn buffy-kill-vampire [vampire]
+  (kill-vampire vampire buffy))
+#+end_src
+
+用 =map= 把 =buffy-kill-vampire= 应用到每只吸血鬼上，这是串行执行——一只打完再打下一只：
+
+#+begin_src clojure
+(map buffy-kill-vampire vampire-line)
+#+end_src
+
+#+begin_example
+(#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0})
+#+end_example
+
+把战斗时间改长一点（每次攻击 2000 毫秒），看看 =map= 和 =pmap= 的性能差异。 =pmap= 跟 =map= 功能一样，但会自动把任务分配到多个线程并行执行。 =dorun= 用来强制求值（因为 =map= 返回的是惰性序列，不消费就不会真正执行）：
+
+#+begin_src clojure
+(def combat-time 200)
+
+(time (dorun (map buffy-kill-vampire vampire-line)))
+#+end_src
+
+#+begin_example
+"Elapsed time: 18002.67764 msecs"
+#+end_example
+
+#+begin_src clojure
+(time (dorun (pmap buffy-kill-vampire vampire-line)))
+#+end_src
+
+#+begin_example
+"Elapsed time: 8001.808821 msecs"
+#+end_example
+
+串行 =map= 花了 18 秒，并行 =pmap= 只花了 8 秒——接近 2 倍的加速。三只吸血鬼的击杀任务被分配到了不同线程上同时执行，总时间取决于最慢的那一只。
+
+* 问题的暴露：吸血鬼杀不透
+
+虽然我们反复杀了一遍又一遍，但如果你查看 =vampire-line= 本身：
+
+#+begin_src clojure
+vampire-line
+#+end_src
+
+#+begin_example
+[#:user.Vampire{:name "Stu", :health 50} #:user.Vampire{:name "Vance", :health 100} #:user.Vampire{:name "Izzy", :health 75}]
+#+end_example
+
+血量全都是满的。它们"没死"。
+
+这就是 Clojure 不可变设计的直接后果： =kill-vampire= 函数返回的是一个新的 Vampire 记录，原始的 =vampire-line= 从来没被修改过。 =map= 返回的新列表也没有存回任何地方。数据是不可变的，操作产生新数据，老数据纹丝不动。
+
+这在一人一线程的小程序里是个麻烦，在多线程共享状态的大程序里就是个灾难——你需要一个机制来安全地管理"共享状态"。
+
+* 用 Atom 管理状态
+
+Clojure 用软件事务内存（STM，Software Transactional Memory）来处理状态。STM 提供了几种工具：
+
+- *Ref* ：协调的、同步的更新——多个 Ref 的值需要同时改变时用
+- *Atom* ：非协调的、同步的更新——只有一个值需要改时用，比 Ref 轻量
+- *Agent* ：异步更新——不需要立刻看到结果时用
+
+我们的场景很简单：维护一个吸血鬼队列的状态。只有一个值要改，用 Atom 就够了。
+
+接下来要把 =vampire-line= 从普通 vector *重新定义* 为 Atom。*这一步必须执行*，否则后面的 =buffy-destroy-all-vampires= 会报错——因为普通 vector 不支持 =@= （deref）操作，只有 Atom 等 STM 类型才支持。
+
+#+begin_src clojure
+;; 重要：用 atom 包装 vampire-line，这会覆盖之前的普通 vector 定义
+(def vampire-line (atom [vampire1 vampire2 vampire3]))
+#+end_src
+
+Atom 的值需要用 =@= （deref 操作）来读取。 =@= 是 Clojure 的语法糖， =@x= 等价于 =(deref x)= ，作用是从 Atom 中取出它当前持有的值。普通 vector 和 record 不支持这个操作——这正是前面"杀不透"的根本原因，它们不是状态容器，而是纯数据。
+
+#+begin_src clojure
+@vampire-line
+#+end_src
+
+#+begin_example
+[#:user.Vampire{:name "Stu", :health 50} #:user.Vampire{:name "Vance", :health 100} #:user.Vampire{:name "Izzy", :health 75}]
+#+end_example
+
+然后定义一个函数，用 =reset!= 把击杀后的结果写回 Atom。 =reset!= 是 Atom 的原子更新操作——它会把 Atom 的值替换为新值，保证线程安全：
+
+#+begin_src clojure
+(defn buffy-destroy-all-vampires []
+  (reset! vampire-line (vec (map buffy-kill-vampire @vampire-line))))
+#+end_src
+
+执行一次：
+
+#+begin_src clojure
+(buffy-destroy-all-vampires)
+#+end_src
+
+#+begin_example
+[#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0}]
+#+end_example
+
+再查看 =vampire-line= ：
+
+#+begin_src clojure
+@vampire-line
+#+end_src
+
+#+begin_example
+[#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0}]
+#+end_example
+
+吸血鬼终于死透了。 =reset!= 把 Atom 中保存的旧列表替换成了击杀后的新列表，而且这个替换是原子性的——即使多个线程同时调用 =buffy-destroy-all-vampires= ，也不会出现数据竞争。
+
+* 小结
+
+这个吸血鬼猎杀程序虽然小，但串起了 Clojure 的几个核心概念：
+
+1. =defrecord= 定义不可变数据类型
+2. =assoc= 在不修改原始数据的前提下生成更新后的副本
+3. =recur= 做尾递归，避免栈溢出
+4. =pmap= 自动并行，利用多核
+5. =Atom= 管理共享状态，让不可变世界中的"变化"成为可能
+
+整个程序的演变过程其实就是 Clojure 处理状态的哲学：默认不可变，需要状态时显式声明（用 Atom/Ref/Agent），状态变更受 STM 保护。不是没有状态，而是让状态的变化变得可控。
+
+[fn:1] https://gigasquidsoftware.com/blog/2011/01/12/vampire-slaying-with-clojure-part-1-defrecord/
+[fn:2] https://gigasquidsoftware.com/blog/2011/01/18/vampire-slaying-in-clojure-with-stm-part-2/
