@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Thu, 23 Apr 2026 06:33:48 UTC</pubDate>
-    <lastBuildDate>Thu, 23 Apr 2026 06:33:48 UTC</lastBuildDate>
+    <pubDate>Thu, 23 Apr 2026 10:22:56 UTC</pubDate>
+    <lastBuildDate>Thu, 23 Apr 2026 10:22:56 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -1025,6 +1025,194 @@ Lucid 工具包不使用 =GTK_IM_MODULE= ，只走 XIM 协议。所以对 Emacs 
 <guid>https://lujun9972.github.io/blog/2026/04/22/fcitx5-下-emacs-无法切换输入法的排查/index.html</guid>
 </item>
 <item>
+<title>Clojure X-Men：当编程语言特性变成超能力</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/clojure-x-men：当编程语言特性变成超能力/index.html</link>
+<description>Carin Meier 在 2014 年写过一篇有趣的短文[fn:1]：假设有人天生拥有 Clojure 语言特性的超能力，他们会是什么样的人？原文只有故事没有代码。本文借用她的创意，为每个&quot;超能力&quot;补上真实的代码示例，看看这些特性到底在做什么。
+
+* Luke：看到无限的未来
+
+Luke 是个懒人，凡事能拖就拖。但他发现自己能看到未来——不是看到确定的某个画面，而是看到未来的所有可能性。虽然只能看到几毫秒之后的事，但这已经够了。
+
+他的超能力是 Clojure 的 *惰性求值*（lazy evaluation）。
+
+普通编程语言中，你要先造好一个完整的列表才能用它。比如生成一百万个数字，就得先把一百万个数字全部算出来放在内存里。Clojure 不一样——它给你一个&quot;承诺&quot;：你需要多少，我就算多少，你不需要的部分永远不算。
+
+#+begin_src clojure
+;; range 不加参数会生成无限序列
+;; 但因为惰性求值，它不会真的把无穷多个数字全算出来
+(take 5 (range))
+#+end_src
+
+#+begin_example
+(0 1 2 3 4)
+#+end_example
+
+=range= 返回的是一个无限序列的描述，不是真的把无穷多个数塞进内存。=take 5= 说&quot;我只要前 5 个&quot;，于是 Clojure 只算 5 个就停下来。你也可以对无限序列做变换：
+
+#+begin_src clojure
+(take 3 (map #(+ % 100) (range)))
+#+end_src
+
+#+begin_example
+(100 101 102)
+#+end_example
+
+=map= 把每个元素加 100，=take 3= 只取前 3 个。中间的无限序列从来没有被完整计算过。这就是 Luke 的能力——他不需要看到全部的未来，只需要看到眼前需要的那部分。
+
+* Spress：让万物开口说话
+
+Spress 五岁就发现自己的超能力：她能让任何东西&quot;说话&quot;。指着一桶水说&quot;牛&quot;，水桶就会&quot;哞&quot;叫。她不需要改造水桶本身，只需要定义一套新的行为规则，然后把规则套到任何东西上。
+
+她的超能力是 Clojure 的 *protocol*（协议）——解决&quot;表达式问题&quot;的机制。
+
+表达式问题是编程语言设计中的经典难题：你有一组数据类型和一组操作，想在不修改已有代码的前提下同时增加新的类型和新的操作。面向对象语言容易加新类型（写个子类），但加新操作（给已有类加新方法）很难。函数式语言反过来，容易加新操作（写个新函数），但加新类型很难。
+
+Clojure 的 protocol 让你两者都能做到：
+
+#+begin_src clojure
+;; 定义一个协议：speak（说话）
+(defprotocol Speak
+  (speak [this]))
+
+;; 给已有的 String 和 Number 类型扩展 speak 行为
+;; 不需要修改 String 或 Number 的源码
+(extend-protocol Speak
+  String
+  (speak [this] (str this &quot; says: 喵&quot;))
+  Number
+  (speak [this] (str this &quot; says: 汪&quot;)))
+#+end_src
+
+#+begin_src clojure
+(speak &quot;cat&quot;)
+;; =&gt; &quot;cat says: 喵&quot;
+
+(speak 42)
+;; =&gt; &quot;42 says: 汪&quot;
+#+end_src
+
+String 和 Number 是 Java/Clojure 内置的类型，你改不了它们的源码。但通过 =extend-protocol= ，你可以给它们加上 =speak= 行为，就像 Spress 给水桶加上了&quot;哞&quot;叫的能力一样。以后你还可以定义新的类型，也让它们实现 =Speak= 协议——新类型、新操作，互不干扰。
+
+* Multi：一心多用
+
+普通人看东西、听声音、感受触摸，这些感官输入最终都要排队进入意识——一个单线程的瓶颈。Multi 不一样，他的大脑能同时对所有感官输入做高级推理。结果就是，他反应超快，决策超聪明。
+
+他的超能力是 Clojure 的 *并发*（concurrency）。
+
+Clojure 提供了几种并发工具。最直观的是 =future= ：把一段代码丢到另一个线程去执行，当前线程继续干别的事，需要结果的时候再等它。
+
+#+begin_src clojure
+;; future 启动另一个线程执行
+(let [f (future (Thread/sleep 100) &quot;来自未来的结果&quot;)]
+  ;; 在这里可以做别的事...
+  ;; 需要结果时用 @ 等待
+  @f)
+#+end_src
+
+#+begin_example
+&quot;来自未来的结果&quot;
+#+end_example
+
+如果你有一批计算任务，=pmap= （parallel map）能自动把它们分到多个核上并行执行：
+
+#+begin_src clojure
+;; pmap 像 map 一样工作，但自动并行
+(doall (pmap #(* % %) (range 1 6)))
+#+end_src
+
+#+begin_example
+(1 4 9 16 25)
+#+end_example
+
+=pmap= 把 5 个平方计算分配到多个线程上同时执行，比串行的 =map= 快。Clojure 的并发工具不只是这些, 比如：
++ =atom= 做原子更新
++ =core.async= 做消息传递
+核心思想都是为了让多核的能力为你所用，而不是被锁和竞态条件搞得焦头烂额。
+
+* Dot：跟异类说话
+
+Dot 天生跟动物亲近。走进森林，鹿和鸟会主动靠近。有次她被压在树下，一头熊走过来帮她搬开了木头。她能毫不费力地跟其他物种沟通。
+
+她的超能力是 Clojure 的 *Java 互操作*（interop）。
+
+Clojure 跑在 JVM 上，Java 生态里几百万个库就是她的&quot;动物&quot;。她不需要特殊的桥梁或适配器，直接用 Clojure 语法调 Java 方法：
+
+#+begin_src clojure
+;; 调用 Java 的 String.toUpperCase
+(.toUpperCase &quot;hello clojure&quot;)
+#+end_src
+
+#+begin_example
+&quot;HELLO CLOJURE&quot;
+#+end_example
+
+#+begin_src clojure
+;; 读取 Java 的常量
+Math/PI
+#+end_src
+
+#+begin_example
+3.141592653589793
+#+end_example
+
+#+begin_src clojure
+;; 调用 Java 的系统方法
+(System/getProperty &quot;java.version&quot;)
+#+end_src
+
+#+begin_example
+&quot;21.0.10&quot;
+#+end_example
+
+不用写适配层，不用写包装类，Clojure 调 Java 就像调自己人一样。反过来，Java 代码也能调用 Clojure 函数。两门语言之间没有隔阂——这就是 Dot 的天赋。
+
+* Bob：一眼看穿本质
+
+Bob 是 X-Men 的队长。他最大的能力是：面对任何复杂问题，他能立刻剥离掉不重要的细节，抓住核心。他从不被花哨的框架和设计模式迷惑，因为他知道，真正有力量的东西都是简单的。
+
+他的超能力是 Clojure 的 *极简哲学*（simplicity）。
+
+Clojure 的设计哲学是：能用数据解决的问题，就不要发明新概念。你不需要定义一个 Person 类，用 map 就行：
+
+#+begin_src clojure
+;; 不需要定义类，用 map 表示数据
+(def person {:name &quot;Bob&quot; :power &quot;simplicity&quot;})
+#+end_src
+
+#+begin_example
+{:name &quot;Bob&quot;, :power &quot;simplicity&quot;}
+#+end_example
+
+#+begin_src clojure
+;; 用关键字当函数，直接取值
+(:name person)
+#+end_src
+
+#+begin_example
+&quot;Bob&quot;
+#+end_example
+
+#+begin_src clojure
+;; 需要加字段？assoc 一下
+(assoc person :age 30)
+#+end_src
+
+#+begin_example
+{:name &quot;Bob&quot;, :power &quot;simplicity&quot;, :age 30}
+#+end_example
+
+没有类定义，没有构造函数，没有 getter/setter，没有继承体系。一个 map 加几个通用函数（=assoc= 、=dissoc= 、=update= 、=merge=），就能完成绝大多数数据操作。Clojure 认为复杂性是敌人——语言应该帮你消除不必要的抽象，而不是制造更多的抽象。
+
+* 还可能有更多
+
+原文最后说：可能还有更多拥有 Clojure 超能力的人没被发现，我们只能希望他们被 Bob 找到，用力量做善事。现实中，Clojure 的特性远不止这五个,比如，宏（macro）、持久化数据结构（persistent data structure）、软件事务内存（STM）……每个都值得单独聊聊。但用超级英雄角色来理解编程语言特性，这个角度本身就挺有趣——把抽象的概念套上人格，比直接读文档容易记住得多。
+
+[fn:1] https://gigasquidsoftware.com/blog/2014/07/27/clojure-x-men/
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/clojure-x-men：当编程语言特性变成超能力/index.html</guid>
+</item>
+<item>
 <title>fcitx 启动后键盘输入卡顿的排查</title>
 <link>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</link>
 <description>* 背景
@@ -1585,93 +1773,6 @@ jobs:
 </description>
 <pubDate>2026-04-21</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</guid>
-</item>
-<item>
-<title>读：ASCII control characters in my terminal</title>
-<link>https://lujun9972.github.io/blog/2026/04/21/读：ascii-control-characters-in-my-terminal/index.html</link>
-<description>Julia Evans 写了一篇文章梳理终端中所有 33 个 ASCII 控制字符的作用。这些控制字符是你每天按 Ctrl-C 终止程序、按 Ctrl-Z 挂起进程、按 Ctrl-W 删一个词时实际发送的那些字节。本文是对她文章的解读。
-
-** 只有 33 个控制码
-
-ASCII 表的前 32 个位置（0-31）加上第 127 个位置，一共 33 个，留给&quot;控制字符&quot;——它们不对应可打印字符，而是表示某种控制动作。其中 26 个对应 =Ctrl-A= 到 =Ctrl-Z= ，另外 7 个对应 Ctrl 加上 =@= 、 =[= 、 =\= 、 =]= 、 =^= 、 =_= 、 =?= 。
-
-这意味着 =Ctrl-1= 、 =Ctrl-2= 这种组合在终端里根本不存在——按下 =Ctrl-1= 跟直接按 =1= 效果一样，因为 ASCII 没有为数字键预留控制码的位置。同样， =Ctrl+Shift+C= 也不是控制码，它由终端模拟器自己处理（用来复制），根本不会发送到终端里运行的程序。
-
-** 三层处理：谁来响应你的按键
-
-这 33 个控制码并不是统一由某一层处理的，而是分成了三股道：
-
-1. *OS 终端驱动*直接处理的：比如 =Ctrl-C= （发送 SIGINT 信号终止程序）、 =Ctrl-Z= （发送 SIGTSTP 挂起程序）、 =Ctrl-D= （发送 EOF）。这些按键按下后，OS 的终端驱动会直接拦截并产生相应动作，程序本身收不到这个字节。
-
-2. *readline 库*处理的：比如 =Ctrl-W= （删一个词）、 =Ctrl-U= （删整行）、 =Ctrl-R= （搜索历史命令）。这些在 bash、python REPL 等使用 readline 的程序中工作，但在 =cat= 这种不用 readline 的程序中就不起作用。
-
-3. *应用程序自己定义*的：比如 =Ctrl-X= 在一般终端程序里没有固定含义，但 Emacs 把它用作了大量快捷键的前缀。
-
-用 =stty -a= 可以看到 OS 终端驱动处理的所有控制码映射：
-
-#+begin_src shell
-stty -a
-#+end_src
-
-在我的机器上输出如下（只列出控制字符映射部分）：
-
-#+begin_src text
-intr = ^C; quit = ^\; erase = ^?; kill = ^U; eof = ^D; eol = &lt;undef&gt;;
-eol2 = &lt;undef&gt;; swtch = &lt;undef&gt;; start = ^Q; stop = ^S; susp = ^Z;
-rprnt = ^R; werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
-#+end_src
-
-这里 ~intr = ^C~ 表示 =Ctrl-C= 触发中断信号， ~erase = ^?~ 表示退格键（byte 127）触发删除字符， ~kill = ^U~ 表示清行， ~werase = ^W~ 表示删一个词。所有这些映射都可以通过 =stty= 命令修改——比如 =stty intr ^X= 可以把中断信号改到 =Ctrl-X= 上。不过实际上几乎没有人改这些映射，改了只会让自己在各种教程和问答里找不到北。
-
-** Ctrl-M 就是 Enter，Ctrl-I 就是 Tab
-
-这是一个容易让人困惑的设计： =Ctrl-M= 发送的字节值是 13，跟按 =Enter= 键完全一样； =Ctrl-I= 发送的字节值是 9，跟按 =Tab= 键完全一样。所以如果你想给终端程序设置 =Ctrl-M= 或 =Ctrl-I= 作为快捷键，会发现它们的效果跟 =Enter= 和 =Tab= 一样——因为从程序的角度看，收到的是同一个字节。
-
-这也解释了为什么很多终端程序（包括 bash 的 readline）的快捷键覆盖了 =Ctrl-A= 到 =Ctrl-Z= 的大部分，唯独跳过了 =Ctrl-I= 和 =Ctrl-M= ——不是故意这样设计的，而是这两个位置已经被 =Tab= 和 =Enter= 占了。
-
-** canonical 模式 vs noncanonical 模式
-
-=Ctrl-W= 和 =Ctrl-U= 的行为取决于终端当前处于哪种模式：
-
-- *canonical 模式*（规范模式）：OS 终端驱动负责行编辑。你按 =Backspace= 删字符、按 =Ctrl-W= 删词、按 =Ctrl-U= 清行，这些都是 OS 在缓冲区里处理的，程序只有在你按 =Enter= 之后才能看到整行输入。 =cat= 、 =grep= 等非交互程序通常用这种模式。
-
-- *noncanonical 模式*（原始模式）：OS 不做任何行编辑，每按一个键程序就立刻收到。 =Ctrl-W= 和 =Ctrl-U= 的删词、清行功能需要程序自己实现。bash、python REPL、vim 等交互式程序用这种模式。
-
-可以用 =strace= 观察一个程序设置了哪些终端模式：
-
-#+begin_src shell
-strace -tt -o /tmp/strace-out vim
-# 退出 vim 后：
-grep ioctl /tmp/strace-out | grep SET
-#+end_src
-
-你会看到 vim 启动时关闭了 =ISIG= （不再由 OS 处理信号）和 =ICANON= （关闭 canonical 模式），改为 raw 模式自己处理所有输入。vim 退出时又把这些设置恢复回去。
-
-** Backspace 的混乱历史
-
-按 =Backspace= 键时，终端到底发送哪个字节？这个问题居然没有统一答案：
-
-- 有些机器发 byte =127= （ASCII 名 =DEL= ）
-- 有些机器发 byte =8= （ASCII 名 =BS= ，Backspace）
-
-在 Linux 上， =Backspace= 键发送的是 byte =127= ，OS 终端驱动和 readline 都把它映射为&quot;删除前一个字符&quot;。 =Ctrl-H= 发送 byte =8= ，在 readline 里它的效果跟 =Backspace= 一样（都是删除一个字符），但在 =cat= 这种只用 canonical 模式的程序里， =Ctrl-H= 只会打印出 =^H= 而不会删字符——因为 canonical 模式只认识 =stty= 里 =erase= 设置的那个字节（127）。
-
-如果你的 =Backspace= 键行为异常（按了不删字符反而显示 =^H= ），原因就是你的终端发的是 byte =8= 而 =stty= 期望的是 byte =127= 。修复方法是 =stty erase ^H= ，把删除字符的映射从 127 改到 8。
-
-** Ctrl-S 冻屏之谜
-
-=Ctrl-S= 发送 byte =19= （ASCII 名 =XOFF= ），OS 终端驱动收到后会暂停向终端输出——这就是古老的&quot;软件流控制&quot;。在 90 年代的低速串口终端上这很有用（输出太快来不及看就按 =Ctrl-S= 暂停， =Ctrl-Q= 恢复），但今天几乎没人需要这个功能了。
-
-问题在于 =Ctrl-S= 这个按键被 XOFF 占了，导致 readline 无法用它做&quot;前向搜索历史命令&quot;（ =Ctrl-R= 是反向搜索， =Ctrl-S= 本应是正向搜索）。解决方法是用 =stty -ixon= 关闭软件流控制，这样 =Ctrl-S= 就不再触发 XOFF，而是被传给 readline 使用。
-
-** ASCII 名字可以忽略
-
-每个控制码在 ASCII 标准里都有一个正式名字，比如 byte =3= 叫 =ETX= （End of Text）、byte =26= 叫 =SUB= （Substitute）。但这些名字是为 1960 年代的电报机设计的——那个时代的 =ETX= 表示&quot;报文结束&quot;，跟今天终端里 =byte 3= 的作用（发送 SIGINT 终止程序）毫无关系。33 个控制码里，大约一半的 ASCII 名字跟它今天在终端中的功能对不上，所以不如直接忽略这些名字。
-
-原文链接： [[https://jvns.ca/blog/2024/10/31/ascii-control-characters/][ASCII control characters in my terminal]]
-</description>
-<pubDate>2026-04-21</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/21/读：ascii-control-characters-in-my-terminal/index.html</guid>
 </item>
 </channel>
 </rss>
