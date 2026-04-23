@@ -1,0 +1,161 @@
+#+TITLE: 读：芭芭雅嘎与 Clojure Reducers
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: clojure, programming, fp, reducers
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Carin Meier 在 2012 年写了一篇用俄罗斯童话教 Clojure 的文章[fn:1]。一个女程序员在森林里迷路，闯进了巫婆芭芭雅嘎的长脚小屋，被迫完成一项编程任务：对一本小说的文本做哈希值计算、筛选、求和。故事本身是个有趣的包装，真正值得学的是它教的东西——Clojure 的 map/filter/reduce 组合怎么用，以及 Reducers 库怎么让它们跑得更快。
+
+* 芭芭雅嘎是谁
+
+芭芭雅嘎（Baba Yaga）是斯拉夫民间故事里的经典角色——一个住在森林深处、长着铁牙齿的老巫婆。她的房子长着鸡腿，能走来走去。她有时吃人，有时帮人，全看心情。在这篇故事里，她抓了一个迷路的女程序员当奴隶，逼她做编程题。
+
+* 编程任务：算《奥德赛》的哈希值
+
+芭芭雅嘎翻出一本《奥德赛》，下了命令：
+
+1. 计算书中每个字符的哈希值
+2. 只保留偶数
+3. 求和
+4. 要快，她在计时
+
+这是一个典型的 map → filter → reduce 流水线。
+
+** 第一步：把书读进内存
+
+#+begin_src clojure
+(def odyssey-text (vec (slurp "odyssey.txt")))
+(class odyssey-text)
+;; => clojure.lang.PersistentVector
+#+end_src
+
+=slurp= 把整个文件读成字符串， =vec= 转成向量（可以按索引随机访问的数组）。字符在 Clojure 里是 =java.lang.Character= 类型：
+
+#+begin_src clojure
+(first odyssey-text)
+;; => \P
+
+(.hashCode (first odyssey-text))
+;; => 80
+#+end_src
+
+第一个字符是 =\P= ，它的哈希值是 80。Java 中字符的哈希值就是它的 Unicode 码点，所以 =\P= 的 Unicode 是 80（对应大写字母 P）。
+
+** 第二步：map → filter → reduce
+
+#+begin_src clojure
+(defn hashcode [c] (.hashCode c))
+
+(reduce + (filter even? (map hashcode odyssey-text)))
+;; => 33702446
+#+end_src
+
+三步组合：
+- =map= 对每个字符算哈希值，得到一个整数序列
+- =filter= 只保留偶数
+- =reduce= 用 =+= 把所有偶数加起来
+
+这是函数式编程中最常见的模式。三个函数像流水线一样串起来：数据从 =map= 流出，进入 =filter= ，最后汇入 =reduce= 。中间不会产生可变状态，也不需要手动写循环。
+
+** 性能测试
+
+#+begin_src clojure
+(dotimes [n 5]
+  (println (str "map - filter - reduce - ( run " n " ):"))
+  (time (reduce + (filter even? (map hashcode odyssey-text)))))
+#+end_src
+
+#+begin_example
+map - filter - reduce - ( run 0 ):
+"Elapsed time: 6932.227 msecs"
+map - filter - reduce - ( run 1 ):
+"Elapsed time: 5433.219 msecs"
+map - filter - reduce - ( run 2 ):
+"Elapsed time: 5157.45 msecs"
+map - filter - reduce - ( run 3 ):
+"Elapsed time: 5397.058 msecs"
+map - filter - reduce - ( run 4 ):
+"Elapsed time: 5224.334 msecs"
+#+end_example
+
+平均大约 5200 毫秒。芭芭雅嘎嫌太慢："5 秒以内做完，不然吃了你！"
+
+* 用 Reducers 加速
+
+关键时刻，黑猫出主意：Clojure 有一个 Reducers 库，能把 =map= 和 =filter= 变成可并行操作的版本。这个库从 Clojure 1.5 开始就是标准库的一部分，不需要额外安装依赖，只要在命名空间里 =require= 就能用。
+
+#+begin_src clojure
+(ns reducers.core
+  (:require [clojure.core.reducers :as r]))
+
+(r/fold + (r/filter even? (r/map hashcode odyssey-text)))
+;; => 33702446
+#+end_src
+
+代码结构几乎一模一样——只是把 =map= 换成了 =r/map= ， =filter= 换成了 =r/filter= ， =reduce= 换成了 =r/fold= 。结果也完全一样：33702446。
+
+#+begin_src clojure
+(dotimes [n 5]
+  (println (str "r/map - r/filter - r/fold - ( run " n " ):"))
+  (time (r/fold + (r/filter even? (r/map hashcode odyssey-text)))))
+#+end_src
+
+#+begin_example
+r/map - r/filter - r/fold - ( run 0 ):
+"Elapsed time: 4702.766 msecs"
+r/map - r/filter - r/fold - ( run 1 ):
+"Elapsed time: 4617.575 msecs"
+r/map - r/filter - r/fold - ( run 2 ):
+"Elapsed time: 4596.329 msecs"
+r/map - r/filter - r/fold - ( run 3 ):
+"Elapsed time: 4636.259 msecs"
+r/map - r/filter - r/fold - ( run 4 ):
+"Elapsed time: 4572.804 msecs"
+#+end_example
+
+平均大约 4600 毫秒，比之前快了约 12%。刚好卡在 5 秒以内，勉强过关。
+
+* Reducers 和普通 map/filter/reduce 有什么区别
+
+普通版本的 =map= 和 =filter= 返回的是 *惰性序列* (lazy seq) 。数据沿着流水线一个一个传过去—— =map= 处理完一个元素，交给 =filter= ， =filter= 通过了再交给 =reduce= 。虽然是惰性的（不用到的部分不计算），但整个过程是单线程的。
+
+Reducers 库的 =r/map= 和 =r/filter= 返回的不是惰性序列，而是一个"可归约"（reducible）的变换描述。当你最终调用 =r/fold= 时，它做了两件事：
+
+1. 把所有变换（map、filter）合并成一个复合操作——数据只需要遍历一次，不用在多个中间序列之间搬来搬去
+2. 把数据分成几块，用 Java 的 ForkJoin 框架并行处理每块
+
+用一句话概括区别：普通版本是"把数据推过流水线"，Reducers 是"把流水线折叠成一个操作，分块并行执行"。
+
+* 逃出长脚小屋
+
+故事最后，芭芭雅嘎不信邪，要亲自检查所有哈希值。黑猫低声告诉女孩：用 =into= 把结果收集成向量，趁芭芭雅嘎检查数字时溜走。
+
+#+begin_quote
+*小知识：为什么 =into= 能处理 Reducers 的输出？*
+
+=r/map= 和 =r/filter= 返回的不是普通列表，而是实现了 =CollReduce= 协议的对象。你不能直接打印它或当普通序列用。Clojure 的 =reduce= 函数是多态的：它会检查参数是否实现了 =CollReduce= 协议，如果实现了，就用对象自己的归约方法来遍历。=into= 的内部实现就是调 =reduce= ——具体来说相当于 =(reduce conj [] reducible-result)= 。因为 =reduce= 能识别 =CollReduce= 协议，所以 =into= 自然也能处理 Reducers 的输出。
+#+end_quote
+
+#+begin_src clojure
+(into [] (r/filter even? (r/map hashcode odyssey-text)))
+;; => [80 114 ... ]
+#+end_src
+
+趁着芭芭雅嘎逐个检查向量里的数字，女孩抱着猫溜出了门。从此幸福地写 Clojure 代码去了。
+
+* 什么时候该用 Reducers
+
+原文的场景（2012 年）中，Reducers 只带来了约 12% 的性能提升。这是因为《奥德赛》的文本量不够大（约 60 万字符），而且 =hashcode= 和 =even?= 都是极轻的操作——单次执行几乎不花时间，并行化的调度开销抵消了不少收益。
+
+Reducers 的优势在以下场景更明显：
+
+1. *数据量大* (百万级以上元素) ——分块并行才有意义
+2. *单个操作耗时* (比如复杂计算、IO 密集型操作) ——并行化收益高
+3. *CPU 密集型任务* ——能充分利用多核
+
+如果你的数据集很小、操作很轻，普通 map/filter/reduce 就够了，Reducers 的并行调度开销反而可能拖慢速度。
+
+* Footnotes
+
+[fn:1] 原文：[[https://gigasquidsoftware.com/blog/2012/07/07/baba-yaga-and-the-clojure-reducers/][Baba Yaga and the Clojure Reducers]]，Carin Meier，2012 年 7 月 7 日。
