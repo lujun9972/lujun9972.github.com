@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>SEM Assistant: 当 Elisp 守护进程遇上 LLM - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="emacs, org-mode, llm, ai, architecture" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">SEM Assistant: 当 Elisp 守护进程遇上 LLM</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga1765cd">SEM Assistant 做什么</a></li>
+<li><a href="#org7a13300">关键设计：LLM 是工具不是编排者</a></li>
+<li><a href="#orgd7d6b55">安全模型：LLM 输出是不可信的</a></li>
+<li><a href="#orge701f3d">可复用的设计原则</a></li>
+<li><a href="#org0aea879">安装与配置</a></li>
+</ul>
+</div>
+</div>
+<p>
+SEM Assistant<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup> 是一个用 Elisp 写的自托管守护进程。它解决的问题是：手机上快速捕获信息（想法、链接、任务），服务端自动处理，结果写回你自己的 Org 文件。这跟笔记同步的不同之处在于它在管道里接了 LLM，只不过 LLM 只做有限的文本变换，流程控制完全由 Elisp 代码决定。这个"LLM 是工具不是老板"的设计思路，对任何想把 LLM 接入自己工作流的人都有参考价值。
+</p>
+
+<div id="outline-container-orga1765cd" class="outline-2">
+<h2 id="orga1765cd">SEM Assistant 做什么</h2>
+<div class="outline-text-2" id="text-orga1765cd">
+<p>
+整体数据流是这样的：
+</p>
+
+<pre class="example" id="org390d174">
+手机捕获 → WebDAV → inbox-mobile.org → Elisp 管道路由 → LLM 文本处理 → Org 文件
+</pre>
+
+<p>
+具体来说，它在服务端跑一个 Emacs 守护进程，通过 WebDAV 接收手机端（organice）传来的捕获内容，写入 <code>inbox-mobile.org</code> 。然后根据条目的标签走不同的处理流程：
+</p>
+
+<dl class="org-dl">
+<dt><code>:task:</code> 标签</dt><dd>走任务归一化 + 规划流程。LLM 帮你把随手写的任务拆解成结构化的 TODO 列表</dd>
+<dt><code>:link:</code> 标签（或标题以 <code>http://</code> 开头）</dt><dd>走 URL 捕获流程。LLM 帮你从网页内容生成 org-roam 笔记</dd>
+<dt>其他</dt><dd>跳过，记录日志</dd>
+</dl>
+
+<p>
+处理完的结果写回到对应的 Org 文件（ <code>tasks.org</code> 或 org-roam 笔记库），并定期 git 同步备份。
+</p>
+
+<p>
+<b><b>目录约定</b></b>
+</p>
+
+<p>
+所有数据都在 <code>/data</code> 下，每个文件有明确的角色：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">路径</th>
+<th scope="col" class="org-left">作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>/data/inbox-mobile.org</code></td>
+<td class="org-left">手机端传来的原始捕获，管道路由的入口</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/data/tasks.org</code></td>
+<td class="org-left">任务处理后的输出文件</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/data/rules.org</code></td>
+<td class="org-left">调度规则文件，控制 cron 触发哪些流程</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/data/org-roam/org-files</code></td>
+<td class="org-left">org-roam 笔记库，URL 捕获的结果写到这里</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>/data/org-roam</code></td>
+<td class="org-left">git 同步的仓库根目录</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b><b>具体使用场景</b></b>
+</p>
+
+<p>
+场景一：在手机上随手记了一个任务。打开 organice，在 <code>inbox-mobile.org</code> 里写一条带 <code>:task:</code> 标签的标题，比如"准备下周的技术分享"。保存后，服务端的 cron 定时触inbox处理流程：Elisp 识别到 <code>:task:</code> 标签，把这条文本发给 LLM，LLM 归一化任务描述并生成规划（拆解成"确定主题"、"准备 slides"、"排练"等子任务），Elisp 把结果写入 <code>tasks.org</code> ，然后从收件箱中移除这条。
+</p>
+
+<p>
+场景二：在手机浏览器里看到一个有趣的文章，复制链接，在 organice 里粘贴为 <code>inbox-mobile.org</code> 的一条标题（以 <code>https://</code> 开头，甚至不需要加 <code>:link:</code> 标签，系统会自动识别）。cron 触发后，LLM 从网页内容中提取关键信息，生成一篇 org-roam 笔记节点，写入 <code>/data/org-roam/org-files</code> 下。
+</p>
+
+<p>
+<b><b>三个后台循环</b></b>
+</p>
+
+<p>
+SEM Assistant 在后台跑着三个定时循环：
+</p>
+
+<ol class="org-ol">
+<li><code>inbox processing</code> :: 扫描收件箱，按标签路由，调用 LLM 处理，写回结果</li>
+<li><code>URL-to-org-roam</code> :: 把链接转成 org-roam 笔记节点</li>
+<li><code>git sync</code> :: 定期把 org-roam 笔记库 commit + push</li>
+</ol>
+
+<p>
+这三个循环由 cron 驱动（项目自带 crontab 配置）。你也可以手动触发：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25163;&#21160;&#35302;&#21457;&#25910;&#20214;&#31665;&#22788;&#29702;
+</span>docker compose exec emacs emacsclient -s sem-server -e <span class="org-string">"(sem-core-process-inbox)"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25163;&#21160;&#35302;&#21457; git &#21516;&#27493;
+</span>docker compose exec emacs emacsclient -s sem-server -e <span class="org-string">"(sem-git-sync-org-roam)"</span>
+</pre>
+</div>
+
+<p>
+git 同步需要在容器内配置好 SSH 密钥（ <code>/root/.ssh/id_rsa</code> ）和 git 身份（name/email），这样每次同步都会自动 commit 和 push 到远程仓库。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7a13300" class="outline-2">
+<h2 id="org7a13300">关键设计：LLM 是工具不是编排者</h2>
+<div class="outline-text-2" id="text-org7a13300">
+<p>
+这是整个项目最有价值的设计思想。
+</p>
+
+<p>
+现在很多 AI 工具让 LLM 直接驱动整个工作流——LLM 决定下一步做什么、调什么 API、写什么文件。SEM Assistant 反其道而行：Elisp 代码是编排者，LLM 只是管道中的一个处理步骤。
+</p>
+
+<p>
+LLM *只负责三件事*：
+</p>
+
+<dl class="org-dl">
+<dt>归一化</dt><dd>把随手写的任务文本整理成统一格式</dd>
+<dt>规划</dt><dd>把一个模糊的任务拆解成可执行的 TODO 列表</dd>
+<dt>摘要</dt><dd>从网页内容中提取关键信息生成笔记</dd>
+</dl>
+
+<p>
+它 *不负责的事*：
+</p>
+
+<ul class="org-ul">
+<li>决定走哪条处理流程（由标签决定，代码控制）</li>
+<li>决定结果写到哪个文件（由路径约定决定）</li>
+<li>决定是否重试（由 Elisp 的重试逻辑决定）</li>
+<li>决定是否调用下一个步骤（由确定性管道控制）</li>
+</ul>
+
+<p>
+这种设计的核心好处是：管道行为是可预测的。你可以看 Elisp 代码就知道数据怎么流转，不需要猜测"AI 会不会走错路"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd7d6b55" class="outline-2">
+<h2 id="orgd7d6b55">安全模型：LLM 输出是不可信的</h2>
+<div class="outline-text-2" id="text-orgd7d6b55">
+<p>
+既然 LLM 是不可信组件，SEM Assistant 专门做了几层防护：
+</p>
+
+<ol class="org-ol">
+<li>*敏感内容屏蔽*：Org 文件中用 <code>#+begin_sensitive</code> / <code>#+end_sensitive</code> 包裹的内容在发送给 LLM 之前会被替换掉（masked），LLM 看不到原文。处理完后自动恢复</li>
+<li>*上下文裁剪*：任务规划时，传给 LLM 的不是完整的任务库，而是经过精简和匿名化的上下文——减少不必要的数据暴露</li>
+<li>*输出验证*：LLM 的输出被当作不可信文本处理，经过验证后才写入文件</li>
+<li>*确定性兜底*：重试、错误日志、死信队列（DLQ）、cron 重复执行防护——这些全都由 Elisp 代码确定性处理，不依赖 LLM</li>
+</ol>
+
+<p>
+这套安全模型可以总结为一句话：LLM 只能接触它需要处理的数据，只能产生文本，不能做任何决策。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge701f3d" class="outline-2">
+<h2 id="orge701f3d">可复用的设计原则</h2>
+<div class="outline-text-2" id="text-orge701f3d">
+<p>
+从 SEM Assistant 的架构中，可以提炼出几个通用的设计原则：
+</p>
+
+<p>
+原则一：*确定性管道 + LLM 有限调用*
+</p>
+
+<p>
+把"流程控制"和"文本处理"分成两层。流程用确定性代码（Elisp、Python、Shell 都行），LLM 只在需要理解或生成文本的环节介入。这样管道行为可预测、可调试、可测试。
+</p>
+
+<p>
+原则二：*文件契约*
+</p>
+
+<p>
+所有组件通过文件系统通信，约定好目录结构和文件名。比如 <code>/data/inbox-mobile.org</code> 是收件箱，=/data/tasks.org= 是任务输出。文件是接口——任何工具只要遵守文件格式就能接入。
+</p>
+
+<p>
+原则三：*标签即路由*
+</p>
+
+<p>
+用 Org-mode 的标签（=:task:=、=:link:=）作为路由条件，决定数据走哪条管道。简单、直观、用户可以在手机端直接控制。
+</p>
+
+<p>
+原则四：*操作数据对人类可读*
+</p>
+
+<p>
+所有数据都是纯文本 Org 文件，你可以直接打开看、直接编辑、直接用 git 管理。不依赖任何数据库或专有格式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0aea879" class="outline-2">
+<h2 id="org0aea879">安装与配置</h2>
+<div class="outline-text-2" id="text-org0aea879">
+<p>
+SEM Assistant 用 Docker Compose 部署，整体架构是三个容器：Emacs 守护进程、WebDAV 服务器、organice（手机端 Org 编辑器）。
+</p>
+
+<p>
+<b><b>前提条件：</b></b>
+</p>
+
+<ul class="org-ul">
+<li>一台有公网 IP 的服务器</li>
+<li>两个域名：一个给 WebDAV（比如 <code>org.example.com</code> ），一个给 organice（比如 <code>organice.example.com</code> ），都指向同一个 IP</li>
+<li>Docker 和 Docker Compose 已安装</li>
+</ul>
+
+<p>
+<b><b>第一步：克隆仓库并配置环境变量</b></b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">git clone https://github.com/SemyonSinchenko/sem-assistant-el.git
+<span class="org-builtin">cd</span> sem-assistant-el
+cp .env.example .env
+</pre>
+</div>
+
+<p>
+编辑 <code>.env</code> 文件，填入以下配置：
+</p>
+
+<pre class="example" id="org5735924">
+WEBDAV_DOMAIN=org.example.com
+ORGANICE_DOMAIN=organice.example.com
+ORGANICE_ORIGIN=https://organice.example.com
+WEBDAV_USERNAME=your-username
+WEBDAV_PASSWORD=your-password
+</pre>
+
+<p>
+<code>ORGANICE_ORIGIN</code> 必须严格匹配 <code>https://ORGANICE_DOMAIN</code> 。=ORGANICE_IMAGE= 是可选的，默认使用 <code>twohundredok/organice:5826</code> 。
+</p>
+
+<p>
+<b><b>第二步：申请 TLS 证书</b></b>
+</p>
+
+<p>
+两个域名都需要 HTTPS。用 certbot 申请：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">docker compose --profile certbot up -d certbot
+</pre>
+</div>
+
+<p>
+确认证书文件存在于 <code>/etc/letsencrypt/live/$DOMAIN/</code> 下（=fullchain.pem= 和 <code>privkey.pem</code> ）。
+</p>
+
+<p>
+<b><b>第三步：启动服务</b></b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">docker compose up -d webdav emacs
+</pre>
+</div>
+
+<p>
+这会启动 WebDAV 服务器和 Emacs 守护进程。organice 通过 WebDAV 容器的反向代理提供（根据 Host 头路由到 <code>ORGANICE_DOMAIN</code> ），不需要单独启动。
+</p>
+
+<p>
+CORS 策略是严格单源的——只允许 <code>ORGANICE_ORIGIN</code> 的跨域请求，且带凭证。OPTIONS 预检请求不需要认证（兼容浏览器），其他 WebDAV 方法仍需认证。
+</p>
+
+<p>
+<b><b>第四步：配置 git 同步</b></b>
+</p>
+
+<p>
+进入 Emacs 容器，配置 SSH 密钥和 git 身份：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#36827;&#20837;&#23481;&#22120;
+</span>docker compose exec emacs bash
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#37197;&#32622; git &#36523;&#20221;
+</span>git config --global user.name <span class="org-string">"Your Name"</span>
+git config --global user.email <span class="org-string">"you@example.com"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#30830;&#35748; SSH &#23494;&#38053;&#24050;&#23601;&#20301;
+</span>ls /root/.ssh/id_rsa
+</pre>
+</div>
+
+<p>
+<code>sem-git-sync-org-roam</code> 函数会用这个密钥 push 到远程仓库。
+</p>
+
+<p>
+<b><b>第五步：配置 LLM</b></b>
+</p>
+
+<p>
+项目需要配置 LLM 的 API 密钥和 endpoint。参考项目中的 <code>general-prompt.example.txt</code> 和 <code>arxiv-prompt.example.txt</code> 了解 prompt 模板的格式。
+</p>
+
+<p>
+<b><b>第六步：启动 cron 定时任务</b></b>
+</p>
+
+<p>
+项目自带 <code>crontab</code> 文件，定义了三个循环的触发频率。安装到容器中后，收件箱处理和 git 同步就会自动运行。
+</p>
+
+<p>
+你也可以跳过 cron，完全用手动触发（见上文的手动触发命令）。
+</p>
+
+<p>
+<b><b>日常使用流程</b></b>
+</p>
+
+<ol class="org-ol">
+<li>在手机浏览器打开 <code>https://organice.example.com</code> ，连接到你的 WebDAV</li>
+<li>编辑 <code>inbox-mobile.org</code> ，添加带 <code>:task:</code> 或 <code>:link:</code> 标签的条目，或者直接粘贴 URL 作为标题</li>
+<li>保存后，cron 会自动触发处理（或你手动执行 <code>sem-core-process-inbox</code> ）</li>
+<li>处理完的结果出现在 <code>tasks.org</code> 或 org-roam 笔记库中</li>
+<li>git 同步自动 push 到远程仓库</li>
+</ol>
+
+<p>
+<b><b>回滚</b></b>
+</p>
+
+<p>
+如果部署出问题，回滚步骤：
+</p>
+
+<ol class="org-ol">
+<li>保持 WebDAV 容器运行（数据还在）</li>
+<li>还原 <code>ORGANICE_*</code> 环境变量和 Apache 模板配置</li>
+<li>先重启 webdav 服务，再重启依赖服务</li>
+<li>certbot 继续管理现有证书，不需要额外操作</li>
+</ol>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://github.com/SemyonSinchenko/sem-assistant-el">https://github.com/SemyonSinchenko/sem-assistant-el</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/emacs">emacs</a> : <a href="../../../../../tags/org-mode">org-mode</a> : <a href="../../../../../tags/llm">llm</a> : <a href="../../../../../tags/ai">ai</a> : <a href="../../../../../tags/architecture">architecture</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; zuup3ixw3die3n0bckkvpevybe &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 dmsg 给 Elisp 加上结构化调试日志 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="emacs, elisp, debug, dmsg" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 dmsg 给 Elisp 加上结构化调试日志</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org784a88f">基本用法</a></li>
+<li><a href="#orgf53b4e1">%= 格式符：自动给变量加标签</a></li>
+<li><a href="#orgea48719">专用 buffer 和交互式浏览</a>
+<ul>
+<li><a href="#orgcc06745">调用栈自动捕获</a></li>
+<li><a href="#org6eeee50">过滤和导出</a></li>
+</ul>
+</li>
+<li><a href="#org2c4fd9a">拦截 message 和捕获错误</a></li>
+</ul>
+</div>
+</div>
+<p>
+写 Elisp 调试的时候，大多数人靠的就是 <code>message</code> 往 <code>*Messages*</code> buffer 里塞字符串。但用多了就会发现几个很烦的问题：
+</p>
+
+<ul class="org-ul">
+<li><code>*Messages*</code> 里什么都有: package 初始化的日志、mode 激活的信息、你自己的 debug 输出全混在一起，翻半天找不到想看的那条</li>
+<li>没有调用栈: 你看到一条消息，但完全不知道它是从哪个函数、哪条代码路径打出来的</li>
+<li>没有日志级别: debug 信息和 error 混在一起，没法按严重程度过滤</li>
+<li><code>*Messages*</code> 是个只读 buffer: 想过滤或者导出都得自己想办法</li>
+</ul>
+
+<p>
+dmsg.el<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup> 就是来解决这些问题的。它提供了带时间戳、日志级别和自动调用栈捕获的调试日志系统，还有一个专用的 dmsg-mode 让你交互式地浏览和过滤日志。
+</p>
+
+<div id="outline-container-org784a88f" class="outline-2">
+<h2 id="org784a88f">基本用法</h2>
+<div class="outline-text-2" id="text-org784a88f">
+<p>
+安装很简单，clone 仓库后 <code>require</code> 就行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'load-path <span class="org-string">"~/github/dmsg.el/"</span>)
+(<span class="org-keyword">require</span> '<span class="org-constant">dmsg</span>)
+</pre>
+</div>
+
+<pre class="example">
+dmsg
+</pre>
+
+
+<p>
+用 <code>dmsg</code> 宏打日志，默认级别是 debug：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-function</span> (x)
+  (dmsg <span class="org-string">"x is %S"</span> x))
+(my-function 42)
+</pre>
+</div>
+
+<pre class="example" id="orgd2a3435">
+* DBG [2026-04-23 09:50:41.015] x is 42
+</pre>
+
+<p>
+可以指定日志级别（debug / info / warn / error 四个级别，严重程度递增）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(dmsg 'warn <span class="org-string">"unexpected: %s"</span> <span class="org-string">"something odd"</span>)
+(dmsg 'error <span class="org-string">"failed: %s"</span> <span class="org-string">"connection lost"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orgbf4505f">
+WARN [2026-04-23] 09:51:21.883 [eval] unexpected: something odd
+ERR  [2026-04-23] 09:51:25.053 [eval] failed: connection lost
+</pre>
+
+<p>
+每条日志都会写入专用的 <code>*DEBUG*Messages*</code> buffer，不会和 <code>*Messages*</code> 混在一起。日志格式长这样：
+</p>
+
+<pre class="example" id="orgd0d2362">
+* DBG [2026-04-23 10:30:45.123] [my-function] x is 42
+</pre>
+
+<p>
+分别是日志级别（DBG）、时间戳、展开后的调用栈帧和消息内容。调用栈默认是隐藏的，后面会说怎么查看。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf53b4e1" class="outline-2">
+<h2 id="orgf53b4e1">%= 格式符：自动给变量加标签</h2>
+<div class="outline-text-2" id="text-orgf53b4e1">
+<p>
+dmsg 加了一个实用的格式符 <code>%=X</code> （X 是普通的 format 转换字符，比如 s、d、S），它会自动把参数变成 <code>label=value</code> 的形式，label 直接从源码的变量名提取：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let</span> ((buf <span class="org-string">"foo.el"</span>) (line 10))
+  (dmsg <span class="org-string">"at %=s %=d"</span> buf line))
+</pre>
+</div>
+
+<p>
+输出类似：
+</p>
+
+<pre class="example" id="org8a6d1f9">
+* DBG [2026-04-23 10:31:00.456] [eval] at buf=foo.el line=10
+</pre>
+
+<p>
+调试的时候如果一次打好几个变量，这个功能能省不少事——不用手动写 <code>buf=</code> 和 <code>line=</code> ，也避免搞混哪个值对应哪个变量。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgea48719" class="outline-2">
+<h2 id="orgea48719">专用 buffer 和交互式浏览</h2>
+<div class="outline-text-2" id="text-orgea48719">
+<p>
+dmsg 的日志写入 <code>*DEBUG*Messages*</code> buffer，这个 buffer 使用 dmsg-mode，提供了一组快捷键来浏览和过滤：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">快捷键</th>
+<th scope="col" class="org-left">功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>&lt;tab&gt;</code></td>
+<td class="org-left">切换紧凑调用链显示</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>b</code></td>
+<td class="org-left">在侧边窗口打开详细调用栈</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>c</code></td>
+<td class="org-left">隐藏/恢复所有当前条目</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>e</code></td>
+<td class="org-left">清空 buffer</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>f</code></td>
+<td class="org-left">按正则表达式过滤</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>s</code></td>
+<td class="org-left">将可见条目导出到带时间戳的 .log 文件</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>l1</code>-<code>l4</code></td>
+<td class="org-left">设置最低显示级别（1=debug, 4=error）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+header line 始终显示 <code>visible/total</code> 计数、活跃的过滤条件和当前级别阈值，一眼就能看出当前状态。
+</p>
+</div>
+
+<div id="outline-container-orgcc06745" class="outline-3">
+<h3 id="orgcc06745">调用栈自动捕获</h3>
+<div class="outline-text-3" id="text-orgcc06745">
+<p>
+每条日志都自动捕获了调用栈。默认状态下调用栈是隐藏的，按 <code>&lt;tab&gt;</code> 可以展开为紧凑的函数调用链：
+</p>
+
+<pre class="example" id="org359fdd9">
+my-function ← some-handler ← process-event
+</pre>
+
+<p>
+函数名是可点击的，点击后直接跳转到函数的定义位置（通过 <code>find-function</code> 实现）。
+</p>
+
+<p>
+按 <code>b</code> 可以在侧边窗口看到完整的调用栈详情，包含每个函数的参数值。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6eeee50" class="outline-3">
+<h3 id="org6eeee50">过滤和导出</h3>
+<div class="outline-text-3" id="text-org6eeee50">
+<p>
+dmsg 支持多种过滤方式，全部通过 overlay 实现——只改变显示，不修改 buffer 内容，随时可以恢复：
+</p>
+
+<ul class="org-ul">
+<li><code>f</code> 按正则过滤消息文本</li>
+<li><code>c</code> 隐藏/恢复所有当前条目</li>
+<li><code>l1</code> 到 <code>l4</code> 设置最低显示级别</li>
+<li><code>dmsg-max-entries</code> 限制最大显示条数（超出时自动隐藏最旧的条目）</li>
+</ul>
+
+<p>
+想把日志分享给别人或存档？按 <code>s</code> 可以把当前可见的条目导出到一个带时间戳的 <code>.log</code> 文件。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2c4fd9a" class="outline-2">
+<h2 id="org2c4fd9a">拦截 message 和捕获错误</h2>
+<div class="outline-text-2" id="text-org2c4fd9a">
+<p>
+除了主动调用 <code>dmsg</code> 打日志，dmsg 还提供了两个功能来对付已有的代码。
+</p>
+
+<p>
+<code>dmsg-on-message</code> 可以拦截 <code>message</code> 函数的调用，把匹配正则的输出也转到 dmsg buffer 里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(dmsg-on-message <span class="org-string">"error</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">|</span></span><span class="org-string">warning"</span>)  <span class="org-comment-delimiter">; </span><span class="org-comment">&#25318;&#25130;&#21253;&#21547; error &#25110; warning &#30340; message
+</span>(message <span class="org-string">"something error happened"</span>)
+(dmsg-on-message nil)                <span class="org-comment-delimiter">; </span><span class="org-comment">&#20851;&#38381;&#25318;&#25130;</span>
+</pre>
+</div>
+
+<p>
+这对于排查第三方包的日志特别有用——不用改别人的代码，直接把感兴趣的 <code>message</code> 输出捞到 dmsg 里来，还能看到调用栈。
+</p>
+
+<p>
+<code>dmsg-on-error</code> 可以给指定函数加上错误日志。当这个函数抛错时，错误会被记录为 error 级别，然后正常重新抛出，不影响原有的错误处理逻辑：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(dmsg-on-error 'my-problematic-function)
+</pre>
+</div>
+
+<p>
+这在调试 <code>post-command-hook</code> 里的间歇性错误时特别方便，因为这类错误往往被 Emacs 的错误处理吞掉了，你只知道"出了个错"但不知道具体是什么。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://github.com/haji-ali/dmsg.el">https://github.com/haji-ali/dmsg.el</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/emacs">emacs</a> : <a href="../../../../../tags/elisp">elisp</a> : <a href="../../../../../tags/debug">debug</a> : <a href="../../../../../tags/dmsg">dmsg</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; zuup3ixw3die3n0bckkvpevybe &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
