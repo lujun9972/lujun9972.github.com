@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Thu, 23 Apr 2026 10:22:56 UTC</pubDate>
-    <lastBuildDate>Thu, 23 Apr 2026 10:22:56 UTC</lastBuildDate>
+    <pubDate>Thu, 23 Apr 2026 15:09:53 UTC</pubDate>
+    <lastBuildDate>Thu, 23 Apr 2026 15:09:53 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -533,6 +533,43 @@ ls /root/.ssh/id_rsa
 <guid>https://lujun9972.github.io/blog/2026/04/23/sem-assistant-当-elisp-守护进程遇上-llm/index.html</guid>
 </item>
 <item>
+<title>TIL: 用 diff-hl 在 fringe 中显示 git 变更</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/til-用-diff-hl-在-fringe-中显示-git-变更/index.html</link>
+<description>读到 James Dyer 的一篇文章[fn:1]，介绍了 =diff-hl= 这个包——在 fringe（Emacs 窗口两侧的边栏）中高亮显示当前 buffer 相对于 git 最新提交的变更：新增的行标绿色，修改的行标黄色，删除的行标红色。不用跳出 buffer 就能看到自己改了什么。
+
+* 配置
+
+#+BEGIN_SRC emacs-lisp
+(use-package diff-hl
+  :ensure t
+  :hook (dired-mode . diff-hl-dired-mode)
+  :config
+  (global-diff-hl-mode 1)
+  (diff-hl-flydiff-mode 1)
+  (unless (display-graphic-p)
+    (diff-hl-margin-mode 1)))
+#+END_SRC
+
+几个要点：
+
+- =global-diff-hl-mode= 开启全局 fringe 高亮，但默认只在 *保存文件后* 更新
+- =diff-hl-flydiff-mode= 改为 *边打字边更新* ，不用先保存再看变更——这个几乎是必开的
+- =diff-hl-dired-mode= 在 dired 中用颜色标记哪些文件有 git 变更，一眼看出项目状态
+- =diff-hl-margin-mode= 是给终端用户（非图形界面）的回退方案——终端没有 fringe，改在行号旁边的 margin 区域显示
+
+* 配合内置 VC 工具
+
+=diff-hl= 的高亮位置跟 Emacs 内置的 VC（Version Control）工具是对齐的。把光标移到某行高亮处，按 =C-x v == （ =vc-diff= ），会直接跳到 diff 中对应的 hunk——不需要先记住改了哪里再去找。
+
+如果开了 =repeat-mode= （之前写过[fn:2]），第一次按 =C-x v ]= 跳到下一个变更后，后续只需按 =]= 就能继续跳，不用重复 =C-x v= 前缀。=]= 和 =[= 之间也能随意切换方向。
+
+[fn:1] https://www.emacs.dyerdwelling.family/emacs/20260421070329-emacs--getting-diff-hl-just-right/
+[fn:2] [[file:TIL-repeat-mode省去重复按键前缀.org][TIL: repeat-mode 省去重复按键前缀]]
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/til-用-diff-hl-在-fringe-中显示-git-变更/index.html</guid>
+</item>
+<item>
 <title>用 dmsg 给 Elisp 加上结构化调试日志</title>
 <link>https://lujun9972.github.io/blog/2026/04/23/用-dmsg-给-elisp-加上结构化调试日志/index.html</link>
 <description>写 Elisp 调试的时候，大多数人靠的就是 =message= 往 =*Messages*= buffer 里塞字符串。但用多了就会发现几个很烦的问题：
@@ -773,6 +810,109 @@ SCHEDULED: &lt;2026-04-25 Fri .+2d/4d&gt;
 </description>
 <pubDate>2026-04-23</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/23/用-org-habit-追踪非每日习惯/index.html</guid>
+</item>
+<item>
+<title>读：llm-test —— 用 LLM agent 驱动 Emacs 测试</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/读：llm-test-——-用-llm-agent-驱动-emacs-测试/index.html</link>
+<description>Andrew Hyatt（Emacs 核心贡献者）最近开源了一个实验性项目[fn:1]： =llm-test= 。它的核心想法是——用 LLM 代替人来测试 Emacs 包。你用自然语言描述&quot;用户应该看到什么&quot;，LLM agent 会启动一个干净的 Emacs 进程，像人一样操作它（按键、输入文字、执行命令），然后判断测试是否通过。
+
+* 怎么工作
+
+整个流程分四步：
+
+1. 用 YAML 文件写测试描述，就是一段英文说明要测什么、期望什么结果
+2. =llm-test= 解析 YAML，为每个测试描述注册一个 ERT 测试
+3. 运行测试时，启动一个 =emacs -Q= 的干净 daemon 进程
+4. LLM agent 通过 tool calling 驱动这个 Emacs，直到判定通过或失败
+
+#+BEGIN_SRC yaml
+group: auto-fill mode
+setup: |
+  Enable auto-fill-mode in a text-mode buffer.
+  Set fill-column to 40.
+tests:
+  - description: |
+      Type a long paragraph that exceeds fill-column.
+      Verify that the text is automatically wrapped.
+  - description: |
+      Type a numbered list item that exceeds fill-column.
+      Verify that continuation lines are indented properly.
+#+END_SRC
+
+这个例子测试的是 =auto-fill-mode= ：开一个文本 buffer，设置 =fill-column= 为 40，然后让 LLM 输入一段超过 40 列的文字，检查 Emacs 是否自动换行了。测试描述就是自然语言，不需要写一行 Elisp。
+
+* Agent 怎么&quot;看&quot; Emacs
+
+LLM agent 看不到图形界面——测试 Emacs 是以 daemon 模式运行的。那它怎么知道 Emacs 当前什么状态？
+
+答案是：每次 agent 执行完一个操作（按键、执行命令、eval 代码等）， =llm-test= 会自动附加一份 JSON 格式的 frame 快照。这个快照包含当前所有窗口的可见内容（就像截图，但是文字版）、光标位置、minibuffer 状态和 echo area 消息。
+
+#+BEGIN_SRC json
+{
+  &quot;selected-window&quot;: {&quot;number&quot;: 0, &quot;buffer&quot;: &quot;&lt;buffer name&gt;&quot;},
+  &quot;windows&quot;: [
+    {
+      &quot;number&quot;: 0,
+      &quot;buffer&quot;: &quot;&lt;buffer name&gt;&quot;,
+      &quot;mode&quot;: &quot;&lt;major mode&gt;&quot;,
+      &quot;point&quot;: 1,
+      &quot;lines&quot;: [&quot;&lt;visual line 1&gt;&quot;, &quot;&lt;visual line 2&gt;&quot;]
+    }
+  ],
+  &quot;minibuffer&quot;: {&quot;active&quot;: false, &quot;prompt&quot;: &quot;&quot;, &quot;input&quot;: &quot;&quot;},
+  &quot;message&quot;: &quot;&lt;echo area message&gt;&quot;
+}
+#+END_SRC
+
+Agent 不需要主动请求&quot;给我看看现在屏幕上有什么&quot;——每次操作后自动收到。这让 agent 的行为更像真人：按了一个键，&quot;看&quot;到结果，决定下一步做什么。
+
+Agent 可以调用的工具包括：
+
+- =eval-elisp= ：在测试进程中执行任意 Elisp 并返回结果
+- =send-keys= ：模拟按键（如 =C-x C-f= 、 =M-x= ）
+- =type-text= ：逐字输入文本（保留空格和特殊字符）
+- =run-command= ：按名称执行命令（比 =M-x= 更可靠）
+- =sleep= ：等待异步操作完成
+- =suggest-improvement= ：记录 UI/UX 改进建议（不影响测试结果）
+- =pass-test= / =fail-test= ：判定测试结果，结束循环
+
+整个 agent loop 最多跑 80 轮（ =llm-test-max-iterations= 默认值），每轮是一次 LLM 请求/响应往返。
+
+* 跟传统测试的区别
+
+传统的 Emacs 测试用 ERT（Emacs Lisp 测试框架），测试代码直接调用函数、检查返回值。比如测试 =auto-fill= ，你要写 Elisp 设置 buffer、插入文字、检查换行位置。这测的是 *函数的行为* 。
+
+=llm-test= 测的是 *用户的体验* 。Agent 不知道你的内部函数怎么调用——它只知道按键、看屏幕、判断结果是否符合描述。这跟真实用户使用 Emacs 的方式一模一样。
+
+这种思路的优势：
+
+- *能测传统测试很难覆盖的场景* ：比如&quot; =M-x= 输入命令时的补全是否正确&quot;、&quot; =dired= 中按 =g= 刷新后文件列表是否更新&quot;——这些涉及多个命令组合和 UI 状态变化的交互流程，用 Elisp 写测试非常痛苦，用自然语言描述却很自然
+- *测试描述就是文档* ：YAML 里的自然语言描述既是测试用例，也是用户行为的文档
+- *对被测代码零侵入* ：不需要为测试暴露内部接口或写 test helper
+
+但也有明显的代价：
+
+- *非确定性* ：同一个测试跑两次，LLM 可能走不同的操作路径，甚至得出不同的结论。这不是传统测试的&quot;确定性&quot;范式
+- *成本* ：每个测试都要多次调用 LLM API，一个测试组跑下来可能消耗不少 token
+- *速度* ：每轮 agent loop 都是一次 API 调用，比直接 eval Elisp 慢几个数量级
+- *依赖模型质量* ：Andrew Hyatt 在 README 中建议使用 Claude Sonnet 级别的模型，不过他指出只要指令足够清晰，便宜的模型也能胜任
+
+* &quot;LLM 当测试员&quot;的适用场景
+
+=llm-test= 不会取代传统 ERT 测试。对于&quot;函数 =f(x)= 输入 5 应该返回 10&quot;这类确定性逻辑测试，Elisp 单元测试更快更准。
+
+它适合的是另一类测试——那些&quot;人一眼就能看出来对不对，但用代码描述很麻烦&quot;的场景：
+
+- 包的 UI 工作流是否顺畅（按键 → 期望看到某个界面）
+- 多步骤交互的端到端验证（打开文件 → 编辑 → 保存 → 确认状态）
+- 发现 UI/UX 问题（ =suggest-improvement= 工具让 agent 可以主动提出改进建议）
+
+这个思路也可以延伸到其他 GUI 应用——只要你能给 LLM 提供&quot;屏幕状态&quot;和&quot;操作接口&quot;，就能用同样的 agent loop 模式做测试。 =llm-test= 的 frame state JSON 快照设计就是一个很好的参考：不需要真的截图，把视觉信息结构化为文本就够了。
+
+[fn:1] https://github.com/ahyatt/llm-test
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/读：llm-test-——-用-llm-agent-驱动-emacs-测试/index.html</guid>
 </item>
 <item>
 <title>fcitx5 下 Emacs 无法切换输入法的排查</title>
@@ -1025,6 +1165,44 @@ Lucid 工具包不使用 =GTK_IM_MODULE= ，只走 XIM 协议。所以对 Emacs 
 <guid>https://lujun9972.github.io/blog/2026/04/22/fcitx5-下-emacs-无法切换输入法的排查/index.html</guid>
 </item>
 <item>
+<title>TIL: AI 时代的橡皮鸭调试</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/til-ai-时代的橡皮鸭调试/index.html</link>
+<description>读到 opensourceforu 的一篇文章[fn:1]，提醒我一个容易忘记的事：调试效率的关键不是工具多强，而是你能不能把问题解释清楚。
+
+* 橡皮鸭调试法
+
+&quot;橡皮鸭调试&quot;（Rubber Duck Debugging）这个名字来自 *The Pragmatic Programmer* （1999 年）这本书：程序员桌上放一只橡皮鸭，卡住的时候就对着鸭子逐行解释代码。很多时候解释到一半，自己就发现问题了。
+
+这个现象其实大家都不陌生。你肯定经历过：写了半天邮件描述一个 bug，写到一半突然想通了；或者在会议上给同事讲一个问题的来龙去脉，讲着讲着自己就意识到了错在哪。鸭子只是个象征，真正的机制是： *把模糊的想法变成清晰的表述，这个过程本身就是思考* 。
+
+为什么解释能帮你找到 bug？因为脑子里想的逻辑和嘴里说出来的逻辑不一样。脑子里你可以跳步、模糊处理、含糊带过；但要说给别人听，你就必须一步步走：输入是什么？然后呢？这个条件为什么需要？失败了怎么办？这些被跳过的&quot;然后呢&quot;往往是 bug 藏身的地方。另外，说出来的假设会变得可疑——&quot;这个值不可能为 null&quot;一旦说出口，你马上会意识到&quot;等等，万一呢？&quot;
+
+* AI 是一只会提问的鸭子
+
+传统橡皮鸭是被动倾听者——你对着它说，它不回应。AI 不同，它可以主动提问：&quot;你确定这个 API 调用不会超时吗？&quot;&quot;如果输入是空列表会怎样？&quot;
+
+但用 AI 调试有一个陷阱：如果你直接把代码丢给 AI 说&quot;帮我找 bug&quot;，你只是在用 AI 替你思考。短期内问题解决了，长期来看你的调试能力没成长。正确的用法是把 AI 当鸭子而不是当助手——你来解释，让它质疑你的逻辑。
+
+一个实用的 prompt：
+
+#+begin_example
+扮演一只橡皮鸭。不要直接给我解决方案。
+听我解释代码逻辑，然后指出不清晰的地方、
+遗漏的步骤或错误的假设。
+#+end_example
+
+这样 AI 会帮你发现思维盲点，而不是直接帮你填上。
+
+* 为什么这个方法仍然重要
+
+AI 工具越来越强，一键就能生成代码、定位错误。但软件质量的上限取决于你对问题的理解程度，而不是工具的能力。不管工具怎么进化，&quot;解释清楚&quot;这项能力永远是稀缺的——因为它的本质不是技术能力，而是把混乱的直觉变成有序的逻辑。
+
+[fn:1] https://www.opensourceforu.com/2026/04/the-relevance-of-rubber-duck-debugging-in-the-age-of-ai/
+</description>
+<pubDate>2026-04-23</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/til-ai-时代的橡皮鸭调试/index.html</guid>
+</item>
+<item>
 <title>Clojure X-Men：当编程语言特性变成超能力</title>
 <link>https://lujun9972.github.io/blog/2026/04/23/clojure-x-men：当编程语言特性变成超能力/index.html</link>
 <description>Carin Meier 在 2014 年写过一篇有趣的短文[fn:1]：假设有人天生拥有 Clojure 语言特性的超能力，他们会是什么样的人？原文只有故事没有代码。本文借用她的创意，为每个&quot;超能力&quot;补上真实的代码示例，看看这些特性到底在做什么。
@@ -1211,568 +1389,6 @@ Clojure 的设计哲学是：能用数据解决的问题，就不要发明新概
 </description>
 <pubDate>2026-04-23</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/23/clojure-x-men：当编程语言特性变成超能力/index.html</guid>
-</item>
-<item>
-<title>fcitx 启动后键盘输入卡顿的排查</title>
-<link>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</link>
-<description>* 背景
-
-=fcitx= 是 Linux 下常用的输入法框架，用于在英文环境中输入中文、日文、韩文等语言。它的工作方式是&quot;拦截&quot;应用程序的键盘输入，在用户敲拼音时弹出候选词窗口，选中后把中文字符提交给应用程序。
-
-这个&quot;拦截&quot;机制意味着 =fcitx= 会插入到键盘事件的传递链路中。如果这条链路的某个环节出了问题，键盘输入就会受影响——而我遇到的就是这种情况。
-
-* 故障现象
-
-某天，我发现启动 =fcitx= 后，整个键盘输入变得 *非常卡* ——敲一个键要等半秒甚至更久才有反应。但鼠标完全正常，丝毫不受影响。不启动 =fcitx= 就一切如常。
-
-键盘卡而鼠标没事，这个现象很诡异。直觉告诉我：一定是 =fcitx= 做了什么只影响键盘、不影响鼠标的事情。
-
-* 排查过程
-
-** 第一步：收集基础信息
-
-先搞清楚环境。我的系统是 Arch Linux，窗口管理器是 =awesome= ，显示服务器是 =Xorg= ， =fcitx= 版本是 4.2.9.9（fcitx4）。
-
-#+begin_src shell
-  uname -r
-  # 6.19.12-arch1-1
-
-  fcitx --version
-  # fcitx version: 4.2.9.9
-#+end_src
-
-然后运行 =fcitx= 自带的诊断工具：
-
-#+begin_src shell
-  DISPLAY=:0 fcitx-diagnose
-#+end_src
-
-诊断结果暴露了大量问题，下面列出关键部分并逐一说明。
-
-*** Fcitx 状态：DBus 通信断裂
-
-#+begin_example
-# Fcitx State:
-4.  `fcitx-remote`:
-
-    **Cannot connect to fcitx correctly.**
-
-5.  DBus interface:
-
-    **Cannot find DBus name `org.fcitx.Fcitx` owner.**
-
-    **Cannot find pid of DBus name `org.fcitx.Fcitx` owner.**
-#+end_example
-
-=fcitx-remote= 无法连接 =fcitx= ，DBus 总线上也找不到 =org.fcitx.Fcitx= 这个服务名。这意味着 =fcitx= 虽然进程在跑，但它 *没有成功注册到会话总线* 。
-
-#+BEGIN_QUOTE
-*小知识：什么是 DBus？*
-
-DBus 是 Linux 桌面环境中的 *进程间通信* （IPC）机制。你可以把它想象成一个&quot;内部公告栏&quot;：各个程序在上面发布自己的服务，其他程序通过公告栏找到并调用这些服务。
-
-对 =fcitx= 来说，DBus 的作用包括：
-- 输入法切换通知（从中文切到英文）
-- 输入法状态查询（当前是中文还是英文模式？）
-- 配置变更同步（修改了快捷键后立即生效）
-
-如果 DBus 通信断了，这些操作要么失败，要么阻塞等待超时。
-#+END_QUOTE
-
-更进一步，检查进程列表发现 =fcitx= 启动了一个 *私有的 dbus-daemon= ：
-
-#+begin_example
-  lujun9972  27481  /usr/bin/dbus-daemon --syslog --fork ... \
-    --config-file /usr/share/fcitx/dbus/daemon.conf
-#+end_example
-
-正常情况下， =fcitx= 应该使用桌面会话的 DBus（ =/run/user/1000/bus= ），但它退而求其次启动了自己的私有 DBus 实例。这说明 =fcitx= 启动时会话总线不可用（或者地址不对）。私有总线意味着其他应用无法通过标准 DBus 接口与 =fcitx= 通信，输入法切换、状态同步等功能全部受影响。
-
-*** 前端模块：环境变量缺失
-
-#+begin_example
-# Frontends setup:
-## Xim:
-1.  `${XMODIFIERS}`:
-
-    **XMODIFIERS is not set**
-
-## Qt:
-1.  qt4 - `${QT4_IM_MODULE}`:
-
-    **Please set environment variable QT4_IM_MODULE ...**
-
-2.  qt5 - `${QT_IM_MODULE}`:
-
-    **Please set environment variable QT_IM_MODULE ...**
-
-## Gtk:
-1.  gtk - `${GTK_IM_MODULE}`:
-
-    **Please set environment variable GTK_IM_MODULE ...**
-#+end_example
-
-三个关键环境变量（ =XMODIFIERS= 、 =QT_IM_MODULE= 、 =GTK_IM_MODULE= ）全部未设置。不过这一条有 *误导性* ——我检查了 =~/.xinitrc= ，里面确实有设置这些变量，只是 =fcitx-diagnose= 运行所在的 shell 环境没继承到 X 会话的环境变量。所以这个问题的严重程度需要打个问号。
-
-#+BEGIN_QUOTE
-*小知识：为什么需要三个环境变量？*
-
-- =XMODIFIERS=@im=fcitx= ：告诉 *所有 X11 应用* 通过 XIM 协议连接输入法服务器。这是最底层的兼容方案，几乎所有 X 应用都支持。
-- =GTK_IM_MODULE=fcitx= ：让 *GTK 应用* 使用专门的 fcitx IM 模块，比 XIM 性能更好、体验更流畅（支持光标跟随、预编辑等）。
-- =QT_IM_MODULE=fcitx= ：同理，让 *Qt 应用* 使用专门的 fcitx IM 模块。
-
-三个变量的作用范围不同但互补： =XMODIFIERS= 是兜底方案， =GTK_IM_MODULE= 和 =QT_IM_MODULE= 是针对特定框架的优化方案。
-#+END_QUOTE
-
-*** crash.log：BadWindow 错误
-
-#+begin_example
-  3.  `~/.config/fcitx/log/crash.log`:
-
-      fcitx: BadWindow (invalid Window parameter)
-#+end_example
-
-=crash.log= 中记录了一次 =BadWindow= 错误。这是 X11 协议中的经典错误，表示 =fcitx= 尝试操作一个不存在或已销毁的窗口。这通常发生在窗口关闭时 =fcitx= 还没来得及清理对该窗口的引用。虽然未必直接导致卡顿，但说明 =fcitx= 的窗口管理与 X 服务器的状态存在不同步。
-
-*** 配置工具：GTK2 模块缺失
-
-#+begin_example
-# Fcitx Configure UI:
-2.  Config GUI for gtk2:
-
-    **Config GUI for gtk2 not found.**
-
-...
-
-## Gtk:
-1.  gtk - gtk-query-immodules:
-
-    **Failed to find fcitx in the output of `/usr/bin/gtk-query-immodules-2.0`**
-    **Cannot find fcitx im module for gtk 2.**
-#+end_example
-
-GTK2 的 fcitx 输入法模块缺失。这在 2026 年影响不大——GTK2 应用已经很少见了，而且如果 =XMODIFIERS= 设置正确，GTK2 应用仍可通过 XIM 协议使用输入法。
-
-*** Locale 警告
-
-#+begin_example
-3.  XIM for Emacs:
-
-    **Your LC_CTYPE is set to en_US.UTF-8 instead of one of zh, ja, ko.
-    You may not be able to use input method in emacs because of
-    an really old emacs bug that upstream refuse to fix for years.**
-#+end_example
-
-这是一个 Emacs 的古老 bug ：当 =LC_CTYPE= 不是中日韩 locale 时，Emacs 的 XIM 输入可能不工作。对我来说影响不大，因为我用的是 Emacs 内置的输入法支持，不走 XIM 。
-
-** 第二步：发现键盘设备被禁用
-
-=fcitx-diagnose= 虽然暴露了很多问题，但没有一个能直接解释&quot;为什么键盘卡&quot;。我需要换个角度思考：
-
-- *键盘卡，鼠标没事* → 两种设备的处理路径不同
-- 在 X11 中，键盘和鼠标是 *独立的设备* ，各有各的事件传递管道
-- 如果 =fcitx= 只干扰了键盘的管道而没有干扰鼠标的，那问题一定出在键盘设备的 *X 层面配置* 上
-
-所以我用 =xinput= （X Input 扩展的命令行工具）来检查 X11 是怎么看待键盘设备的：
-
-#+begin_src shell
-  DISPLAY=:0 xinput list-props &quot;AT Translated Set 2 keyboard&quot;
-#+end_src
-
-输出中有一行：
-
-#+begin_example
-  Device Enabled (176):  0
-#+end_example
-
-=Device Enabled= 是 *0* ！物理键盘在 X 层面被 *禁用* 了！
-
-再看设备列表：
-
-#+begin_src shell
-  DISPLAY=:0 xinput list
-#+end_src
-
-#+begin_example
-  ⎡ Virtual core pointer                      id=2  [master pointer  (3)]
-  ⎜   ↳ Virtual core XTEST pointer            id=4  [slave  pointer  (2)]
-  ⎣ Virtual core keyboard                     id=3  [master keyboard (2)]
-      ↳ Virtual core XTEST keyboard           id=5  [slave  keyboard (3)]
-  ∼ AT Translated Set 2 keyboard              id=10 [floating slave]
-  ∼ ThinkPad Extra Buttons                    id=13 [floating slave]
-  ...
-#+end_example
-
-物理键盘前面的符号是 =~= （tilde），表示它是 *floating slave* ——一个浮动的、没有挂载到任何 master 设备上的从设备。正常情况下，物理键盘应该是 =↳= （attached slave），挂载在 master keyboard 下面。
-
-#+BEGIN_QUOTE
-*小知识：X11 的输入设备层级*
-
-X11 的输入设备分为三层：
-
-1. *Master 设备* ：虚拟的核心设备（master keyboard + master pointer），是应用程序看到的&quot;键盘&quot;和&quot;鼠标&quot;
-2. *Slave 设备* ：物理设备，attach 到 master 上，通过 master 将事件传递给应用程序
-3. *Floating slave* ：物理设备但 *没有* attach 到任何 master，事件走另一条路径
-
-当物理键盘变成 floating slave 且被禁用时，键盘事件只能通过更慢的回退路径（如 XIM 或 XKB 扩展）传递，这就是输入卡顿的原因。
-#+END_QUOTE
-
-** 第三步：临时修复——重新启用键盘
-
-我尝试了两个操作：
-
-#+begin_src shell
-  # 将键盘重新挂载到 master keyboard
-  DISPLAY=:0 xinput reattach 10 3
-
-  # 重新启用键盘设备
-  DISPLAY=:0 xinput enable &quot;AT Translated Set 2 keyboard&quot;
-#+end_src
-
-执行后确认：
-
-#+begin_example
-  Device Enabled (176):  1
-#+end_example
-
-键盘恢复了正常。这证实了： *键盘被禁用和分离就是卡顿的直接原因* 。
-
-** 第四步：定位根因——fcitx-xkb 插件
-
-为什么键盘会被禁用？回到 =fcitx-diagnose= 的输出，我注意到 =fcitx= 加载了大量插件：
-
-#+begin_example
-  Found 36 enabled addons:
-      fcitx-xkb
-      fcitx-xkbdbus
-      fcitx-x11
-      fcitx-xim
-      ...
-#+end_example
-
-其中 =fcitx-xkb= 和 =fcitx-xkbdbus= 这两个插件引起了我的注意。 =fcitx-xkb= 的功能是接管 X 的键盘布局管理（XKB），当它启动时会：
-
-1. 接管 XKB 布局控制权
-2. 通过自己的管道处理键盘事件
-
-它是怎么把物理键盘搞成 disabled + floating 的？我没有在源码中逐行确认，但推理链条很清楚：
-
-- =fcitx-xkb= 启动前：键盘正常（ =Device Enabled = 1= ，attached slave ）
-- =fcitx-xkb= 启动后：键盘被禁用且分离
-- 停止 =fcitx= 后手动 =xinput enable= + =reattach= ：键盘恢复正常
-- 鼠标设备完全不受影响（ =fcitx-xkb= 只管键盘布局，不管鼠标）
-
-三个事实指向同一个结论： *=fcitx-xkb= 在接管键盘布局时，错误地禁用并分离了物理键盘设备* 。
-
-而鼠标走的是完全独立的 XInput 路径，不受 XKB 插件影响。这完美解释了&quot; *键盘卡而鼠标没事* &quot;的现象。
-
-同时，诊断还发现了 DBus 通信问题：
-
-#+begin_example
-  Cannot connect to fcitx correctly.
-  Cannot find DBus name org.fcitx.Fcitx owner.
-#+end_example
-
-=fcitx-remote= 也无法连接 =fcitx= ，说明 DBus 通信链路是断的。 =fcitx-xkbdbus= 插件需要通过 DBus 传递键盘状态，如果 DBus 通信断了，每次按键都可能在等待一个永远不会到来的 DBus 响应，进一步加剧延迟。
-
-*** 根因链条
-
-#+begin_example
-  fcitx4 启动
-    → fcitx-xkb 插件接管 X 键盘布局
-      → 禁用/分离物理键盘设备
-        → 键盘事件走慢速回退路径
-          → 再叠加 DBus 通信断裂
-            → 每次按键都卡
-#+end_example
-
-* 解决方案
-
-我选择了升级到 =fcitx5= ，因为 =fcitx4= 太老了（4.2.9.9），它的 XKB 集成有 bug。 =fcitx5= 已经完全重写了 XKB 管理模块，不会有这个问题。
-
-不过，如果你暂时不想升级，也有两个轻量的替代方案：
-
-1. *禁用 fcitx-xkb 插件* ：在 =~/.config/fcitx/conf/= 中创建 =fcitx-xkb.conf= ，设置 =Enabled=False= ，然后重启 =fcitx= 。代价是失去通过 =fcitx= 管理键盘布局的能力（如果你只用英文布局，无影响）。
-2. *在 .xinitrc 中加修复命令* ：在 =fcitx= 启动之后加一行 =xinput enable &quot;AT Translated Set 2 keyboard&quot;= ，强制重新启用键盘。
-
-** 升级到 fcitx5
-
-#+begin_src shell
-  # 移除 fcitx4 所有包
-  sudo pacman -Rns fcitx fcitx-configtool fcitx-googlepinyin \
-    fcitx-mozc fcitx-qt4 fcitx-qt5 fcitx-qt6 fcitx-rime \
-    fcitx-sogoupinyin fcitx-sunpinyin
-#+end_src
-
-#+begin_src shell
-  # 安装 fcitx5 全家桶
-  sudo pacman -S fcitx5 fcitx5-configtool fcitx5-gtk fcitx5-qt \
-    fcitx5-chinese-addons fcitx5-mozc fcitx5-rime fcitx5-pinyin-zhwiki
-#+end_src
-
-** 更新环境变量
-
-=fcitx4= 和 =fcitx5= 的环境变量值不同，需要修改 =~/.xinitrc= ：
-
-#+begin_example
-  # 旧的 (fcitx4)
-  export GTK_IM_MODULE=fcitx
-  export QT_IM_MODULE=fcitx
-  export XMODIFIERS=&quot;@im=fcitx&quot;
-
-  # 新的 (fcitx5)
-  export GTK_IM_MODULE=fcitx5
-  export QT_IM_MODULE=fcitx5
-  export XMODIFIERS=&quot;@im=fcitx5&quot;
-#+end_example
-
-#+BEGIN_QUOTE
-*小知识：为什么环境变量值要改？*
-
-=GTK_IM_MODULE= 和 =QT_IM_MODULE= 告诉 GTK/Qt 应用加载哪个输入法模块。 =fcitx= 和 =fcitx5= 是两套独立的 IM 模块共享库，名字不同。如果环境变量还指向 =fcitx= ，应用会尝试加载一个已经不存在的 =im-fcitx.so= ，结果就是找不到输入法。
-#+END_QUOTE
-
-升级后重新登录 X 会话，一切正常，键盘输入丝般顺滑。
-
-* 输入法对照表
-
-升级过程中，输入法引擎也需要对应替换：
-
-| fcitx4 包             | fcitx5 包                | 说明             |
-|-----------------------+--------------------------+------------------|
-| =fcitx=               | =fcitx5=                 | 核心框架         |
-| =fcitx-configtool=    | =fcitx5-configtool=      | 图形配置工具     |
-| =fcitx-sunpinyin=     | =fcitx5-chinese-addons=  | 拼音（内置更优） |
-| =fcitx-sogoupinyin=   | =fcitx5-chinese-addons=  | 拼音（内置更优） |
-| =fcitx-googlepinyin=  | =fcitx5-chinese-addons=  | 拼音（内置更优） |
-| =fcitx-mozc=          | =fcitx5-mozc=            | 日文输入         |
-| =fcitx-rime=          | =fcitx5-rime=            | Rime 输入        |
-| =fcitx-qt5/6=         | =fcitx5-qt=              | Qt IM 模块       |
-| （无）                | =fcitx5-gtk=             | GTK IM 模块      |
-| （无）                | =fcitx5-pinyin-zhwiki=   | 维基百科词库     |
-
-值得一提的是， =fcitx-sogoupinyin= （搜狗拼音）没有 fcitx5 版本，但 =fcitx5-chinese-addons= 内置的拼音引擎带云拼音功能，体验不逊于搜狗。
-
-* 复盘
-
-** 排查思路
-
-这次排查的关键转折点是用 =xinput list-props= 检查物理键盘的状态。如果只停留在&quot; =fcitx= 导致卡顿&quot;的表面，可能会一直猜测是 =fcitx= 性能问题，而不会发现真正的原因是 =X11= 层面的设备被禁用了。
-
-整个排查过程遵循了一个核心原则： *先找根因，再动手修* 。
-
-#+begin_example
-  现象：键盘输入卡顿
-    │
-    ├─ 1. fcitx-diagnose 收集信息
-    │     → 发现 DBus 断裂、环境变量缺失等多个异常
-    │
-    ├─ 2. xinput list-props 检查键盘设备
-    │     → Device Enabled = 0，键盘被禁用！
-    │
-    ├─ 3. xinput list 看设备拓扑
-    │     → 物理键盘是 floating slave，未挂载到 master
-    │
-    ├─ 4. xinput enable + reattach 临时修复
-    │     → 卡顿消失，确认根因
-    │
-    └─ 5. 定位 fcitx-xkb 插件为罪魁祸首
-          → 升级到 fcitx5 彻底解决
-#+end_example
-
-** 经验教训
-
-1. *=xinput= 是排查 X11 键盘/鼠标问题的利器* ： =xinput list= 看设备拓扑， =xinput list-props= 看设备属性， =xinput enable/disable= 控制设备开关
-2. *输入法问题不一定在输入法层面* ：这次表面是 =fcitx= 的锅，实际上是 =fcitx= 的 XKB 插件把 X11 的设备搞乱了，根因在 X 输入子系统
-3. *老软件就该升级* ： =fcitx4= 已经停止维护， =fcitx5= 不仅修复了这类 bug ，架构也更现代。在 Arch Linux 这种滚动更新的发行版上，抱着旧版本不放只会积累技术债
-</description>
-<pubDate>2026-04-22</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/22/fcitx-启动后键盘输入卡顿的排查/index.html</guid>
-</item>
-<item>
-<title>TIL: 早期网页的图片热区导航</title>
-<link>https://lujun9972.github.io/blog/2026/04/22/til-早期网页的图片热区导航/index.html</link>
-<description>读到 Heydon Pickering 的一篇文章，才知道 HTML 里有个 =&lt;area&gt;= 元素，专门用来在一张图片上定义可点击区域——这种技术叫 /image map/ 。
-
-#+BEGIN_SRC html
-&lt;map name=&quot;mySite&quot;&gt;
-  &lt;area
-    shape=&quot;poly&quot;
-    coords=&quot;48,249,0,96,129,138&quot;
-    href=&quot;https://example.com/about&quot;
-    alt=&quot;关于本站&quot; /&gt;
-  &lt;area
-    shape=&quot;poly&quot;
-    coords=&quot;68,259,10,106,139,148&quot;
-    href=&quot;https://example.com/contact&quot;
-    alt=&quot;联系我&quot; /&gt;
-&lt;/map&gt;
-&lt;img usemap=&quot;#mySite&quot; src=&quot;/path/to/homepage.jpg&quot; alt=&quot;欢迎访问&quot; /&gt;
-#+END_SRC
-
-用 =&lt;map&gt;= 把多个 =&lt;area&gt;= 包起来，再在 =&lt;img&gt;= 上用 =usemap= 属性关联，就能让一张图片的不同区域指向不同的链接。 =shape= 支持 =rect= （矩形）、 =circle= （圆形）和 =poly= （多边形）， =coords= 是像素坐标。
-
-这种做法在 2000 年代初很流行。那时候没有 =border-radius= ，没有 web fonts ，CSS 能做的事很少。很多&quot;网页&quot;其实就是设计师在 Photoshop 或 FrontPage 里画好的一张大图，整个塞进 HTML ，然后用 image map 标出导航区域。比起当时更流行的表格布局（在 Dreamweaver 里拖半天单元格，打开浏览器发现全乱了），image map 至少坐标不会跑位。
-
-当然问题也很大：图片大加载慢，文字不可选中不可搜索，屏幕阅读器只能读出&quot;一张图片加几个链接&quot;，而且 =coords= 是像素值，图片一缩放区域就全歪了。后来 CSS 能力跟上了，这种做法就自然消失了。
-
-参考：[[https://heydonworks.com/article/the-area-element/][The area element - HeydonWorks]]
-</description>
-<pubDate>2026-04-22</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/22/til-早期网页的图片热区导航/index.html</guid>
-</item>
-<item>
-<title>用 Emacs 自动生成每周链接推荐</title>
-<link>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</link>
-<description>原文：[[https://localghost.dev/blog/automated-weekly-links-posts-with-raindrop-io-and-eleventy/][Automated weekly links posts with raindrop.io and Eleventy]]
-
-Sophie Koonin 在一篇博客中描述了她的自动化链接推荐方案：用 Raindrop.io（一个书签管理工具）收集链接，用 Eleventy（一个静态网站生成器）把链接渲染成博文，再用 GitHub Actions 每周日定时跑脚本，自动 commit 和发布。整条链路不需要手动操作，唯一要做的事就是平时看到好文章时随手收藏一下。
-
-这套方案的核心思路—— *把&quot;每周手动发博文&quot;拆解成&quot;收集 → 生成 → 发布&quot;三步自动化* ——并不依赖特定工具。下面我用 Emacs + Org-mode 重新实现同样的效果，因为我的博客本身就是用 EGO（Emacs Git Org，一个基于 Org-mode 的静态站点生成器）构建的。
-
-** 整体链条
-
-#+begin_src
-看到好文章 → org-capture 保存链接到 links.org
-                      ↓
-          GitHub Actions 每周日定时运行 elisp 脚本
-                      ↓
-         从 links.org 提取本周链接 → 生成 Org 博文
-                      ↓
-            自动 commit → 触发博客构建 → 发布
-#+end_src
-
-** 第一步：org-capture 收集链接
-
-在博客仓库中创建一个 =links.org= 文件专门存放链接，然后配一个 org-capture 模板：
-
-#+begin_src emacs-lisp
-(add-to-list &#39;org-capture-templates
-  &#39;(&quot;l&quot; &quot;收集链接&quot; entry (file &quot;~/blog/links.org&quot;)
-    &quot;* %? %t\n  %x\n&quot; :empty-lines 1))
-#+end_src
-
-使用方法：在浏览器里复制 URL，切到 Emacs， =M-x org-capture= ，选 =l= ，输入链接标题， =C-c C-c= 保存。 =%t= 插入当天日期（ =&lt;2026-04-19 Sat&gt;= 格式）， =%x= 粘贴剪贴板中的 URL。
-
-收集到的内容示例：
-
-#+begin_src org
-,* 一篇不错的 Rust 教程 &lt;2026-04-19 Sat&gt;
-  https://example.com/rust-tutorial
-
-,* Hacker News 上关于 Emacs 的讨论 &lt;2026-04-20 Sun&gt;
-  https://news.ycombinator.com/...
-  这篇讨论串里有几个关于 tramp 配置的好建议
-#+end_src
-
-** 第二步：elisp 脚本生成博文
-
-接下来需要一个 elisp 函数，读取 =links.org= ，筛选出本周的链接，生成一篇 EGO 格式的博文。
-
-#+begin_src emacs-lisp
-(defun my/generate-weekly-links-post (links-file output-dir)
-  &quot;从 LINKS-FILE 提取本周链接，生成博文到 OUTPUT-DIR.&quot;
-  (interactive &quot;fLinks file: \nDOutput directory: &quot;)
-  (let* ((today (format-time-string &quot;%Y-%m-%d&quot;))
-         (today-prefix (format &quot;&lt;%s&quot; today))
-         (week-ago-time (time-subtract (current-time) (days-to-time 7)))
-         (week-ago-prefix (format &quot;&lt;%s&quot;
-                                  (format-time-string &quot;%Y-%m-%d&quot; week-ago-time)))
-         links)
-    (with-temp-buffer
-      (insert-file-contents links-file)
-      (goto-char (point-min))
-      (while (re-search-forward
-              &quot;^\\* \\(.+?\\) \\(&lt;[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\} [^&gt;]+&gt;\\)&quot;
-              nil t)
-        (let* ((title (match-string 1))
-               (ts (match-string 2))
-               (body-start (1+ (line-end-position)))
-               (body-end (save-excursion
-                           (if (re-search-forward &quot;^\\*&quot; nil t)
-                               (1- (match-beginning 0))
-                             (point-max))))
-               (body (string-trim
-                      (buffer-substring-no-properties body-start body-end))))
-          (when (and (not (string&lt; ts week-ago-prefix))
-                     (string&lt; ts today-prefix))
-            (push (list title body) links)))))
-    (when links
-      (let ((post-file (expand-file-name
-                        (format &quot;每周链接推荐-%s.org&quot; today) output-dir))
-            (links-count (length links)))
-        (with-temp-buffer
-          (insert (format &quot;#+TITLE: 每周链接推荐 %s\n&quot; today))
-          (insert &quot;#+AUTHOR: lujun9972\n&quot;)
-          (insert &quot;#+TAGS: Emacs之怒\n&quot;)
-          (insert (format &quot;#+DATE: [%s %s]\n&quot;
-                          today (let ((system-time-locale &quot;zh_CN.utf-8&quot;))
-                                  (format-time-string &quot;%a&quot;))))
-          (insert &quot;#+LANGUAGE: zh-CN\n&quot;)
-          (insert &quot;#+OPTIONS: H:6 num:nil toc:t \\n:nil ::t |:t ^:nil -:nil f:t *:t &lt;:nil\n\n&quot;)
-          (insert &quot;本周收集的有意思的链接。\n\n&quot;)
-          (dolist (link (nreverse links))
-            (let ((title (nth 0 link))
-                  (body (nth 1 link)))
-              (if (string-empty-p body)
-                  (insert (format &quot;- %s\n&quot; title))
-                (insert (format &quot;- %s\n  %s\n&quot; title body)))))
-          (write-file post-file)
-          (message &quot;生成完毕: %s (%d 条链接)&quot; post-file links-count))))))
-#+end_src
-
-函数逻辑：
-
-1. 用正则匹配每个一级标题的时间戳（ =&lt;2026-04-19 Sat&gt;= 格式）
-2. 用字符串比较筛选：日期 &gt;= 7 天前 且 &lt; 今天
-3. 拼接成 EGO 格式的 Org 博文，写到博客目录
-
-字符串比较能正确工作的原因是时间戳格式为 =&lt;YYYY-MM-DD ...&gt;= ，日期部分在前面，字典序和日期序一致。
-
-** 第三步：GitHub Actions 定时发布
-
-在仓库中添加一个 workflow 文件（如 =.github/workflows/weekly-links.yml= ）：
-
-#+begin_src yaml
-name: &quot;生成每周链接推荐&quot;
-on:
-  schedule:
-    - cron: 0 10 * * 0  # 每周日 UTC 10:00（北京时间 18:00）
-jobs:
-  generate-links:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: source
-      - name: 安装 Emacs
-        run: sudo apt-get update &amp;&amp; sudo apt-get install -y emacs-nox
-      - name: 生成博文
-        run: |
-          emacs --batch -l generate_weekly_links.el
-      - uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: &quot;每周链接推荐&quot;
-#+end_src
-
-其中 =generate_weekly_links.el= 就是上面的函数，末尾加一行调用：
-
-#+begin_src emacs-lisp
-;; generate_weekly_links.el — 放在博客仓库根目录
-;; ... 函数定义同上 ...
-(my/generate-weekly-links-post &quot;links.org&quot; &quot;Emacs之怒/&quot;)
-#+end_src
-
-这个 workflow 往 =source= 分支 push 新博文，而现有的博客构建 workflow 已经在监听 =source= 分支的 push 事件，所以新博文会自动构建发布，不需要额外的部署步骤。
-
-** 小结
-
-整个方案的精髓： *把一个需要坚持的习惯，拆解成&quot;收集、生成、发布&quot;三步自动化* 。你唯一需要做的就是看到好文章时随手 =org-capture= 一下。
-
-不管你用的是 Raindrop.io + Eleventy 还是 Emacs + EGO，思路都一样——找到你的&quot;收集入口&quot;，写一个&quot;提取脚本&quot;，再用 CI 的定时任务跑起来。工具不同，模式相同。
-</description>
-<pubDate>2026-04-21</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/21/用-emacs-自动生成每周链接推荐/index.html</guid>
 </item>
 </channel>
 </rss>

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Clojure 吸血鬼猎杀实战：从 defrecord 到 STM - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="clojure, programming, fp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Clojure 吸血鬼猎杀实战：从 defrecord 到 STM</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org19f2992">用 defrecord 创建角色</a></li>
+<li><a href="#org31133b7">不可变更新：用 assoc 打出伤害</a></li>
+<li><a href="#orgc8a3fdc">用 recur 递归击杀</a></li>
+<li><a href="#org09049ff">并行战斗：map vs pmap</a></li>
+<li><a href="#org137f15f">问题的暴露：吸血鬼杀不透</a></li>
+<li><a href="#orgb39a674">用 Atom 管理状态</a></li>
+<li><a href="#org54a2b13">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+学一门新语言最好的方式是写一个完整的程序，哪怕是个小到不能再小的程序。Carin Meier 在 2011 年写了两篇用"吸血鬼猎杀"来教 Clojure 的文章<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup><sup>, </sup><sup><a id="fnr.2" class="footref" href="#fn.2" role="doc-backlink">2</a></sup>——用 <code>defrecord</code> 定义角色，用 <code>assoc</code> 做不可变更新，用 <code>recur</code> 递归击杀，用 <code>pmap</code> 并行战斗，最后用 <code>Atom</code> （软件事务内存）让吸血鬼真正"死透"。本文是对这两篇文章的解读和代码验证。
+</p>
+
+<div id="outline-container-org19f2992" class="outline-2">
+<h2 id="org19f2992">用 defrecord 创建角色</h2>
+<div class="outline-text-2" id="text-org19f2992">
+<p>
+<code>defrecord</code> 是 Clojure 中定义数据类型的方式。跟 Java 的 class 不同， <code>defrecord</code> 创建的是不可变（immutable）的数据结构——一旦创建就不能修改，只能生成新的副本。
+</p>
+
+<p>
+先定义吸血鬼。每只吸血鬼有两个属性：名字和血量（health points）。血量降到 0 就是灰飞烟灭了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defrecord Vampire [name health])
+</pre>
+</div>
+
+<pre class="example">
+user.Vampire
+</pre>
+
+
+<p>
+然后用 <code>Vampire.</code> （注意末尾的点，这是 Clojure 调用 Java 构造函数的语法）创建一只叫 Stu 的吸血鬼，血量 50：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def vampire1 (Vampire. "Stu" 50))
+</pre>
+</div>
+
+<pre class="example">
+#'user/vampire1
+</pre>
+
+
+<p>
+在 REPL 中查看它的值，你会看到一个类似 map 的结构：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">vampire1
+</pre>
+</div>
+
+<pre class="example">
+#user.Vampire{:name "Stu", :health 50}
+</pre>
+
+
+<pre class="example" id="org5f45cc6">
+#:user.Vampire{:name "Stu", :health 50}
+</pre>
+
+<p>
+<code>defrecord</code> 生成的类型自动支持用关键字当函数来取值。
+</p>
+
+<p>
+Clojure 中的*关键字*（keyword）是以冒号开头的标识符，如 <code>:name</code> 、 <code>:health</code> 。关键字跟字符串或符号不同，它求值的结果就是它自己。关键字有一个特殊能力：它可以当函数用——当关键字后面跟一个 map 或 record 时，它会在这个结构中查找跟自己同名的键，返回对应的值。所以 <code>(:name vampire1)</code> 等价于"在 vampire1 中查找 <code>:name</code> 这个键"，结果是 <code>"Stu"</code> 。这比 Java 的 <code>getName()</code> 简洁得多，但本质一样——都是访问字段。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(:name vampire1)
+</pre>
+</div>
+
+<pre class="example" id="org94d3ff2">
+"Stu"
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(:health vampire1)
+</pre>
+</div>
+
+<pre class="example" id="orgd691f1c">
+50
+</pre>
+
+<p>
+多创建几只吸血鬼，后面要用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def vampire1 (Vampire. "Stu" 50))
+(def vampire2 (Vampire. "Vance" 100))
+(def vampire3 (Vampire. "Izzy" 75))
+</pre>
+</div>
+
+<p>
+然后是猎人。猎人也有名字和武器，武器用一个数字表示伤害值。Buffy 决定赤手空拳上阵，她的功夫值 25 点伤害：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defrecord Slayer [name weapon])
+(def kungfu 25)
+(def buffy (Slayer. "Buffy" kungfu))
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org31133b7" class="outline-2">
+<h2 id="org31133b7">不可变更新：用 assoc 打出伤害</h2>
+<div class="outline-text-2" id="text-org31133b7">
+<p>
+角色到齐了，但有个问题：Clojure 的数据结构是不可变的。你不能直接修改吸血鬼的血量，只能创建一个 <b>新</b> 的吸血鬼，新吸血鬼的血量是扣减后的值。这个操作用 <code>assoc</code> 完成——它接收一个已有结构和一个新的键值对，返回一个更新后的副本，原始数据不变。
+</p>
+
+<p>
+先定义一个计算伤害的辅助函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn hit [vampire hitpoints]
+  (- (:health vampire) hitpoints))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(hit vampire1 20)
+</pre>
+</div>
+
+<pre class="example" id="org7ed982d">
+30
+</pre>
+
+<p>
+然后定义"猎人攻击吸血鬼"的函数。它调用 <code>hit</code> 计算新血量，再用 <code>assoc</code> 把新血量塞回吸血鬼结构中：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn hit-vampire [vampire slayer]
+  (assoc vampire :health (hit vampire (:weapon slayer))))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(hit-vampire vampire1 buffy)
+</pre>
+</div>
+
+<pre class="example" id="org3dc09c1">
+#:user.Vampire{:name "Stu", :health 25}
+</pre>
+
+<p>
+注意 <code>vampire1</code> 本身没变—— <code>assoc</code> 返回的是一个 <b>新</b> 的 Vampire 记录。如果查看 <code>vampire1</code> ，它的血量仍然是 50。这在后面会成为一个关键问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc8a3fdc" class="outline-2">
+<h2 id="orgc8a3fdc">用 recur 递归击杀</h2>
+<div class="outline-text-2" id="text-orgc8a3fdc">
+<p>
+一次攻击不够，猎人需要反复攻击直到吸血鬼血量归零。Clojure 不用普通的递归（会消耗栈空间），而是用 <code>recur</code> 做尾递归优化——每次递归调用不会增加调用栈，而是直接跳回函数开头继续执行，性能等价于循环。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def combat-time 20)
+
+(defn hit-vampire [vampire slayer]
+  (Thread/sleep (* combat-time 10))
+  (assoc vampire :health (hit vampire (:weapon slayer))))
+</pre>
+</div>
+
+<p>
+这里加了 <code>Thread/sleep</code> 来模拟战斗耗时——每次攻击需要 200 毫秒（combat-time 20 × 10）。
+</p>
+
+<p>
+然后用 <code>recur</code> 实现递归击杀：如果血量大于 1，就再打一次；否则把血量设为 0 返回：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn kill-vampire [vampire slayer]
+  (if (&gt; (:health vampire) 0)
+    (recur (hit-vampire vampire slayer) slayer)
+    (assoc vampire :health 0)))
+</pre>
+</div>
+
+<pre class="example">
+#'user/kill-vampire
+</pre>
+
+
+<p>
+Buffy 用功夫（25 点伤害）杀 Stu（50 血量），需要打 2 次，耗时约 400 毫秒：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(time (kill-vampire vampire1 buffy))
+</pre>
+</div>
+
+<pre class="example" id="org7c226df">
+"Elapsed time: 400.542595 msecs"
+#:user.Vampire{:name "Stu", :health 0}
+</pre>
+
+<p>
+Vance 有 100 血量，需要打 4 次，耗时约 800 毫秒：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(time (kill-vampire vampire2 buffy))
+</pre>
+</div>
+
+<pre class="example" id="org1a9fe9a">
+"Elapsed time: 801.318529 msecs"
+#:user.Vampire{:name "Vance", :health 0}
+</pre>
+
+<p>
+如果给 Buffy 换上圣水（100 点伤害），杀 Vance 只需 1 次，200 毫秒就够了：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def holy-water 100)
+(def buffy (Slayer. "Buffy" holy-water))
+
+(time (kill-vampire vampire2 buffy))
+</pre>
+</div>
+
+<pre class="example" id="org592130d">
+"Elapsed time: 200.247375 msecs"
+#:user.Vampire{:name "Vance", :health 0}
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org09049ff" class="outline-2">
+<h2 id="org09049ff">并行战斗：map vs pmap</h2>
+<div class="outline-text-2" id="text-org09049ff">
+<p>
+把吸血鬼排成一队让 Buffy 依次击杀。先定义一个封装函数，把 Buffy 固定为猎人：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def vampire-line [vampire1 vampire2 vampire3])
+
+(defn buffy-kill-vampire [vampire]
+  (kill-vampire vampire buffy))
+</pre>
+</div>
+
+<p>
+用 <code>map</code> 把 <code>buffy-kill-vampire</code> 应用到每只吸血鬼上，这是串行执行——一只打完再打下一只：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(map buffy-kill-vampire vampire-line)
+</pre>
+</div>
+
+<pre class="example" id="orgfaf5b17">
+(#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0})
+</pre>
+
+<p>
+把战斗时间改长一点（每次攻击 2000 毫秒），看看 <code>map</code> 和 <code>pmap</code> 的性能差异。 <code>pmap</code> 跟 <code>map</code> 功能一样，但会自动把任务分配到多个线程并行执行。 <code>dorun</code> 用来强制求值（因为 <code>map</code> 返回的是惰性序列，不消费就不会真正执行）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def combat-time 200)
+
+(time (dorun (map buffy-kill-vampire vampire-line)))
+</pre>
+</div>
+
+<pre class="example" id="org2803d93">
+"Elapsed time: 18002.67764 msecs"
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(time (dorun (pmap buffy-kill-vampire vampire-line)))
+</pre>
+</div>
+
+<pre class="example" id="orga56b4ed">
+"Elapsed time: 8001.808821 msecs"
+</pre>
+
+<p>
+串行 <code>map</code> 花了 18 秒，并行 <code>pmap</code> 只花了 8 秒——接近 2 倍的加速。三只吸血鬼的击杀任务被分配到了不同线程上同时执行，总时间取决于最慢的那一只。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org137f15f" class="outline-2">
+<h2 id="org137f15f">问题的暴露：吸血鬼杀不透</h2>
+<div class="outline-text-2" id="text-org137f15f">
+<p>
+虽然我们反复杀了一遍又一遍，但如果你查看 <code>vampire-line</code> 本身：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">vampire-line
+</pre>
+</div>
+
+<pre class="example" id="orgf1a2fde">
+[#:user.Vampire{:name "Stu", :health 50} #:user.Vampire{:name "Vance", :health 100} #:user.Vampire{:name "Izzy", :health 75}]
+</pre>
+
+<p>
+血量全都是满的。它们"没死"。
+</p>
+
+<p>
+这就是 Clojure 不可变设计的直接后果： <code>kill-vampire</code> 函数返回的是一个新的 Vampire 记录，原始的 <code>vampire-line</code> 从来没被修改过。 <code>map</code> 返回的新列表也没有存回任何地方。数据是不可变的，操作产生新数据，老数据纹丝不动。
+</p>
+
+<p>
+这在一人一线程的小程序里是个麻烦，在多线程共享状态的大程序里就是个灾难——你需要一个机制来安全地管理"共享状态"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb39a674" class="outline-2">
+<h2 id="orgb39a674">用 Atom 管理状态</h2>
+<div class="outline-text-2" id="text-orgb39a674">
+<p>
+Clojure 用软件事务内存（STM，Software Transactional Memory）来处理状态。STM 提供了几种工具：
+</p>
+
+<ul class="org-ul">
+<li><b>Ref</b> ：协调的、同步的更新——多个 Ref 的值需要同时改变时用</li>
+<li><b>Atom</b> ：非协调的、同步的更新——只有一个值需要改时用，比 Ref 轻量</li>
+<li><b>Agent</b> ：异步更新——不需要立刻看到结果时用</li>
+</ul>
+
+<p>
+我们的场景很简单：维护一个吸血鬼队列的状态。只有一个值要改，用 Atom 就够了。
+</p>
+
+<p>
+接下来要把 <code>vampire-line</code> 从普通 vector <b>重新定义</b> 为 Atom。*这一步必须执行*，否则后面的 <code>buffy-destroy-all-vampires</code> 会报错——因为普通 vector 不支持 <code>@</code> （deref）操作，只有 Atom 等 STM 类型才支持。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">;; 重要：用 atom 包装 vampire-line，这会覆盖之前的普通 vector 定义
+(def vampire-line (atom [vampire1 vampire2 vampire3]))
+</pre>
+</div>
+
+<p>
+Atom 的值需要用 <code>@</code> （deref 操作）来读取。 <code>@</code> 是 Clojure 的语法糖， <code>@x</code> 等价于 <code>(deref x)</code> ，作用是从 Atom 中取出它当前持有的值。普通 vector 和 record 不支持这个操作——这正是前面"杀不透"的根本原因，它们不是状态容器，而是纯数据。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">@vampire-line
+</pre>
+</div>
+
+<pre class="example" id="org9a84b4c">
+[#:user.Vampire{:name "Stu", :health 50} #:user.Vampire{:name "Vance", :health 100} #:user.Vampire{:name "Izzy", :health 75}]
+</pre>
+
+<p>
+然后定义一个函数，用 <code>reset!</code> 把击杀后的结果写回 Atom。 <code>reset!</code> 是 Atom 的原子更新操作——它会把 Atom 的值替换为新值，保证线程安全：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn buffy-destroy-all-vampires []
+  (reset! vampire-line (vec (map buffy-kill-vampire @vampire-line))))
+</pre>
+</div>
+
+<p>
+执行一次：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(buffy-destroy-all-vampires)
+</pre>
+</div>
+
+<pre class="example" id="orgaa89bc7">
+[#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0}]
+</pre>
+
+<p>
+再查看 <code>vampire-line</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">@vampire-line
+</pre>
+</div>
+
+<pre class="example" id="orge371a69">
+[#:user.Vampire{:name "Stu", :health 0} #:user.Vampire{:name "Vance", :health 0} #:user.Vampire{:name "Izzy", :health 0}]
+</pre>
+
+<p>
+吸血鬼终于死透了。 <code>reset!</code> 把 Atom 中保存的旧列表替换成了击杀后的新列表，而且这个替换是原子性的——即使多个线程同时调用 <code>buffy-destroy-all-vampires</code> ，也不会出现数据竞争。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org54a2b13" class="outline-2">
+<h2 id="org54a2b13">小结</h2>
+<div class="outline-text-2" id="text-org54a2b13">
+<p>
+这个吸血鬼猎杀程序虽然小，但串起了 Clojure 的几个核心概念：
+</p>
+
+<ol class="org-ol">
+<li><code>defrecord</code> 定义不可变数据类型</li>
+<li><code>assoc</code> 在不修改原始数据的前提下生成更新后的副本</li>
+<li><code>recur</code> 做尾递归，避免栈溢出</li>
+<li><code>pmap</code> 自动并行，利用多核</li>
+<li><code>Atom</code> 管理共享状态，让不可变世界中的"变化"成为可能</li>
+</ol>
+
+<p>
+整个程序的演变过程其实就是 Clojure 处理状态的哲学：默认不可变，需要状态时显式声明（用 Atom/Ref/Agent），状态变更受 STM 保护。不是没有状态，而是让状态的变化变得可控。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://gigasquidsoftware.com/blog/2011/01/12/vampire-slaying-with-clojure-part-1-defrecord/">https://gigasquidsoftware.com/blog/2011/01/12/vampire-slaying-with-clojure-part-1-defrecord/</a>
+</p></div></div>
+
+<div class="footdef"><sup><a id="fn.2" class="footnum" href="#fnr.2" role="doc-backlink">2</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://gigasquidsoftware.com/blog/2011/01/18/vampire-slaying-in-clojure-with-stm-part-2/">https://gigasquidsoftware.com/blog/2011/01/18/vampire-slaying-in-clojure-with-stm-part-2/</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/clojure">clojure</a> : <a href="../../../../../tags/programming">programming</a> : <a href="../../../../../tags/fp">fp</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm04xxt &lt;dot&gt; q1dgkpax044ebjlqqxvb14ao4g &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

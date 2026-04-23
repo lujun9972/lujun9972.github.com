@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：llm-test —— 用 LLM agent 驱动 Emacs 测试 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, LLM, testing, ERT" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：llm-test —— 用 LLM agent 驱动 Emacs 测试</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org69cd2ba">怎么工作</a></li>
+<li><a href="#org3b0658c">Agent 怎么"看" Emacs</a></li>
+<li><a href="#org9907db0">跟传统测试的区别</a></li>
+<li><a href="#orgbcce3b6">"LLM 当测试员"的适用场景</a></li>
+</ul>
+</div>
+</div>
+<p>
+Andrew Hyatt（Emacs 核心贡献者）最近开源了一个实验性项目<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup>： <code>llm-test</code> 。它的核心想法是——用 LLM 代替人来测试 Emacs 包。你用自然语言描述"用户应该看到什么"，LLM agent 会启动一个干净的 Emacs 进程，像人一样操作它（按键、输入文字、执行命令），然后判断测试是否通过。
+</p>
+
+<div id="outline-container-org69cd2ba" class="outline-2">
+<h2 id="org69cd2ba">怎么工作</h2>
+<div class="outline-text-2" id="text-org69cd2ba">
+<p>
+整个流程分四步：
+</p>
+
+<ol class="org-ol">
+<li>用 YAML 文件写测试描述，就是一段英文说明要测什么、期望什么结果</li>
+<li><code>llm-test</code> 解析 YAML，为每个测试描述注册一个 ERT 测试</li>
+<li>运行测试时，启动一个 <code>emacs -Q</code> 的干净 daemon 进程</li>
+<li>LLM agent 通过 tool calling 驱动这个 Emacs，直到判定通过或失败</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-variable-name">group</span>: auto-fill mode
+<span class="org-variable-name">setup</span>: |
+  <span class="org-string">Enable auto-fill-mode in a text-mode buffer.</span>
+<span class="org-string">  Set fill-column to 40.
+</span><span class="org-variable-name">tests</span>:
+  - <span class="org-variable-name">description</span>: |
+      <span class="org-string">Type a long paragraph that exceeds fill-column.</span>
+<span class="org-string">      Verify that the text is automatically wrapped.
+</span>  - <span class="org-variable-name">description</span>: |
+      <span class="org-string">Type a numbered list item that exceeds fill-column.</span>
+<span class="org-string">      Verify that continuation lines are indented properly.</span>
+</pre>
+</div>
+
+<p>
+这个例子测试的是 <code>auto-fill-mode</code> ：开一个文本 buffer，设置 <code>fill-column</code> 为 40，然后让 LLM 输入一段超过 40 列的文字，检查 Emacs 是否自动换行了。测试描述就是自然语言，不需要写一行 Elisp。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3b0658c" class="outline-2">
+<h2 id="org3b0658c">Agent 怎么"看" Emacs</h2>
+<div class="outline-text-2" id="text-org3b0658c">
+<p>
+LLM agent 看不到图形界面——测试 Emacs 是以 daemon 模式运行的。那它怎么知道 Emacs 当前什么状态？
+</p>
+
+<p>
+答案是：每次 agent 执行完一个操作（按键、执行命令、eval 代码等）， <code>llm-test</code> 会自动附加一份 JSON 格式的 frame 快照。这个快照包含当前所有窗口的可见内容（就像截图，但是文字版）、光标位置、minibuffer 状态和 echo area 消息。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-json">{
+  "selected-window": {"number": 0, "buffer": "&lt;buffer name&gt;"},
+  "windows": [
+    {
+      "number": 0,
+      "buffer": "&lt;buffer name&gt;",
+      "mode": "&lt;major mode&gt;",
+      "point": 1,
+      "lines": ["&lt;visual line 1&gt;", "&lt;visual line 2&gt;"]
+    }
+  ],
+  "minibuffer": {"active": false, "prompt": "", "input": ""},
+  "message": "&lt;echo area message&gt;"
+}
+</pre>
+</div>
+
+<p>
+Agent 不需要主动请求"给我看看现在屏幕上有什么"——每次操作后自动收到。这让 agent 的行为更像真人：按了一个键，"看"到结果，决定下一步做什么。
+</p>
+
+<p>
+Agent 可以调用的工具包括：
+</p>
+
+<ul class="org-ul">
+<li><code>eval-elisp</code> ：在测试进程中执行任意 Elisp 并返回结果</li>
+<li><code>send-keys</code> ：模拟按键（如 <code>C-x C-f</code> 、 <code>M-x</code> ）</li>
+<li><code>type-text</code> ：逐字输入文本（保留空格和特殊字符）</li>
+<li><code>run-command</code> ：按名称执行命令（比 <code>M-x</code> 更可靠）</li>
+<li><code>sleep</code> ：等待异步操作完成</li>
+<li><code>suggest-improvement</code> ：记录 UI/UX 改进建议（不影响测试结果）</li>
+<li><code>pass-test</code> / <code>fail-test</code> ：判定测试结果，结束循环</li>
+</ul>
+
+<p>
+整个 agent loop 最多跑 80 轮（ <code>llm-test-max-iterations</code> 默认值），每轮是一次 LLM 请求/响应往返。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9907db0" class="outline-2">
+<h2 id="org9907db0">跟传统测试的区别</h2>
+<div class="outline-text-2" id="text-org9907db0">
+<p>
+传统的 Emacs 测试用 ERT（Emacs Lisp 测试框架），测试代码直接调用函数、检查返回值。比如测试 <code>auto-fill</code> ，你要写 Elisp 设置 buffer、插入文字、检查换行位置。这测的是 <b>函数的行为</b> 。
+</p>
+
+<p>
+<code>llm-test</code> 测的是 <b>用户的体验</b> 。Agent 不知道你的内部函数怎么调用——它只知道按键、看屏幕、判断结果是否符合描述。这跟真实用户使用 Emacs 的方式一模一样。
+</p>
+
+<p>
+这种思路的优势：
+</p>
+
+<ul class="org-ul">
+<li><b>能测传统测试很难覆盖的场景</b> ：比如" <code>M-x</code> 输入命令时的补全是否正确"、" <code>dired</code> 中按 <code>g</code> 刷新后文件列表是否更新"——这些涉及多个命令组合和 UI 状态变化的交互流程，用 Elisp 写测试非常痛苦，用自然语言描述却很自然</li>
+<li><b>测试描述就是文档</b> ：YAML 里的自然语言描述既是测试用例，也是用户行为的文档</li>
+<li><b>对被测代码零侵入</b> ：不需要为测试暴露内部接口或写 test helper</li>
+</ul>
+
+<p>
+但也有明显的代价：
+</p>
+
+<ul class="org-ul">
+<li><b>非确定性</b> ：同一个测试跑两次，LLM 可能走不同的操作路径，甚至得出不同的结论。这不是传统测试的"确定性"范式</li>
+<li><b>成本</b> ：每个测试都要多次调用 LLM API，一个测试组跑下来可能消耗不少 token</li>
+<li><b>速度</b> ：每轮 agent loop 都是一次 API 调用，比直接 eval Elisp 慢几个数量级</li>
+<li><b>依赖模型质量</b> ：Andrew Hyatt 在 README 中建议使用 Claude Sonnet 级别的模型，不过他指出只要指令足够清晰，便宜的模型也能胜任</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgbcce3b6" class="outline-2">
+<h2 id="orgbcce3b6">"LLM 当测试员"的适用场景</h2>
+<div class="outline-text-2" id="text-orgbcce3b6">
+<p>
+<code>llm-test</code> 不会取代传统 ERT 测试。对于"函数 <code>f(x)</code> 输入 5 应该返回 10"这类确定性逻辑测试，Elisp 单元测试更快更准。
+</p>
+
+<p>
+它适合的是另一类测试——那些"人一眼就能看出来对不对，但用代码描述很麻烦"的场景：
+</p>
+
+<ul class="org-ul">
+<li>包的 UI 工作流是否顺畅（按键 → 期望看到某个界面）</li>
+<li>多步骤交互的端到端验证（打开文件 → 编辑 → 保存 → 确认状态）</li>
+<li>发现 UI/UX 问题（ <code>suggest-improvement</code> 工具让 agent 可以主动提出改进建议）</li>
+</ul>
+
+<p>
+这个思路也可以延伸到其他 GUI 应用——只要你能给 LLM 提供"屏幕状态"和"操作接口"，就能用同样的 agent loop 模式做测试。 <code>llm-test</code> 的 frame state JSON 快照设计就是一个很好的参考：不需要真的截图，把视觉信息结构化为文本就够了。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://github.com/ahyatt/llm-test">https://github.com/ahyatt/llm-test</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/testing">testing</a> : <a href="../../../../../tags/ert">ERT</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm04xxt &lt;dot&gt; q1dgkpax044ebjlqqxvb14ao4g &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

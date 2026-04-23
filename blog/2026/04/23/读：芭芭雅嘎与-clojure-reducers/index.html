@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：芭芭雅嘎与 Clojure Reducers - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="clojure, programming, fp, reducers" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：芭芭雅嘎与 Clojure Reducers</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga1110c9">芭芭雅嘎是谁</a></li>
+<li><a href="#orga98e722">编程任务：算《奥德赛》的哈希值</a>
+<ul>
+<li><a href="#org2ad4785">第一步：把书读进内存</a></li>
+<li><a href="#orgafcc996">第二步：map → filter → reduce</a></li>
+<li><a href="#org1197088">性能测试</a></li>
+</ul>
+</li>
+<li><a href="#org11b4263">用 Reducers 加速</a></li>
+<li><a href="#orgae6d4b0">Reducers 和普通 map/filter/reduce 有什么区别</a></li>
+<li><a href="#org6a4b483">逃出长脚小屋</a></li>
+<li><a href="#orgf415fda">什么时候该用 Reducers</a></li>
+</ul>
+</div>
+</div>
+<p>
+Carin Meier 在 2012 年写了一篇用俄罗斯童话教 Clojure 的文章<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup>。一个女程序员在森林里迷路，闯进了巫婆芭芭雅嘎的长脚小屋，被迫完成一项编程任务：对一本小说的文本做哈希值计算、筛选、求和。故事本身是个有趣的包装，真正值得学的是它教的东西——Clojure 的 map/filter/reduce 组合怎么用，以及 Reducers 库怎么让它们跑得更快。
+</p>
+
+<div id="outline-container-orga1110c9" class="outline-2">
+<h2 id="orga1110c9">芭芭雅嘎是谁</h2>
+<div class="outline-text-2" id="text-orga1110c9">
+<p>
+芭芭雅嘎（Baba Yaga）是斯拉夫民间故事里的经典角色——一个住在森林深处、长着铁牙齿的老巫婆。她的房子长着鸡腿，能走来走去。她有时吃人，有时帮人，全看心情。在这篇故事里，她抓了一个迷路的女程序员当奴隶，逼她做编程题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga98e722" class="outline-2">
+<h2 id="orga98e722">编程任务：算《奥德赛》的哈希值</h2>
+<div class="outline-text-2" id="text-orga98e722">
+<p>
+芭芭雅嘎翻出一本《奥德赛》，下了命令：
+</p>
+
+<ol class="org-ol">
+<li>计算书中每个字符的哈希值</li>
+<li>只保留偶数</li>
+<li>求和</li>
+<li>要快，她在计时</li>
+</ol>
+
+<p>
+这是一个典型的 map → filter → reduce 流水线。
+</p>
+</div>
+
+<div id="outline-container-org2ad4785" class="outline-3">
+<h3 id="org2ad4785">第一步：把书读进内存</h3>
+<div class="outline-text-3" id="text-org2ad4785">
+<div class="org-src-container">
+<pre class="src src-clojure">(def odyssey-text (vec (slurp "odyssey.txt")))
+(class odyssey-text)
+;; =&gt; clojure.lang.PersistentVector
+</pre>
+</div>
+
+<p>
+<code>slurp</code> 把整个文件读成字符串， <code>vec</code> 转成向量（可以按索引随机访问的数组）。字符在 Clojure 里是 <code>java.lang.Character</code> 类型：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(first odyssey-text)
+;; =&gt; \P
+
+(.hashCode (first odyssey-text))
+;; =&gt; 80
+</pre>
+</div>
+
+<p>
+第一个字符是 <code>\P</code> ，它的哈希值是 80。Java 中字符的哈希值就是它的 Unicode 码点，所以 <code>\P</code> 的 Unicode 是 80（对应大写字母 P）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgafcc996" class="outline-3">
+<h3 id="orgafcc996">第二步：map → filter → reduce</h3>
+<div class="outline-text-3" id="text-orgafcc996">
+<div class="org-src-container">
+<pre class="src src-clojure">(defn hashcode [c] (.hashCode c))
+
+(reduce + (filter even? (map hashcode odyssey-text)))
+;; =&gt; 33702446
+</pre>
+</div>
+
+<p>
+三步组合：
+</p>
+<ul class="org-ul">
+<li><code>map</code> 对每个字符算哈希值，得到一个整数序列</li>
+<li><code>filter</code> 只保留偶数</li>
+<li><code>reduce</code> 用 <code>+</code> 把所有偶数加起来</li>
+</ul>
+
+<p>
+这是函数式编程中最常见的模式。三个函数像流水线一样串起来：数据从 <code>map</code> 流出，进入 <code>filter</code> ，最后汇入 <code>reduce</code> 。中间不会产生可变状态，也不需要手动写循环。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1197088" class="outline-3">
+<h3 id="org1197088">性能测试</h3>
+<div class="outline-text-3" id="text-org1197088">
+<div class="org-src-container">
+<pre class="src src-clojure">(dotimes [n 5]
+  (println (str "map - filter - reduce - ( run " n " ):"))
+  (time (reduce + (filter even? (map hashcode odyssey-text)))))
+</pre>
+</div>
+
+<pre class="example" id="orgd6d884b">
+map - filter - reduce - ( run 0 ):
+"Elapsed time: 6932.227 msecs"
+map - filter - reduce - ( run 1 ):
+"Elapsed time: 5433.219 msecs"
+map - filter - reduce - ( run 2 ):
+"Elapsed time: 5157.45 msecs"
+map - filter - reduce - ( run 3 ):
+"Elapsed time: 5397.058 msecs"
+map - filter - reduce - ( run 4 ):
+"Elapsed time: 5224.334 msecs"
+</pre>
+
+<p>
+平均大约 5200 毫秒。芭芭雅嘎嫌太慢："5 秒以内做完，不然吃了你！"
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org11b4263" class="outline-2">
+<h2 id="org11b4263">用 Reducers 加速</h2>
+<div class="outline-text-2" id="text-org11b4263">
+<p>
+关键时刻，黑猫出主意：Clojure 有一个 Reducers 库，能把 <code>map</code> 和 <code>filter</code> 变成可并行操作的版本。这个库从 Clojure 1.5 开始就是标准库的一部分，不需要额外安装依赖，只要在命名空间里 <code>require</code> 就能用。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(ns reducers.core
+  (:require [clojure.core.reducers :as r]))
+
+(r/fold + (r/filter even? (r/map hashcode odyssey-text)))
+;; =&gt; 33702446
+</pre>
+</div>
+
+<p>
+代码结构几乎一模一样——只是把 <code>map</code> 换成了 <code>r/map</code> ， <code>filter</code> 换成了 <code>r/filter</code> ， <code>reduce</code> 换成了 <code>r/fold</code> 。结果也完全一样：33702446。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(dotimes [n 5]
+  (println (str "r/map - r/filter - r/fold - ( run " n " ):"))
+  (time (r/fold + (r/filter even? (r/map hashcode odyssey-text)))))
+</pre>
+</div>
+
+<pre class="example" id="org6211727">
+r/map - r/filter - r/fold - ( run 0 ):
+"Elapsed time: 4702.766 msecs"
+r/map - r/filter - r/fold - ( run 1 ):
+"Elapsed time: 4617.575 msecs"
+r/map - r/filter - r/fold - ( run 2 ):
+"Elapsed time: 4596.329 msecs"
+r/map - r/filter - r/fold - ( run 3 ):
+"Elapsed time: 4636.259 msecs"
+r/map - r/filter - r/fold - ( run 4 ):
+"Elapsed time: 4572.804 msecs"
+</pre>
+
+<p>
+平均大约 4600 毫秒，比之前快了约 12%。刚好卡在 5 秒以内，勉强过关。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgae6d4b0" class="outline-2">
+<h2 id="orgae6d4b0">Reducers 和普通 map/filter/reduce 有什么区别</h2>
+<div class="outline-text-2" id="text-orgae6d4b0">
+<p>
+普通版本的 <code>map</code> 和 <code>filter</code> 返回的是 <b>惰性序列</b> (lazy seq) 。数据沿着流水线一个一个传过去—— <code>map</code> 处理完一个元素，交给 <code>filter</code> ， <code>filter</code> 通过了再交给 <code>reduce</code> 。虽然是惰性的（不用到的部分不计算），但整个过程是单线程的。
+</p>
+
+<p>
+Reducers 库的 <code>r/map</code> 和 <code>r/filter</code> 返回的不是惰性序列，而是一个"可归约"（reducible）的变换描述。当你最终调用 <code>r/fold</code> 时，它做了两件事：
+</p>
+
+<ol class="org-ol">
+<li>把所有变换（map、filter）合并成一个复合操作——数据只需要遍历一次，不用在多个中间序列之间搬来搬去</li>
+<li>把数据分成几块，用 Java 的 ForkJoin 框架并行处理每块</li>
+</ol>
+
+<p>
+用一句话概括区别：普通版本是"把数据推过流水线"，Reducers 是"把流水线折叠成一个操作，分块并行执行"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6a4b483" class="outline-2">
+<h2 id="org6a4b483">逃出长脚小屋</h2>
+<div class="outline-text-2" id="text-org6a4b483">
+<p>
+故事最后，芭芭雅嘎不信邪，要亲自检查所有哈希值。黑猫低声告诉女孩：用 <code>into</code> 把结果收集成向量，趁芭芭雅嘎检查数字时溜走。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：为什么 <code>into</code> 能处理 Reducers 的输出？</b>
+</p>
+
+<p>
+<code>r/map</code> 和 <code>r/filter</code> 返回的不是普通列表，而是实现了 <code>CollReduce</code> 协议的对象。你不能直接打印它或当普通序列用。Clojure 的 <code>reduce</code> 函数是多态的：它会检查参数是否实现了 <code>CollReduce</code> 协议，如果实现了，就用对象自己的归约方法来遍历。=into= 的内部实现就是调 <code>reduce</code> ——具体来说相当于 <code>(reduce conj [] reducible-result)</code> 。因为 <code>reduce</code> 能识别 <code>CollReduce</code> 协议，所以 <code>into</code> 自然也能处理 Reducers 的输出。
+</p>
+</blockquote>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(into [] (r/filter even? (r/map hashcode odyssey-text)))
+;; =&gt; [80 114 ... ]
+</pre>
+</div>
+
+<p>
+趁着芭芭雅嘎逐个检查向量里的数字，女孩抱着猫溜出了门。从此幸福地写 Clojure 代码去了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf415fda" class="outline-2">
+<h2 id="orgf415fda">什么时候该用 Reducers</h2>
+<div class="outline-text-2" id="text-orgf415fda">
+<p>
+原文的场景（2012 年）中，Reducers 只带来了约 12% 的性能提升。这是因为《奥德赛》的文本量不够大（约 60 万字符），而且 <code>hashcode</code> 和 <code>even?</code> 都是极轻的操作——单次执行几乎不花时间，并行化的调度开销抵消了不少收益。
+</p>
+
+<p>
+Reducers 的优势在以下场景更明显：
+</p>
+
+<ol class="org-ol">
+<li><b>数据量大</b> (百万级以上元素) ——分块并行才有意义</li>
+<li><b>单个操作耗时</b> (比如复杂计算、IO 密集型操作) ——并行化收益高</li>
+<li><b>CPU 密集型任务</b> ——能充分利用多核</li>
+</ol>
+
+<p>
+如果你的数据集很小、操作很轻，普通 map/filter/reduce 就够了，Reducers 的并行调度开销反而可能拖慢速度。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+原文：<a href="https://gigasquidsoftware.com/blog/2012/07/07/baba-yaga-and-the-clojure-reducers/">Baba Yaga and the Clojure Reducers</a>，Carin Meier，2012 年 7 月 7 日。
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-23</span>
+    <a href="../../../../../tags/clojure">clojure</a> : <a href="../../../../../tags/programming">programming</a> : <a href="../../../../../tags/fp">fp</a> : <a href="../../../../../tags/reducers">reducers</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm04xxt &lt;dot&gt; q1dgkpax044ebjlqqxvb14ao4g &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
