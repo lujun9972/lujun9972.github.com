@@ -1,0 +1,103 @@
+#+TITLE: 用 org-habit 追踪非每日习惯
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: emacs, org-mode, habit, life-hacking
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+很多人用 Org-mode 管理任务，但追踪习惯——尤其是非每日习惯——的时候往往会卡住。比如"每周跑三次步，跑完至少休息一天，最多休息三天"这种需求，用普通的 TODO 或 checkbox 列表很难搞定。Org-mode 内置了一个 =org-habit= 模块，专门解决这类问题：它能按你设定的频率自动安排下次执行日期，还能在 agenda 里用彩色图形展示你的连续完成情况。
+
+* 开启 org-habit
+
+=org-habit= 是 Org-mode 的内置扩展，默认没开。在你的配置文件（通常是 =~/.emacs.d/init.el= ）里加上：
+
+#+begin_src emacs-lisp
+(add-to-list 'org-modules 'org-habit t)
+#+end_src
+
+然后需要让 Org-mode 记录状态变更的时间戳，这样 =org-habit= 才有数据画图。关键是在 =org-todo-keywords= 里给需要记录的状态加上 =!= 标记—— =!= 的意思是"切换到这个状态时自动记录时间戳"。下面例子里的 =TODO(t!)= 表示：快捷键 =t= 触发，并且切换时自动记录时间。 =DONE(d!)= 同理：
+
+#+begin_src emacs-lisp
+;; TODO 和 DONE 都自动记录时间戳
+(setq org-todo-keywords
+      '((sequence "TODO(t!)" "NEXT(n)" "|" "DONE(d!)" "CANC(c!)"))
+
+;; 创建 TODO 时也记录时间
+(setq org-treat-insert-todo-heading-as-state-change t)
+
+;; 状态变更记录到 LOGBOOK drawer（就是条目下方用 :LOGBOOK: ... :END: 包裹的区域）
+(setq org-log-into-drawer t)
+#+end_src
+
+最后，习惯图形是在 org-agenda 里显示的，所以习惯所在的文件要加入 =org-agenda-files=：
+
+#+begin_src emacs-lisp
+(setq org-agenda-files '("~/org/habits.org"))
+#+end_src
+
+* 创建习惯条目
+
+习惯条目本质上是一个特殊的 TODO 节点，需要两样东西：=STYLE: habit= 属性和带 repeater 的 SCHEDULED 日期。
+
+创建步骤：
+1. 先写一个普通的 TODO 条目（=C-c C-t= 切换到 TODO 状态）
+2. 在条目上按 =C-c C-s= 设置 SCHEDULED 日期，输入 =.+2d/4d= 作为 repeater（日期部分会自动填入当天）
+3. 按 =C-c C-x p= 或 =M-x org-set-property= 设置 =STYLE= 为 =habit=
+
+最终效果长这样（注意：行首没有逗号，下面示例中的逗号是 Org-mode 在 example 块里转义 =*= 用的）：
+
+#+begin_example
+** TODO 跑步
+SCHEDULED: <2026-04-23 Wed .+2d/4d>
+:PROPERTIES:
+:STYLE:    habit
+:END:
+#+end_example
+
+** Repeater 语法是核心
+
+=SCHEDULED= 后面的 =.+2d/4d= 是整个习惯追踪的关键：
+
+- =.+2d= :: 最小间隔 2 天。完成后的下次安排至少在 2 天之后（跑完步至少休息一天）
+- =/4d= :: 最大间隔 4 天。如果超过 4 天没做，agenda 上就会标红提醒你
+
+也就是说，这是一个"每 2 到 4 天做一次"的习惯。当你把它标记为 =DONE= 时，Org-mode 会自动把 =SCHEDULED= 更新为下一个合法日期。
+
+Repeater 的第一个字符决定了计算起点：
+
+| 语法     | 含义                                       |
+|----------+--------------------------------------------|
+| =.+Nd/Md= | 从上次完成日期算起（适合"休息 X 天再做"） |
+| =++Nd/Md= | 从上次安排日期算起（固定周期）             |
+| =+Nd=     | 简单重复，不设最大间隔                     |
+
+大多数习惯追踪场景用 =.+Nd/Md= 最合适——它以你的实际完成时间为基准，不会因为你某天忘了做就把后面的日期全打乱。
+
+* 实际使用
+
+完成一次习惯后，在条目上按 =C-c C-t= 把状态从 =TODO= 切到 =DONE=：
+
+- 状态会短暂显示 =DONE=，然后自动切回 =TODO=
+- =SCHEDULED= 日期自动更新为下次执行日期
+- =LOGBOOK= 里多一条完成记录，带上时间戳
+
+#+begin_example
+** TODO 跑步
+SCHEDULED: <2026-04-25 Fri .+2d/4d>
+:PROPERTIES:
+:STYLE:    habit
+:LAST_REPEAT: [2026-04-23 Wed 08:00]
+:END:
+:LOGBOOK:
+- State "DONE"       from "TODO"       [2026-04-23 Wed 08:00]
+- State "DONE"       from "TODO"       [2026-04-21 Mon 07:30]
+:END:
+#+end_example
+
+配置好之后，用 =M-x org-agenda= 选择 agenda 视图（通常是按 =a= 进入周/日视图），就能看到习惯的彩色图形了。绿色表示按时完成，黄色表示该做了但还没做，红色表示已经超期。每列是一天， =!= 表示今天，让你一眼看出自己的连续完成情况（streak）和最近的节奏。
+
+* 几个实用细节
+
+- =org-habit-show-all-today= :: 设为 =t= 可以让所有习惯都在今天的 agenda 上显示，不管今天是不是安排日
+- 不用为习惯断裂感到沮丧——org-habit 的设计本身就允许间隔波动，重要的是重新开始
+- 如果某个习惯不再需要了，把 =STYLE= 属性删掉就变回普通 =TODO=

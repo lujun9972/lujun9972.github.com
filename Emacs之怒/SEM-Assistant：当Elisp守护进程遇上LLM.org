@@ -1,0 +1,211 @@
+#+TITLE: SEM Assistant: 当 Elisp 守护进程遇上 LLM
+#+AUTHOR: lujun9972
+#+TAGS: emacs, org-mode, llm, ai, architecture
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+SEM Assistant[fn:1] 是一个用 Elisp 写的自托管守护进程。它解决的问题是：手机上快速捕获信息（想法、链接、任务），服务端自动处理，结果写回你自己的 Org 文件。这跟笔记同步的不同之处在于它在管道里接了 LLM，只不过 LLM 只做有限的文本变换，流程控制完全由 Elisp 代码决定。这个"LLM 是工具不是老板"的设计思路，对任何想把 LLM 接入自己工作流的人都有参考价值。
+
+* SEM Assistant 做什么
+
+整体数据流是这样的：
+
+#+begin_example
+手机捕获 → WebDAV → inbox-mobile.org → Elisp 管道路由 → LLM 文本处理 → Org 文件
+#+end_example
+
+具体来说，它在服务端跑一个 Emacs 守护进程，通过 WebDAV 接收手机端（organice）传来的捕获内容，写入 =inbox-mobile.org= 。然后根据条目的标签走不同的处理流程：
+
+- =:task:= 标签 :: 走任务归一化 + 规划流程。LLM 帮你把随手写的任务拆解成结构化的 TODO 列表
+- =:link:= 标签（或标题以 =http://= 开头） :: 走 URL 捕获流程。LLM 帮你从网页内容生成 org-roam 笔记
+- 其他 :: 跳过，记录日志
+
+处理完的结果写回到对应的 Org 文件（ =tasks.org= 或 org-roam 笔记库），并定期 git 同步备份。
+
+**目录约定**
+
+所有数据都在 =/data= 下，每个文件有明确的角色：
+
+| 路径 | 作用 |
+|------+------|
+| =/data/inbox-mobile.org= | 手机端传来的原始捕获，管道路由的入口 |
+| =/data/tasks.org= | 任务处理后的输出文件 |
+| =/data/rules.org= | 调度规则文件，控制 cron 触发哪些流程 |
+| =/data/org-roam/org-files= | org-roam 笔记库，URL 捕获的结果写到这里 |
+| =/data/org-roam= | git 同步的仓库根目录 |
+
+**具体使用场景**
+
+场景一：在手机上随手记了一个任务。打开 organice，在 =inbox-mobile.org= 里写一条带 =:task:= 标签的标题，比如"准备下周的技术分享"。保存后，服务端的 cron 定时触inbox处理流程：Elisp 识别到 =:task:= 标签，把这条文本发给 LLM，LLM 归一化任务描述并生成规划（拆解成"确定主题"、"准备 slides"、"排练"等子任务），Elisp 把结果写入 =tasks.org= ，然后从收件箱中移除这条。
+
+场景二：在手机浏览器里看到一个有趣的文章，复制链接，在 organice 里粘贴为 =inbox-mobile.org= 的一条标题（以 =https://= 开头，甚至不需要加 =:link:= 标签，系统会自动识别）。cron 触发后，LLM 从网页内容中提取关键信息，生成一篇 org-roam 笔记节点，写入 =/data/org-roam/org-files= 下。
+
+**三个后台循环**
+
+SEM Assistant 在后台跑着三个定时循环：
+
+1. =inbox processing= :: 扫描收件箱，按标签路由，调用 LLM 处理，写回结果
+2. =URL-to-org-roam= :: 把链接转成 org-roam 笔记节点
+3. =git sync= :: 定期把 org-roam 笔记库 commit + push
+
+这三个循环由 cron 驱动（项目自带 crontab 配置）。你也可以手动触发：
+
+#+begin_src shell
+# 手动触发收件箱处理
+docker compose exec emacs emacsclient -s sem-server -e "(sem-core-process-inbox)"
+
+# 手动触发 git 同步
+docker compose exec emacs emacsclient -s sem-server -e "(sem-git-sync-org-roam)"
+#+end_src
+
+git 同步需要在容器内配置好 SSH 密钥（ =/root/.ssh/id_rsa= ）和 git 身份（name/email），这样每次同步都会自动 commit 和 push 到远程仓库。
+
+* 关键设计：LLM 是工具不是编排者
+
+这是整个项目最有价值的设计思想。
+
+现在很多 AI 工具让 LLM 直接驱动整个工作流——LLM 决定下一步做什么、调什么 API、写什么文件。SEM Assistant 反其道而行：Elisp 代码是编排者，LLM 只是管道中的一个处理步骤。
+
+LLM *只负责三件事*：
+
+- 归一化 :: 把随手写的任务文本整理成统一格式
+- 规划 :: 把一个模糊的任务拆解成可执行的 TODO 列表
+- 摘要 :: 从网页内容中提取关键信息生成笔记
+
+它 *不负责的事*：
+
+- 决定走哪条处理流程（由标签决定，代码控制）
+- 决定结果写到哪个文件（由路径约定决定）
+- 决定是否重试（由 Elisp 的重试逻辑决定）
+- 决定是否调用下一个步骤（由确定性管道控制）
+
+这种设计的核心好处是：管道行为是可预测的。你可以看 Elisp 代码就知道数据怎么流转，不需要猜测"AI 会不会走错路"。
+
+* 安全模型：LLM 输出是不可信的
+
+既然 LLM 是不可信组件，SEM Assistant 专门做了几层防护：
+
+1. *敏感内容屏蔽*：Org 文件中用 =#+begin_sensitive= / =#+end_sensitive= 包裹的内容在发送给 LLM 之前会被替换掉（masked），LLM 看不到原文。处理完后自动恢复
+2. *上下文裁剪*：任务规划时，传给 LLM 的不是完整的任务库，而是经过精简和匿名化的上下文——减少不必要的数据暴露
+3. *输出验证*：LLM 的输出被当作不可信文本处理，经过验证后才写入文件
+4. *确定性兜底*：重试、错误日志、死信队列（DLQ）、cron 重复执行防护——这些全都由 Elisp 代码确定性处理，不依赖 LLM
+
+这套安全模型可以总结为一句话：LLM 只能接触它需要处理的数据，只能产生文本，不能做任何决策。
+
+* 可复用的设计原则
+
+从 SEM Assistant 的架构中，可以提炼出几个通用的设计原则：
+
+原则一：*确定性管道 + LLM 有限调用*
+
+把"流程控制"和"文本处理"分成两层。流程用确定性代码（Elisp、Python、Shell 都行），LLM 只在需要理解或生成文本的环节介入。这样管道行为可预测、可调试、可测试。
+
+原则二：*文件契约*
+
+所有组件通过文件系统通信，约定好目录结构和文件名。比如 =/data/inbox-mobile.org= 是收件箱，=/data/tasks.org= 是任务输出。文件是接口——任何工具只要遵守文件格式就能接入。
+
+原则三：*标签即路由*
+
+用 Org-mode 的标签（=:task:=、=:link:=）作为路由条件，决定数据走哪条管道。简单、直观、用户可以在手机端直接控制。
+
+原则四：*操作数据对人类可读*
+
+所有数据都是纯文本 Org 文件，你可以直接打开看、直接编辑、直接用 git 管理。不依赖任何数据库或专有格式。
+
+* 安装与配置
+
+SEM Assistant 用 Docker Compose 部署，整体架构是三个容器：Emacs 守护进程、WebDAV 服务器、organice（手机端 Org 编辑器）。
+
+**前提条件：**
+
+- 一台有公网 IP 的服务器
+- 两个域名：一个给 WebDAV（比如 =org.example.com= ），一个给 organice（比如 =organice.example.com= ），都指向同一个 IP
+- Docker 和 Docker Compose 已安装
+
+**第一步：克隆仓库并配置环境变量**
+
+#+begin_src shell
+git clone https://github.com/SemyonSinchenko/sem-assistant-el.git
+cd sem-assistant-el
+cp .env.example .env
+#+end_src
+
+编辑 =.env= 文件，填入以下配置：
+
+#+begin_example
+WEBDAV_DOMAIN=org.example.com
+ORGANICE_DOMAIN=organice.example.com
+ORGANICE_ORIGIN=https://organice.example.com
+WEBDAV_USERNAME=your-username
+WEBDAV_PASSWORD=your-password
+#+end_example
+
+=ORGANICE_ORIGIN= 必须严格匹配 =https://ORGANICE_DOMAIN= 。=ORGANICE_IMAGE= 是可选的，默认使用 =twohundredok/organice:5826= 。
+
+**第二步：申请 TLS 证书**
+
+两个域名都需要 HTTPS。用 certbot 申请：
+
+#+begin_src shell
+docker compose --profile certbot up -d certbot
+#+end_src
+
+确认证书文件存在于 =/etc/letsencrypt/live/$DOMAIN/= 下（=fullchain.pem= 和 =privkey.pem= ）。
+
+**第三步：启动服务**
+
+#+begin_src shell
+docker compose up -d webdav emacs
+#+end_src
+
+这会启动 WebDAV 服务器和 Emacs 守护进程。organice 通过 WebDAV 容器的反向代理提供（根据 Host 头路由到 =ORGANICE_DOMAIN= ），不需要单独启动。
+
+CORS 策略是严格单源的——只允许 =ORGANICE_ORIGIN= 的跨域请求，且带凭证。OPTIONS 预检请求不需要认证（兼容浏览器），其他 WebDAV 方法仍需认证。
+
+**第四步：配置 git 同步**
+
+进入 Emacs 容器，配置 SSH 密钥和 git 身份：
+
+#+begin_src shell
+# 进入容器
+docker compose exec emacs bash
+
+# 配置 git 身份
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+
+# 确认 SSH 密钥已就位
+ls /root/.ssh/id_rsa
+#+end_src
+
+=sem-git-sync-org-roam= 函数会用这个密钥 push 到远程仓库。
+
+**第五步：配置 LLM**
+
+项目需要配置 LLM 的 API 密钥和 endpoint。参考项目中的 =general-prompt.example.txt= 和 =arxiv-prompt.example.txt= 了解 prompt 模板的格式。
+
+**第六步：启动 cron 定时任务**
+
+项目自带 =crontab= 文件，定义了三个循环的触发频率。安装到容器中后，收件箱处理和 git 同步就会自动运行。
+
+你也可以跳过 cron，完全用手动触发（见上文的手动触发命令）。
+
+**日常使用流程**
+
+1. 在手机浏览器打开 =https://organice.example.com= ，连接到你的 WebDAV
+2. 编辑 =inbox-mobile.org= ，添加带 =:task:= 或 =:link:= 标签的条目，或者直接粘贴 URL 作为标题
+3. 保存后，cron 会自动触发处理（或你手动执行 =sem-core-process-inbox= ）
+4. 处理完的结果出现在 =tasks.org= 或 org-roam 笔记库中
+5. git 同步自动 push 到远程仓库
+
+**回滚**
+
+如果部署出问题，回滚步骤：
+
+1. 保持 WebDAV 容器运行（数据还在）
+2. 还原 =ORGANICE_*= 环境变量和 Apache 模板配置
+3. 先重启 webdav 服务，再重启依赖服务
+4. certbot 继续管理现有证书，不需要额外操作
+
+[fn:1] https://github.com/SemyonSinchenko/sem-assistant-el

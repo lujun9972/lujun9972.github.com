@@ -1,0 +1,139 @@
+#+TITLE: 用 dmsg 给 Elisp 加上结构化调试日志
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: emacs, elisp, debug, dmsg
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+写 Elisp 调试的时候，大多数人靠的就是 =message= 往 =*Messages*= buffer 里塞字符串。但用多了就会发现几个很烦的问题：
+
+- =*Messages*= 里什么都有: package 初始化的日志、mode 激活的信息、你自己的 debug 输出全混在一起，翻半天找不到想看的那条
+- 没有调用栈: 你看到一条消息，但完全不知道它是从哪个函数、哪条代码路径打出来的
+- 没有日志级别: debug 信息和 error 混在一起，没法按严重程度过滤
+- =*Messages*= 是个只读 buffer: 想过滤或者导出都得自己想办法
+
+dmsg.el[fn:1] 就是来解决这些问题的。它提供了带时间戳、日志级别和自动调用栈捕获的调试日志系统，还有一个专用的 dmsg-mode 让你交互式地浏览和过滤日志。
+
+* 基本用法
+
+安装很简单，clone 仓库后 =require= 就行：
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "~/github/dmsg.el/")
+(require 'dmsg)
+#+end_src
+
+#+RESULTS:
+: dmsg
+
+用 =dmsg= 宏打日志，默认级别是 debug：
+
+#+begin_src emacs-lisp
+  (defun my-function (x)
+    (dmsg "x is %S" x))
+  (my-function 42)
+#+end_src
+
+#+begin_example
+,* DBG [2026-04-23 09:50:41.015] x is 42
+#+end_example
+
+可以指定日志级别（debug / info / warn / error 四个级别，严重程度递增）：
+
+#+begin_src emacs-lisp
+(dmsg 'warn "unexpected: %s" "something odd")
+(dmsg 'error "failed: %s" "connection lost")
+#+end_src
+
+#+begin_example
+WARN [2026-04-23] 09:51:21.883 [eval] unexpected: something odd
+ERR  [2026-04-23] 09:51:25.053 [eval] failed: connection lost
+#+end_example
+
+每条日志都会写入专用的 =*DEBUG*Messages*= buffer，不会和 =*Messages*= 混在一起。日志格式长这样：
+
+#+begin_example
+  ,* DBG [2026-04-23 10:30:45.123] [my-function] x is 42
+#+end_example
+
+分别是日志级别（DBG）、时间戳、展开后的调用栈帧和消息内容。调用栈默认是隐藏的，后面会说怎么查看。
+
+* %= 格式符：自动给变量加标签
+
+dmsg 加了一个实用的格式符 ~%=X~ （X 是普通的 format 转换字符，比如 s、d、S），它会自动把参数变成 =label=value= 的形式，label 直接从源码的变量名提取：
+
+#+begin_src emacs-lisp
+(let ((buf "foo.el") (line 10))
+  (dmsg "at %=s %=d" buf line))
+#+end_src
+
+输出类似：
+
+#+begin_example
+,* DBG [2026-04-23 10:31:00.456] [eval] at buf=foo.el line=10
+#+end_example
+
+调试的时候如果一次打好几个变量，这个功能能省不少事——不用手动写 ~buf=~ 和 ~line=~ ，也避免搞混哪个值对应哪个变量。
+
+* 专用 buffer 和交互式浏览
+
+dmsg 的日志写入 =*DEBUG*Messages*= buffer，这个 buffer 使用 dmsg-mode，提供了一组快捷键来浏览和过滤：
+
+| 快捷键    | 功能                                   |
+|-----------+----------------------------------------|
+| =<tab>=   | 切换紧凑调用链显示                     |
+| =b=       | 在侧边窗口打开详细调用栈               |
+| =c=       | 隐藏/恢复所有当前条目                   |
+| =e=       | 清空 buffer                            |
+| =f=       | 按正则表达式过滤                       |
+| =s=       | 将可见条目导出到带时间戳的 .log 文件   |
+| =l1=-=l4= | 设置最低显示级别（1=debug, 4=error）   |
+
+header line 始终显示 =visible/total= 计数、活跃的过滤条件和当前级别阈值，一眼就能看出当前状态。
+
+** 调用栈自动捕获
+
+每条日志都自动捕获了调用栈。默认状态下调用栈是隐藏的，按 =<tab>= 可以展开为紧凑的函数调用链：
+
+#+begin_example
+my-function ← some-handler ← process-event
+#+end_example
+
+函数名是可点击的，点击后直接跳转到函数的定义位置（通过 =find-function= 实现）。
+
+按 =b= 可以在侧边窗口看到完整的调用栈详情，包含每个函数的参数值。
+
+** 过滤和导出
+
+dmsg 支持多种过滤方式，全部通过 overlay 实现——只改变显示，不修改 buffer 内容，随时可以恢复：
+
+- =f= 按正则过滤消息文本
+- =c= 隐藏/恢复所有当前条目
+- =l1= 到 =l4= 设置最低显示级别
+- =dmsg-max-entries= 限制最大显示条数（超出时自动隐藏最旧的条目）
+
+想把日志分享给别人或存档？按 =s= 可以把当前可见的条目导出到一个带时间戳的 =.log= 文件。
+
+* 拦截 message 和捕获错误
+
+除了主动调用 =dmsg= 打日志，dmsg 还提供了两个功能来对付已有的代码。
+
+=dmsg-on-message= 可以拦截 =message= 函数的调用，把匹配正则的输出也转到 dmsg buffer 里：
+
+#+begin_src emacs-lisp
+  (dmsg-on-message "error\\|warning")  ; 拦截包含 error 或 warning 的 message
+  (message "something error happened")
+  (dmsg-on-message nil)                ; 关闭拦截
+#+end_src
+
+这对于排查第三方包的日志特别有用——不用改别人的代码，直接把感兴趣的 =message= 输出捞到 dmsg 里来，还能看到调用栈。
+
+=dmsg-on-error= 可以给指定函数加上错误日志。当这个函数抛错时，错误会被记录为 error 级别，然后正常重新抛出，不影响原有的错误处理逻辑：
+
+#+begin_src emacs-lisp
+(dmsg-on-error 'my-problematic-function)
+#+end_src
+
+这在调试 =post-command-hook= 里的间歇性错误时特别方便，因为这类错误往往被 Emacs 的错误处理吞掉了，你只知道"出了个错"但不知道具体是什么。
+
+[fn:1] https://github.com/haji-ali/dmsg.el
