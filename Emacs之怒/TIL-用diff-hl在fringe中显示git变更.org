@@ -1,0 +1,37 @@
+#+TITLE: TIL: 用 diff-hl 在 fringe 中显示 git 变更
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, git, TIL
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+读到 James Dyer 的一篇文章[fn:1]，介绍了 =diff-hl= 这个包——在 fringe（Emacs 窗口两侧的边栏）中高亮显示当前 buffer 相对于 git 最新提交的变更：新增的行标绿色，修改的行标黄色，删除的行标红色。不用跳出 buffer 就能看到自己改了什么。
+
+* 配置
+
+#+BEGIN_SRC emacs-lisp
+(use-package diff-hl
+  :ensure t
+  :hook (dired-mode . diff-hl-dired-mode)
+  :config
+  (global-diff-hl-mode 1)
+  (diff-hl-flydiff-mode 1)
+  (unless (display-graphic-p)
+    (diff-hl-margin-mode 1)))
+#+END_SRC
+
+几个要点：
+
+- =global-diff-hl-mode= 开启全局 fringe 高亮，但默认只在 *保存文件后* 更新
+- =diff-hl-flydiff-mode= 改为 *边打字边更新* ，不用先保存再看变更——这个几乎是必开的
+- =diff-hl-dired-mode= 在 dired 中用颜色标记哪些文件有 git 变更，一眼看出项目状态
+- =diff-hl-margin-mode= 是给终端用户（非图形界面）的回退方案——终端没有 fringe，改在行号旁边的 margin 区域显示
+
+* 配合内置 VC 工具
+
+=diff-hl= 的高亮位置跟 Emacs 内置的 VC（Version Control）工具是对齐的。把光标移到某行高亮处，按 =C-x v == （ =vc-diff= ），会直接跳到 diff 中对应的 hunk——不需要先记住改了哪里再去找。
+
+如果开了 =repeat-mode= （之前写过[fn:2]），第一次按 =C-x v ]= 跳到下一个变更后，后续只需按 =]= 就能继续跳，不用重复 =C-x v= 前缀。=]= 和 =[= 之间也能随意切换方向。
+
+[fn:1] https://www.emacs.dyerdwelling.family/emacs/20260421070329-emacs--getting-diff-hl-just-right/
+[fn:2] [[file:TIL-repeat-mode省去重复按键前缀.org][TIL: repeat-mode 省去重复按键前缀]]
