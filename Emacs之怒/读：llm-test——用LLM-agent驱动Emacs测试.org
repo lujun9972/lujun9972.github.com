@@ -1,0 +1,103 @@
+#+TITLE: 读：llm-test —— 用 LLM agent 驱动 Emacs 测试
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, LLM, testing, ERT
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Andrew Hyatt（Emacs 核心贡献者）最近开源了一个实验性项目[fn:1]： =llm-test= 。它的核心想法是——用 LLM 代替人来测试 Emacs 包。你用自然语言描述"用户应该看到什么"，LLM agent 会启动一个干净的 Emacs 进程，像人一样操作它（按键、输入文字、执行命令），然后判断测试是否通过。
+
+* 怎么工作
+
+整个流程分四步：
+
+1. 用 YAML 文件写测试描述，就是一段英文说明要测什么、期望什么结果
+2. =llm-test= 解析 YAML，为每个测试描述注册一个 ERT 测试
+3. 运行测试时，启动一个 =emacs -Q= 的干净 daemon 进程
+4. LLM agent 通过 tool calling 驱动这个 Emacs，直到判定通过或失败
+
+#+BEGIN_SRC yaml
+group: auto-fill mode
+setup: |
+  Enable auto-fill-mode in a text-mode buffer.
+  Set fill-column to 40.
+tests:
+  - description: |
+      Type a long paragraph that exceeds fill-column.
+      Verify that the text is automatically wrapped.
+  - description: |
+      Type a numbered list item that exceeds fill-column.
+      Verify that continuation lines are indented properly.
+#+END_SRC
+
+这个例子测试的是 =auto-fill-mode= ：开一个文本 buffer，设置 =fill-column= 为 40，然后让 LLM 输入一段超过 40 列的文字，检查 Emacs 是否自动换行了。测试描述就是自然语言，不需要写一行 Elisp。
+
+* Agent 怎么"看" Emacs
+
+LLM agent 看不到图形界面——测试 Emacs 是以 daemon 模式运行的。那它怎么知道 Emacs 当前什么状态？
+
+答案是：每次 agent 执行完一个操作（按键、执行命令、eval 代码等）， =llm-test= 会自动附加一份 JSON 格式的 frame 快照。这个快照包含当前所有窗口的可见内容（就像截图，但是文字版）、光标位置、minibuffer 状态和 echo area 消息。
+
+#+BEGIN_SRC json
+{
+  "selected-window": {"number": 0, "buffer": "<buffer name>"},
+  "windows": [
+    {
+      "number": 0,
+      "buffer": "<buffer name>",
+      "mode": "<major mode>",
+      "point": 1,
+      "lines": ["<visual line 1>", "<visual line 2>"]
+    }
+  ],
+  "minibuffer": {"active": false, "prompt": "", "input": ""},
+  "message": "<echo area message>"
+}
+#+END_SRC
+
+Agent 不需要主动请求"给我看看现在屏幕上有什么"——每次操作后自动收到。这让 agent 的行为更像真人：按了一个键，"看"到结果，决定下一步做什么。
+
+Agent 可以调用的工具包括：
+
+- =eval-elisp= ：在测试进程中执行任意 Elisp 并返回结果
+- =send-keys= ：模拟按键（如 =C-x C-f= 、 =M-x= ）
+- =type-text= ：逐字输入文本（保留空格和特殊字符）
+- =run-command= ：按名称执行命令（比 =M-x= 更可靠）
+- =sleep= ：等待异步操作完成
+- =suggest-improvement= ：记录 UI/UX 改进建议（不影响测试结果）
+- =pass-test= / =fail-test= ：判定测试结果，结束循环
+
+整个 agent loop 最多跑 80 轮（ =llm-test-max-iterations= 默认值），每轮是一次 LLM 请求/响应往返。
+
+* 跟传统测试的区别
+
+传统的 Emacs 测试用 ERT（Emacs Lisp 测试框架），测试代码直接调用函数、检查返回值。比如测试 =auto-fill= ，你要写 Elisp 设置 buffer、插入文字、检查换行位置。这测的是 *函数的行为* 。
+
+=llm-test= 测的是 *用户的体验* 。Agent 不知道你的内部函数怎么调用——它只知道按键、看屏幕、判断结果是否符合描述。这跟真实用户使用 Emacs 的方式一模一样。
+
+这种思路的优势：
+
+- *能测传统测试很难覆盖的场景* ：比如" =M-x= 输入命令时的补全是否正确"、" =dired= 中按 =g= 刷新后文件列表是否更新"——这些涉及多个命令组合和 UI 状态变化的交互流程，用 Elisp 写测试非常痛苦，用自然语言描述却很自然
+- *测试描述就是文档* ：YAML 里的自然语言描述既是测试用例，也是用户行为的文档
+- *对被测代码零侵入* ：不需要为测试暴露内部接口或写 test helper
+
+但也有明显的代价：
+
+- *非确定性* ：同一个测试跑两次，LLM 可能走不同的操作路径，甚至得出不同的结论。这不是传统测试的"确定性"范式
+- *成本* ：每个测试都要多次调用 LLM API，一个测试组跑下来可能消耗不少 token
+- *速度* ：每轮 agent loop 都是一次 API 调用，比直接 eval Elisp 慢几个数量级
+- *依赖模型质量* ：Andrew Hyatt 在 README 中建议使用 Claude Sonnet 级别的模型，不过他指出只要指令足够清晰，便宜的模型也能胜任
+
+* "LLM 当测试员"的适用场景
+
+=llm-test= 不会取代传统 ERT 测试。对于"函数 =f(x)= 输入 5 应该返回 10"这类确定性逻辑测试，Elisp 单元测试更快更准。
+
+它适合的是另一类测试——那些"人一眼就能看出来对不对，但用代码描述很麻烦"的场景：
+
+- 包的 UI 工作流是否顺畅（按键 → 期望看到某个界面）
+- 多步骤交互的端到端验证（打开文件 → 编辑 → 保存 → 确认状态）
+- 发现 UI/UX 问题（ =suggest-improvement= 工具让 agent 可以主动提出改进建议）
+
+这个思路也可以延伸到其他 GUI 应用——只要你能给 LLM 提供"屏幕状态"和"操作接口"，就能用同样的 agent loop 模式做测试。 =llm-test= 的 frame state JSON 快照设计就是一个很好的参考：不需要真的截图，把视觉信息结构化为文本就够了。
+
+[fn:1] https://github.com/ahyatt/llm-test
