@@ -1,0 +1,22 @@
+#+TITLE: WSL9x —— 在 Windows 9x 里跑 Linux 内核 6.19
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: 无主之地,linux,windows,retro
+#+DATE: [2026-04-24 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近看到一个很有意思的项目：把 Linux 内核搬进了 Windows 9x。微软的 WSL（Windows Subsystem for Linux）让 Linux 跑在 Windows 10/11 里，已经够让人吃惊了。但开源开发者 Hailey 更进一步——她让 Linux 内核 6.19 跑在了 Windows 9x（95、98、ME）里。项目名叫 [[https://codeberg.org/nicholatian/wsl9x][WSL9x]]。
+
+* 它怎么做到的？
+
+WSL9x 的核心思路是用 Linux 的 User Mode Linux（UML）架构——一种让 Linux 内核作为用户态进程运行的设计。Hailey 基于 UML 做了定制（对应 Codeberg 上的 =win9x-um-6.19= 分支），把内核移植到了 Win9x 环境下：补丁后的内核被加载到固定的内存地址（ =0xd0000000= ），一个 VxD（Win9x 的虚拟设备驱动）负责把内核从磁盘读进来，然后处理页面错误和系统调用。
+
+比较巧妙的是系统调用的处理方式。Win9x 没有提供 Linux 标准的系统调用中断表支持，所以 WSL9x 没有走常规的 =int 0x80= 路线，而是通过异常处理函数来拦截和转发 Linux 的系统调用。
+
+终端交互靠一个叫 =wsl.com= 的 16 位 DOS 程序，它把 Linux 的终端输出管道传回你运行它的那个 DOS 窗口。对，你在一台跑 Windows 98 的机器上打开 MS-DOS 提示符，输入 =wsl= ，就能看到 Linux 内核的启动输出。
+
+* 不需要虚拟化，i486 就能跑
+
+整个方案不依赖任何硬件虚拟化——没有 VT-x、没有 AMD-V。Hailey 说它理论上能在 i486 处理器上运行。巧合的是，i486 正好是 Linux 内核即将放弃支持的最老架构。这么一看，WSL9x 等于给了一台快要被 Linux 内核抛弃的老机器一个继续跑 Linux 的机会——只不过是在 Windows 9x 里面跑。
+
+项目目前没有提供预编译的二进制文件，想玩的话需要自己从 [[https://codeberg.org/nicholatian/wsl9x][Codeberg 上的源码]] 构建并部署到一台真正的 Windows 9x 系统上。虽然实用性有限，但作为一个技术实验，它的思路和实现都很有意思。
