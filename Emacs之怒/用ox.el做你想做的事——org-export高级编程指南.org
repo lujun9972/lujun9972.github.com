@@ -1,0 +1,456 @@
+#+TITLE: 用 ox.el 做你想做的事 —— org-export 高级编程指南
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, Org-mode, org-export, Elisp, HTML
+#+DATE: [2026-04-24 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+大多数 Emacs 用户只知道 =org-export= 能把 Org 文件转成 HTML/PDF，但很少有人意识到它其实是一个高度可扩展的编译框架。你可以继承已有的 backend，覆盖特定元素的渲染逻辑，注入自定义元数据，甚至完全重定义链接的解析方式——所有这些都不需要修改 Org 源码。
+
+本文从 scheatkode 的 ossg 项目[fn:1] 中提炼出几个实用的 =org-export= 高级技巧，每个技巧都配有可独立运行的代码。读完之后你会对 =ox.el= 的架构有一个清晰的认识，知道什么时候该用它、怎么用它。
+
+* 基础概念：backend 和 transcoder
+
+=org-export= 用"backend"来定义如何把 Org AST（抽象语法树）转换成目标格式。每个 backend 本质上是一个从"Org 元素类型"到"渲染函数"的映射表。比如 =html= backend 里， =headline= 元素对应 =org-html-headline= 函数， =link= 元素对应 =org-html-link= 函数。
+
+这些渲染函数叫 *transcoder* 。每个 transcoder 接收三个参数：元素本身、可选的描述文字、和一个 =info= plist（贯穿整个导出过程的通信管道）。
+
+#+BEGIN_SRC emacs-lisp
+;; 查看内置 html backend 的 transcoder 列表
+(org-export-backend-transcoders (org-export-get-backend 'html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+((bold . org-html-bold)
+ (center-block . org-html-center-block)
+ (clock . org-html-clock)
+ (code . org-html-code)
+ (drawer . org-html-drawer)
+ (dynamic-block . org-html-dynamic-block)
+ (entity . org-html-entity)
+ (example-block . org-html-example-block)
+ (export-block . org-html-export-block)
+ (export-snippet . org-html-export-snippet)
+ (fixed-width . org-html-fixed-width)
+ (footnote-reference . org-html-footnote-reference)
+ (headline . org-html-headline)
+ (horizontal-rule . org-html-horizontal-rule)
+ (inline-src-block . org-html-inline-src-block)
+ (inlinetask . org-html-inlinetask)
+ (inner-template . org-html-inner-template)
+ (italic . org-html-italic)
+ (item . org-html-item)
+ (keyword . org-html-keyword)
+ (latex-environment . org-html-latex-environment)
+ (latex-fragment . org-html-latex-fragment)
+ (line-break . org-html-line-break)
+ (link . org-html-link)
+ (node-property . org-html-node-property)
+ (paragraph . org-html-paragraph)
+ (plain-list . org-html-plain-list)
+ (plain-text . org-html-plain-text)
+ (planning . org-html-planning)
+ (property-drawer . org-html-property-drawer)
+ (quote-block . org-html-quote-block)
+ (radio-target . org-html-radio-target)
+ (section . org-html-section)
+ (special-block . org-html-special-block)
+ (src-block . org-html-src-block)
+ (statistics-cookie . org-html-statistics-cookie)
+ (strike-through . org-html-strike-through)
+ (subscript . org-html-subscript)
+ (superscript . org-html-superscript)
+ (table . org-html-table)
+ (table-cell . org-html-table-cell)
+ (table-row . org-html-table-row)
+ (target . org-html-target)
+ (template . org-html-template)
+ (timestamp . org-html-timestamp)
+ (underline . org-html-underline)
+ (verbatim . org-html-verbatim)
+ (verse-block . org-html-verse-block))
+#+END_EXAMPLE
+
+这意味着只要覆盖其中任何一个 transcoder，就能改变对应元素的输出方式。
+
+* 技巧一：继承 backend 并覆盖 transcoder
+
+=org-export-define-derived-backend= 是整个扩展机制的入口。它从父 backend 继承所有默认行为，然后你只需覆盖想要改动的部分。
+
+下面是一个最小示例：继承 =html= backend，把所有 =verbatim= （用 == 包裹的行内代码）渲染成带有 CSS class 的 =<code>= 标签，方便自定义样式：
+
+#+BEGIN_SRC emacs-lisp
+;; 定义一个自定义 backend，继承自 html
+(org-export-define-derived-backend 'my-html 'html
+  :translate-alist
+  '((verbatim . my-html-verbatim)))
+
+(defun my-html-verbatim (verbatim _contents _info)
+  "Render VERBATIM with a custom CSS class."
+  (format "<code class=\"inline-code\">%s</code>"
+          (org-element-property :value verbatim)))
+#+END_SRC
+
+验证一下效果：
+
+#+BEGIN_SRC emacs-lisp
+;; 在临时 buffer 中测试导出
+(with-temp-buffer
+  (insert "=hello world=\n")
+  (org-mode)
+  (org-export-as 'my-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+<p>
+<code class="inline-code">hello world</code>
+</p>
+#+END_EXAMPLE
+
+对比默认的 =html= backend 输出：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert "=hello world=\n")
+  (org-mode)
+  (org-export-as 'html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+<p>
+<code>hello world</code>
+</p>
+#+END_EXAMPLE
+
+区别在于默认输出没有任何 CSS class，而我们的自定义版本加上了 =inline-code= class，方便统一设置样式。
+
+`★ Insight ─────────────────────────────────────`
+=org-export-define-derived-backend= 的 =:translate-alist= 只需要列出你要覆盖的
+transcoder。没有列出的元素类型自动继承父 backend 的行为。这意味着你的自定义
+backend 可以只改一个元素（比如只改 =verbatim= 的渲染），其他所有元素都跟
+标准 HTML 导出一模一样。
+`─────────────────────────────────────────────────`
+
+* 技巧二：通过 #+KEYWORD 注入自定义数据到导出管线
+
+=ossg= 用了一个巧妙的技巧：往 Org 文件里插入 =#+OPD_BASE_URL:= 这样的自定义 keyword，Org 解析器会自动把它解析进 =info= plist，transcoder 就能读取到。
+
+=org-export-define-derived-backend= 的 =:options-alist= 参数定义了 keyword 到 plist key 的映射：
+
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend 'my-html 'html
+  :options-alist
+  '((:my-color "MY_COLOR"))     ; #+MY_COLOR: blue → (:my-color . "blue")
+  :translate-alist
+  '((verbatim . my-html-verbatim)))
+#+END_SRC
+
+这样，如果 Org 文件里有 =#+MY_COLOR: blue= ，transcoder 就能通过 =(plist-get info :my-color)= 拿到 =blue= 。
+
+来做一个完整的例子：根据文件中的 =#+MY_COLOR= keyword 来改变 =verbatim= 的输出颜色。
+
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend 'my-html 'html
+  :options-alist
+  '((:my-color "MY_COLOR"))
+  :translate-alist
+  '((verbatim . my-html-colored-verbatim)))
+
+(defun my-html-colored-verbatim (verbatim _contents info)
+  "Render VERBATIM with color from MY_COLOR keyword."
+  (let ((color (or (plist-get info :my-color) "inherit")))
+    (format "<code style=\"color: %s;\">%s</code>"
+            color
+            (org-element-property :value verbatim))))
+#+END_SRC
+
+测试：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert "#+MY_COLOR: red\n\n=colorized text=\n")
+  (org-mode)
+  (org-export-as 'my-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+<p>
+<code style="color: red;">colorized text</code>
+</p>
+#+END_EXAMPLE
+
+如果没有设置 =#+MY_COLOR= ，则回退到 =inherit= （继承父元素颜色）。
+
+这个技巧的威力在于：你可以在不修改 Org 文件内容的情况下，在构建脚本里动态插入 =#+KEYWORD= 行，把外部上下文"走私"进导出管线。ossg 就是这样把站点 URL 注入进去的——在渲染前往临时 buffer 里插入一行 =#+OPD_BASE_URL:= ，org-export 自动解析它，link transcoder 就能读到。
+
+`★ Insight ─────────────────────────────────────`
+=info= plist 是贯穿整个导出过程的"通信管道"。它包含文件的所有元数据
+（标题、作者、日期、选项等），加上你在 =:options-alist= 里声明的自定义字段。
+每个 transcoder 的第三个参数就是这个 plist。通过往里面注入自定义数据，
+你可以实现 transcoder 和外部世界的通信，而不需要全局变量。
+`─────────────────────────────────────────────────`
+
+* 技巧三：自定义 link transcoder
+
+=ossg= 最核心的技巧之一是自定义 link transcoder，把 Org 文件间的 =[[file:xxx.org]]= 链接自动替换成最终的 permalink。
+
+link transcoder 接收的 =link= 参数是一个 org-element 对象，你可以用 =org-element-property= 读取它的属性：
+
+#+BEGIN_SRC emacs-lisp
+(defun my-link-info (link desc info)
+  "Demonstrate link element properties."
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link))
+        (raw-link (org-element-property :raw-link link)))
+    (format "<!-- type=%s path=%s raw=%s -->%s"
+            type path raw-link
+            (org-html-link link desc info))))
+#+END_SRC
+
+先看看 Org 是怎么解析不同类型的链接的：
+
+#+BEGIN_SRC emacs-lisp
+  (org-export-define-derived-backend 'debug-html 'html
+    :translate-alist
+    '((link . my-link-info)))
+
+  (with-temp-buffer
+    (insert "* Test links
+  - [[https://example.com][external link]]
+  - [[file:other.org][file link]]
+  - [[file:images/photo.png][image link]]
+  - [[#my-heading][internal heading link]]
+
+  ,* My Heading
+  :PROPERTIES:
+  :CUSTOM_ID: my-heading
+  :END:
+  ")
+    (org-mode)
+    (org-export-as 'debug-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+<ul>
+<li><!-- type=https path=//example.com raw=https://example.com --><a href="https://example.com">external link</a></li>
+<li><!-- type=file path=other.org raw=file:other.org --><a href="other.html">file link</a></li>
+<li><!-- type=file path=images/photo.png raw=file:images/photo.png --><a href="images/photo.png">image link</a></li>
+<li><!-- type=custom-id path=my-heading raw=#my-heading --><a href="#my-heading">internal heading link</a></li>
+</ul>
+#+END_EXAMPLE
+
+可以看到：
+- 外部 URL 的 =type= 是 =https= ， =path= 是 =//= 开头的地址部分（不含 scheme）
+- 文件链接的 =type= 是 =file= ， =path= 是文件路径
+- 内部标题链接的 =type= 是 =custom-id=
+
+有了这些信息，就可以实现 ossg 那样的链接重写——检测到 =type= 为 =file= 且 =path= 以 =.org= 结尾时，查表替换成 permalink：
+
+#+BEGIN_SRC emacs-lisp
+(defvar my-url-registry (make-hash-table :test 'equal)
+  "Maps absolute file paths to their final URLs.")
+
+;; 假设我们已经注册了一些 URL
+(puthash "/home/user/blog/posts/hello.org" "/posts/hello.html" my-url-registry)
+
+(defun my-translate-link (link desc info)
+  "Resolve file: links to .org files using the URL registry."
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link)))
+    (if (and (string= type "file")
+             (string-suffix-p ".org" path))
+        ;; 查表替换
+        (let* ((abspath (expand-file-name path))
+               (url (gethash abspath my-url-registry)))
+          (if url
+              (format "<a href=\"%s\">%s</a>" url (or desc url))
+            ;; 找不到就回退到默认行为
+            (org-html-link link desc info)))
+      ;; 非 .org 链接，用默认处理
+      (org-html-link link desc info))))
+#+END_SRC
+
+`★ Insight ─────────────────────────────────────`
+link transcoder 是 =org-export= 最强大的扩展点之一。
+通过检查 =type= 和 =path= 属性，你可以精确控制不同类型链接的输出。
+ossg 用它实现了跨路由链接解析，但同样的技巧也可以用于：
+把 =[[file:*.pdf]]= 链接渲染成嵌入式的 PDF 查看器、
+把 =[[doi:xxx]]= 链接渲染成学术引用格式、
+或者把特定路径的文件链接渲染成缩略图。
+`─────────────────────────────────────────────────`
+
+* 技巧四：用 cl-progv 做动态变量绑定
+
+=ossg= 需要在不同路由中覆盖不同的 =org-export= 全局变量（比如 =org-export-with-toc= ），但普通的 =let= 绑定在延迟执行的场景下会失效——因为 =let= 在求值时就确定了绑定，而实际导出可能在很久之后才发生。
+
+=cl-progv= 解决了这个问题：它接受一个 *运行时* 生成的变量名列表和值列表，动态绑定它们。
+
+#+BEGIN_SRC emacs-lisp
+;; cl-progv 的基本用法
+(cl-progv
+    '(org-export-with-toc org-export-with-section-numbers)
+    '(nil nil)
+  ;; 在这个作用域内，org-export-with-toc 为 nil
+  ;; org-export-with-section-numbers 也为 nil
+  (list org-export-with-toc org-export-with-section-numbers))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+(nil nil)
+#+END_EXAMPLE
+
+这和 =let= 的区别在哪？关键在于变量名可以是 *数据驱动的* ：
+
+#+BEGIN_SRC emacs-lisp
+;; 用 let：变量名在编写时就确定了（词法）
+(let ((org-export-with-toc nil))
+  org-export-with-toc)  ;; → nil
+
+;; 用 cl-progv：变量名来自数据结构（动态）
+(let ((env '((org-export-with-toc . nil)
+             (org-html-link-home . "https://example.com"))))
+  (cl-progv
+      (mapcar #'car env)    ;; 变量名列表
+      (mapcar #'cdr env)    ;; 值列表
+    (list org-export-with-toc org-html-link-home)))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+(nil "https://example.com")
+#+END_EXAMPLE
+
+实际应用中， =env= 可以来自配置数据（比如路由的 =:env= 属性），不同的路由覆盖不同的变量组合。这让每个路由有自己独立的导出环境，互不污染。
+
+* 技巧五：org-element-parse-buffer 的 granularity 控制
+
+=ossg= 在性能优化中发现了一个关键细节： =org-element-parse-buffer= 的第一个参数控制解析深度。
+
+#+BEGIN_SRC emacs-lisp
+;; 完整解析（默认）—— 解析所有内容，包括行内标记
+(org-element-parse-buffer)              ; 等价于 (org-element-parse-buffer 'object)
+
+;; 只解析到元素级 —— 不解析行内对象
+(org-element-parse-buffer 'element)
+
+;; 只解析大元素 —— 不递归进入段落内部
+(org-element-parse-buffer 'greater-element)
+
+;; 只解析标题
+(org-element-parse-buffer 'headline)
+#+END_SRC
+
+来看一个具体的例子，感受不同粒度返回的 AST 结构差异：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert "* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+,** Sub heading
+Another paragraph.
+")
+  (org-mode)
+  (let ((ast (org-element-parse-buffer 'greater-element)))
+    ;; greater-element 粒度下，段落存在但没有子对象
+    (format "paragraphs: %d, bold objects: %d"
+            (length (org-element-map ast 'paragraph #'identity))
+            (length (org-element-map ast 'bold #'identity)))))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+"paragraphs: 2, bold objects: 0"
+#+END_EXAMPLE
+
+注意 =*bold text*= 没有被解析成独立的 bold 对象——在 =greater-element= 粒度下段落内部不会被递归解析。这比完整解析快得多，当你只需要提取标题、日期、标签等顶层元数据时完全够用。
+
+对比完整解析的结果：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert "* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+,** Sub heading
+Another paragraph.
+")
+  (org-mode)
+  (let ((ast (org-element-parse-buffer)))  ; 默认 'object 粒度
+    (format "paragraphs: %d, bold objects: %d"
+            (length (org-element-map ast 'paragraph #'identity))
+            (length (org-element-map ast 'bold #'identity))))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+"paragraphs: 2, bold objects: 1"
+#+END_EXAMPLE
+
+完整解析时， =*bold text*= 被识别为一个独立的 =bold= 对象。这种精度在你需要精确控制行内标记的 HTML 输出时是必要的，但在只需要元数据的场景下就是浪费。
+
+`★ Insight ─────────────────────────────────────`
+选择合适的 =granularity= 是 =org-element= 性能优化的关键。
+规则很简单：如果你只需要标题、属性、keyword 等结构性数据，
+用 =greater-element= ；如果你需要操作段落内的行内标记（粗体、链接、代码等），
+用 =element= 或默认的 =object= 。对于大文件的元数据提取，
+这个选择可能带来数倍的性能差异。
+`─────────────────────────────────────────────────`
+
+* 组合起来：一个自定义导出 pipeline
+
+把上面几个技巧组合起来，你可以构建一个完整的自定义导出 pipeline。下面是一个简化的示例，演示了 ossg 的核心思路：
+
+#+BEGIN_SRC emacs-lisp
+;; 1. 定义 URL 注册表
+(defvar my-url-registry (make-hash-table :test 'equal))
+
+;; 2. 定义自定义 backend
+(org-export-define-derived-backend 'site-html 'html
+  :options-alist
+  '((:site-base-url "SITE_BASE_URL"))
+  :translate-alist
+  '((link . my-site-translate-link)))
+
+;; 3. Link transcoder：处理文件间链接
+(defun my-site-translate-link (link desc info)
+  "Resolve .org file links using the URL registry."
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link)))
+    (if (and (string= type "file")
+             (string-suffix-p ".org" path))
+        (let ((url (gethash (expand-file-name path) my-url-registry)))
+          (if url
+              (format "<a href=\"%s\">%s</a>" url (or desc url))
+            (org-html-link link desc info)))
+      (org-html-link link desc info))))
+
+;; 4. 导出一个文件（注入 SITE_BASE_URL）
+(defun my-site-export-file (filepath output-path base-url)
+  "Export FILEPATH to OUTPUT-PATH with BASE-URL injected."
+  (with-temp-buffer
+    (insert-file-contents filepath)
+    (org-mode)
+    ;; 注入自定义 keyword，把站点 URL 走私进导出管线
+    (goto-char (point-min))
+    (forward-line)
+    (insert (format "#+SITE_BASE_URL: %s\n" base-url))
+    (let ((html (org-export-as 'site-html)))
+      (with-temp-file output-path
+        (insert html)))))
+#+END_SRC
+
+这就是 ossg 导出管线的最小核心：一个自定义 backend + 一个 link transcoder + 一个注入元数据的导出函数。ossg 在此基础上加了两遍编译（第一遍注册 URL、第二遍渲染）、路由系统、增量缓存等，但骨架就是这些。
+
+* 小结
+
+=org-export= 的可扩展性来自三个核心机制：
+
+1. *Backend 继承* ：通过 =org-export-define-derived-backend= 继承已有 backend，只覆盖需要的部分
+2. *Keyword 注入* ：通过 =:options-alist= 声明自定义 keyword，让 Org 解析器自动把文件元数据传进 transcoder 的 =info= plist
+3. *Transcoder 覆盖* ：在 =:translate-alist= 里指定自定义渲染函数，精确控制特定元素类型的输出
+
+这三个机制组合起来，足以在不修改 Org 源码的前提下实现几乎所有自定义导出需求。下次你需要定制 HTML 输出时，不妨先看看能不能用这些机制解决，而不是写后处理脚本。
+
+[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/

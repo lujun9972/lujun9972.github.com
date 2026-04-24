@@ -1,0 +1,322 @@
+#+TITLE: 读：Hot-wiring the Lisp Machine —— 用纯 Elisp 构建零依赖的 Org 静态站点生成器
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, Org-mode, SSG, org-export, Elisp
+#+DATE: [2026-04-24 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+scheatkode 发表了一篇长文[fn:1]，记录了他用纯 Emacs Lisp 从零构建 Org-mode 静态站点生成器的全过程。这个项目叫 =ossg= （Org Static Site Generator），它的核心约束是 *零外部依赖* ——不依赖 Node.js、不依赖 Hugo、不依赖任何 Elisp 包，只用 Emacs 内置的 =org-export= 管线完成一切。
+
+这篇文章值得读，不光因为项目本身有意思，更因为它记录了一次完整的架构演进：从天真的字符串替换，到发现 Emacs 内置能力的真正价值，再到两遍编译器、增量热重建。每一步都是被现实逼出来的。
+
+* 起点：为什么不用现成的 SSG
+
+作者试了一圈主流方案，发现没有一个是"原生 Emacs"的：
+
+- =org-publish= ：Emacs 内置的发布引擎，但它的 API 只暴露了很少的配置点——你想自定义 HTML 结构，只能通过几个固定的 hook 变量往里塞代码；想生成分页索引，得自己手写一大段补丁逻辑。换句话说，它给了你一个框架，但这个框架的骨架是焊死的，你只能在预留的槽位上插东西
+- Hugo + =ox-hugo= ：先把 Org 转成 Markdown 再喂给 Hugo，等于多了一层没必要的抽象
+- Weblorg：架构最接近理想，但依赖字符串模板引擎，没法直接用 Elisp 控制输出
+
+作者最终选择了 Weblorg 的路由架构作为骨架，但把它的模板引擎整个替换掉了。
+
+* 第一版：字符串模板的死胡同
+
+最初的方案用 =format-spec= 把变量塞进 HTML 模板：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(format-spec
+ template
+ `((?p . ,(or (org-html--build-pre/postamble 'preamble info) ""))
+   (?P . ,(or (org-html--build-pre/postamble 'postamble info) ""))
+   (?t . ,title-fragment)
+   (?d . ,date-fragment)
+   (?T . ,tags-fragment)
+   (?r . ,reading-time)
+   (?c . ,contents)))
+#+END_SRC
+
+template长这样：
+
+#+BEGIN_SRC html :eval never
+<html%a>
+  <head>
+    <title>%t</title>
+  </head>
+  <body>
+    <main id="content">
+      <article>
+        <h1 class="title">%t</h1>
+        %c
+      </article>
+    </main>
+  </body>
+</html>
+#+END_SRC
+
+这个方案一开始能用，但扩展性为零。每加一种元数据就要硬编码一个新的 =%X= 占位符。更致命的是， =format-spec= 会把 CSS 里的 =width: 100%;= 当成变量去替换，直接报错。
+
+作者试过让每个 =%X= 占位符不再对应一个固定字符串，而是对应一个闭包（延迟求值的函数）——这样模板引擎在替换 =%t= 时不是直接插入 =title-fragment= ，而是调用一个函数动态计算结果。这听起来像是"让字符串变聪明了"，但本质上仍然是在一个已经有强大解析器的编辑器里重新发明一个简陋的字符串格式化器。用原文的话说："给马车装曲速引擎。"
+
+* 转折：让 Lisp 闭包替代模板
+
+作者意识到问题的根源：不应该在 HTML 字符串里塞变量，应该直接用 Elisp 控制整个输出过程。
+
+关键改动是把路由的 =:template= 参数从文件路径改成了一个纯 Lisp 闭包：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(lambda (ctx)
+  (when-let ((path (alist-get 'abspath ctx)))
+    (insert-file-contents path)))
+#+END_SRC
+
+这个闭包接收一个临时 buffer 和解析后的上下文数据，用 Elisp 往 buffer 里填内容。最简单的用法就是把文件内容倒进去，但你可以在里面做 *任何事* —— 条件判断、循环、调用外部函数、生成动态内容，全都是标准的 Elisp，不需要学任何模板语法。
+
+同样， =:exporter= 参数也是一个闭包，默认实现是把 buffer 交给 =org-export= 处理：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(lambda (_)
+  (org-export-as 'opd))
+#+END_SRC
+
+这一步是整个架构的关键转折。因为 template 和 exporter 都是闭包，整个引擎不再需要自己的模板语言、插件系统或 hook 机制。它只是一个路由层：找到文件 → 喂给 template 闭包 → 喂给 exporter 闭包 → 写入磁盘。所有复杂逻辑都交给用户用 Elisp 自己写。
+
+`★ Insight ─────────────────────────────────────`
+这个设计的精髓在于"站在 =org-export= 的肩膀上"。
+=ossg= 没有重新发明 HTML 生成，而是通过
+=org-export-define-derived-backend= 继承 =html= backend，
+只在需要的地方覆盖 transcoder（比如自定义链接解析）。
+这意味着 Org-mode 原生的所有导出能力——脚注、表格、代码高亮——都自动可用，
+不需要额外实现。
+`─────────────────────────────────────────────────`
+
+整个公开 API 缩减到四个原语： =opd-site= 、 =opd-route= 、 =opd-assets= 、 =opd-export= 。
+
+* 两遍编译器：跨路由链接
+
+一个网站不是一堆孤立的页面——页面之间有链接。作者不想手动维护链接路径，也不想让源文件目录结构跟部署 URL 一一对应。他希望写一个标准的 =[[file:somewhere/some-file.org]]= 链接，Emacs 编辑时能正常跳转，构建时自动替换成正确的 permalink。
+
+解决方案是"两遍编译器"：
+
+1. *第一遍（扫描）* ：遍历所有文件，计算每个文件的目标 URL，填充到一个全局的 URL 注册表中
+2. *第二遍（渲染）* ：渲染 HTML，此时注册表已经完整，可以解析所有跨路由链接
+
+链接替换通过自定义的 link transcoder 实现。 =transcoder= 是 =org-export= 中的一个概念：每个 Org 元素类型（标题、段落、链接等）在导出时都对应一个渲染函数，比如标题对应 =org-html-headline= ，链接对应 =org-html-link= 。你可以定义自己的渲染函数来替换默认行为，这个自定义渲染函数就叫 transcoder。下面这段代码就是一个专门处理链接的 transcoder：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(defun opd-translate-link (link desc info)
+  "Resolve cross-route Org links using the site's URL registry."
+  (if-let*
+      ((type (org-element-property :type link))
+       (path (org-element-property :path link))
+       ((and (string= "file" type)
+             (string-suffix-p ".org" path)))
+       (base (plist-get info :opd-base-url))
+       (site (opd--site-get base))
+       (absp (expand-file-name path))
+       (url (and site (gethash absp (gethash :registry site)))))
+      (org-element-put-property link :path url)
+    (org-html-link link desc info)))
+#+END_SRC
+
+这段代码的逻辑是：如果链接指向一个 =.org= 文件，就去 URL 注册表里查它最终的 URL，替换掉原始路径；否则按默认的 =org-html-link= 处理。
+
+但有个问题： =org-export= 是 Emacs 内置模块，它只认得 Org 文件里的标准语法（ =#+TITLE= 、 =#+DATE= 等），对 =ossg= 自定义的站点 URL 注册表一无所知。而 link transcoder 在导出过程中需要知道"当前文件属于哪个站点"，才能去注册表里查链接。 =org-export= 又没有提供传递自定义数据的接口，那 transcoder 怎么拿到当前文件的站点信息？
+
+作者的解法很巧妙——在渲染前往临时 buffer 的元数据里注入一行 =#+OPD_BASE_URL:= ，Org 解析器会自动把它解析进 =info= plist 中：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(org-export-define-derived-backend
+ 'opd 'html
+  :options-alist
+ '((:opd-base-url "OPD_BASE_URL"))
+ :translate-alist
+ '((headline . opd-translate-headline)
+   (link     . opd-translate-link)))
+#+END_SRC
+
+这样就把站点上下文"走私"进了 =org-export= 管线，不需要修改 =org-export= 本身。
+
+* 状态隔离：用 cl-progv 防止全局变量污染
+
+Emacs 的 =org-export= 大量依赖全局变量（比如 =org-export-with-toc= 控制是否生成目录）。不同路由需要不同的变量覆盖——博客路由要生成目录，RSS 路由不要。
+
+你可能会想，把变量绑定写在闭包里面不就行了？
+
+#+BEGIN_SRC emacs-lisp :eval never
+(opd-route
+ :name "rss"
+ :exporter
+ (lambda (_)
+   (let ((org-export-with-toc nil)
+         (org-html-link-home "http://localhost:8080"))
+     (org-export-as 'rss))))
+#+END_SRC
+
+确实， =let= 在闭包体内部，闭包被调用时才执行，没有时序问题。但如果你有 20 个路由，每个覆盖不同的变量组合，就要写 20 份几乎一样的闭包，唯一的区别就是 =let= 里的变量名和值不同——纯粹是重复劳动。
+
+那把 =let= 写在 =opd-route= 外面，让闭包自动捕获变量值呢？
+
+#+BEGIN_SRC emacs-lisp :eval never
+(let ((org-export-with-toc nil))
+  (opd-route ...))   ;; ← 只是注册，没有执行导出
+(opd-export)          ;; ← 导出时 let 已经过期了
+#+END_SRC
+
+对于普通变量，闭包确实会捕获 =let= 的绑定，即使 =let= 结束后值也不会丢。但 =org-export-with-toc= 不是普通变量——它是用 =defcustom= 声明的 special variable（特殊变量）。在 Emacs Lisp 中，special variable（用 =defvar= 或 =defcustom= 声明的变量）始终是动态作用域，即使开了 =lexical-binding= ，闭包也不会捕获它们的 =let= 绑定。等 =opd-export= 真正开始工作时， =let= 作用域早就结束了，动态绑定也跟着消失。
+
+作者想要的是一种 *声明式* 的写法——把要覆盖的变量写在路由配置数据里，引擎自动在正确的时机绑定它们。这就是 =cl-progv= 的用武之地。这个宏接受一个变量名列表和一个值列表，在运行时动态绑定它们：
+
+作者用 Common Lisp 的 =cl-progv= 解决了这个问题。这个宏接受一个变量名列表和一个值列表，动态绑定它们：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(defmacro opd--with-env (route &rest body)
+  "Evaluate BODY with dynamic bindings specified in ROUTE's `:env'."
+  (declare (indent 1))
+  (let ((r-var (make-symbol "route")))
+    `(let* ((,r-var ,route)
+            (env (plist-get ,r-var :env))
+            (vars (mapcar #'car env))
+            (vals (mapcar #'cdr env)))
+       (cl-progv vars vals ,@body))))
+#+END_SRC
+
+这样每个路由可以声明自己的环境变量覆盖，互不干扰：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(let ((org-export-with-toc nil)
+      (org-html-html5-fancy t))
+  (opd-route ...)
+  (opd-route
+   :name "rss"
+   :env '((org-html-link-home . "http://localhost:8080"))
+   :exporter (lambda (_) (org-export-as 'rss))))
+#+END_SRC
+
+`★ Insight ─────────────────────────────────────`
+=cl-progv= 和 =let= 的区别在于 *什么时候* 决定绑定哪些变量。
+=let= 在编写时就知道变量名（词法作用域），而 =cl-progv= 在运行时
+从数据结构中读取变量名和值（动态作用域）。这正是处理路由级配置所需要的——
+不同路由可能覆盖不同的全局变量，而且变量名来自配置数据而非代码。
+`─────────────────────────────────────────────────`
+
+* 函数式组合器：声明式过滤 API
+
+早期的过滤 API 用硬编码的具名函数（比如 =opd-input-filter-drafts= 专门过滤草稿、 =opd-input-aggregate-all-desc= 专门按日期倒序聚合），每加一种过滤条件就要在引擎里加一个新函数，用户没法组合它们。作者把这改成了布尔组合器和匹配谓词的分离设计：
+
+- 组合器： =opd-filter-any= 、 =opd-filter-all= 、 =opd-filter-omit=
+- 匹配器： =opd-match-tag= 、 =opd-match-prop= 、 =opd-match-has-prop=
+
+这就像 Lisp 里的布尔表达式一样，可以无限嵌套组合：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(opd-route
+ :name "rss"
+ :pattern "*.org"
+ :filter
+ (opd-filter-all
+  (opd-filter-any
+   (opd-match-tag "blog")
+   (opd-match-tag "lore"))
+  (opd-match-has-prop 'date)
+  (opd-filter-omit
+   (opd-match-tag "draft")
+   (opd-match-tag "archive"))))
+#+END_SRC
+
+这段代码的含义直白得像英语：匹配所有带 =blog= 或 =lore= 标签、有日期、且不是 =draft= 或 =archive= 的文件。
+
+* 性能优化：从 5 分半到 1 分 15 秒
+
+作者用 10,000 个文件做压力测试。初始版本跑完要 5 分 30 秒（每文件 32ms），经过一系列优化降到了 1 分 15 秒（每文件 7.5ms）。这部分的详细分析我之前写过一篇[[file:Elisp性能优化的六个实战教训.org][独立的博文]]，这里只概述关键转折点。
+
+*第一轮优化：降低解析精度*
+
+=org-element-parse-buffer= 默认解析整个 buffer 的所有内容（ =object= 级别）。第一遍扫描只需要标题、日期等顶层元数据，不需要解析每个段落里的行内标记。把粒度降到 =greater-element= 后，时间从 5 分 30 秒降到 3 分 44 秒（22ms/文件）。
+
+#+BEGIN_SRC emacs-lisp :eval never
+;; 默认：解析所有内容（最慢）
+(org-element-parse-buffer)
+
+;; 只解析顶层元素（快得多）
+(org-element-parse-buffer 'greater-element t)
+#+END_SRC
+
+*第二轮优化：用 profiler 找到真正的瓶颈*
+
+用 =M-x profiler-start= 跑出的结果令人意外——最大的 CPU 消耗不是 =org-element-parse-buffer= ，而是 =find-file-noselect= （13%）和 =org-persist-write-all-buffer= （12%）。
+
+原因在于 =org-with-file-buffer= 内部调用 =find-file-noselect= ，它会把每个文件当作交互式 buffer 打开——触发文件锁、版本控制查询、major-mode hook 等一系列操作。 =org-persist= 还会为每个文件写缓存到磁盘。相当于为了读一个标题字符串，承担了整个交互式操作系统的行政开销。
+
+换成 =with-temp-buffer= + =insert-file-contents= 后，时间骤降到 1 分 15 秒（7.5ms/文件）。
+
+`★ Insight ─────────────────────────────────────`
+这个发现对写 Elisp 性能敏感代码很有参考价值：
+=find-file-noselect= 是为交互使用设计的，它会触发所有 hook、
+缓存写入和版本控制操作。当你只是想读取文件内容时，
+=with-temp-buffer= + =insert-file-contents= 才是正确的选择。
+同理， =org-element-parse-buffer= 的 =granularity= 参数
+在只需要顶层元数据时能省下大量 CPU。
+`─────────────────────────────────────────────────`
+
+*第三轮优化：算法改进*
+
+把所有线性扫描替换成哈希表查找，用 =cl-loop= 替代 =maphash= + =lambda= 减少闭包开销，把模板编译提前到路由初始化阶段而非每次渲染时重复编译。
+
+* 增量热重建
+
+在经过改造后，压测的结果是10,000 篇博文全量构建花了 1 分 15 秒,这已经很快了，但实际使用中还不够。因为作者用 Emacs 内置的 =filenotify= 实现了文件监视,在每次保存文件时自动触发构建,每次保存都会触发一次全量构建。作者的博客大约 500 篇，全量构建需要 11 秒，也就是说改一个字母就要等 11 秒才能看到效果。原作者称之为"masochism"。
+
+为了解决这个问题，作者引入了增量逻辑，核心思路分三层：
+
+1. *文件级缓存* ：每个文件独立缓存，改一个文件只重建那一个文件，不波及同路由的其他文件
+2. *内容变更 vs 结构变更* ：只改文字（元数据不变）走快速路径，直接替换输出；改了标签或 =#+FILETAGS= 等结构性内容才需要重建聚合路由（索引页、RSS 等）
+3. *依赖图* ：如果 =post.org= 通过 =#+SETUPFILE:= 引用了 =setup.org= ，修改 =setup.org= 时引擎会反向查找所有依赖它的文件，级联失效缓存并重建
+
+依赖图的实现用了一个 =:depcache= 哈希表。第一遍扫描时记录每个文件的 =#+SETUPFILE= 和 =#+INCLUDE= 指令，构建反向依赖关系。当文件变化时，用深度优先搜索遍历依赖图，找出所有需要重建的父文件。
+
+还有一个精巧的"duck-typed 路由"设计：引擎不需要手动标记哪个路由是"主路由"——它检查聚合后数据块的结构来判断。
+
+比如 =opd-aggregate-each= （每篇博文单独输出一个 HTML 文件）的返回值长这样：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(((abspath . "/blog/post-a.org") (slug . "post-a") ...)
+ ((abspath . "/blog/post-b.org") (slug . "post-b") ...))
+#+END_SRC
+
+每个数据块顶层就有 =abspath= ——这是一对一的路由，引擎只重建变化的那个文件。
+
+而 =opd-aggregate-all= （所有博文聚合到一个 RSS 文件）的返回值长这样：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(((posts .
+   (((abspath . "/blog/post-a.org") (slug . "post-a") ...)
+    ((abspath . "/blog/post-b.org") (slug . "post-b") ...)))))
+#+END_SRC
+
+=abspath= 被包裹在 =posts= 列表里——这是一对多的聚合路由，任何一个输入文件变化都可能影响最终输出，所以必须整体重建。
+
+引擎只需要递归搜索数据块树，检查 =abspath= 出现在什么位置，就能自动判断路由类型，不需要任何手动标记。
+
+最终效果：热重建时间降到 7~200 毫秒，取决于源文件的复杂度。
+
+* 几个值得注意的设计决策
+
+*防御性编程变成进攻性编程*
+
+作者曾花了好几个小时调试一个诡异的构建失败，最后发现原因竟是自己配置文件里一段被注释掉的路由。这让他转向"进攻式"风格——到处插 =cl-assert= ，出错立刻中断并告诉你哪里错了，而不是静默恢复继续跑。因为静默恢复容易导致状态污染，让你更难找到真正的 bug。
+
+*静态资产统一到路由系统*
+
+图片、CSS 等静态文件最初走的是一个独立的"复制文件"循环，跟 Org 文件完全分离。后来作者意识到：一个静态文件就是一个没有元数据的 Org 文件。他用一个不解析 Org 的 dummy parser 把静态资产统一进了同一个路由系统，享受同样的缓存、监视和增量重建能力。
+
+*不实现垃圾回收*
+
+作者曾试图跟踪所有生成的文件，用于清理孤立文件。最后放弃了——直接删掉整个输出目录再全量重建，简单、无状态、正确。有时候最聪明的工程决策就是认出一个五十年前就被 shell 命令解决的问题。
+
+* 读完之后
+
+这篇文章最打动人的不是最终的产品——一个静态站点生成器——而是整个过程。作者没有一开始就设计出完美的架构，而是从最朴素的字符串替换开始，一步步被现实逼着改进。每个转折点都有明确的"为什么旧方案不行"和"为什么新方案更好"。
+
+对于 Emacs 用户来说，这篇文章还提供了一个实用的启示： =org-export= 的可扩展性远比大多数人想象的大。通过 =org-export-define-derived-backend= 和自定义 transcoder，你可以在不修改 Org 源码的情况下深度定制 HTML 输出。 =ossg= 整个项目就是建立在这个能力之上的。
+
+[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/
