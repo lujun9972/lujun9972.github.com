@@ -1,0 +1,178 @@
+#+TITLE: 读：Anvil——把 Emacs 变成 AI 的工具服务器
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, AI, MCP, token优化, org-mode
+#+DATE: [2026-04-23 Wed]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 一个反直觉的想法
+
+我们习惯的模式是"人在编辑器里写代码，AI 在旁边辅助"。但 anvil.el 这个项目提出了一个反过来的思路：让 AI 直接操作编辑器，让编辑器成为 AI 的工具。
+
+这不是换个说法而已。传统的 AI 编码流程里，agent 要改一个文件，必须先把整个文件读进来，定位要改的地方，修改，再把整个文件写回去。如果文件很大，每一次读和写都在浪费 token——agent 的上下文窗口被大量无关内容占满，钱也花在了搬运无用数据上。
+
+anvil.el 的做法是：Emacs 作为 MCP（Model Context Protocol，模型上下文协议）服务器运行，AI agent 通过 MCP 协议直接调用 Emacs 的能力。想改哪一行就只传那一行的变更。想读某个 org 标题下的内容就只返回那个子树。Emacs 几十年积累的编辑能力——org-mode、dired、magit、calc——全部变成了 AI 可以调用的工具，v0.4.0 已经有 198 个以上这样的工具了。
+
+* 为什么做这个工具：一个人的三阶段进化
+
+anvil.el 的作者 zawatton 在日本经营一家一人电气工程公司，大约维护 40 个客户的设备。他的日常工作依赖 Windows 上的 Excel 做巡检报告，用 Emacs 的 org-mode 做笔记和日程管理。
+
+他使用 Claude 辅助工作的过程经历了三个阶段：
+
+*阶段一：Claude Desktop。* Anthropic 的桌面应用能直接操作本地文件和浏览器，帮他把文档整理、报告起草、记账这些工作自动化了。但很快他就撞上了月费 200 美元（MAX 套餐）的使用上限。
+
+*阶段二：Claude Code。* 他转到命令行版的 Claude Code，shell 和 git 集成更流畅了。但问题出在文件编辑上——他开始把巡检数据从 Excel 迁移到 org 文件，因为 AI 处理纯文本比处理 Excel 高效得多。然而 Claude Code 编辑大 org 文件（约 1.2 MB）时，内容频繁丢失，token 消耗也跟着暴涨。原因很简单：Claude Code 每次编辑都要读整个文件再写回去，对于 Emacs 用户来说习以为常的大文件，在 AI 的读写模式下效率极低。
+
+*阶段三：造 Anvil。* 他的想法是：既然 Emacs 处理大 org 文件这么熟练（按行编辑、按标题导航），为什么不让 Claude 直接用 Emacs 的能力来编辑？于是他把 Emacs 做成了 MCP 服务器，AI 通过协议调用 Emacs 的编辑命令，而不是自己笨拙地读写整个文件。
+
+* 核心设计：操作区域，而不是整个文件
+
+理解 Anvil 的关键在于"按区域操作"这个设计原则。
+
+传统模式下，agent 想在一个 1.2 MB 的 org 文件里替换一个字符串，流程是：读取 1.2 MB 内容 → 找到目标 → 修改 → 把修改后的 1.2 MB 写回去。往返一次，光搬运数据就消耗几万个 token。
+
+Anvil 提供的是精准操作工具：
+
+- ~anvil-file-replace-string~:只传要查找的字符串和替换内容，Emacs 在本地完成替换，不传文件内容
+- ~anvil-org-read-headline~:只读某个标题下的子树，哪怕整个文件有 13000 行
+- ~anvil-file-insert-at-line~:在指定行号插入内容，只传新增的那几行
+- ~anvil-file-batch~:把对同一个文件的多次编辑合并成一次调用，一次性完成
+
+实际效果如何？作者在真实项目（一个 16000+ 行 TypeScript 的游戏移植项目 newDTW）中测量了几个典型场景：
+
+| 操作场景 | 传统方式 | Anvil 方式 | token 节省 |
+|----------+----------+------------+------------|
+| 同一文件 6 处编辑 | ~4800 token（6 次读写） | ~1500 token（1 次批量调用） | ~70% |
+| 4000 行类型定义文件里加一个字段 | 数千 token（读写整个文件） | 几十个 token（只传插入位置和内容） | ~90%+ |
+| 批量添加 200 个 i18n 翻译键值 | ~30000 token | ~8000 token | ~73% |
+| 从 3407 行代码中提取 347 个结构化记录 | ~8000+ token | ~3000-5000 token | ~50% |
+
+每次重构会话累计节省 15000-25000 个 token。这些 token 省下来之后，agent 可以把上下文窗口用在真正的推理上，而不是反复搬运文件内容。
+
+* 更多的设计考量
+
+*Worker 异步调度：* 慢操作（大型 tangle、全项目扫描、字节编译）不会阻塞 agent 的主连接。Anvil 把这些任务分发给后台的 worker Emacs 进程。实测中， ~org-babel-tangle~ 在主线程跑要 30 秒，用 worker 派发只要 2 秒——快了 15 倍，而且 agent 的主会话不会被卡住。
+
+*Manifest 配置文件控制工具暴露数量：* Anvil 提供了不同的配置文件来控制向 agent 暴露多少工具。全量模式暴露 198+ 个工具（约 20400 token 的描述），精简模式（ultra）只暴露 17 个核心工具（约 2740 token）。在多 agent 并行的场景下，200 个子会话用全量配置光工具列表就消耗 400 万 token，用 ultra 只需 55 万——工具列表本身就省了 87%。
+
+*不只是 org-mode：* 虽然 Anvil 的起源是 org 文件编辑问题，但它的工具覆盖了文件批量操作、JSON 编辑、git 操作、Elisp 求值、进程管理、剪贴板读写、Excel/PDF 处理等等。v0.4.0 还加入了基于 tree-sitter 的 Python、TypeScript、JavaScript 结构化编辑——agent 可以在 AST 层面做重构，而不是靠正则匹配。
+
+*多 agent 编排：* ~anvil-orchestrator~ 能把一个 prompt 同时发给多个 AI CLI（Claude、Codex、Gemini、Ollama），收集结果后做共识判定，甚至可以让一个 meta-LLM 来评审。作者实测：三个不同 provider 的 consensus 调用（claude + codex + ollama）比单独跑三个 Claude 又快又便宜——因为 codex 和 ollama 没有按 token 计费。
+
+* 怎么用
+
+了解了设计思路之后，实际用起来并不复杂。以下是从零开始的三个步骤。
+
+**安装：** 非 Emacs 用户可以用一行脚本自动安装（会自动安装 Emacs、clone 仓库、启动守护进程、注册 MCP 服务）：
+
+#+begin_src shell
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/zawatton/anvil.el/master/install.sh | bash
+#+end_src
+
+Emacs 用户可以用包管理器安装，比如 straight.el：
+
+#+begin_src emacs-lisp
+(straight-use-package
+ '(anvil :type git :host github :repo "zawatton/anvil.el"
+         :branch "v0.4.1"))
+#+end_src
+
+**配置并启动：** Anvil 的模块分默认和可选两类。默认模块在 ~anvil-enable~ 时自动加载，可选模块需要手动指定：
+
+#+begin_src emacs-lisp
+(require 'anvil)
+
+;; 默认加载的模块（不改就不用设，这些是默认值）
+(setq anvil-modules
+      '(worker eval org file host git proc fs emacs text clipboard data net))
+
+;; 按需开启可选模块
+(setq anvil-optional-modules
+      '(xlsx     ;; Excel 读写（需要 Python + openpyxl）
+        pdf      ;; PDF 文本提取（需要 Python + pymupdf）
+        ide      ;; xref、diagnostics、imenu、tree-sitter（需要 project.el）
+        browser  ;; 网页抓取（需要 agent-browser CLI）
+        http     ;; HTTP GET/HEAD + ETag 缓存（需要 Emacs 29+）
+        orchestrator  ;; 多 agent 并行编排（需要 AI CLIs + Emacs 29+）
+        cron     ;; 定时任务（配合 orchestrator 可做夜间自动重构）
+        elisp    ;; Agentic Elisp 开发工具
+        ))
+
+(anvil-enable)         ;; 注册所有模块的 MCP 工具
+(anvil-server-start)   ;; 启动 MCP 服务器
+#+end_src
+
+默认模块覆盖了日常场景：worker（后台任务派发）、eval（Elisp 求值）、org（org 操作）、file（文件操作）、git（git 查询）、host（系统信息）等。不需要的功能直接从列表里去掉就行，比如你不用 git 就可以把 ~git~ 删掉，Anvil 就不会注册相关的 MCP 工具。
+
+**Spacemacs 配置：** 如果你用 Spacemacs，可以把 Anvil 放到某个 layer 里管理。比如在 =my-misc= layer 的 =packages.el= 中：
+
+#+begin_src emacs-lisp
+;; packages.el
+(setq my-misc-packages
+  '(
+    ;; ... 其他包 ...
+    (anvil :location (recipe :fetcher github :repo "zawatton/anvil.el"
+                             :branch "v0.4.1"))
+    ;; ...
+    ))
+
+(defun my-misc/init-anvil ()
+  (use-package anvil
+    :config
+    (setq anvil-optional-modules '(ide http))
+    (server-start)              ;; Anvil 需要 emacsclient 连接
+    (anvil-enable)
+    (anvil-server-start)))
+#+end_src
+
+有一个坑需要注意：Spacemacs 用 recipe 方式安装包时，编译后的 =.el= 文件和 =.sh= 脚本可能不在同一个目录，导致 ~M-x anvil-server-install~ 报"Cannot find anvil-stdio.sh"。解决办法是手动复制桥接脚本：
+
+#+begin_src sh
+# 从 clone 下来的仓库中复制（或从 GitHub 下载）
+cp /path/to/anvil.el/anvil-stdio.sh ~/.emacs.d/anvil-stdio.sh
+chmod +x ~/.emacs.d/anvil-stdio.sh
+#+end_src
+
+**连接 Claude Code：** Anvil 通过一个 shell 脚本（~anvil-stdio.sh~）作为 MCP 桥接。先在 Emacs 里运行 ~M-x anvil-server-install~ 安装桥接脚本，然后在终端注册两个 MCP 服务：
+
+#+begin_src sh
+claude mcp add -s user -t stdio anvil -- \
+  ~/.emacs.d/anvil-stdio.sh \
+  --server-id=anvil \
+  --init-function=anvil-enable \
+  --stop-function=anvil-disable
+
+claude mcp add -s user -t stdio anvil-emacs-eval -- \
+  ~/.emacs.d/anvil-stdio.sh \
+  --server-id=emacs-eval
+#+end_src
+
+为什么是两个？因为 Anvil 内部用两个 server-id 分别管理不同类别的工具（ ~anvil~ 管 eval/IDE， ~emacs-eval~ 管文件/org/buffer/worker）。注册两个入口就能让 Claude Code 看到全部 198+ 个工具。
+
+之后正常使用 Claude Code 就行——Claude 会自动在需要时调用 Anvil 的工具，不需要手动触发。
+
+**使用示例：** 假设你有一个 3000 行的 =todo.org=，想用 Claude Code 把某个标题下的所有 TODO 项标记为 DONE，并移到归档位置。
+
+没有 Anvil 时，Claude Code 的流程是：先用 Read 工具读取整个 3000 行文件（消耗几千 token），找到目标标题，修改状态，再用 Edit 工具写回去（又几千 token）。如果想同时移动子树到另一个位置，还要再来一轮读写。
+
+有了 Anvil，Claude Code 的对话会变成这样：
+
+#+begin_example
+你：把 todo.org 里"Q1 任务"下面的 TODO 项全部标记为 DONE，然后 refiling 到"归档"标题下。
+
+Claude：我来处理。
+[调用 anvil-org-read-headline]  ;; 只读"Q1 任务"子树，约 80 行，而不是整个 3000 行
+[调用 anvil-file-batch]         ;; 一次性把所有 TODO → DONE + 执行 refiling
+完成。"Q1 任务"下 12 个 TODO 项已全部标记为 DONE 并 refiling 到"归档"标题下。
+#+end_example
+
+整个过程只传了目标子树的内容和变更指令，没有读写整个文件。传统方式可能消耗 6000-8000 token（读 + 写各一轮），Anvil 方式大约 500-800 token——省了将近 90%。
+
+再比如批量重命名。没有 Anvil 时，Claude Code 要先 ~grep~ 找到所有包含旧名字的文件，然后逐个 Read、Edit、写回，几十个文件就是几十轮往返。有了 Anvil，一条 ~anvil-file-replace-string~ 或 ~emacs-eval~ 调用就能在 Emacs 侧一次性完成——作者实测在 7 个仓库 39 个文件里把 =zawatton21= 改为 =zawatton=，只花了一次往返。
+
+* 对非 Emacs 用户的启示
+
+但更重要的启示不在于这个工具本身，而在于它揭示的优化方向：AI agent 的效率瓶颈往往不是模型能力，而是它和编辑器之间的交互方式。每次读写整个文件是在浪费 token，按区域操作才能把上下文窗口留给真正重要的事。
+
+这个思路不依赖 Emacs——任何编辑器只要能提供类似的精准操作接口，都能实现同样的效果。只是 Emacs 作为 Lisp 机器，天然具备无限可扩展性，所以率先把这个想法做出来了。

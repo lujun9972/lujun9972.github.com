@@ -1,0 +1,176 @@
+#+TITLE: 读：Emacs 代码折叠终极指南
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, 代码折叠, kirigami, outline, hideshow, treesit-fold
+#+DATE: [2026-04-24 Thu]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+James Cherti（kirigami.el 和 outline-indent 的作者）写了一篇 Emacs 代码折叠的综合指南。这篇文章的价值在于它不是只推荐一个方案，而是把所有折叠后端理清楚——每种后端适合什么语言，怎么配置，怎么用一个统一的前端把它们串起来。
+
+这篇博文是对原文的解读。
+
+* 为什么需要代码折叠
+
+原文列了几个场景，说得比较到位：
+
+- 在几千行的文件里跳来跳去（比如用 LSP 跳到某个函数定义），跳完之后你不知道自己在文件的哪个位置了。把整个文件折叠到顶层结构，你一眼就能看到骨架
+- 调试一个 2 万行的遗留文件时，不可能马上重构。折叠让你把文件按模块临时分组，让难以维护的代码变得可读
+- 屏幕上每一行可见代码都会消耗你一丝注意力。把当前不相关的函数折叠起来，相当于视觉上的垃圾回收
+- 折叠后的代码块可以作为单个逻辑单元来剪切、复制、移动，不容易选错
+- 做 code review 时，把已经看过的地方折叠掉，过滤视觉噪音
+
+* 前端：kirigami 统一接口
+
+Emacs 代码折叠最大的痛点不是"没有折叠功能"，而是"折叠功能太多，各用各的快捷键"。
+
+~hs-minor-mode~ 有一套快捷键， ~outline-minor-mode~ 有另一套， ~org-mode~ 又是一套。逻辑上一样的操作（折叠、展开、全部展开），不同模式的命令名和按键完全不同。
+
+kirigami 解决的就是这个问题。它是一个统一前端——你定义一次快捷键，它会自动检测当前 buffer 用的是哪种折叠后端，然后把你的操作路由到正确的引擎。支持的引擎包括 ~outline-minor-mode~、~outline-indent-minor-mode~、~org-mode~、~markdown-mode~、~gfm-mode~、~treesit-fold-mode~、~hs-minor-mode~、~vimish-fold-mode~、~origami-mode~、~yafolding-mode~ 等。
+
+** 安装与配置
+kirigami 在 MELPA 上，支持 Emacs 26.3+。确保你的配置里已经添加了 MELPA 源，然后：
+
+#+begin_src emacs-lisp
+(use-package kirigami
+  :ensure t
+  :commands (kirigami-open-fold
+             kirigami-open-fold-rec
+             kirigami-close-fold
+             kirigami-toggle-fold
+             kirigami-open-folds
+             kirigami-close-folds-except-current
+             kirigami-close-folds)
+  :bind
+  (("C-c z o" . kirigami-open-fold)       ; 展开当前折叠
+   ("C-c z O" . kirigami-open-fold-rec)    ; 递归展开
+   ("C-c z r" . kirigami-open-folds)       ; 展开所有
+   ("C-c z c" . kirigami-close-fold)       ; 折叠当前
+   ("C-c z m" . kirigami-close-folds)      ; 折叠所有
+   ("C-c z a" . kirigami-toggle-fold)))    ; 切换折叠
+#+end_src
+
+如果你用 evil-mode（Spacemacs、Doom Emacs 等），vim 风格的 zo/zc/za/zr/zm 按键也有对应的绑定：
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'evil
+  (define-key evil-normal-state-map "zo" #'kirigami-open-fold)
+  (define-key evil-normal-state-map "zO" #'kirigami-open-fold-rec)
+  (define-key evil-normal-state-map "zc" #'kirigami-close-fold)
+  (define-key evil-normal-state-map "za" #'kirigami-toggle-fold)
+  (define-key evil-normal-state-map "zr" #'kirigami-open-folds)
+  (define-key evil-normal-state-map "zm" #'kirigami-close-folds))
+#+end_src
+
+kirigami 除了统一接口之外，还增强了 ~outline~、~markdown-mode~ 和 ~org-mode~ 的折叠行为——深层次折叠和兄弟节点的开合在这些模式下原来不太可靠，kirigami 修补了这些问题。它还保证了折叠/展开时光标在窗口中的垂直位置不变（不会跳屏），关闭 outline 折叠时保留已折叠标题的可见性。
+
+** 使用
+配好快捷键和后端之后，在任意 buffer 中直接用快捷键操作就行。kirigami 提供的命令：
+
+| 命令 | 功能 |
+|------+------|
+| ~kirigami-close-fold~ | 折叠光标处的代码块 |
+| ~kirigami-open-fold~ | 展开光标处的折叠 |
+| ~kirigami-open-fold-rec~ | 递归展开光标处的所有子折叠 |
+| ~kirigami-toggle-fold~ | 切换光标处的折叠/展开状态 |
+| ~kirigami-close-folds~ | 折叠 buffer 中所有代码块 |
+| ~kirigami-open-folds~ | 展开buffer 中所有折叠 |
+
+如果你想自定义某个 mode 的折叠行为（比如添加 kirigami 原生不支持的后端），可以通过 ~kirigami-fold-list~ 这个 alist 来注册新的折叠方法。
+
+* 后端：五种折叠引擎
+
+kirigami 只管前端，实际折叠操作需要后端来执行。原文给每种后端指明了适用的语言。
+
+**重要提醒**：每个 buffer 同时只能激活一个折叠后端。如果把钩子挂到 ~prog-mode-hook~ 或 ~text-mode-hook~ 这种大类上，多个后端可能冲突。所以要挂到具体的语言 mode 钩子上（如 ~emacs-lisp-mode-hook~）。
+
+**outline-minor-mode（内置）：** 基于层级标题来折叠。适合有明确标题结构的文件，比如 Elisp（以 ~;;;~ 标题分级）和conf文件：
+
+#+begin_src emacs-lisp
+(add-hook 'emacs-lisp-mode-hook #'outline-minor-mode)
+(add-hook 'conf-mode-hook #'outline-minor-mode)
+#+end_src
+
+**hs-minor-mode（内置，即 Hideshow）：** 通过解析语法来识别代码块（函数、if/else 等）。最适合用花括号 ~{}~ 分块的 C 系语言，也支持 shell 脚本：
+
+#+begin_src emacs-lisp
+(add-hook 'c-mode-hook #'hs-minor-mode)
+(add-hook 'c++-mode-hook #'hs-minor-mode)
+(add-hook 'java-mode-hook #'hs-minor-mode)
+(add-hook 'rust-mode-hook #'hs-minor-mode)
+(add-hook 'go-mode-hook #'hs-minor-mode)
+(add-hook 'js-mode-hook #'hs-minor-mode)
+(add-hook 'typescript-mode-hook #'hs-minor-mode)
+(add-hook 'sh-mode-hook #'hs-minor-mode)
+#+end_src
+
+Hideshow 的局限是每次只折叠一层（比如只能折叠整个函数，不能单独折叠函数内部的 if 块）。这对 C/Java 这种花括号语言影响不大，但对 Python、YAML 这种需要多层折叠的语言就不够用了。
+
+**outline-indent（第三方包）：** 基于缩进层级来折叠，支持无限层级。这正是 Python、Haskell、YAML 这种靠缩进表示结构的语言需要的——你可以折叠整个函数，也可以只折叠函数里某个 if 块：
+
+#+begin_src emacs-lisp
+(use-package outline-indent
+  :commands outline-indent-minor-mode
+  :custom
+  (outline-indent-ellipsis " ▼"))
+
+(add-hook 'python-mode-hook #'outline-indent-minor-mode)
+(add-hook 'python-ts-mode-hook #'outline-indent-minor-mode)
+(add-hook 'yaml-mode-hook #'outline-indent-minor-mode)
+(add-hook 'yaml-ts-mode-hook #'outline-indent-minor-mode)
+(add-hook 'haskell-mode-hook #'outline-indent-minor-mode)
+#+end_src
+
+除了折叠，outline-indent 还能移动缩进块、调整缩进层级、插入同级缩进的新行——这些都是缩进敏感语言经常需要的操作。
+
+**treesit-fold（第三方包）：** 利用 tree-sitter 的语法树来识别可折叠区域（函数、类、注释、文档字符串等）。传统折叠方式靠正则或缩进来猜，treesit-fold 靠真正的语法分析来判断，准确度更高。需要 Emacs 29.1+ 和对应语言的 tree-sitter 语法：
+
+#+begin_src emacs-lisp
+(use-package treesit-fold
+  :commands (treesit-fold-close treesit-fold-close-all
+            treesit-fold-open treesit-fold-toggle
+            treesit-fold-open-all treesit-fold-mode
+            global-treesit-fold-mode
+            treesit-fold-open-recursively
+            treesit-fold-line-comment-mode)
+  :custom
+  (treesit-fold-line-count-show t)
+  (treesit-fold-line-count-format " ▼")
+  :config
+  (set-face-attribute 'treesit-fold-replacement-face nil
+                      :foreground "#808080" :box nil :weight 'bold))
+
+(add-hook 'c-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'c++-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'java-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'rust-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'go-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'js-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'typescript-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'bash-ts-mode-hook #'treesit-fold-mode)
+#+end_src
+
+treesit-fold 适合有 ~-ts-mode~ 的语言（Emacs 29+ 内置的 tree-sitter major mode）。
+
+**markdown-mode：** Markdown 文件用 ~outline-minor-mode~ 做折叠，因为 Markdown 的标题层级（~#~、~##~）天然就是 outline 结构：
+
+#+begin_src emacs-lisp
+(use-package markdown-mode
+  :mode (("\\.markdown\\'" . markdown-mode)
+         ("\\.md\\'" . markdown-mode)
+         ("README\\.md\\'" . gfm-mode)))
+
+(add-hook 'markdown-mode-hook #'outline-minor-mode)
+#+end_src
+
+* 快速选择表
+
+| 语言类型 | 推荐后端 | 原因 |
+|----------+----------+------|
+| Elisp、配置文件 | outline-minor-mode | 内置，基于 ~;;;~ 标题分级 |
+| C/C++/Java/Rust/Go | hs-minor-mode | 内置，基于花括号语法 |
+| Shell 脚本 | hs-minor-mode | 内置，支持 ~if/fi~、~case/esac~ 等块 |
+| Python、YAML、Haskell | outline-indent | 基于缩进，支持多层折叠 |
+| 有 ~-ts-mode~ 的语言 | treesit-fold | 基于语法树，最准确，但需要 Emacs 29+ |
+| Markdown | outline-minor-mode | 标题层级天然是 outline 结构 |
+
+原文的核心思路就是：前端用 kirigami 统一按键，后端按语言选最合适的引擎。配置完之后，不管你在编辑什么语言，折叠操作都用同一套快捷键。
