@@ -1,0 +1,186 @@
+#+TITLE: 异步编程的函数着色税
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: 异步编程, async/await, 函数着色, JavaScript, Rust
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+异步编程经历了三波演进：回调 → Promise → async/await，每波都让写异步代码更顺手。但 async/await 引入了一个前两波都没有的结构性问题——函数着色（function coloring）：一个函数是否 async 不再只取决于业务逻辑，还取决于它内部做了什么类型的 I/O。这个"颜色"会沿着调用链传染，从函数蔓延到库，从库蔓延到生态。这篇文章要回答两个问题：函数着色具体是怎么蔓延的，以及哪些语言选择了不同的路。
+
+* 红蓝函数的比喻
+
+2015 年，Bob Nystrom 发了一篇文章 "What Color is Your Function?"，用一个思想实验描述了 async/await 的核心约束：
+
+想象一门语言里每个函数都有颜色——红色或蓝色。规则是：红色函数可以调用蓝色函数，但蓝色函数不能直接调用红色函数。如果想调用，蓝色函数必须把自己也变成红色。而一旦变红，所有调用它的函数也必须跟着变红，沿着调用链一路传染到程序入口。
+
+对应到实际编程中： =async= 函数是红色，普通（同步）函数是蓝色。从普通函数里调用 =async= 函数，要么用 =await= （这要求调用者本身也是 =async= ），要么阻塞线程（违背了用 async 的初衷）。没有第三种选择。
+
+下面用一个具体的 JavaScript 例子展示这个传染过程：
+
+#+begin_src javascript
+// 原本是一个同步函数，只做纯计算
+function formatUserName(user) {
+  return `${user.firstName} ${user.lastName}`;
+}
+
+// 需求变了：格式化之前需要从数据库查用户信息
+// 加了一行 I/O 调用，函数就必须变成 async
+async function formatUserName(userId) {
+  const user = await db.getUser(userId);      // 新增这一行
+  return `${user.firstName} ${user.lastName}`; // 其余逻辑没变
+}
+
+// 调用 formatUserName 的函数也必须跟着变
+async function displayHeader(userId) {         // 被迫加 async
+  const name = await formatUserName(userId);   // 被迫加 await
+  console.log(`Hello, ${name}`);
+}
+
+// displayHeader 的调用者也跑不掉
+async function renderPage(userId) {            // 被迫加 async
+  await displayHeader(userId);                 // 被迫加 await
+  // ... 其他渲染逻辑
+}
+#+end_src
+
+一个函数加了一行数据库查询，三条调用链全部改了签名。这就是函数着色的传染性：你的函数签名不再只取决于"做什么"，还取决于"内部怎么执行"。
+
+* 三级蔓延
+
+函数着色不只是函数签名的问题。它在三个层面逐级放大。
+
+** 函数级：一行改动，全链重写
+
+上例已经展示了函数级的影响：给一个同步函数加上 =async= ，返回类型从值变成了 Promise，调用约定从直接调用变成了 =await= 。改动沿着调用图向上传播，直到遇到 =main= 函数或框架入口。在实践中，一个同步函数加一行数据库查询，可能需要改几十个文件。
+
+** 库级：作者被迫选边站
+
+函数着色到了库的层面，变成一个两难选择：写同步库，异步用户用不了；写异步库，同步用户要调用就必须引入一整套异步运行时——比如 Rust 的 Tokio 或 Python 的 asyncio 事件循环，原本简单的调用变成了先初始化运行时、再注册回调、再处理异常；两个都写，API 面积翻倍，测试矩阵翻倍，维护负担翻倍。
+
+Python 是最典型的例子： =requests= 库（同步）和 =aiohttp= 库（异步）是两个独立项目，由不同作者分别实现同一个功能——发 HTTP 请求。后来 =httpx= 出现，同时提供同步和异步接口。但这恰恰说明函数着色把事情搞复杂了： =httpx= 的"统一"是对分裂问题的补救，而不是分裂不存在。
+
+** 生态级：运行时分裂
+
+到了生态层面，函数着色直接导致运行时分裂。Rust 的异步生态围绕 Tokio、async-std、smol 三个互不兼容的运行时被割裂了。它们各自实现了 TCP 流、定时器等基础类型，一个为 Tokio 写的库没法直接在 async-std 上跑。流行的 HTTP 客户端 reqwest 直接绑定了 Tokio。
+
+这意味着库作者面临两难：选 Tokio，锁定用户选择；写运行时无关的抽象层，增加复杂度和性能开销。结果是生态围绕"颜色"割裂，而不是围绕功能分工。
+
+* 顺序陷阱：async/await 隐藏的并行机会
+
+函数着色之外，async/await 还有一个容易被忽视的副作用：它让异步代码看起来像同步代码，反而隐藏了并行机会。
+
+要理解这个陷阱，先要弄清 =await= 到底做了什么： =await= 不是"发起异步操作然后立刻继续下一行"，而是 *暂停当前函数的执行* ，等 Promise 完成后才继续往下跑。跟同步代码的区别在于：同步代码在等待 I/O 时线程被阻塞、什么也干不了； =await= 在暂停当前函数的同时 *释放线程* ，让线程去处理其他请求，等 I/O 完成后再回来继续执行。所以 async/await 的设计目的是：让异步代码 *读起来* 像同步代码（语法上顺序执行），但底层仍然是非阻塞的。
+
+#+begin_src javascript
+async function loadDashboard(userId) {
+  const user = await getUser(userId);
+  const orders = await getOrders(user.id);            // 等 100ms
+  const recommendations = await getRecommendations(user.id); // 再等 100ms
+  return { user, orders, recommendations };
+}
+#+end_src
+
+这段代码看起来清晰正确，但 =getOrders= 和 =getRecommendations= 之间没有依赖关系——推荐数据不需要等订单查完才能开始获取。然而 =await= 会暂停函数执行， =getRecommendations= 要等 =getOrders= 完成后才会开始——注意，不是"线程在忙别的所以推荐查询没排上"，而是这个函数被暂停了， =getRecommendations= 那一行代码根本还没执行到，连请求都还没发出去。两个本可以同时发起的 I/O 操作被强制串行了：串行耗时约 200ms（两个 100ms 的操作依次执行），而并行只需约 100ms（同时发起）。
+
+下面的脚本用模拟的异步函数实际演示了这个差距：
+
+#+begin_src javascript
+// 模拟异步 I/O 操作（每个耗时 100ms）
+function getUser(id) {
+  return new Promise(r => setTimeout(() => r({id, name: 'Alice'}), 100));
+}
+
+function getOrders(userId) {
+  return new Promise(r => setTimeout(() => r(['order1', 'order2']), 100));
+}
+
+function getRecommendations(userId) {
+  return new Promise(r => setTimeout(() => r(['rec1', 'rec2']), 100));
+}
+
+// 顺序执行：getOrders 完成后才开始 getRecommendations
+async function loadSequential(userId) {
+  const start = Date.now();
+  const user = await getUser(userId);
+  const orders = await getOrders(user.id);
+  const recommendations = await getRecommendations(user.id);
+  console.log(`顺序执行耗时: ${Date.now() - start}ms`);
+  return { user, orders, recommendations };
+}
+
+// 并行执行：getOrders 和 getRecommendations 同时发起
+async function loadParallel(userId) {
+  const start = Date.now();
+  const user = await getUser(userId);
+  const [orders, recommendations] = await Promise.all([
+    getOrders(user.id),
+    getRecommendations(user.id)
+  ]);
+  console.log(`并行执行耗时: ${Date.now() - start}ms`);
+  return { user, orders, recommendations };
+}
+
+(async () => {
+  await loadSequential(1);
+  await loadParallel(1);
+})();
+#+end_src
+
+#+begin_example
+顺序执行耗时: 302ms
+并行执行耗时: 201ms
+#+end_example
+
+* 哪些语言选择了不同的路
+
+函数着色不是不可避免的。一些语言的设计者研究了 async/await 在其他生态中的代价后，选择了不同的方案。
+
+** Go：goroutine 回避着色
+
+Go 用 goroutine 回避了着色问题。goroutine 是 Go 运行时调度的轻量级线程，所有函数都是"蓝色"的——没有 =async= 关键字，没有颜色传染。调用 I/O 操作时，运行时自动把当前 goroutine 挂起，不需要函数签名做任何标记。代价是运行时更重（内置调度器和垃圾回收器），但换来的是零着色。
+
+** Java：虚拟线程消除着色
+
+Java 21 的 Project Loom 走了类似的路。虚拟线程（virtual threads）是 JVM 管理的轻量级线程，行为和普通线程完全一致——现有代码无需修改就能享受高并发。Loom 团队明确引用了函数着色问题作为他们想要避免的东西。
+
+** Zig：从语言关键字退格为库函数
+
+Zig 的做法更激进：它曾经有 =async= / =await= 关键字，后来在编译器层面直接移除，改为让 I/O 操作接受一个 =Io= 接口参数。运行时（线程池、事件循环、用户自定义）来实现这个接口。函数签名不因调度方式而改变， =async= 和 =await= 从语言关键字变成了库函数。不过也有人认为 =Io= 参数本身就是另一种形式的着色。
+
+** Clojure：channel 作为统一接口
+
+Clojure 的 core.async 库用了另一种方式回避着色。它的核心抽象是 channel（通道），函数返回 channel 而不是 Promise 或值。调用者自行决定怎么消费这个 channel：同步调用者用 =<!!= 阻塞线程取值，异步调用者在 =go= 块里用 =<=!= 暂停状态机取值。
+
+#+begin_src clojure
+;; 函数返回 channel，不区分 sync/async
+(defn fetch-user [id]
+  (let [ch (chan)]
+    (thread                              ;; 在独立线程中执行 I/O
+      (>!! ch {:id id :name "Alice"}))   ;; 结果放入 channel
+    ch))                                 ;; 返回 channel
+
+;; 同步调用者：阻塞等待结果
+(let [user (<!! (fetch-user 1))]
+  (println user))
+
+;; 异步调用者：在 go 块中非阻塞等待
+(go
+  (let [user (<! (fetch-user 1))]
+    (println user)))
+#+end_src
+
+=fetch-user= 的签名不包含任何颜色标记——它只返回一个 channel。同步和异步调用者用各自的取值方式消费同一个 channel，函数本身不需要改变。Clojure 把"怎么执行"的决定权交给了调用者，而不是强制编码在函数签名里。
+
+** Elisp：单线程回避着色
+
+Elisp 从未引入 async/await。Emacs 是单线程运行的，异步操作通过回调（ =make-process= 、 =make-network-process= ）或子进程实现。所有函数都是"蓝色"的，不存在着色问题。代价是 Emacs 主线程内部无法真正并行处理 I/O（子进程可以并行，但 Elisp 代码本身只能串行执行）。
+
+这些方案的共同思路是：不让"怎么执行"的细节泄漏到"做什么"的接口里。函数签名应该表达业务意图，而不是执行策略。
+
+* 着色税的本质
+
+函数着色的核心矛盾是：函数签名不应该取决于内部用了什么类型的 I/O，但 async/await 恰恰把这个实现细节变成了接口的一部分。
+
+从函数级（一行改动导致全链重写）到库级（被迫维护同步和异步两套 API），再到生态级（运行时碎片化），每一层都在支付着色税。这不是工程失误——回调、Promise、async/await 每一步都在解决真实问题。但从 2012 年 C# 5.0 引入 async/await 算起，十四年过去了，累积的代价已经很大：维护两套 API、处理运行时兼容性、在顺序语法中寻找并行机会、应对全新的死锁类型（Rust 生态中出现了一种特有的死锁模式：一个 future 持有锁后停止被轮询，另一个 future 试图获取同一把锁，诊断这种问题需要 core dump 和反汇编）。
+
+Go、Java、Zig、Clojure 的探索表明，函数着色不是异步的固有代价，而是一种特定实现的代价。问题是：你愿不愿意为更轻的运行时承受更重的着色税？
