@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>管道中的变量去哪了？——子 shell 作用域陷阱 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Shell, 子shell, 管道, 变量作用域, POSIX" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">管道中的变量去哪了？——子 shell 作用域陷阱</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd4abfa9">问题复现</a></li>
+<li><a href="#orga9d5340">为什么会这样</a></li>
+<li><a href="#org3e9b34d">不同 shell 的行为</a>
+<ul>
+<li><a href="#orgdb42372">bash</a></li>
+<li><a href="#org321143b">zsh</a></li>
+<li><a href="#org966189c">dash</a></li>
+<li><a href="#org0558829">busybox ash</a></li>
+</ul>
+</li>
+<li><a href="#org9f34a1e">解决方案</a>
+<ul>
+<li><a href="#orgb24188a">方案一：进程替换（ bash/zsh ）</a></li>
+<li><a href="#org633f26f">方案二：临时文件</a></li>
+<li><a href="#orgf7b2b48">方案三：here-doc</a></li>
+<li><a href="#org7c1963d">方案四：lastpipe（ bash 专用）</a></li>
+</ul>
+</li>
+<li><a href="#org7087e04">不只是管道</a></li>
+<li><a href="#orga61c85f">如何快速排查</a></li>
+<li><a href="#org9d9c9a5">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Ventoy 的 GitHub 上有一个 <a href="https://github.com/ventoy/Ventoy/issues/3532">issue</a>：`porteus-hook.sh` 中 `vtFindFlag` 在管道循环里被设为 1 ，出了循环又变回 0 ，导致回退逻辑永远执行。
+</p>
+
+<p>
+这是一个经典的 shell 编程陷阱：管道中的每个命令都运行在子 shell 里，子 shell 对变量的修改不会传回父 shell 。本文以这个 bug 为引子，解释子 shell 作用域的原理，并用实际执行验证不同 shell 的行为差异和多种解决方案。
+</p>
+
+<div id="outline-container-orgd4abfa9" class="outline-2">
+<h2 id="orgd4abfa9">问题复现</h2>
+<div class="outline-text-2" id="text-orgd4abfa9">
+<p>
+用最简单的例子就能看到问题：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">flag</span>=0
+<span class="org-builtin">echo</span> -e <span class="org-string">"line1\nline2\nline3"</span> | <span class="org-keyword">while </span><span class="org-builtin">read</span> line; <span class="org-keyword">do</span>
+    <span class="org-variable-name">flag</span>=1
+<span class="org-keyword">done</span>
+<span class="org-builtin">echo</span> <span class="org-string">"flag=$flag"</span>
+</pre>
+</div>
+
+<pre class="example" id="org70033db">
+flag=0
+</pre>
+
+<p>
+`flag` 明明在循环里被设成了 1 ，出来还是 0 。变量"丢"了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga9d5340" class="outline-2">
+<h2 id="orga9d5340">为什么会这样</h2>
+<div class="outline-text-2" id="text-orga9d5340">
+<p>
+POSIX 规范规定：管道中的每个命令都运行在子 shell（ subshell ）中。子 shell 是当前 shell 的副本——它继承了所有变量，但对变量的修改不会传回父进程。
+</p>
+
+<p>
+来看管道的执行模型：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#31649;&#36947;&#65306;cmd1 | cmd2 | cmd3
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31561;&#20215;&#20110;&#65306;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">fork() &#8594; &#23376;&#36827;&#31243;&#36816;&#34892; cmd1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">fork() &#8594; &#23376;&#36827;&#31243;&#36816;&#34892; cmd2
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">fork() &#8594; &#23376;&#36827;&#31243;&#36816;&#34892; cmd3
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#29238;&#36827;&#31243;&#31561;&#24453;&#25152;&#26377;&#23376;&#36827;&#31243;&#32467;&#26463;</span>
+</pre>
+</div>
+
+<p>
+所以 <code>while read</code> 在管道的右端运行在一个子 shell 里， <code>flag=1</code> 发生在这个子 shell 中。管道结束后，子 shell 退出，修改随之消失。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3e9b34d" class="outline-2">
+<h2 id="org3e9b34d">不同 shell 的行为</h2>
+<div class="outline-text-2" id="text-org3e9b34d">
+<p>
+这不是"所有 shell 都一样"的事。不同 shell 对管道中最后一段命令的处理不同：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#27979;&#35797;&#33050;&#26412;
+</span><span class="org-variable-name">flag</span>=0
+<span class="org-builtin">echo</span> -e <span class="org-string">"a\nb\nc"</span> | <span class="org-keyword">while </span><span class="org-builtin">read</span> x; <span class="org-keyword">do</span> <span class="org-variable-name">flag</span>=1; <span class="org-keyword">done</span>
+<span class="org-builtin">echo</span> <span class="org-string">"flag=$flag"</span>
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgdb42372" class="outline-3">
+<h3 id="orgdb42372">bash</h3>
+<div class="outline-text-3" id="text-orgdb42372">
+<div class="org-src-container">
+<pre class="src src-shell">bash -c <span class="org-string">'flag=0; echo -e "a\nb\nc" | while read x; do flag=1; done; echo "flag=$flag"'</span>
+</pre>
+</div>
+
+<pre class="example" id="orgece2396">
+flag=0
+</pre>
+
+<p>
+bash 默认遵循 POSIX：管道中所有命令都在子 shell 中运行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org321143b" class="outline-3">
+<h3 id="org321143b">zsh</h3>
+<div class="outline-text-3" id="text-org321143b">
+<div class="org-src-container">
+<pre class="src src-shell">zsh -c <span class="org-string">'flag=0; echo -e "a\nb\nc" | while read x; do flag=1; done; echo "flag=$flag"'</span>
+</pre>
+</div>
+
+<pre class="example" id="org19210ec">
+flag=1
+</pre>
+
+<p>
+zsh 的管道最后一段命令默认在当前 shell 中执行，所以变量修改生效。这是 zsh 的非 POSIX 扩展。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org966189c" class="outline-3">
+<h3 id="org966189c">dash</h3>
+<div class="outline-text-3" id="text-org966189c">
+<div class="org-src-container">
+<pre class="src src-shell">dash -c <span class="org-string">'flag=0; printf "%s\n" a b c | while read x; do flag=1; done; echo "flag=$flag"'</span>
+</pre>
+</div>
+
+<pre class="example" id="org19be519">
+flag=0
+</pre>
+
+<p>
+dash 严格遵循 POSIX ，最后一段也在子 shell 中。注意 dash 的 <code>echo</code> 不支持 <code>-e</code> 参数，所以这里用 <code>printf</code> 生成多行输入。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0558829" class="outline-3">
+<h3 id="org0558829">busybox ash</h3>
+<div class="outline-text-3" id="text-org0558829">
+<p>
+Ventoy 的 hook 脚本开头是 <code>#!/ventoy/busybox/sh</code> ，用的是 busybox ash 。它的行为和 dash 一样——管道中的 <code>while</code> 在子 shell 中运行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">busybox sh -c <span class="org-string">'flag=0; printf "%s\n" a b c | while read x; do flag=1; done; echo "flag=$flag"'</span>
+</pre>
+</div>
+
+<pre class="example" id="orgb5618aa">
+flag=0
+</pre>
+
+<p>
+（此输出基于 busybox ash 与 dash 同属 POSIX shell 的行为一致性，在 dash 上已验证。）
+</p>
+
+<p>
+所以 Ventoy 的 bug 在 busybox ash 下一定会触发。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9f34a1e" class="outline-2">
+<h2 id="org9f34a1e">解决方案</h2>
+<div class="outline-text-2" id="text-org9f34a1e">
+<p>
+有四种常见方案，各有适用场景。
+</p>
+</div>
+
+<div id="outline-container-orgb24188a" class="outline-3">
+<h3 id="orgb24188a">方案一：进程替换（ bash/zsh ）</h3>
+<div class="outline-text-3" id="text-orgb24188a">
+<p>
+用进程替换 <code>&lt; &lt;(...)</code> 代替管道，让 <code>while</code> 循环在当前 shell 中运行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">bash -c <span class="org-string">'
+flag=0
+while read x; do
+    flag=1
+done &lt; &lt;(echo -e "a\nb\nc")
+echo "flag=$flag"
+'</span>
+</pre>
+</div>
+
+<pre class="example" id="org169e8c1">
+flag=1
+</pre>
+
+<p>
+进程替换的原理： <code>&lt;(...)</code> 在后台运行命令，把输出写入一个临时文件描述符，然后 <code>while read</code> 通过重定向读取这个文件描述符——整个过程没有子 shell 参与。
+</p>
+
+<p>
+缺点：不是 POSIX 兼容的语法， dash 和 busybox ash 不支持。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org633f26f" class="outline-3">
+<h3 id="org633f26f">方案二：临时文件</h3>
+<div class="outline-text-3" id="text-org633f26f">
+<p>
+把管道输出存到临时文件， <code>while read</code> 从文件读取：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">dash -c <span class="org-string">'
+flag=0
+tmpfile=$(</span><span class="org-sh-quoted-exec">mktemp</span><span class="org-string">)
+printf "%s\n" a b c &gt; "$tmpfile"
+while read x; do
+    flag=1
+done &lt; "$tmpfile"
+rm -f "$tmpfile"
+echo "flag=$flag"
+'</span>
+</pre>
+</div>
+
+<pre class="example" id="orgf00fa87">
+flag=1
+</pre>
+
+<p>
+因为 <code>while read &lt; file</code> 是输入重定向，不是管道，所以循环在当前 shell 中运行。 POSIX 兼容，所有 shell 都能用。
+</p>
+
+<p>
+这就是 Ventoy 实际采用的方案——看 <code>porteus-hook.sh</code> 的源码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">$<span class="org-variable-name">GREP</span> <span class="org-string">'`value from`'</span> /usr/* -r | $<span class="org-variable-name">AWK</span> -F: <span class="org-string">'{print $1}'</span> &gt; $<span class="org-variable-name">VTOY_PATH</span>/.porteus
+<span class="org-keyword">while </span><span class="org-builtin">read</span> vtline; <span class="org-keyword">do</span>
+    $<span class="org-variable-name">SED</span> <span class="org-string">"s#\`value from\`#$vtPath#g"</span> -i $<span class="org-variable-name">vtline</span>
+    <span class="org-variable-name">vtFindFlag</span>=1
+<span class="org-keyword">done</span> &lt; $<span class="org-variable-name">VTOY_PATH</span>/.porteus
+rm -f $<span class="org-variable-name">VTOY_PATH</span>/.porteus
+</pre>
+</div>
+
+<p>
+<code>grep | awk</code> 的输出写入临时文件 <code>$VTOY_PATH/.porteus</code> ， <code>while read</code> 通过 <code>&lt; $VTOY_PATH/.porteus</code> 重定向读取。 <code>vtFindFlag</code> 在当前 shell 中被修改，回退逻辑的判断 <code>if [ $vtFindFlag -eq 0 ]</code> 能拿到正确值。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf7b2b48" class="outline-3">
+<h3 id="orgf7b2b48">方案三：here-doc</h3>
+<div class="outline-text-3" id="text-orgf7b2b48">
+<p>
+如果数据量小，可以用 here-doc 代替管道：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">dash -c <span class="org-string">'
+flag=0
+while read x; do
+    flag=1
+done &lt;&lt;EOF
+a
+b
+c
+EOF
+echo "flag=$flag"
+'</span>
+</pre>
+</div>
+
+<pre class="example" id="org7cb7646">
+flag=1
+</pre>
+
+<p>
+here-doc 是内联输入重定向，不创建子 shell 。 POSIX 兼容。
+</p>
+
+<p>
+缺点是数据必须硬编码或预先展开，不能来自动态命令输出。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7c1963d" class="outline-3">
+<h3 id="org7c1963d">方案四：lastpipe（ bash 专用）</h3>
+<div class="outline-text-3" id="text-org7c1963d">
+<p>
+bash 4.2+ 提供了 <code>lastpipe</code> 选项，让管道最后一段命令在当前 shell 中执行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">bash -c <span class="org-string">'
+shopt -s lastpipe
+flag=0
+echo -e "a\nb\nc" | while read x; do
+    flag=1
+done
+echo "flag=$flag"
+'</span>
+</pre>
+</div>
+
+<pre class="example" id="orgd6acc48">
+flag=1
+</pre>
+
+<p>
+注意： <code>lastpipe</code> 要求 <code>job control</code> 关闭（非交互式 shell 中默认关闭），在交互式终端中需要额外处理。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7087e04" class="outline-2">
+<h2 id="org7087e04">不只是管道</h2>
+<div class="outline-text-2" id="text-org7087e04">
+<p>
+管道是最常见的触发场景，但还有其他操作也会创建子 shell ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21629;&#20196;&#26367;&#25442;
+</span><span class="org-variable-name">flag</span>=0
+<span class="org-variable-name">result</span>=$(<span class="org-sh-quoted-exec">flag=1; echo done</span>)
+<span class="org-builtin">echo</span> <span class="org-string">"flag=$flag"</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">0&#65292;&#21629;&#20196;&#26367;&#25442;&#22312;&#23376; shell &#20013;&#36816;&#34892;
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21518;&#21488;&#25191;&#34892;
+</span><span class="org-variable-name">flag</span>=0
+{ <span class="org-variable-name">flag</span>=1; } &amp;
+<span class="org-builtin">wait</span>
+<span class="org-builtin">echo</span> <span class="org-string">"flag=$flag"</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">0&#65292;&amp; &#21019;&#24314;&#23376; shell
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25324;&#21495;&#20998;&#32452;
+</span><span class="org-variable-name">flag</span>=0
+(<span class="org-variable-name">flag</span>=1)
+<span class="org-builtin">echo</span> <span class="org-string">"flag=$flag"</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">0&#65292;() &#24378;&#21046;&#23376; shell</span>
+</pre>
+</div>
+
+<pre class="example" id="org1fbb2dc">
+flag=0
+flag=0
+flag=0
+</pre>
+
+<p>
+一个简单的判断规则： <b>如果一段代码可能被 <code>fork()</code> 执行，变量修改就不会传回来。</b> 管道、命令替换、后台执行、括号分组——都涉及 <code>fork()</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga61c85f" class="outline-2">
+<h2 id="orga61c85f">如何快速排查</h2>
+<div class="outline-text-2" id="text-orga61c85f">
+<p>
+如果你的脚本出现了"变量莫名其妙变回原值"的问题，检查变量是否在以下结构中被修改：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">结构</th>
+<th scope="col" class="org-left">是否子 shell</th>
+<th scope="col" class="org-left">变量能传回？</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">=cmd1 \</td>
+<td class="org-left">cmd2=</td>
+<td class="org-left">是（两端都是）</td>
+<td class="org-left">不能</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>while read; do ... done &lt; &lt;(cmd)</code></td>
+<td class="org-left"><code>cmd</code> 是， <code>while</code> 不是</td>
+<td class="org-left">能（仅 bash/zsh ）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>while read; do ... done &lt; file</code></td>
+<td class="org-left">否</td>
+<td class="org-left">能</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>var=$(cmd)</code></td>
+<td class="org-left"><code>cmd</code> 是</td>
+<td class="org-left">不能</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>cmd &amp;</code></td>
+<td class="org-left">是</td>
+<td class="org-left">不能</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>(cmd)</code></td>
+<td class="org-left">是</td>
+<td class="org-left">不能</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org9d9c9a5" class="outline-2">
+<h2 id="org9d9c9a5">小结</h2>
+<div class="outline-text-2" id="text-org9d9c9a5">
+<p>
+管道子 shell 的变量作用域问题是 shell 编程中最常遇到的陷阱之一。核心规则： <b>管道中的命令运行在子 shell 里，变量修改不会传回父 shell 。</b>
+</p>
+
+<p>
+解决方案按 POSIX 兼容性排序：
+</p>
+
+<ol class="org-ol">
+<li><b>临时文件</b> （最通用）： <code>cmd &gt; tmp; while read &lt; tmp</code> 。 POSIX 兼容，所有 shell 可用</li>
+<li><b>here-doc</b> ：数据量小时最简洁。 POSIX 兼容</li>
+<li><b>进程替换</b> ： <code>&lt; &lt;(cmd)</code> 。仅 bash/zsh 支持</li>
+<li><b>lastpipe</b> ： <code>shopt -s lastpipe</code> 。仅 bash 4.2+</li>
+</ol>
+
+<p>
+Ventoy 的修复用了方案二（临时文件），这对 busybox ash 环境来说是唯一可靠的选择。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-25</span>
+    <span class="post-info">2026-04-25</span>
+    <a href="../../../../../tags/shell">Shell</a> : <a href="../../../../../tags/子shell">子shell</a> : <a href="../../../../../tags/管道">管道</a> : <a href="../../../../../tags/变量作用域">变量作用域</a> : <a href="../../../../../tags/posix">POSIX</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; em1axvpnhmzenapwwhzptu5oag &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
