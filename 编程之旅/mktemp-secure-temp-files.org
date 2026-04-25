@@ -1,0 +1,282 @@
+#+TITLE: mktemp: Shell 脚本中临时文件的安全陷阱与最佳实践
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux, shell, 安全, mktemp
+#+DATE: [2026-04-24 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Shell 脚本经常需要临时文件来存放中间数据，但很多人习惯手写一个固定路径（比如 =/tmp/backup.log= ）就开始用了。这种写法在单用户、单进程的环境下不会出问题，一旦脚本被多人同时运行，或者系统上有恶意用户，就会触发竞态条件和符号链接攻击（symlink attack）。这篇文章要回答的核心问题是：为什么 =mktemp= 是创建临时文件的标准做法，以及在实际脚本中怎么用好它。
+
+* 危险的手写临时文件
+
+问题出在 =/tmp= 目录的共享性质上。所有用户、所有进程都能读写这个目录，所以你的脚本必须假设"别人也在 =/tmp= 里操作"。
+
+** 竞态条件
+
+假设你写了一个备份脚本，中间结果存到 =/tmp/backup.log= ：
+
+#+begin_src shell
+echo "backup started at $(date)" > /tmp/backup.log
+# ... 执行备份操作 ...
+cat /tmp/backup.log
+#+end_src
+
+如果两个人同时跑这个脚本，后启动的那个会 *覆盖* 前一个的文件。更隐蔽的是，两个进程的 =echo= 和 =cat= 交替执行，你读到的可能是别人写的数据，而你以为的备份记录已经不见了。这就是竞态条件（race condition）——多个进程争抢同一个资源，执行顺序不确定，结果也不确定。
+
+** 符号链接攻击（Symlink Attack）
+
+竞态条件只是麻烦，符号链接攻击则是真正的安全威胁。攻击者可以预先在 =/tmp= 里放一个符号链接，指向敏感文件。你的脚本往"临时文件"写入时，实际写入的是攻击者指定的目标。
+
+下面用一个安全的演示来展示这个攻击的原理。我们在一个受控目录里模拟整个过程：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 安全演示：symlink attack 的原理
+# 所有操作在受控目录中进行，不涉及真实系统文件
+
+# 准备：创建一个"假想的敏感文件"
+mkdir -p /tmp/mktemp-demo
+echo "这是敏感数据，密码是 hunter2" > /tmp/mktemp-demo/sensitive.txt
+
+# 攻击者预先创建符号链接，指向敏感文件
+ln -sf /tmp/mktemp-demo/sensitive.txt /tmp/mktemp-demo/fake-temp.log
+
+# 受害脚本：天真地往固定路径写临时数据
+echo "备份日志..." > /tmp/mktemp-demo/fake-temp.log
+
+# 结果：敏感文件被覆盖了！
+echo "=== 敏感文件现在的内容 ==="
+cat /tmp/mktemp-demo/sensitive.txt
+echo "=== 符号链接指向 ==="
+ls -la /tmp/mktemp-demo/fake-temp.log
+
+# 清理
+rm -rf /tmp/mktemp-demo
+#+end_src
+
+#+begin_example
+=== 敏感文件现在的内容 ===
+备份日志...
+=== 符号链接指向 ===
+lrwxrwxrwx 1 lujun9972 users 30  4月24日 23:20 /tmp/mktemp-demo/fake-temp.log -> /tmp/mktemp-demo/sensitive.txt
+#+end_example
+
+关键在于 =ln -sf= 这一步：攻击者把 =/tmp/mktemp-demo/fake-temp.log= 变成了一个指向 =sensitive.txt= 的符号链接。脚本用 =>= 重定向写入时，Shell 会跟随符号链接，把数据写到 =sensitive.txt= 里。如果这个敏感文件是 =/etc/passwd= 或者 SSH 私钥，后果就很严重了。
+
+* mktemp 的工作原理
+
+=mktemp= 是 GNU coreutils 的一部分，每个 Linux 发行版都预装了它。它用三个机制同时解决上面两个问题：
+
+1. *随机文件名* ：在模板末尾的 =X= 字符位置填入随机字符（字母和数字），保证每次调用产生不同的文件名，彻底消除竞态条件
+2. *原子创建* ：内部用 =open()= 系统调用加上 =O_CREAT | O_EXCL= 标志位，保证"检查文件是否存在"和"创建文件"是一个不可分割的操作——即使攻击者在 =mktemp= 生成名字和实际创建文件之间的微秒窗口里插入了符号链接， =O_EXCL= 也会让创建失败，不会跟随符号链接写入
+3. *安全权限* ：自动设置权限为 =600= （仅 owner 可读写），其他用户无法读取你的临时数据
+
+这三个机制叠加在一起，让 =mktemp= 创建的临时文件同时具备了唯一性、原子性和私密性。
+
+* 核心用法
+
+** 1. 基本用法 + trap 清理
+
+这是最值得记住的模式。用 =mktemp= 创建文件，把路径存到变量里，然后用 =trap= 注册退出时的清理动作：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+TMPFILE=$(mktemp)
+trap "rm -f $TMPFILE" EXIT
+echo "临时文件路径: $TMPFILE"
+echo "some data" > "$TMPFILE"
+cat "$TMPFILE"
+# 脚本退出时 trap 自动触发，rm -f $TMPFILE 被执行
+#+end_src
+
+#+begin_example
+临时文件路径: /tmp/tmp.ZCNLZw66zR
+some data
+#+end_example
+
+=trap "rm -f $TMPFILE" EXIT= 这行是关键：它告诉 Shell，不管脚本正常退出还是中途崩溃，都执行 =rm -f= 删除临时文件。没有这行的话， =mktemp= 创建的文件会一直留在 =/tmp= 里，日积月累就占满了磁盘。
+
+** 2. 创建临时目录
+
+脚本需要多个临时文件时（比如解压一个 tar 包），用 =-d= 创建目录：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+WORKDIR=$(mktemp -d)
+trap "rm -rf $WORKDIR" EXIT
+echo "临时目录: $WORKDIR"
+ls -ld "$WORKDIR"
+# 在里面创建多个文件
+echo "file1" > "$WORKDIR/a.txt"
+echo "file2" > "$WORKDIR/b.txt"
+ls -la "$WORKDIR"
+#+end_src
+
+#+begin_example
+临时目录: /tmp/tmp.66U76Ka8q3
+drwx------ 2 lujun9972 users 40  4月24日 23:20 /tmp/tmp.66U76Ka8q3
+总计 8
+drwxrwx--  2 lujun9972 users   80  4月24日 23:20 .
+drwxrwxrwt 17 root      root  1020  4月24日 23:20 ..
+-rw-r--r-- 1 lujun9972 users    6  4月24日 23:20 a.txt
+-rw-r--r-- 1 lujun9972 users    6  4月24日 23:20 b.txt
+#+end_example
+
+注意两点：目录权限是 =drwx------= ，只有 owner 能进入和列出内容；清理时要用 =rm -rf= 而不是 =rm -f= ，否则删除目录会失败 （ =rm= 不加 =-r= 拒绝删除目录 ） 。
+
+** 3. 自定义模板
+
+调试时想在 =/tmp= 里一眼找到自己的临时文件，可以用自定义模板。模板的最后一个组成部分必须含有至少 3 个连续的 =X= ， =mktemp= 会把最后一段连续的 =X= 替换成随机字符：
+
+#+begin_src shell
+mktemp /tmp/myapp-XXXXXX
+#+end_src
+
+#+begin_example
+/tmp/myapp-ZlAGi2
+#+end_example
+
+不带路径的模板会在当前目录创建文件，这经常让人意外：
+
+#+begin_src shell
+mktemp myapp-XXXXXX
+#+end_src
+
+#+begin_example
+myapp-HMl7WJ
+#+end_example
+
+要确保文件一定在 =$TMPDIR= 或 =/tmp= 里，请用下面的 =--tmpdir= 参数。
+
+** 4. 尊重用户的 TMPDIR 设置
+
+=$TMPDIR= 是一个标准环境变量，很多程序（包括 =mktemp= ）用它来决定临时文件放在哪里。如果不设置这个变量，默认值是 =/tmp= 。系统管理员可以通过设置 =$TMPDIR= 把临时文件重定向到更大的磁盘、或避开 =noexec= 挂载选项。
+
+=--tmpdir= 参数让 =mktemp= 把文件放在 =$TMPDIR= 指定的目录（如果没设置则回退到 =/tmp= ）。也可以用 =-p /path= 显式指定目录：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 不设 TMPDIR 时，放到 /tmp
+mktemp --tmpdir myapp-XXXXXX
+# 设置 TMPDIR 后，放到指定位置
+export TMPDIR=/var/tmp
+mktemp --tmpdir myapp-XXXXXX
+#+end_src
+
+#+begin_example
+/tmp/myapp-KdoJ82
+/var/tmp/myapp-nWG3E6
+#+end_example
+
+为什么这很重要？因为有些系统管理员会把 =/tmp= 挂载为 tmpfs（内存文件系统），空间有限；或者把 =/tmp= 设为 =noexec= ，不能在里面执行脚本。用 =--tmpdir= 让脚本自动适应用户的环境配置，不需要硬编码路径。
+
+注意： =mktemp= 还有一个 =-t= 参数也能实现类似效果，但它已被标记为废弃，新脚本建议使用 =--tmpdir= 。
+
+** 5. 干跑模式：只生成名字不创建文件
+
+=--dry-run= 返回一个唯一的文件名，但不在磁盘上创建任何东西。适合下一个命令自己会创建文件的场景（比如 =tar= 解压到新目录、 =ssh-keygen= 生成密钥）：
+
+#+begin_src shell
+mktemp --dry-run --tmpdir staging-XXXXXX
+#+end_src
+
+#+begin_example
+/tmp/staging-XcBg1g
+#+end_example
+
+注意： =--dry-run= 返回的名字 *不保证* 后续一定可用——在你使用这个名字之前，别的进程可能已经创建了同名文件。所以它只在"下一个命令会原子创建"的场景下安全。
+
+* 进阶场景
+
+** 在管道中使用
+
+管道的一个经典限制是：读取端和写入端必须在管道启动时就接好，不能在管道中间插入一个"先处理再传递"的步骤。临时文件可以打破这个限制。
+
+下面这个例子展示了一个常见的场景：把命令输出同时存到临时文件和继续传给下一个命令处理。
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+TMPFILE=$(mktemp)
+trap "rm -f $TMPFILE" EXIT
+
+# tee 把 ls 的输出同时写到临时文件和标准输出
+# 标准输出继续通过管道传给 grep
+ls -la /usr/bin | tee "$TMPFILE" | grep "bash"
+
+echo "--- 临时文件中记录的总行数 ---"
+wc -l < "$TMPFILE"
+#+end_src
+
+#+begin_example
+-rwxr-xr-x 1 root root 1162312 12月11日 06:02 bash
+-r-xr-x 1 root root   7321 12月11日 06:02 bashbug
+-rwxr-xr-x 1 root root  20411  4月 1日 05:17 env_parallel.bash
+-rwxr-xr-x 1 root root    2756 2024年12月27日 globash
+lrwxrwxrwx 1 root root       4 12月11日 06:02 rbash -> bash
+lrwxrwxrwx 1 root root       4 12月11日 06:02 sh -> bash
+--- 临时文件中记录的总行数 ---
+4756
+#+end_example
+
+** 并行处理中的临时文件
+
+用 =xargs= 或 =parallel= 并行执行任务时，每个任务都需要独立的输出文件。 =mktemp= 可以在循环中为每个任务分配唯一的文件名：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 为每个输入项创建独立的临时文件
+RESULTDIR=$(mktemp -d)
+trap "rm -rf $RESULTDIR" EXIT
+
+# 模拟并行处理：对每个数字做计算
+for i in 1 2 3; do
+  outfile="$RESULTDIR/result-$i.txt"
+  echo "processing $i" > "$outfile" &
+done
+wait
+
+echo "=== 所有结果 ==="
+cat "$RESULTDIR"/result-*.txt
+#+end_src
+
+#+begin_example
+=== 所有结果 ===
+processing 1
+processing 2
+processing 3
+#+end_example
+
+上面这个例子中， =mktemp -d= 创建了一个唯一的私有目录，所有临时文件都放在里面。循环变量 =$i= 保证了同一脚本内并行任务之间不会冲突，但两个用户同时跑脚本时， =mktemp= 的唯一目录能确保两批文件互不干扰，而且 =drwx------= 的目录权限防止其他用户读取你的中间数据。
+
+** Makefile 中的临时文件
+
+Make 的 recipe 是在子 Shell 中执行的，多个 recipe 可能同时运行 （ =make -j= ） 。临时文件命名冲突在并行构建中尤其常见：
+
+#+begin_src shell
+# Makefile 片段（示例，不单独执行）
+%.processed: %.raw
+    TMPFILE=$$(mktemp) && \
+    trap "rm -f $$TMPFILE" EXIT && \
+    sed 's/old/new/g' $< > $$TMPFILE && \
+    mv $$TMPFILE $@
+#+end_src
+
+这里必须用 =$$(mktemp)= （两个 =$$= 是因为 Makefile 中的 =$= 需要转义） ，而不能用固定路径。 =make -j4= 并行构建时，四个 recipe 同时执行，共享一个固定路径必然冲突。
+
+* 速查表
+
+| 参数          | 作用                                 | 示例                           |
+|---------------+--------------------------------------+--------------------------------|
+| （无参数）     | 在 =$TMPDIR= 或 =/tmp= 创建临时文件    | =mktemp=                         |
+| =-d=          | 创建临时目录                         | =mktemp -d=                      |
+| =--tmpdir=    | 在 =$TMPDIR= 或 =/tmp= 创建带模板名称的文件 | =mktemp --tmpdir myapp-XXXXXX=          |
+| =-p=          | 指定创建位置                          | =mktemp -p /var/cache XXXXXX=    |
+| =--dry-run=   | 只返回名字，不创建文件               | =mktemp --dry-run --tmpdir x-XXXXXX=  |
+
+| 常见错误                        | 正确做法                                  |
+|---------------------------------+-------------------------------------------|
+| =mktemp= 后没保存返回路径        | =TMPFILE=$(mktemp)= 保存到变量             |
+| 忘记 =trap= 清理                 | =trap "rm -f $TMPFILE" EXIT= 紧跟 mktemp   |
+| 用 =rm -f= 删除 =mktemp -d= 目录 | 用 =rm -rf= 删除目录                       |
+| 模板少于 3 个 =X=               | 至少 3 个 =X= ，推荐 6 个                  |
+| 硬编码 =/tmp/= 路径             | 用 =--tmpdir= 参数尊重 =$TMPDIR= 设置            |
