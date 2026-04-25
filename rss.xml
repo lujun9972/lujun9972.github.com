@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 25 Apr 2026 10:14:09 UTC</pubDate>
-    <lastBuildDate>Sat, 25 Apr 2026 10:14:09 UTC</lastBuildDate>
+    <pubDate>Sat, 25 Apr 2026 14:36:11 UTC</pubDate>
+    <lastBuildDate>Sat, 25 Apr 2026 14:36:11 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -1143,6 +1143,158 @@ Ventoy 的修复用了方案二（临时文件），这对 busybox ash 环境来
 <guid>https://lujun9972.github.io/blog/2026/04/25/管道中的变量去哪了？——子-shell-作用域陷阱/index.html</guid>
 </item>
 <item>
+<title>开源包装器的信任陷阱：四个危险信号</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/开源包装器的信任陷阱：四个危险信号/index.html</link>
+<description>&quot;开源包装器&quot;是一类特殊的工具：它们把一个已有的开源项目包上一层好用的界面，降低使用门槛，快速积累用户。包装器本身不是坏事—— =Homebrew= 包装了编译工具链， =VS Code= 包装了语言服务器协议，它们都诚实地说清楚了自己包装了什么。问题出在 *不诚实的包装器* 身上：它们模糊上游归属、制造 lock-in、最终把用户引向闭源或云端。
+
+本地 LLM 领域的 Ollama 是一个典型样本。下面从它的故事中提取四个危险信号——当你遇到一个新的包装器项目时，可以用这四个信号来判断它是否值得信任。
+
+* 信号一：模糊上游归属
+
+一个诚实的包装器会在 README 的第一段就说清楚：我包装了什么。
+
+Ollama 的核心推理能力全部来自 =llama.cpp= ，这是 Georgi Gerganov 在 2023 年 3 月创建的 C++ 推理引擎，也是整个本地 LLM 运动的起点。但 Ollama 在发布后超过一年的时间里，README、官网、营销材料中 *没有提及* =llama.cpp= 。连 MIT 许可证要求包含的版权声明都没有附带——MIT 协议对使用者的要求只有一个：保留版权声明。Ollama 连这一个要求都没做到。
+
+社区在 2024 年初开了 GitHub issue 要求合规，等了 400 多天没有回应。最终联合创始人在 README 底部加了一行字。与此同时，团队在 PR 中说：&quot;我们花了很多时间修补它（ =llama.cpp= ）……未来我们会过渡到更系统化构建的引擎。&quot;言下之意：我们不会给 =llama.cpp= 显著的致谢，而且我们打算摆脱它。
+
+ *识别方法* ：看项目的 README。如果它在描述功能时只说&quot;我们支持 X 种模型&quot;、&quot;一行命令启动&quot;，但不提实际干活的是谁——这就是第一个危险信号。
+
+* 信号二：用自有格式制造迁移成本
+
+一个好的包装器会尽量复用已有的标准格式，让用户可以自由切换到其他工具。
+
+=GGUF= 是 =llama.cpp= 创建的模型文件格式，设计原则第一条就是&quot;单文件部署&quot;：聊天模板、停止词、模型元数据全打包在一个文件里， =llama.cpp= 拿到就能跑。
+
+Ollama 在此之上加了 =Modelfile= —— 一个类似 Dockerfile 的配置文件，用来指定基础模型、聊天模板、系统提示词、采样参数。这些信息大部分已经嵌在 =GGUF= 文件里了。更要命的是，改一个参数（比如 temperature）的流程是：导出 Modelfile → 编辑 → 重新创建模型条目。这个&quot;重新创建&quot;会 *复制整个模型文件* ，30 到 60 GB 的数据，就为了改一个数字。而 =llama.cpp= 只需要在命令行传 =--temp 0.7= 。
+
+Ollama 下载的模型用哈希文件名存储在自己的 blob 格式里。你在 Ollama 里积累了几十 GB 的模型，但没法直接切到 =llama.cpp= 或 LM Studio使用，因为那些文件是 Ollama 专属格式。你可以把 =GGUF= 文件通过 Modelfile 导入 Ollama，但反过来（从 Ollama 导出给别的工具用）就困难多了。
+
+ *识别方法* ：看项目是否用自有格式存储数据。如果它把标准的、通用的输入格式转换成了只有自己能读的格式，而反过来（从自有格式导出到标准格式）又很困难——这是在用迁移成本留住用户。
+
+* 信号三：从开源渐进转向闭源
+
+一个诚实的项目如果同时有开源和闭源组件，会把两者清楚分开：让用户知道哪个是开源的、哪个不是，而不是让闭源部分蹭开源的信誉。
+
+Ollama 在 2025 年 7 月发布了 macOS 和 Windows 桌面应用。这个应用在私有仓库中开发，没有附带许可证，源码不公开。但官网的下载按钮紧挨着 GitHub 链接，给人的印象是你在下载那个 MIT 许可的开源工具——实际拿到的是一个无许可证的闭源应用。
+
+社区发现二进制文件中可能有 AGPL-3.0 依赖，在 GitHub 上开了 issue 质疑，获得了 40 多个赞（说明社区关注度很高）。维护者沉默了几个月，最终在 2025 年 11 月把私有仓库的代码合并到公开主仓库——相当于被迫开源了，但拖了四个月才回应，首次发布时的反应已经说明了项目的本能。
+
+ *识别方法* ：观察项目是否渐进地引入闭源组件。典型路径是：CLI 开源 → GUI 闭源 → 云服务闭源。每一步都在用开源版本的信任为闭源部分引流，而用户往往在不知不觉中就从开源跨到了闭源。
+
+* 信号四：借&quot;本地隐私&quot;的口碑卖云服务
+
+一个诚实的本地优先工具，如果推出云服务，会明确标注哪些功能走本地、哪些走云端。
+
+Ollama 在 2025 年底引入了云端模型。一个以&quot;本地、私密推理&quot;为卖点的工具，开始把提示词路由到第三方云服务商。像 MiniMax 这样的闭源模型出现在模型列表里，但没有明确告知用户选择它们会把数据发到外部。Ollama 的文档说&quot;我们处理你的提示词和回复以提供服务，但不存储或记录这些内容&quot;——但对第三方服务商怎么处理你的数据，只字未提。
+
+雪上加霜的是 CVE-2025-51471：一个 token 泄露漏洞，恶意的 registry 服务器可以在模型下载过程中骗 Ollama 把认证 token 发到攻击者控制的服务器上。修复的 PR 等了好几个月才合并。对于一个以本地隐私为品牌核心的工具，这种架构级的信任问题不是小 bug，是方向性问题。
+
+ *识别方法* ：看项目是否在&quot;本地优先&quot;的承诺下悄悄引入云依赖。如果模型列表里混入了需要联网的闭源模型，但没有清晰的视觉区分或提示——用户的隐私预期正在被悄悄改写。
+
+* 评估 Checklist
+
+遇到一个新的包装器项目时，快速检查这四点：
+
+| 检查项                   | 安全信号                     | 危险信号                       |
+|--------------------------+------------------------------+--------------------------------|
+| 上游归属                 | README 首段注明依赖的开源项目 | 只说自己&quot;支持&quot;什么，不提依赖   |
+| 数据格式                 | 使用行业标准格式（如 GGUF）  | 转成自有格式，导出困难         |
+| 开源完整性               | 所有组件有明确许可证         | 核心组件在私有仓库开发         |
+| 本地/云端边界            | 云功能单独标注，需要显式启用 | 云端模型混在本地列表里         |
+
+最后说一句：包装器本身不是问题。LM Studio 也是 =llama.cpp= 的包装器，但它维护了完整的致谢页面，兼容 =GGUF= 文件，不制造 lock-in。问题不在于包装别人，在于包装完了不肯承认，还用 lock-in 把用户锁住。
+
+* 用 AI 评估包装器项目的信任程度
+
+遇到一个新的包装器项目时，可以把以下 prompt 丢给 AI 来快速评估：
+
+#+begin_example
+请评估以下开源包装器项目的信任程度。
+
+项目名称：[填入项目名]
+项目地址：[填入 GitHub 地址]
+
+请按以下四个维度逐一检查并打分（1-5 分，5 为最佳）：
+
+1. 上游归属：README 是否在显眼位置注明了它所依赖的上游开源项目？是否包含上游项目的许可证声明？
+2. 数据格式：项目是否使用行业标准格式存储数据？用户能否无障碍地将数据迁移到其他工具？
+3. 开源完整性：所有核心组件是否都有明确的开源许可证？是否存在在私有仓库中开发的组件？
+4. 本地/云端边界：如果项目主打&quot;本地运行&quot;，是否清楚标注了哪些功能需要联网？云端功能是否需要用户显式启用？
+
+最后给出总体评价：这个项目是一个&quot;诚实的好包装器&quot;还是存在信任风险？
+#+end_example
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/开源包装器的信任陷阱：四个危险信号/index.html</guid>
+</item>
+<item>
+<title>程序员愿意为 AI 写文档，却不愿为同事写</title>
+<link>https://lujun9972.github.io/blog/2026/04/15/程序员愿意为-ai-写文档，却不愿为同事写/index.html</link>
+<description>* 一个有趣的悖论
+
+Mark Dominus在他的博客 [[https://blog.plover.com/][The Universe of Discourse]] 上写了一篇短文 [[https://blog.plover.com/tech/gpt/documentation-wins-2.html][Programmers will document for Claude, but not for each other]]，标题本身就点出了一个耐人寻味的现象：
+
+#+BEGIN_QUOTE
+我不断看到程序员们抱怨：人们愿意为 Claude 写详细的 CLAUDE.md 和 PROJECT.md 文件，却不愿意为自己的同事写这些。
+#+END_QUOTE
+
+这个现象确实讽刺。程序员们多年来对项目文档爱答不理——README 写得敷衍，设计文档懒得更新，交接笔记能省则省。但当 AI 成了文档的&quot;读者&quot;时，大家突然变得勤快了。
+
+* Mark 的做法：从丢弃到保留
+
+Mark 本人在使用 Claude 时养成了一些有意思的习惯。
+
+首先，他让 Claude 维护一份&quot;交接文档&quot;（handoff document）。每次 Claude 会话结束时，这份文档会记录：计划做什么、已经做了什么、以及其他相关信息。下一个 Claude 会话开始时，读取这份文档就能快速进入状态。
+
+一开始，Mark 在项目结束后就把这些交接文档扔掉了。后来他灵光一现——为什么要扔掉呢？把它提交到 git 仓库里不就行了？将来有人用 =git grep= 翻看历史，说不定就能找到有用的信息。
+
+再后来，他进一步改进了做法：项目结束时，不再直接提交交接文档，而是让 Claude 从头写一份结构化的项目摘要——不是零散的笔记，而是对整个项目的高层次概述，包括解决了什么问题、做了哪些改动。
+
+他会仔细审阅这些摘要，必要时进行编辑，然后才提交。毕竟签名是他的，工资也是发到他的银行账户上，所以仓库里的任何内容都必须是他仔细读过并理解的——就像 Claude 是一个由他管理的人类程序员一样。
+
+* Claude 的写作水平
+
+Mark 提到，Claude 的摘要质量和他自己写的差不多，可能稍好一点，也可能稍差一点。但关键是：Claude 写只要 10 秒，而他亲自动手需要一个小时。而且审阅的时间远远不到一个小时。
+
+不过也有有趣的小插曲。有一次 Claude 参考了之前的一份报告来写新报告，而之前那份报告的末尾有一段 Mark 自己加的文字：
+
+#+BEGIN_QUOTE
+# Approved-by
+
+Claude abstracted these notes from our discussions of the issue. Mark Dominus has read, reviewed, edited, and approved these notes.
+#+END_QUOTE
+
+结果新报告里也出现了一模一样的段落。好消息是，等 Mark 发现时，这段话恰好是真实的——他确实审阅过。后来他在 CLAUDE.md 里加了一句话，告诉 Claude 不要再这样做。
+
+* 我的思考
+
+这个现象之所以有趣，是因为它揭示了关于文档本质的几个真相：
+
+** 文档的真正障碍不是&quot;没时间&quot;，而是&quot;没动机&quot;
+
+为 AI 写文档之所以容易，是因为反馈是即时的——你写了 CLAUDE.md，Claude 马上就能理解你的项目上下文，给你更好的回答。而为同事写文档的反馈周期长得多，甚至可能永远得不到反馈。人很难对延迟的、不确定的回报产生动力。
+
+** AI 降低了&quot;表达成本&quot;
+
+让 Claude 代笔写一份项目摘要只要 10 秒，而自己写需要 1 小时。这意味着文档的瓶颈从&quot;写&quot;转移到了&quot;审&quot;。当写作成本趋近于零时，唯一剩下的门槛就是你是否愿意花时间阅读和确认——而这比从零开始写要轻松得多。
+
+** 为 AI 写的文档，最终服务的还是人
+
+Mark 的做法说明了一个巧妙的闭环：你为 Claude 写的交接文档和项目摘要，最终被提交到 git 仓库里，成为团队的知识资产。未来的同事——或者未来的你——可以通过 =git grep= 找到这些信息。AI 在这个过程中扮演的角色更像是一个&quot;文档代笔者&quot;：你说你想表达什么，它帮你写出来，你审核确认后入库。
+
+也许这就是 AI 改善文档文化的隐秘路径：不是说服程序员&quot;文档很重要&quot;，而是让他们在为 AI 服务的过程中，自然而然地为人类同事也留下了文档。
+
+* Mark 的建议
+
+Mark 在文章最后给出了两条实用建议：
+
+1. 如果你让 Claude 写了笔记，项目结束后把它提交到仓库里。
+2. 让 Claude 写一份项目摘要，然后提交到仓库。
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/15/程序员愿意为-ai-写文档，却不愿为同事写/index.html</guid>
+</item>
+<item>
 <title>异步编程的函数着色税</title>
 <link>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</link>
 <description>异步编程经历了三波演进：回调 → Promise → async/await，每波都让写异步代码更顺手。但 async/await 引入了一个前两波都没有的结构性问题——函数着色（function coloring）：一个函数是否 async 不再只取决于业务逻辑，还取决于它内部做了什么类型的 I/O。这个&quot;颜色&quot;会沿着调用链传染，从函数蔓延到库，从库蔓延到生态。这篇文章要回答两个问题：函数着色具体是怎么蔓延的，以及哪些语言选择了不同的路。
@@ -1329,936 +1481,286 @@ Go、Java、Zig、Clojure 的探索表明，函数着色不是异步的固有代
 <guid>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</guid>
 </item>
 <item>
-<title>链式调用的代价：JavaScript 和 Clojure 的共同教训</title>
-<link>https://lujun9972.github.io/blog/2026/04/25/链式调用的代价：javascript-和-clojure-的共同教训/index.html</link>
-<description>最近读到 Matt Smith 的文章 [[https://allthingssmitty.com/2026/04/20/why-i-dont-chain-everything-in-javascript-anymore/][Why I Don&#39;t Chain Everything in JavaScript Anymore]]，核心观点是 JavaScript 的长方法链虽然优雅，但调试困难且容易造成不必要的计算。我发现 Clojure 的 =-&gt;&gt;= 线程宏本质上也是链式调用，面临同样的取舍——只是在性能上有关键区别。
+<title>mktemp: Shell 脚本中临时文件的安全陷阱与最佳实践</title>
+<link>https://lujun9972.github.io/blog/2026/04/24/mktemp-shell-脚本中临时文件的安全陷阱与最佳实践/index.html</link>
+<description>Shell 脚本经常需要临时文件来存放中间数据，但很多人习惯手写一个固定路径（比如 =/tmp/backup.log= ）就开始用了。这种写法在单用户、单进程的环境下不会出问题，一旦脚本被多人同时运行，或者系统上有恶意用户，就会触发竞态条件和符号链接攻击（symlink attack）。这篇文章要回答的核心问题是：为什么 =mktemp= 是创建临时文件的标准做法，以及在实际脚本中怎么用好它。
 
-* 两种语言，同一种写法
+* 危险的手写临时文件
 
-JavaScript 用方法链把数据&quot;串&quot;起来：
+问题出在 =/tmp= 目录的共享性质上。所有用户、所有进程都能读写这个目录，所以你的脚本必须假设&quot;别人也在 =/tmp= 里操作&quot;。
 
-#+begin_src js
-users
-  .filter(u =&gt; u.active)
-  .map(u =&gt; u.name)
-  .sort()
-  .slice(0, 3)
+** 竞态条件
+
+假设你写了一个备份脚本，中间结果存到 =/tmp/backup.log= ：
+
+#+begin_src shell
+echo &quot;backup started at $(date)&quot; &gt; /tmp/backup.log
+# ... 执行备份操作 ...
+cat /tmp/backup.log
 #+end_src
 
-Clojure 用 =-&gt;&gt;= 线程宏做同样的事：
+如果两个人同时跑这个脚本，后启动的那个会 *覆盖* 前一个的文件。更隐蔽的是，两个进程的 =echo= 和 =cat= 交替执行，你读到的可能是别人写的数据，而你以为的备份记录已经不见了。这就是竞态条件（race condition）——多个进程争抢同一个资源，执行顺序不确定，结果也不确定。
 
-#+begin_src clojure
-(-&gt;&gt; users
-     (filter :active)
-     (map :name)
-     (sort)
-     (take 3))
-#+end_src
+** 符号链接攻击（Symlink Attack）
 
-两种写法的思路一样：数据像流水线上的产品，经过一道道工序加工。读起来流畅，写起来也爽。但当链条变长，问题就来了。
+竞态条件只是麻烦，符号链接攻击则是真正的安全威胁。攻击者可以预先在 =/tmp= 里放一个符号链接，指向敏感文件。你的脚本往&quot;临时文件&quot;写入时，实际写入的是攻击者指定的目标。
 
-* 难题一：调试要打断链
+下面用一个安全的演示来展示这个攻击的原理。我们在一个受控目录里模拟整个过程：
 
-假设结果不对，你想看 =filter= 之后的数据。
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 安全演示：symlink attack 的原理
+# 所有操作在受控目录中进行，不涉及真实系统文件
 
-在 JavaScript 里，要么在回调里塞 =console.log= （把调试代码混进业务逻辑），要么直接把链打断：
+# 准备：创建一个&quot;假想的敏感文件&quot;
+mkdir -p /tmp/mktemp-demo
+echo &quot;这是敏感数据，密码是 hunter2&quot; &gt; /tmp/mktemp-demo/sensitive.txt
 
-#+begin_src js
-const activeUsers = users.filter(u =&gt; u.active);
-console.log(activeUsers); // 调试
-const result = activeUsers.map(u =&gt; u.name).sort().slice(0, 3);
-#+end_src
+# 攻击者预先创建符号链接，指向敏感文件
+ln -sf /tmp/mktemp-demo/sensitive.txt /tmp/mktemp-demo/fake-temp.log
 
-Clojure 里也一样。你可以在链中间插入 =tap&gt;= ，但更常见的做法还是拆成 =let= 绑定：
+# 受害脚本：天真地往固定路径写临时数据
+echo &quot;备份日志...&quot; &gt; /tmp/mktemp-demo/fake-temp.log
 
-#+begin_src clojure
-(let [active-users (filter :active users)
-      names       (map :name active-users)
-      sorted      (sort names)]
-  (take 3 sorted))
-#+end_src
+# 结果：敏感文件被覆盖了！
+echo &quot;=== 敏感文件现在的内容 ===&quot;
+cat /tmp/mktemp-demo/sensitive.txt
+echo &quot;=== 符号链接指向 ===&quot;
+ls -la /tmp/mktemp-demo/fake-temp.log
 
-拆开之后，每个中间值都有了名字—— =active-users= 、 =names= 、 =sorted= 。调试时不用在脑子里模拟整条管道的执行过程，看变量名就知道当前步骤在处理什么。
-
-不管是 ~const x = ...~ 还是 ~let [x ...]~ ，思路都是一样的：给中间步骤一个名字。
-
-* 难题二：不必要的计算（这里两种语言有差异）
-
-JavaScript 的数组方法是 /立即求值/ 的——每次调用 =.filter()= 或 =.map()= 都会遍历整个数组并生成新数组。所以：
-
-#+begin_src js
-const users = [
-  {name: &quot;Alice&quot;, active: true},
-  {name: &quot;Bob&quot;, active: false},
-  {name: &quot;Carol&quot;, active: true},
-  {name: &quot;Dave&quot;, active: true},
-  {name: &quot;Eve&quot;, active: false}
-];
-
-// filter 处理了全部 5 个元素，map 处理了 3 个结果
-// 最后只取 [0]，前面的工作大部分白费了
-const firstActiveName = users.filter(u =&gt; u.active).map(u =&gt; u.name)[0];
-console.log(firstActiveName);
+# 清理
+rm -rf /tmp/mktemp-demo
 #+end_src
 
 #+begin_example
-Alice
+=== 敏感文件现在的内容 ===
+备份日志...
+=== 符号链接指向 ===
+lrwxrwxrwx 1 lujun9972 users 30  4月24日 23:20 /tmp/mktemp-demo/fake-temp.log -&gt; /tmp/mktemp-demo/sensitive.txt
 #+end_example
 
-即使只需要第一个结果， =filter= 和 =map= 也处理了整个数组。用 =find= 才能提前退出：
+关键在于 =ln -sf= 这一步：攻击者把 =/tmp/mktemp-demo/fake-temp.log= 变成了一个指向 =sensitive.txt= 的符号链接。脚本用 =&gt;= 重定向写入时，Shell 会跟随符号链接，把数据写到 =sensitive.txt= 里。如果这个敏感文件是 =/etc/passwd= 或者 SSH 私钥，后果就很严重了。
 
-#+begin_src js
-const user = users.find(u =&gt; u.active);
-console.log(user?.name);
+* mktemp 的工作原理
+
+=mktemp= 是 GNU coreutils 的一部分，每个 Linux 发行版都预装了它。它用三个机制同时解决上面两个问题：
+
+1. *随机文件名* ：在模板末尾的 =X= 字符位置填入随机字符（字母和数字），保证每次调用产生不同的文件名，彻底消除竞态条件
+2. *原子创建* ：内部用 =open()= 系统调用加上 =O_CREAT | O_EXCL= 标志位，保证&quot;检查文件是否存在&quot;和&quot;创建文件&quot;是一个不可分割的操作——即使攻击者在 =mktemp= 生成名字和实际创建文件之间的微秒窗口里插入了符号链接， =O_EXCL= 也会让创建失败，不会跟随符号链接写入
+3. *安全权限* ：自动设置权限为 =600= （仅 owner 可读写），其他用户无法读取你的临时数据
+
+这三个机制叠加在一起，让 =mktemp= 创建的临时文件同时具备了唯一性、原子性和私密性。
+
+* 核心用法
+
+** 1. 基本用法 + trap 清理
+
+这是最值得记住的模式。用 =mktemp= 创建文件，把路径存到变量里，然后用 =trap= 注册退出时的清理动作：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+TMPFILE=$(mktemp)
+trap &quot;rm -f $TMPFILE&quot; EXIT
+echo &quot;临时文件路径: $TMPFILE&quot;
+echo &quot;some data&quot; &gt; &quot;$TMPFILE&quot;
+cat &quot;$TMPFILE&quot;
+# 脚本退出时 trap 自动触发，rm -f $TMPFILE 被执行
 #+end_src
 
 #+begin_example
-Alice
+临时文件路径: /tmp/tmp.ZCNLZw66zR
+some data
 #+end_example
 
-Clojure 的 =filter= 和 =map= 返回惰性序列，理论上只在有消费者需要数据时才计算元素。但 Clojure 的惰性序列是 /分块/ （ chunked ）的——每次 realize 32 个元素，而不是严格地只 realize 需要的那一个。用一个带副作用的函数来看实际行为：
+=trap &quot;rm -f $TMPFILE&quot; EXIT= 这行是关键：它告诉 Shell，不管脚本正常退出还是中途崩溃，都执行 =rm -f= 删除临时文件。没有这行的话， =mktemp= 创建的文件会一直留在 =/tmp= 里，日积月累就占满了磁盘。
 
-#+begin_src clojure
-(defn process [x]
-  (println &quot;Processing:&quot; x)
-  (* x 2))
+** 2. 创建临时目录
 
-(-&gt;&gt; (range 100)
-     (map process)
-     (filter #(&gt; % 4))
-     first)
+脚本需要多个临时文件时（比如解压一个 tar 包），用 =-d= 创建目录：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+WORKDIR=$(mktemp -d)
+trap &quot;rm -rf $WORKDIR&quot; EXIT
+echo &quot;临时目录: $WORKDIR&quot;
+ls -ld &quot;$WORKDIR&quot;
+# 在里面创建多个文件
+echo &quot;file1&quot; &gt; &quot;$WORKDIR/a.txt&quot;
+echo &quot;file2&quot; &gt; &quot;$WORKDIR/b.txt&quot;
+ls -la &quot;$WORKDIR&quot;
 #+end_src
 
 #+begin_example
-Processing: 0
-Processing: 1
-Processing: 2
-Processing: 3
-Processing: 4
-Processing: 5
-Processing: 6
-Processing: 7
-Processing: 8
-Processing: 9
-Processing: 10
-Processing: 11
-Processing: 12
-Processing: 13
-Processing: 14
-Processing: 15
-Processing: 16
-Processing: 17
-Processing: 18
-Processing: 19
-Processing: 20
-Processing: 21
-Processing: 22
-Processing: 23
-Processing: 24
-Processing: 25
-Processing: 26
-Processing: 27
-Processing: 28
-Processing: 29
-Processing: 30
-Processing: 31
-6
+临时目录: /tmp/tmp.66U76Ka8q3
+drwx------ 2 lujun9972 users 40  4月24日 23:20 /tmp/tmp.66U76Ka8q3
+总计 8
+drwxrwx--  2 lujun9972 users   80  4月24日 23:20 .
+drwxrwxrwt 17 root      root  1020  4月24日 23:20 ..
+-rw-r--r-- 1 lujun9972 users    6  4月24日 23:20 a.txt
+-rw-r--r-- 1 lujun9972 users    6  4月24日 23:20 b.txt
 #+end_example
 
-处理了 32 个元素就停了——正好是一个 chunk 的大小。对比 JavaScript 对同样 100 个元素全部处理，Clojure 的惰性求值确实省了一些工作，只是没有&quot;只算到第三个就停&quot;那么理想。chunked seq 是 Clojure 在惰性开销和性能之间的折衷：逐元素 realize 每次都要检查是否需要计算下一个元素，开销比分块处理大得多。如果集合很小（小于 32 个元素），整个集合都在一个 chunk 里，惰性求值跟立即求值没有区别。
+注意两点：目录权限是 =drwx------= ，只有 owner 能进入和列出内容；清理时要用 =rm -rf= 而不是 =rm -f= ，否则删除目录会失败 （ =rm= 不加 =-r= 拒绝删除目录 ） 。
 
-所以 Clojure 的惰性序列更准确的说法是&quot;按需分块计算&quot;而不是&quot;按需逐个计算&quot;。但不管 Clojure 在性能上有多大优势，可读性问题依然存在——一条 5 步的 =-&gt;&gt;= 链在 Clojure 里依然不如拆成 =let= 绑定好读。
+** 3. 自定义模板
 
-* 经验法则
+调试时想在 =/tmp= 里一眼找到自己的临时文件，可以用自定义模板。模板的最后一个组成部分必须含有至少 3 个连续的 =X= ， =mktemp= 会把最后一段连续的 =X= 替换成随机字符：
 
-| 链长 | 建议 |
-|------+------|
-| 1-2 步 | 随便用，没有问题 |
-| 3-4 步 | 如果中间步骤有业务含义，就给它一个名字 |
-| 5+ 步 | 应该拆成 =let= 绑定或 =const= 赋值 |
+#+begin_src shell
+mktemp /tmp/myapp-XXXXXX
+#+end_src
 
-链式调用写起来快，拆成步骤的代码读起来快。写代码只花一次时间，读代码可能要反复很多次——这个账要算清楚。
+#+begin_example
+/tmp/myapp-ZlAGi2
+#+end_example
+
+不带路径的模板会在当前目录创建文件，这经常让人意外：
+
+#+begin_src shell
+mktemp myapp-XXXXXX
+#+end_src
+
+#+begin_example
+myapp-HMl7WJ
+#+end_example
+
+要确保文件一定在 =$TMPDIR= 或 =/tmp= 里，请用下面的 =--tmpdir= 参数。
+
+** 4. 尊重用户的 TMPDIR 设置
+
+=$TMPDIR= 是一个标准环境变量，很多程序（包括 =mktemp= ）用它来决定临时文件放在哪里。如果不设置这个变量，默认值是 =/tmp= 。系统管理员可以通过设置 =$TMPDIR= 把临时文件重定向到更大的磁盘、或避开 =noexec= 挂载选项。
+
+=--tmpdir= 参数让 =mktemp= 把文件放在 =$TMPDIR= 指定的目录（如果没设置则回退到 =/tmp= ）。也可以用 =-p /path= 显式指定目录：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 不设 TMPDIR 时，放到 /tmp
+mktemp --tmpdir myapp-XXXXXX
+# 设置 TMPDIR 后，放到指定位置
+export TMPDIR=/var/tmp
+mktemp --tmpdir myapp-XXXXXX
+#+end_src
+
+#+begin_example
+/tmp/myapp-KdoJ82
+/var/tmp/myapp-nWG3E6
+#+end_example
+
+为什么这很重要？因为有些系统管理员会把 =/tmp= 挂载为 tmpfs（内存文件系统），空间有限；或者把 =/tmp= 设为 =noexec= ，不能在里面执行脚本。用 =--tmpdir= 让脚本自动适应用户的环境配置，不需要硬编码路径。
+
+注意： =mktemp= 还有一个 =-t= 参数也能实现类似效果，但它已被标记为废弃，新脚本建议使用 =--tmpdir= 。
+
+** 5. 干跑模式：只生成名字不创建文件
+
+=--dry-run= 返回一个唯一的文件名，但不在磁盘上创建任何东西。适合下一个命令自己会创建文件的场景（比如 =tar= 解压到新目录、 =ssh-keygen= 生成密钥）：
+
+#+begin_src shell
+mktemp --dry-run --tmpdir staging-XXXXXX
+#+end_src
+
+#+begin_example
+/tmp/staging-XcBg1g
+#+end_example
+
+注意： =--dry-run= 返回的名字 *不保证* 后续一定可用——在你使用这个名字之前，别的进程可能已经创建了同名文件。所以它只在&quot;下一个命令会原子创建&quot;的场景下安全。
+
+* 进阶场景
+
+** 在管道中使用
+
+管道的一个经典限制是：读取端和写入端必须在管道启动时就接好，不能在管道中间插入一个&quot;先处理再传递&quot;的步骤。临时文件可以打破这个限制。
+
+下面这个例子展示了一个常见的场景：把命令输出同时存到临时文件和继续传给下一个命令处理。
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+TMPFILE=$(mktemp)
+trap &quot;rm -f $TMPFILE&quot; EXIT
+
+# tee 把 ls 的输出同时写到临时文件和标准输出
+# 标准输出继续通过管道传给 grep
+ls -la /usr/bin | tee &quot;$TMPFILE&quot; | grep &quot;bash&quot;
+
+echo &quot;--- 临时文件中记录的总行数 ---&quot;
+wc -l &lt; &quot;$TMPFILE&quot;
+#+end_src
+
+#+begin_example
+-rwxr-xr-x 1 root root 1162312 12月11日 06:02 bash
+-r-xr-x 1 root root   7321 12月11日 06:02 bashbug
+-rwxr-xr-x 1 root root  20411  4月 1日 05:17 env_parallel.bash
+-rwxr-xr-x 1 root root    2756 2024年12月27日 globash
+lrwxrwxrwx 1 root root       4 12月11日 06:02 rbash -&gt; bash
+lrwxrwxrwx 1 root root       4 12月11日 06:02 sh -&gt; bash
+--- 临时文件中记录的总行数 ---
+4756
+#+end_example
+
+** 并行处理中的临时文件
+
+用 =xargs= 或 =parallel= 并行执行任务时，每个任务都需要独立的输出文件。 =mktemp= 可以在循环中为每个任务分配唯一的文件名：
+
+#+begin_src shell :tangle yes
+#!/bin/bash
+# 为每个输入项创建独立的临时文件
+RESULTDIR=$(mktemp -d)
+trap &quot;rm -rf $RESULTDIR&quot; EXIT
+
+# 模拟并行处理：对每个数字做计算
+for i in 1 2 3; do
+  outfile=&quot;$RESULTDIR/result-$i.txt&quot;
+  echo &quot;processing $i&quot; &gt; &quot;$outfile&quot; &amp;
+done
+wait
+
+echo &quot;=== 所有结果 ===&quot;
+cat &quot;$RESULTDIR&quot;/result-*.txt
+#+end_src
+
+#+begin_example
+=== 所有结果 ===
+processing 1
+processing 2
+processing 3
+#+end_example
+
+上面这个例子中， =mktemp -d= 创建了一个唯一的私有目录，所有临时文件都放在里面。循环变量 =$i= 保证了同一脚本内并行任务之间不会冲突，但两个用户同时跑脚本时， =mktemp= 的唯一目录能确保两批文件互不干扰，而且 =drwx------= 的目录权限防止其他用户读取你的中间数据。
+
+** Makefile 中的临时文件
+
+Make 的 recipe 是在子 Shell 中执行的，多个 recipe 可能同时运行 （ =make -j= ） 。临时文件命名冲突在并行构建中尤其常见：
+
+#+begin_src shell
+# Makefile 片段（示例，不单独执行）
+%.processed: %.raw
+    TMPFILE=$$(mktemp) &amp;&amp; \
+    trap &quot;rm -f $$TMPFILE&quot; EXIT &amp;&amp; \
+    sed &#39;s/old/new/g&#39; $&lt; &gt; $$TMPFILE &amp;&amp; \
+    mv $$TMPFILE $@
+#+end_src
+
+这里必须用 =$$(mktemp)= （两个 =$$= 是因为 Makefile 中的 =$= 需要转义） ，而不能用固定路径。 =make -j4= 并行构建时，四个 recipe 同时执行，共享一个固定路径必然冲突。
+
+* 速查表
+
+| 参数          | 作用                                 | 示例                           |
+|---------------+--------------------------------------+--------------------------------|
+| （无参数）     | 在 =$TMPDIR= 或 =/tmp= 创建临时文件    | =mktemp=                         |
+| =-d=          | 创建临时目录                         | =mktemp -d=                      |
+| =--tmpdir=    | 在 =$TMPDIR= 或 =/tmp= 创建带模板名称的文件 | =mktemp --tmpdir myapp-XXXXXX=          |
+| =-p=          | 指定创建位置                          | =mktemp -p /var/cache XXXXXX=    |
+| =--dry-run=   | 只返回名字，不创建文件               | =mktemp --dry-run --tmpdir x-XXXXXX=  |
+
+| 常见错误                        | 正确做法                                  |
+|---------------------------------+-------------------------------------------|
+| =mktemp= 后没保存返回路径        | =TMPFILE=$(mktemp)= 保存到变量             |
+| 忘记 =trap= 清理                 | =trap &quot;rm -f $TMPFILE&quot; EXIT= 紧跟 mktemp   |
+| 用 =rm -f= 删除 =mktemp -d= 目录 | 用 =rm -rf= 删除目录                       |
+| 模板少于 3 个 =X=               | 至少 3 个 =X= ，推荐 6 个                  |
+| 硬编码 =/tmp/= 路径             | 用 =--tmpdir= 参数尊重 =$TMPDIR= 设置            |
 </description>
 <pubDate>2026-04-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/25/链式调用的代价：javascript-和-clojure-的共同教训/index.html</guid>
-</item>
-<item>
-<title>用 ox.el 做你想做的事 —— org-export 高级编程指南</title>
-<link>https://lujun9972.github.io/blog/2026/04/24/用-ox.el-做你想做的事-——-org-export-高级编程指南/index.html</link>
-<description>大多数 Emacs 用户只知道 =org-export= 能把 Org 文件转成 HTML/PDF，但很少有人意识到它其实是一个高度可扩展的编译框架。你可以继承已有的 backend，覆盖特定元素的渲染逻辑，注入自定义元数据，甚至完全重定义链接的解析方式——所有这些都不需要修改 Org 源码。
-
-本文从 scheatkode 的 ossg 项目[fn:1] 中提炼出几个实用的 =org-export= 高级技巧，每个技巧都配有可独立运行的代码。读完之后你会对 =ox.el= 的架构有一个清晰的认识，知道什么时候该用它、怎么用它。
-
-* 基础概念：backend 和 transcoder
-
-=org-export= 用&quot;backend&quot;来定义如何把 Org AST（抽象语法树）转换成目标格式。每个 backend 本质上是一个从&quot;Org 元素类型&quot;到&quot;渲染函数&quot;的映射表。比如 =html= backend 里， =headline= 元素对应 =org-html-headline= 函数， =link= 元素对应 =org-html-link= 函数。
-
-这些渲染函数叫 *transcoder* 。每个 transcoder 接收三个参数：元素本身、可选的描述文字、和一个 =info= plist（贯穿整个导出过程的通信管道）。
-
-#+BEGIN_SRC emacs-lisp
-;; 查看内置 html backend 的 transcoder 列表
-(org-export-backend-transcoders (org-export-get-backend &#39;html))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-((bold . org-html-bold)
- (center-block . org-html-center-block)
- (clock . org-html-clock)
- (code . org-html-code)
- (drawer . org-html-drawer)
- (dynamic-block . org-html-dynamic-block)
- (entity . org-html-entity)
- (example-block . org-html-example-block)
- (export-block . org-html-export-block)
- (export-snippet . org-html-export-snippet)
- (fixed-width . org-html-fixed-width)
- (footnote-reference . org-html-footnote-reference)
- (headline . org-html-headline)
- (horizontal-rule . org-html-horizontal-rule)
- (inline-src-block . org-html-inline-src-block)
- (inlinetask . org-html-inlinetask)
- (inner-template . org-html-inner-template)
- (italic . org-html-italic)
- (item . org-html-item)
- (keyword . org-html-keyword)
- (latex-environment . org-html-latex-environment)
- (latex-fragment . org-html-latex-fragment)
- (line-break . org-html-line-break)
- (link . org-html-link)
- (node-property . org-html-node-property)
- (paragraph . org-html-paragraph)
- (plain-list . org-html-plain-list)
- (plain-text . org-html-plain-text)
- (planning . org-html-planning)
- (property-drawer . org-html-property-drawer)
- (quote-block . org-html-quote-block)
- (radio-target . org-html-radio-target)
- (section . org-html-section)
- (special-block . org-html-special-block)
- (src-block . org-html-src-block)
- (statistics-cookie . org-html-statistics-cookie)
- (strike-through . org-html-strike-through)
- (subscript . org-html-subscript)
- (superscript . org-html-superscript)
- (table . org-html-table)
- (table-cell . org-html-table-cell)
- (table-row . org-html-table-row)
- (target . org-html-target)
- (template . org-html-template)
- (timestamp . org-html-timestamp)
- (underline . org-html-underline)
- (verbatim . org-html-verbatim)
- (verse-block . org-html-verse-block))
-#+END_EXAMPLE
-
-这意味着只要覆盖其中任何一个 transcoder，就能改变对应元素的输出方式。
-
-* 技巧一：继承 backend 并覆盖 transcoder
-
-=org-export-define-derived-backend= 是整个扩展机制的入口。它从父 backend 继承所有默认行为，然后你只需覆盖想要改动的部分。
-
-下面是一个最小示例：继承 =html= backend，把所有 =verbatim= （用 == 包裹的行内代码）渲染成带有 CSS class 的 =&lt;code&gt;= 标签，方便自定义样式：
-
-#+BEGIN_SRC emacs-lisp
-;; 定义一个自定义 backend，继承自 html
-(org-export-define-derived-backend &#39;my-html &#39;html
-  :translate-alist
-  &#39;((verbatim . my-html-verbatim)))
-
-(defun my-html-verbatim (verbatim _contents _info)
-  &quot;Render VERBATIM with a custom CSS class.&quot;
-  (format &quot;&lt;code class=\&quot;inline-code\&quot;&gt;%s&lt;/code&gt;&quot;
-          (org-element-property :value verbatim)))
-#+END_SRC
-
-验证一下效果：
-
-#+BEGIN_SRC emacs-lisp
-;; 在临时 buffer 中测试导出
-(with-temp-buffer
-  (insert &quot;=hello world=\n&quot;)
-  (org-mode)
-  (org-export-as &#39;my-html))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&lt;p&gt;
-&lt;code class=&quot;inline-code&quot;&gt;hello world&lt;/code&gt;
-&lt;/p&gt;
-#+END_EXAMPLE
-
-对比默认的 =html= backend 输出：
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-buffer
-  (insert &quot;=hello world=\n&quot;)
-  (org-mode)
-  (org-export-as &#39;html))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&lt;p&gt;
-&lt;code&gt;hello world&lt;/code&gt;
-&lt;/p&gt;
-#+END_EXAMPLE
-
-区别在于默认输出没有任何 CSS class，而我们的自定义版本加上了 =inline-code= class，方便统一设置样式。
-
-`★ Insight ─────────────────────────────────────`
-=org-export-define-derived-backend= 的 =:translate-alist= 只需要列出你要覆盖的
-transcoder。没有列出的元素类型自动继承父 backend 的行为。这意味着你的自定义
-backend 可以只改一个元素（比如只改 =verbatim= 的渲染），其他所有元素都跟
-标准 HTML 导出一模一样。
-`─────────────────────────────────────────────────`
-
-* 技巧二：通过 #+KEYWORD 注入自定义数据到导出管线
-
-=ossg= 用了一个巧妙的技巧：往 Org 文件里插入 =#+OPD_BASE_URL:= 这样的自定义 keyword，Org 解析器会自动把它解析进 =info= plist，transcoder 就能读取到。
-
-=org-export-define-derived-backend= 的 =:options-alist= 参数定义了 keyword 到 plist key 的映射：
-
-#+BEGIN_SRC emacs-lisp
-(org-export-define-derived-backend &#39;my-html &#39;html
-  :options-alist
-  &#39;((:my-color &quot;MY_COLOR&quot;))     ; #+MY_COLOR: blue → (:my-color . &quot;blue&quot;)
-  :translate-alist
-  &#39;((verbatim . my-html-verbatim)))
-#+END_SRC
-
-这样，如果 Org 文件里有 =#+MY_COLOR: blue= ，transcoder 就能通过 =(plist-get info :my-color)= 拿到 =blue= 。
-
-来做一个完整的例子：根据文件中的 =#+MY_COLOR= keyword 来改变 =verbatim= 的输出颜色。
-
-#+BEGIN_SRC emacs-lisp
-(org-export-define-derived-backend &#39;my-html &#39;html
-  :options-alist
-  &#39;((:my-color &quot;MY_COLOR&quot;))
-  :translate-alist
-  &#39;((verbatim . my-html-colored-verbatim)))
-
-(defun my-html-colored-verbatim (verbatim _contents info)
-  &quot;Render VERBATIM with color from MY_COLOR keyword.&quot;
-  (let ((color (or (plist-get info :my-color) &quot;inherit&quot;)))
-    (format &quot;&lt;code style=\&quot;color: %s;\&quot;&gt;%s&lt;/code&gt;&quot;
-            color
-            (org-element-property :value verbatim))))
-#+END_SRC
-
-测试：
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-buffer
-  (insert &quot;#+MY_COLOR: red\n\n=colorized text=\n&quot;)
-  (org-mode)
-  (org-export-as &#39;my-html))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&lt;p&gt;
-&lt;code style=&quot;color: red;&quot;&gt;colorized text&lt;/code&gt;
-&lt;/p&gt;
-#+END_EXAMPLE
-
-如果没有设置 =#+MY_COLOR= ，则回退到 =inherit= （继承父元素颜色）。
-
-这个技巧的威力在于：你可以在不修改 Org 文件内容的情况下，在构建脚本里动态插入 =#+KEYWORD= 行，把外部上下文&quot;走私&quot;进导出管线。ossg 就是这样把站点 URL 注入进去的——在渲染前往临时 buffer 里插入一行 =#+OPD_BASE_URL:= ，org-export 自动解析它，link transcoder 就能读到。
-
-`★ Insight ─────────────────────────────────────`
-=info= plist 是贯穿整个导出过程的&quot;通信管道&quot;。它包含文件的所有元数据
-（标题、作者、日期、选项等），加上你在 =:options-alist= 里声明的自定义字段。
-每个 transcoder 的第三个参数就是这个 plist。通过往里面注入自定义数据，
-你可以实现 transcoder 和外部世界的通信，而不需要全局变量。
-`─────────────────────────────────────────────────`
-
-* 技巧三：自定义 link transcoder
-
-=ossg= 最核心的技巧之一是自定义 link transcoder，把 Org 文件间的 =[[file:xxx.org]]= 链接自动替换成最终的 permalink。
-
-link transcoder 接收的 =link= 参数是一个 org-element 对象，你可以用 =org-element-property= 读取它的属性：
-
-#+BEGIN_SRC emacs-lisp
-(defun my-link-info (link desc info)
-  &quot;Demonstrate link element properties.&quot;
-  (let ((type (org-element-property :type link))
-        (path (org-element-property :path link))
-        (raw-link (org-element-property :raw-link link)))
-    (format &quot;&lt;!-- type=%s path=%s raw=%s --&gt;%s&quot;
-            type path raw-link
-            (org-html-link link desc info))))
-#+END_SRC
-
-先看看 Org 是怎么解析不同类型的链接的：
-
-#+BEGIN_SRC emacs-lisp
-  (org-export-define-derived-backend &#39;debug-html &#39;html
-    :translate-alist
-    &#39;((link . my-link-info)))
-
-  (with-temp-buffer
-    (insert &quot;* Test links
-  - [[https://example.com][external link]]
-  - [[file:other.org][file link]]
-  - [[file:images/photo.png][image link]]
-  - [[#my-heading][internal heading link]]
-
-  ,* My Heading
-  :PROPERTIES:
-  :CUSTOM_ID: my-heading
-  :END:
-  &quot;)
-    (org-mode)
-    (org-export-as &#39;debug-html))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&lt;ul&gt;
-&lt;li&gt;&lt;!-- type=https path=//example.com raw=https://example.com --&gt;&lt;a href=&quot;https://example.com&quot;&gt;external link&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;!-- type=file path=other.org raw=file:other.org --&gt;&lt;a href=&quot;other.html&quot;&gt;file link&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;!-- type=file path=images/photo.png raw=file:images/photo.png --&gt;&lt;a href=&quot;images/photo.png&quot;&gt;image link&lt;/a&gt;&lt;/li&gt;
-&lt;li&gt;&lt;!-- type=custom-id path=my-heading raw=#my-heading --&gt;&lt;a href=&quot;#my-heading&quot;&gt;internal heading link&lt;/a&gt;&lt;/li&gt;
-&lt;/ul&gt;
-#+END_EXAMPLE
-
-可以看到：
-- 外部 URL 的 =type= 是 =https= ， =path= 是 =//= 开头的地址部分（不含 scheme）
-- 文件链接的 =type= 是 =file= ， =path= 是文件路径
-- 内部标题链接的 =type= 是 =custom-id=
-
-有了这些信息，就可以实现 ossg 那样的链接重写——检测到 =type= 为 =file= 且 =path= 以 =.org= 结尾时，查表替换成 permalink：
-
-#+BEGIN_SRC emacs-lisp
-(defvar my-url-registry (make-hash-table :test &#39;equal)
-  &quot;Maps absolute file paths to their final URLs.&quot;)
-
-;; 假设我们已经注册了一些 URL
-(puthash &quot;/home/user/blog/posts/hello.org&quot; &quot;/posts/hello.html&quot; my-url-registry)
-
-(defun my-translate-link (link desc info)
-  &quot;Resolve file: links to .org files using the URL registry.&quot;
-  (let ((type (org-element-property :type link))
-        (path (org-element-property :path link)))
-    (if (and (string= type &quot;file&quot;)
-             (string-suffix-p &quot;.org&quot; path))
-        ;; 查表替换
-        (let* ((abspath (expand-file-name path))
-               (url (gethash abspath my-url-registry)))
-          (if url
-              (format &quot;&lt;a href=\&quot;%s\&quot;&gt;%s&lt;/a&gt;&quot; url (or desc url))
-            ;; 找不到就回退到默认行为
-            (org-html-link link desc info)))
-      ;; 非 .org 链接，用默认处理
-      (org-html-link link desc info))))
-#+END_SRC
-
-`★ Insight ─────────────────────────────────────`
-link transcoder 是 =org-export= 最强大的扩展点之一。
-通过检查 =type= 和 =path= 属性，你可以精确控制不同类型链接的输出。
-ossg 用它实现了跨路由链接解析，但同样的技巧也可以用于：
-把 =[[file:*.pdf]]= 链接渲染成嵌入式的 PDF 查看器、
-把 =[[doi:xxx]]= 链接渲染成学术引用格式、
-或者把特定路径的文件链接渲染成缩略图。
-`─────────────────────────────────────────────────`
-
-* 技巧四：用 cl-progv 做动态变量绑定
-
-=ossg= 需要在不同路由中覆盖不同的 =org-export= 全局变量（比如 =org-export-with-toc= ），但普通的 =let= 绑定在延迟执行的场景下会失效——因为 =let= 在求值时就确定了绑定，而实际导出可能在很久之后才发生。
-
-=cl-progv= 解决了这个问题：它接受一个 *运行时* 生成的变量名列表和值列表，动态绑定它们。
-
-#+BEGIN_SRC emacs-lisp
-;; cl-progv 的基本用法
-(cl-progv
-    &#39;(org-export-with-toc org-export-with-section-numbers)
-    &#39;(nil nil)
-  ;; 在这个作用域内，org-export-with-toc 为 nil
-  ;; org-export-with-section-numbers 也为 nil
-  (list org-export-with-toc org-export-with-section-numbers))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-(nil nil)
-#+END_EXAMPLE
-
-这和 =let= 的区别在哪？关键在于变量名可以是 *数据驱动的* ：
-
-#+BEGIN_SRC emacs-lisp
-;; 用 let：变量名在编写时就确定了（词法）
-(let ((org-export-with-toc nil))
-  org-export-with-toc)  ;; → nil
-
-;; 用 cl-progv：变量名来自数据结构（动态）
-(let ((env &#39;((org-export-with-toc . nil)
-             (org-html-link-home . &quot;https://example.com&quot;))))
-  (cl-progv
-      (mapcar #&#39;car env)    ;; 变量名列表
-      (mapcar #&#39;cdr env)    ;; 值列表
-    (list org-export-with-toc org-html-link-home)))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-(nil &quot;https://example.com&quot;)
-#+END_EXAMPLE
-
-实际应用中， =env= 可以来自配置数据（比如路由的 =:env= 属性），不同的路由覆盖不同的变量组合。这让每个路由有自己独立的导出环境，互不污染。
-
-* 技巧五：org-element-parse-buffer 的 granularity 控制
-
-=ossg= 在性能优化中发现了一个关键细节： =org-element-parse-buffer= 的第一个参数控制解析深度。
-
-#+BEGIN_SRC emacs-lisp
-;; 完整解析（默认）—— 解析所有内容，包括行内标记
-(org-element-parse-buffer)              ; 等价于 (org-element-parse-buffer &#39;object)
-
-;; 只解析到元素级 —— 不解析行内对象
-(org-element-parse-buffer &#39;element)
-
-;; 只解析大元素 —— 不递归进入段落内部
-(org-element-parse-buffer &#39;greater-element)
-
-;; 只解析标题
-(org-element-parse-buffer &#39;headline)
-#+END_SRC
-
-来看一个具体的例子，感受不同粒度返回的 AST 结构差异：
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-buffer
-  (insert &quot;* My Title
-#+DATE: 2026-04-24
-
-Some paragraph with *bold text* and =code=.
-
-,** Sub heading
-Another paragraph.
-&quot;)
-  (org-mode)
-  (let ((ast (org-element-parse-buffer &#39;greater-element)))
-    ;; greater-element 粒度下，段落存在但没有子对象
-    (format &quot;paragraphs: %d, bold objects: %d&quot;
-            (length (org-element-map ast &#39;paragraph #&#39;identity))
-            (length (org-element-map ast &#39;bold #&#39;identity)))))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&quot;paragraphs: 2, bold objects: 0&quot;
-#+END_EXAMPLE
-
-注意 =*bold text*= 没有被解析成独立的 bold 对象——在 =greater-element= 粒度下段落内部不会被递归解析。这比完整解析快得多，当你只需要提取标题、日期、标签等顶层元数据时完全够用。
-
-对比完整解析的结果：
-
-#+BEGIN_SRC emacs-lisp
-(with-temp-buffer
-  (insert &quot;* My Title
-#+DATE: 2026-04-24
-
-Some paragraph with *bold text* and =code=.
-
-,** Sub heading
-Another paragraph.
-&quot;)
-  (org-mode)
-  (let ((ast (org-element-parse-buffer)))  ; 默认 &#39;object 粒度
-    (format &quot;paragraphs: %d, bold objects: %d&quot;
-            (length (org-element-map ast &#39;paragraph #&#39;identity))
-            (length (org-element-map ast &#39;bold #&#39;identity))))
-#+END_SRC
-
-#+BEGIN_EXAMPLE
-&quot;paragraphs: 2, bold objects: 1&quot;
-#+END_EXAMPLE
-
-完整解析时， =*bold text*= 被识别为一个独立的 =bold= 对象。这种精度在你需要精确控制行内标记的 HTML 输出时是必要的，但在只需要元数据的场景下就是浪费。
-
-`★ Insight ─────────────────────────────────────`
-选择合适的 =granularity= 是 =org-element= 性能优化的关键。
-规则很简单：如果你只需要标题、属性、keyword 等结构性数据，
-用 =greater-element= ；如果你需要操作段落内的行内标记（粗体、链接、代码等），
-用 =element= 或默认的 =object= 。对于大文件的元数据提取，
-这个选择可能带来数倍的性能差异。
-`─────────────────────────────────────────────────`
-
-* 组合起来：一个自定义导出 pipeline
-
-把上面几个技巧组合起来，你可以构建一个完整的自定义导出 pipeline。下面是一个简化的示例，演示了 ossg 的核心思路：
-
-#+BEGIN_SRC emacs-lisp
-;; 1. 定义 URL 注册表
-(defvar my-url-registry (make-hash-table :test &#39;equal))
-
-;; 2. 定义自定义 backend
-(org-export-define-derived-backend &#39;site-html &#39;html
-  :options-alist
-  &#39;((:site-base-url &quot;SITE_BASE_URL&quot;))
-  :translate-alist
-  &#39;((link . my-site-translate-link)))
-
-;; 3. Link transcoder：处理文件间链接
-(defun my-site-translate-link (link desc info)
-  &quot;Resolve .org file links using the URL registry.&quot;
-  (let ((type (org-element-property :type link))
-        (path (org-element-property :path link)))
-    (if (and (string= type &quot;file&quot;)
-             (string-suffix-p &quot;.org&quot; path))
-        (let ((url (gethash (expand-file-name path) my-url-registry)))
-          (if url
-              (format &quot;&lt;a href=\&quot;%s\&quot;&gt;%s&lt;/a&gt;&quot; url (or desc url))
-            (org-html-link link desc info)))
-      (org-html-link link desc info))))
-
-;; 4. 导出一个文件（注入 SITE_BASE_URL）
-(defun my-site-export-file (filepath output-path base-url)
-  &quot;Export FILEPATH to OUTPUT-PATH with BASE-URL injected.&quot;
-  (with-temp-buffer
-    (insert-file-contents filepath)
-    (org-mode)
-    ;; 注入自定义 keyword，把站点 URL 走私进导出管线
-    (goto-char (point-min))
-    (forward-line)
-    (insert (format &quot;#+SITE_BASE_URL: %s\n&quot; base-url))
-    (let ((html (org-export-as &#39;site-html)))
-      (with-temp-file output-path
-        (insert html)))))
-#+END_SRC
-
-这就是 ossg 导出管线的最小核心：一个自定义 backend + 一个 link transcoder + 一个注入元数据的导出函数。ossg 在此基础上加了两遍编译（第一遍注册 URL、第二遍渲染）、路由系统、增量缓存等，但骨架就是这些。
-
-* 小结
-
-=org-export= 的可扩展性来自三个核心机制：
-
-1. *Backend 继承* ：通过 =org-export-define-derived-backend= 继承已有 backend，只覆盖需要的部分
-2. *Keyword 注入* ：通过 =:options-alist= 声明自定义 keyword，让 Org 解析器自动把文件元数据传进 transcoder 的 =info= plist
-3. *Transcoder 覆盖* ：在 =:translate-alist= 里指定自定义渲染函数，精确控制特定元素类型的输出
-
-这三个机制组合起来，足以在不修改 Org 源码的前提下实现几乎所有自定义导出需求。下次你需要定制 HTML 输出时，不妨先看看能不能用这些机制解决，而不是写后处理脚本。
-
-[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/
-</description>
-<pubDate>2026-04-24</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/24/用-ox.el-做你想做的事-——-org-export-高级编程指南/index.html</guid>
-</item>
-<item>
-<title>读：Hot-wiring the Lisp Machine —— 用纯 Elisp 构建零依赖的 Org 静态站点生成器</title>
-<link>https://lujun9972.github.io/blog/2026/04/24/读：hot-wiring-the-lisp-machine-——-用纯-elisp-构建零依赖的-org-静态站点生成器/index.html</link>
-<description>scheatkode 发表了一篇长文[fn:1]，记录了他用纯 Emacs Lisp 从零构建 Org-mode 静态站点生成器的全过程。这个项目叫 =ossg= （Org Static Site Generator），它的核心约束是 *零外部依赖* ——不依赖 Node.js、不依赖 Hugo、不依赖任何 Elisp 包，只用 Emacs 内置的 =org-export= 管线完成一切。
-
-这篇文章值得读，不光因为项目本身有意思，更因为它记录了一次完整的架构演进：从天真的字符串替换，到发现 Emacs 内置能力的真正价值，再到两遍编译器、增量热重建。每一步都是被现实逼出来的。
-
-* 起点：为什么不用现成的 SSG
-
-作者试了一圈主流方案，发现没有一个是&quot;原生 Emacs&quot;的：
-
-- =org-publish= ：Emacs 内置的发布引擎，但它的 API 只暴露了很少的配置点——你想自定义 HTML 结构，只能通过几个固定的 hook 变量往里塞代码；想生成分页索引，得自己手写一大段补丁逻辑。换句话说，它给了你一个框架，但这个框架的骨架是焊死的，你只能在预留的槽位上插东西
-- Hugo + =ox-hugo= ：先把 Org 转成 Markdown 再喂给 Hugo，等于多了一层没必要的抽象
-- Weblorg：架构最接近理想，但依赖字符串模板引擎，没法直接用 Elisp 控制输出
-
-作者最终选择了 Weblorg 的路由架构作为骨架，但把它的模板引擎整个替换掉了。
-
-* 第一版：字符串模板的死胡同
-
-最初的方案用 =format-spec= 把变量塞进 HTML 模板：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(format-spec
- template
- `((?p . ,(or (org-html--build-pre/postamble &#39;preamble info) &quot;&quot;))
-   (?P . ,(or (org-html--build-pre/postamble &#39;postamble info) &quot;&quot;))
-   (?t . ,title-fragment)
-   (?d . ,date-fragment)
-   (?T . ,tags-fragment)
-   (?r . ,reading-time)
-   (?c . ,contents)))
-#+END_SRC
-
-template长这样：
-
-#+BEGIN_SRC html :eval never
-&lt;html%a&gt;
-  &lt;head&gt;
-    &lt;title&gt;%t&lt;/title&gt;
-  &lt;/head&gt;
-  &lt;body&gt;
-    &lt;main id=&quot;content&quot;&gt;
-      &lt;article&gt;
-        &lt;h1 class=&quot;title&quot;&gt;%t&lt;/h1&gt;
-        %c
-      &lt;/article&gt;
-    &lt;/main&gt;
-  &lt;/body&gt;
-&lt;/html&gt;
-#+END_SRC
-
-这个方案一开始能用，但扩展性为零。每加一种元数据就要硬编码一个新的 =%X= 占位符。更致命的是， =format-spec= 会把 CSS 里的 =width: 100%;= 当成变量去替换，直接报错。
-
-作者试过让每个 =%X= 占位符不再对应一个固定字符串，而是对应一个闭包（延迟求值的函数）——这样模板引擎在替换 =%t= 时不是直接插入 =title-fragment= ，而是调用一个函数动态计算结果。这听起来像是&quot;让字符串变聪明了&quot;，但本质上仍然是在一个已经有强大解析器的编辑器里重新发明一个简陋的字符串格式化器。用原文的话说：&quot;给马车装曲速引擎。&quot;
-
-* 转折：让 Lisp 闭包替代模板
-
-作者意识到问题的根源：不应该在 HTML 字符串里塞变量，应该直接用 Elisp 控制整个输出过程。
-
-关键改动是把路由的 =:template= 参数从文件路径改成了一个纯 Lisp 闭包：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(lambda (ctx)
-  (when-let ((path (alist-get &#39;abspath ctx)))
-    (insert-file-contents path)))
-#+END_SRC
-
-这个闭包接收一个临时 buffer 和解析后的上下文数据，用 Elisp 往 buffer 里填内容。最简单的用法就是把文件内容倒进去，但你可以在里面做 *任何事* —— 条件判断、循环、调用外部函数、生成动态内容，全都是标准的 Elisp，不需要学任何模板语法。
-
-同样， =:exporter= 参数也是一个闭包，默认实现是把 buffer 交给 =org-export= 处理：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(lambda (_)
-  (org-export-as &#39;opd))
-#+END_SRC
-
-这一步是整个架构的关键转折。因为 template 和 exporter 都是闭包，整个引擎不再需要自己的模板语言、插件系统或 hook 机制。它只是一个路由层：找到文件 → 喂给 template 闭包 → 喂给 exporter 闭包 → 写入磁盘。所有复杂逻辑都交给用户用 Elisp 自己写。
-
-`★ Insight ─────────────────────────────────────`
-这个设计的精髓在于&quot;站在 =org-export= 的肩膀上&quot;。
-=ossg= 没有重新发明 HTML 生成，而是通过
-=org-export-define-derived-backend= 继承 =html= backend，
-只在需要的地方覆盖 transcoder（比如自定义链接解析）。
-这意味着 Org-mode 原生的所有导出能力——脚注、表格、代码高亮——都自动可用，
-不需要额外实现。
-`─────────────────────────────────────────────────`
-
-整个公开 API 缩减到四个原语： =opd-site= 、 =opd-route= 、 =opd-assets= 、 =opd-export= 。
-
-* 两遍编译器：跨路由链接
-
-一个网站不是一堆孤立的页面——页面之间有链接。作者不想手动维护链接路径，也不想让源文件目录结构跟部署 URL 一一对应。他希望写一个标准的 =[[file:somewhere/some-file.org]]= 链接，Emacs 编辑时能正常跳转，构建时自动替换成正确的 permalink。
-
-解决方案是&quot;两遍编译器&quot;：
-
-1. *第一遍（扫描）* ：遍历所有文件，计算每个文件的目标 URL，填充到一个全局的 URL 注册表中
-2. *第二遍（渲染）* ：渲染 HTML，此时注册表已经完整，可以解析所有跨路由链接
-
-链接替换通过自定义的 link transcoder 实现。 =transcoder= 是 =org-export= 中的一个概念：每个 Org 元素类型（标题、段落、链接等）在导出时都对应一个渲染函数，比如标题对应 =org-html-headline= ，链接对应 =org-html-link= 。你可以定义自己的渲染函数来替换默认行为，这个自定义渲染函数就叫 transcoder。下面这段代码就是一个专门处理链接的 transcoder：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(defun opd-translate-link (link desc info)
-  &quot;Resolve cross-route Org links using the site&#39;s URL registry.&quot;
-  (if-let*
-      ((type (org-element-property :type link))
-       (path (org-element-property :path link))
-       ((and (string= &quot;file&quot; type)
-             (string-suffix-p &quot;.org&quot; path)))
-       (base (plist-get info :opd-base-url))
-       (site (opd--site-get base))
-       (absp (expand-file-name path))
-       (url (and site (gethash absp (gethash :registry site)))))
-      (org-element-put-property link :path url)
-    (org-html-link link desc info)))
-#+END_SRC
-
-这段代码的逻辑是：如果链接指向一个 =.org= 文件，就去 URL 注册表里查它最终的 URL，替换掉原始路径；否则按默认的 =org-html-link= 处理。
-
-但有个问题： =org-export= 是 Emacs 内置模块，它只认得 Org 文件里的标准语法（ =#+TITLE= 、 =#+DATE= 等），对 =ossg= 自定义的站点 URL 注册表一无所知。而 link transcoder 在导出过程中需要知道&quot;当前文件属于哪个站点&quot;，才能去注册表里查链接。 =org-export= 又没有提供传递自定义数据的接口，那 transcoder 怎么拿到当前文件的站点信息？
-
-作者的解法很巧妙——在渲染前往临时 buffer 的元数据里注入一行 =#+OPD_BASE_URL:= ，Org 解析器会自动把它解析进 =info= plist 中：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(org-export-define-derived-backend
- &#39;opd &#39;html
-  :options-alist
- &#39;((:opd-base-url &quot;OPD_BASE_URL&quot;))
- :translate-alist
- &#39;((headline . opd-translate-headline)
-   (link     . opd-translate-link)))
-#+END_SRC
-
-这样就把站点上下文&quot;走私&quot;进了 =org-export= 管线，不需要修改 =org-export= 本身。
-
-* 状态隔离：用 cl-progv 防止全局变量污染
-
-Emacs 的 =org-export= 大量依赖全局变量（比如 =org-export-with-toc= 控制是否生成目录）。不同路由需要不同的变量覆盖——博客路由要生成目录，RSS 路由不要。
-
-你可能会想，把变量绑定写在闭包里面不就行了？
-
-#+BEGIN_SRC emacs-lisp :eval never
-(opd-route
- :name &quot;rss&quot;
- :exporter
- (lambda (_)
-   (let ((org-export-with-toc nil)
-         (org-html-link-home &quot;http://localhost:8080&quot;))
-     (org-export-as &#39;rss))))
-#+END_SRC
-
-确实， =let= 在闭包体内部，闭包被调用时才执行，没有时序问题。但如果你有 20 个路由，每个覆盖不同的变量组合，就要写 20 份几乎一样的闭包，唯一的区别就是 =let= 里的变量名和值不同——纯粹是重复劳动。
-
-那把 =let= 写在 =opd-route= 外面，让闭包自动捕获变量值呢？
-
-#+BEGIN_SRC emacs-lisp :eval never
-(let ((org-export-with-toc nil))
-  (opd-route ...))   ;; ← 只是注册，没有执行导出
-(opd-export)          ;; ← 导出时 let 已经过期了
-#+END_SRC
-
-对于普通变量，闭包确实会捕获 =let= 的绑定，即使 =let= 结束后值也不会丢。但 =org-export-with-toc= 不是普通变量——它是用 =defcustom= 声明的 special variable（特殊变量）。在 Emacs Lisp 中，special variable（用 =defvar= 或 =defcustom= 声明的变量）始终是动态作用域，即使开了 =lexical-binding= ，闭包也不会捕获它们的 =let= 绑定。等 =opd-export= 真正开始工作时， =let= 作用域早就结束了，动态绑定也跟着消失。
-
-作者想要的是一种 *声明式* 的写法——把要覆盖的变量写在路由配置数据里，引擎自动在正确的时机绑定它们。这就是 =cl-progv= 的用武之地。这个宏接受一个变量名列表和一个值列表，在运行时动态绑定它们：
-
-作者用 Common Lisp 的 =cl-progv= 解决了这个问题。这个宏接受一个变量名列表和一个值列表，动态绑定它们：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(defmacro opd--with-env (route &amp;rest body)
-  &quot;Evaluate BODY with dynamic bindings specified in ROUTE&#39;s `:env&#39;.&quot;
-  (declare (indent 1))
-  (let ((r-var (make-symbol &quot;route&quot;)))
-    `(let* ((,r-var ,route)
-            (env (plist-get ,r-var :env))
-            (vars (mapcar #&#39;car env))
-            (vals (mapcar #&#39;cdr env)))
-       (cl-progv vars vals ,@body))))
-#+END_SRC
-
-这样每个路由可以声明自己的环境变量覆盖，互不干扰：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(let ((org-export-with-toc nil)
-      (org-html-html5-fancy t))
-  (opd-route ...)
-  (opd-route
-   :name &quot;rss&quot;
-   :env &#39;((org-html-link-home . &quot;http://localhost:8080&quot;))
-   :exporter (lambda (_) (org-export-as &#39;rss))))
-#+END_SRC
-
-`★ Insight ─────────────────────────────────────`
-=cl-progv= 和 =let= 的区别在于 *什么时候* 决定绑定哪些变量。
-=let= 在编写时就知道变量名（词法作用域），而 =cl-progv= 在运行时
-从数据结构中读取变量名和值（动态作用域）。这正是处理路由级配置所需要的——
-不同路由可能覆盖不同的全局变量，而且变量名来自配置数据而非代码。
-`─────────────────────────────────────────────────`
-
-* 函数式组合器：声明式过滤 API
-
-早期的过滤 API 用硬编码的具名函数（比如 =opd-input-filter-drafts= 专门过滤草稿、 =opd-input-aggregate-all-desc= 专门按日期倒序聚合），每加一种过滤条件就要在引擎里加一个新函数，用户没法组合它们。作者把这改成了布尔组合器和匹配谓词的分离设计：
-
-- 组合器： =opd-filter-any= 、 =opd-filter-all= 、 =opd-filter-omit=
-- 匹配器： =opd-match-tag= 、 =opd-match-prop= 、 =opd-match-has-prop=
-
-这就像 Lisp 里的布尔表达式一样，可以无限嵌套组合：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(opd-route
- :name &quot;rss&quot;
- :pattern &quot;*.org&quot;
- :filter
- (opd-filter-all
-  (opd-filter-any
-   (opd-match-tag &quot;blog&quot;)
-   (opd-match-tag &quot;lore&quot;))
-  (opd-match-has-prop &#39;date)
-  (opd-filter-omit
-   (opd-match-tag &quot;draft&quot;)
-   (opd-match-tag &quot;archive&quot;))))
-#+END_SRC
-
-这段代码的含义直白得像英语：匹配所有带 =blog= 或 =lore= 标签、有日期、且不是 =draft= 或 =archive= 的文件。
-
-* 性能优化：从 5 分半到 1 分 15 秒
-
-作者用 10,000 个文件做压力测试。初始版本跑完要 5 分 30 秒（每文件 32ms），经过一系列优化降到了 1 分 15 秒（每文件 7.5ms）。这部分的详细分析我之前写过一篇[[file:Elisp性能优化的六个实战教训.org][独立的博文]]，这里只概述关键转折点。
-
-*第一轮优化：降低解析精度*
-
-=org-element-parse-buffer= 默认解析整个 buffer 的所有内容（ =object= 级别）。第一遍扫描只需要标题、日期等顶层元数据，不需要解析每个段落里的行内标记。把粒度降到 =greater-element= 后，时间从 5 分 30 秒降到 3 分 44 秒（22ms/文件）。
-
-#+BEGIN_SRC emacs-lisp :eval never
-;; 默认：解析所有内容（最慢）
-(org-element-parse-buffer)
-
-;; 只解析顶层元素（快得多）
-(org-element-parse-buffer &#39;greater-element t)
-#+END_SRC
-
-*第二轮优化：用 profiler 找到真正的瓶颈*
-
-用 =M-x profiler-start= 跑出的结果令人意外——最大的 CPU 消耗不是 =org-element-parse-buffer= ，而是 =find-file-noselect= （13%）和 =org-persist-write-all-buffer= （12%）。
-
-原因在于 =org-with-file-buffer= 内部调用 =find-file-noselect= ，它会把每个文件当作交互式 buffer 打开——触发文件锁、版本控制查询、major-mode hook 等一系列操作。 =org-persist= 还会为每个文件写缓存到磁盘。相当于为了读一个标题字符串，承担了整个交互式操作系统的行政开销。
-
-换成 =with-temp-buffer= + =insert-file-contents= 后，时间骤降到 1 分 15 秒（7.5ms/文件）。
-
-`★ Insight ─────────────────────────────────────`
-这个发现对写 Elisp 性能敏感代码很有参考价值：
-=find-file-noselect= 是为交互使用设计的，它会触发所有 hook、
-缓存写入和版本控制操作。当你只是想读取文件内容时，
-=with-temp-buffer= + =insert-file-contents= 才是正确的选择。
-同理， =org-element-parse-buffer= 的 =granularity= 参数
-在只需要顶层元数据时能省下大量 CPU。
-`─────────────────────────────────────────────────`
-
-*第三轮优化：算法改进*
-
-把所有线性扫描替换成哈希表查找，用 =cl-loop= 替代 =maphash= + =lambda= 减少闭包开销，把模板编译提前到路由初始化阶段而非每次渲染时重复编译。
-
-* 增量热重建
-
-在经过改造后，压测的结果是10,000 篇博文全量构建花了 1 分 15 秒,这已经很快了，但实际使用中还不够。因为作者用 Emacs 内置的 =filenotify= 实现了文件监视,在每次保存文件时自动触发构建,每次保存都会触发一次全量构建。作者的博客大约 500 篇，全量构建需要 11 秒，也就是说改一个字母就要等 11 秒才能看到效果。原作者称之为&quot;masochism&quot;。
-
-为了解决这个问题，作者引入了增量逻辑，核心思路分三层：
-
-1. *文件级缓存* ：每个文件独立缓存，改一个文件只重建那一个文件，不波及同路由的其他文件
-2. *内容变更 vs 结构变更* ：只改文字（元数据不变）走快速路径，直接替换输出；改了标签或 =#+FILETAGS= 等结构性内容才需要重建聚合路由（索引页、RSS 等）
-3. *依赖图* ：如果 =post.org= 通过 =#+SETUPFILE:= 引用了 =setup.org= ，修改 =setup.org= 时引擎会反向查找所有依赖它的文件，级联失效缓存并重建
-
-依赖图的实现用了一个 =:depcache= 哈希表。第一遍扫描时记录每个文件的 =#+SETUPFILE= 和 =#+INCLUDE= 指令，构建反向依赖关系。当文件变化时，用深度优先搜索遍历依赖图，找出所有需要重建的父文件。
-
-还有一个精巧的&quot;duck-typed 路由&quot;设计：引擎不需要手动标记哪个路由是&quot;主路由&quot;——它检查聚合后数据块的结构来判断。
-
-比如 =opd-aggregate-each= （每篇博文单独输出一个 HTML 文件）的返回值长这样：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(((abspath . &quot;/blog/post-a.org&quot;) (slug . &quot;post-a&quot;) ...)
- ((abspath . &quot;/blog/post-b.org&quot;) (slug . &quot;post-b&quot;) ...))
-#+END_SRC
-
-每个数据块顶层就有 =abspath= ——这是一对一的路由，引擎只重建变化的那个文件。
-
-而 =opd-aggregate-all= （所有博文聚合到一个 RSS 文件）的返回值长这样：
-
-#+BEGIN_SRC emacs-lisp :eval never
-(((posts .
-   (((abspath . &quot;/blog/post-a.org&quot;) (slug . &quot;post-a&quot;) ...)
-    ((abspath . &quot;/blog/post-b.org&quot;) (slug . &quot;post-b&quot;) ...)))))
-#+END_SRC
-
-=abspath= 被包裹在 =posts= 列表里——这是一对多的聚合路由，任何一个输入文件变化都可能影响最终输出，所以必须整体重建。
-
-引擎只需要递归搜索数据块树，检查 =abspath= 出现在什么位置，就能自动判断路由类型，不需要任何手动标记。
-
-最终效果：热重建时间降到 7~200 毫秒，取决于源文件的复杂度。
-
-* 几个值得注意的设计决策
-
-*防御性编程变成进攻性编程*
-
-作者曾花了好几个小时调试一个诡异的构建失败，最后发现原因竟是自己配置文件里一段被注释掉的路由。这让他转向&quot;进攻式&quot;风格——到处插 =cl-assert= ，出错立刻中断并告诉你哪里错了，而不是静默恢复继续跑。因为静默恢复容易导致状态污染，让你更难找到真正的 bug。
-
-*静态资产统一到路由系统*
-
-图片、CSS 等静态文件最初走的是一个独立的&quot;复制文件&quot;循环，跟 Org 文件完全分离。后来作者意识到：一个静态文件就是一个没有元数据的 Org 文件。他用一个不解析 Org 的 dummy parser 把静态资产统一进了同一个路由系统，享受同样的缓存、监视和增量重建能力。
-
-*不实现垃圾回收*
-
-作者曾试图跟踪所有生成的文件，用于清理孤立文件。最后放弃了——直接删掉整个输出目录再全量重建，简单、无状态、正确。有时候最聪明的工程决策就是认出一个五十年前就被 shell 命令解决的问题。
-
-* 读完之后
-
-这篇文章最打动人的不是最终的产品——一个静态站点生成器——而是整个过程。作者没有一开始就设计出完美的架构，而是从最朴素的字符串替换开始，一步步被现实逼着改进。每个转折点都有明确的&quot;为什么旧方案不行&quot;和&quot;为什么新方案更好&quot;。
-
-对于 Emacs 用户来说，这篇文章还提供了一个实用的启示： =org-export= 的可扩展性远比大多数人想象的大。通过 =org-export-define-derived-backend= 和自定义 transcoder，你可以在不修改 Org 源码的情况下深度定制 HTML 输出。 =ossg= 整个项目就是建立在这个能力之上的。
-
-[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/
-</description>
-<pubDate>2026-04-24</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/24/读：hot-wiring-the-lisp-machine-——-用纯-elisp-构建零依赖的-org-静态站点生成器/index.html</guid>
+<guid>https://lujun9972.github.io/blog/2026/04/24/mktemp-shell-脚本中临时文件的安全陷阱与最佳实践/index.html</guid>
 </item>
 </channel>
 </rss>

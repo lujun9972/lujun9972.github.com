@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>分层控制：从 AI 技能到 Unix 管道的共同设计原则 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="系统设计, AI, Clojure, Emacs, Unix" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">分层控制：从 AI 技能到 Unix 管道的共同设计原则</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd30334d">为什么图结构会失控</a></li>
+<li><a href="#org6502931">分层控制的两条规则</a></li>
+<li><a href="#org00fa458">Unix 管道：最经典的分层系统</a></li>
+<li><a href="#org5d65cd9">Clojure Transducer：函数式编程中的分层</a></li>
+<li><a href="#org6a5ded4">Emacs：从命令到宏到包</a></li>
+<li><a href="#org02e3464">分层的代价</a></li>
+<li><a href="#org83d2161">当你面对失控的系统</a></li>
+</ul>
+</div>
+</div>
+<p>
+最近读到 <a href="https://www.jdon.com/91569-Skill-Graphs-2-0.html">Skill Graphs 2.0</a> 这篇文章，讨论 AI 智能体的技能系统如何从"图结构"转向"分层结构"。核心主张是：当技能规模扩大时，依赖关系会失控，AI 智能体开始"迷路"。解决思路是把技能分成三层——原子（确定性执行）、分子（受控组合）、复合体（自治但受监控）。
+</p>
+
+<p>
+读完之后我发现，这三层架构并不是什么新发明。它是"分层控制"这一经典设计原则在 AI agent 领域的再发现。而且这个原则在 Unix 管道、Clojure 的 transducer、Emacs 的扩展体系中反复出现。
+</p>
+
+<div id="outline-container-orgd30334d" class="outline-2">
+<h2 id="orgd30334d">为什么图结构会失控</h2>
+<div class="outline-text-2" id="text-orgd30334d">
+<p>
+原文描述的场景很具体：技能图在项目初期看起来优雅——每个技能是一个节点，依赖关系是边，像 Obsidian 的双链笔记。但技能数量增长到上百个后，依赖链变得又深又密，AI 智能体在执行时路径选择开始不稳定。你让它用技能 A，它可能跳到技能 C，或者在某个依赖路径上彻底迷路。
+</p>
+
+<p>
+更致命的是循环依赖：技能 A 依赖 B，B 依赖 C，C 又依赖 A。系统退化成"随机行为发生器"，每次运行结果都不一样。
+</p>
+
+<p>
+这个问题的本质是：图结构只描述了"连接关系"，没有约束"决策权"。所有节点在理论上平等，没有任何机制告诉系统"你应该先做什么、后做什么、什么时候停下来"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6502931" class="outline-2">
+<h2 id="org6502931">分层控制的两条规则</h2>
+<div class="outline-text-2" id="text-org6502931">
+<p>
+Skill Graphs 2.0 的三层架构可以抽象出两条通用规则：
+</p>
+
+<ol class="org-ol">
+<li><b>越底层越追求确定性，越高层越允许自主性</b> 。原子层不允许调用其他技能，输出必须稳定可预测。复合体层允许 AI 智能体自主决策，但需要人类定期检查。分子层处于中间——允许组合，但调用顺序和条件分支必须事先写清楚。</li>
+
+<li><b>层与层之间是"控制边界"而非"连接关系"</b> 。不再强调"谁依赖谁"，而是强调"谁拥有决策权，谁只负责执行"。上层决定"做什么"，下层只管"怎么做"。</li>
+</ol>
+
+<p>
+这两条规则听起来平淡，但它们在多个领域反复出现。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org00fa458" class="outline-2">
+<h2 id="org00fa458">Unix 管道：最经典的分层系统</h2>
+<div class="outline-text-2" id="text-org00fa458">
+<p>
+Unix 哲学是分层控制的教科书级案例。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep ERROR access.log | sort | uniq -c | sort -rn | head -5
+</pre>
+</div>
+
+<p>
+这条管道中，每个命令就是一个"原子技能"：
+</p>
+
+<ul class="org-ul">
+<li><code>grep</code> 只做一件事：过滤匹配行</li>
+<li><code>sort</code> 只做一件事：排序</li>
+<li><code>uniq -c</code> 只做一件事：去重并计数</li>
+<li><code>sort -rn</code> 只做一件事：按数字倒序排列</li>
+<li><code>head -5</code> 只做一件事：取前 5 行</li>
+</ul>
+
+<p>
+每个命令的输入输出格式完全确定，行为高度可预测。没有人会担心 <code>sort</code> 突然决定跳过某些行或者自作主张把结果发给 <code>wc</code> 而不是下一个管道。
+</p>
+
+<p>
+管道和简单 shell 脚本都是"分子技能"。管道是调用顺序固定的流水线；脚本可以包含条件分支和循环，但所有逻辑都是事先写死的——这正好对应 Skill Graphs 2.0 中分子层"有限编排器"模式（最多几次判断，每次不超过两个分支）。
+</p>
+
+<p>
+那"复合体"在哪？在人身上。运维工程师根据当前状况决定跑哪个脚本、用什么策略、出问题了切什么备选方案。这个决策过程无法事先完全写死，需要根据实际情况动态判断。这和 Skill Graphs 2.0 中"人类在复合体层设定目标、定期检查、偏离时介入纠正"的描述完全吻合。
+</p>
+
+<p>
+Doug McIlroy 在 1964 年提出管道概念时，出发点就是"不要让程序之间产生复杂的依赖关系，用统一的接口（文本流）连接它们"。这和 Skill Graphs 2.0 把"连接关系"换成"控制边界"是同一个思路。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d65cd9" class="outline-2">
+<h2 id="org5d65cd9">Clojure Transducer：函数式编程中的分层</h2>
+<div class="outline-text-2" id="text-org5d65cd9">
+<p>
+Clojure 的 transducer（转换器）是分层控制在函数式编程中的体现。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">;; 原子：单个 transducer
+(map inc)           ;; 输入一个数，输出加一后的数
+(filter even?)      ;; 输入一个数，只保留偶数
+(take 10)           ;; 只取前 10 个
+
+;; 分子：组合多个 transducer + 应用到数据源
+(def xf (comp (map inc) (filter even?) (take 10)))
+(into [] xf (range 1000))
+;; → [2 4 6 8 10 12 14 16 18 20]
+</pre>
+</div>
+
+<p>
+每个单独的 transducer 是"原子技能"——它只做一次变换，输入输出完全确定。 <code>comp</code> 把多个 transducer 组合起来， <code>into</code> 把组合应用到数据源上，整体构成"分子技能"——组合顺序固定，执行结果完全可预测（同样的输入永远出同样的输出）。
+</p>
+
+<p>
+"复合体"在哪？和 Unix 一样，在人身上。开发者根据业务需求决定写哪些 transducer、用什么顺序组合、数据从哪来到哪去。这个设计过程涉及动态判断，无法事先完全写死。
+</p>
+
+<p>
+这里的关键设计决策和 Skill Graphs 2.0 完全一致：单个 transducer 不允许"决定"数据流向哪里，它只负责变换经过自己的那一个元素。数据流的控制权在写 <code>comp</code> 和 <code>into</code> 的人手中。
+</p>
+
+<p>
+Rich Hickey 设计 transducer 时特意把"做什么变换"和"如何应用变换"解耦。这和 Skill Graphs 2.0 把"决策权"和"执行权"分层是同一件事。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6a5ded4" class="outline-2">
+<h2 id="org6a5ded4">Emacs：从命令到宏到包</h2>
+<div class="outline-text-2" id="text-org6a5ded4">
+<p>
+Emacs 的扩展体系也遵循类似的分层：
+</p>
+
+<ul class="org-ul">
+<li><b>原子层</b> ：单条命令，如 <code>M-x sort-lines</code> 、 <code>M-x query-replace</code> 。每条命令做一件事，行为确定。</li>
+<li><b>分子层</b> ：keyboard macro（键盘宏）把多条命令录制成一个序列，按固定顺序回放。或者写一个简单的 Elisp 函数，把几条命令串起来。</li>
+<li><b>复合体层</b> ：用户根据当前编辑任务动态决定用哪些命令、宏和函数。和 Unix 运维工程师一样，Emacs 用户面对的不是写死流程能覆盖的问题——你得看当前文件是什么、代码结构怎样、想达到什么效果，然后决定是跑个宏还是调个函数还是装个插件。</li>
+</ul>
+
+<p>
+三层之间的复杂度跃迁很直观：写一个 <code>defun</code> 很容易，因为流程是固定的；写一个可靠的 minor mode 就难得多，因为涉及 keymap 继承、hook 管理、buffer-local 变量等动态行为；而把各种工具灵活组合起来解决眼前的问题，这个判断力需要长期积累。这和原文说的"分子技能内部包含超过 8-10 个原子技能后复杂度再次爆炸"是同一个现象。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org02e3464" class="outline-2">
+<h2 id="org02e3464">分层的代价</h2>
+<div class="outline-text-2" id="text-org02e3464">
+<p>
+原文坦诚地指出了两个代价，它们同样适用于所有分层系统：
+</p>
+
+<p>
+第一， <b>规模天花板</b> 。一个复合体技能内部包含超过 8-10 个分子技能时，复杂度会再次爆炸。这意味着分层只是推迟了复杂度问题，并没有消除它。Unix 的 shell 脚本也有类似的天花板——超过一定复杂度后，人们会转向 Python 或 Go。Clojure 的 transducer 链太长时也会变得难以理解。
+</p>
+
+<p>
+第二， <b>测试成本</b> 。每一层都需要独立验证，组合起来还要做集成测试。原文说"没有任何捷径可走，你只能老老实实写测试用例"。这和软件工程中"测试金字塔"的经验完全一致——底层单元测试最多，中间集成测试适中，顶层端到端测试最少但也最贵。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org83d2161" class="outline-2">
+<h2 id="org83d2161">当你面对失控的系统</h2>
+<div class="outline-text-2" id="text-org83d2161">
+<p>
+分层控制不是银弹，但它提供了一个可操作的诊断框架：当你面对一个行为不可预测的复杂系统时，不要试图用更复杂的规则来管理它。
+</p>
+
+<p>
+先问两个问题：
+</p>
+<ol class="org-ol">
+<li>这个系统中，哪些部分的行为是确定的？把它们压到底层。</li>
+<li>哪些部分必须动态决策？把它们提到高层，并且加人监控。</li>
+</ol>
+
+<p>
+从 Unix 管道到 Clojure transducer 到 AI 技能系统，这个思路一次又一次地被重新发现。也许因为这就是对付复杂性的基本方法。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-25</span>
+    <span class="post-info">2026-04-25</span>
+    <a href="../../../../../tags/系统设计">系统设计</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/clojure">Clojure</a> : <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/unix">Unix</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ds5r5dszg3eenmbmpnlugfotxe &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
