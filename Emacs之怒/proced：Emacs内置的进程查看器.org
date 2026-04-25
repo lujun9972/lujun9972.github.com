@@ -1,0 +1,97 @@
+#+TITLE: proced：Emacs 内置的进程查看器
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, proced, 进程管理
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+=proced= 是 Emacs 内置的进程查看器，相当于一个可以直接在 Emacs 里操作的彩色版 =ps= 。它支持自动刷新、树状视图、按列排序、发送信号，还可以通过 =proced-custom-attributes= 扩展自定义列。本文介绍 =proced= 的基本用法和常用配置。
+
+* 启动
+
+=M-x proced= 即可打开。 =proced= 会列出当前系统的进程，默认只显示当前用户的进程（ =proced-filter= 默认值为 =user= ）。
+
+* 常用按键
+
+=proced= buffer 中的按键分为几类：
+
+** 导航
+
+| 按键 | 功能 |
+|------+------|
+| =n= / =p= | 上下移动 |
+| =SPC= | 移动到下一行 |
+
+** 标记
+
+| 按键 | 功能 |
+|------+------|
+| =m= / =d= | 标记当前行（ =d= 是"标记准备操作"的习惯按键） |
+| =u= | 取消当前行标记 |
+| =U= | 取消所有标记 |
+| =M= | 标记所有行 |
+| =t= | 反转标记 |
+| =C= | 标记子进程 |
+| =P= | 标记父进程 |
+
+** 视图控制
+
+| 按键 | 功能 |
+|------+------|
+| =f= | 切换过滤器（user / user-running / all / all-running / emacs） |
+| =F= | 切换显示格式（short / medium / long / verbose） |
+| =T= | 切换树状视图 |
+| =o= | 隐藏/显示被标记的进程 |
+| =RET= | 在当前列上细化筛选 |
+
+** 操作
+
+| 按键 | 功能 |
+|------+------|
+| =k= / =x= | 向标记的进程发送信号 |
+| =r= | 修改进程的 nice 值 |
+
+** 其他
+
+| 按键 | 功能 |
+|------+------|
+| =?= / =h= | 查看帮助 |
+
+* 发送信号
+
+按 =k= 或 =x= 会弹出一个信号列表，让你选择要发送的信号。你可以直接输入信号名（如 =SIGTERM= 、 =SIGKILL= ），也可以从列表中选择。如果事先用 =m= 标记了多个进程，信号会发给所有被标记的进程。
+
+* 排序
+
+在 =proced= 中，用鼠标点击列头就能按该列排序。再次点击同一列头会反转排序顺序。
+
+把光标移到某个属性值上按 =RET= （ =proced-refine= ）则会根据当前值细化筛选——比如把光标放在某个进程的 USER 列上按 =RET= ，可以只显示同一用户的进程。
+
+* 常用配置
+
+以下是一套推荐的 =proced= 配置：
+
+#+begin_src emacs-lisp
+(use-package proced
+  :ensure nil
+  :defer t
+  :custom
+  (proced-enable-color-flag t)      ;; 启用颜色
+  (proced-tree-flag t)              ;; 默认启用树状视图
+  (proced-auto-update-flag 'visible) ;; 只在 buffer 可见时自动刷新
+  (proced-auto-update-interval 1)    ;; 每秒刷新
+  (proced-descend t)                 ;; 树状视图降序排列
+  (proced-format 'medium)            ;; 中等详细度的显示格式
+  (proced-filter 'user))             ;; 只显示当前用户的进程
+#+end_src
+
+几个关键变量说明：
+
+- =proced-auto-update-flag= ：设为 ='visible= 表示只在 buffer 可见时刷新，比 =t= 更省资源。 =proced= 会按 =proced-auto-update-interval= 指定的秒数定期重新读取进程列表。
+- =proced-format= ：控制显示哪些列。 =short= 最精简， =verbose= 最详细。运行时可以用 =F= 键切换，不需要重启。
+- =proced-filter= ：控制显示哪些进程。 =user= 只显示当前用户的， =all= 显示所有， =emacs= 只显示 Emacs 相关进程。运行时用 =f= 键切换。
+- =proced-tree-flag= ： =t= 启用树状视图，可以直观看到进程的父子关系。
+
+* 自定义扩展
+
+=proced= 支持通过 =proced-custom-attributes= 添加自定义列。这个功能在某些场景下很有用——比如 macOS 上 =proced= 默认缺少 CPU 和内存列，就可以通过这个机制补上。具体的实现思路见[[file:读：让proced在macOS上显示CPU和内存.org][上一篇博文]]。

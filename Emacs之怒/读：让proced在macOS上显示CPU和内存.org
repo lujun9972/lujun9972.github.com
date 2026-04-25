@@ -1,0 +1,144 @@
+#+TITLE: 读：让 Emacs proced 在 macOS 上显示 CPU 和内存
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, proced, macOS, Elisp
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+本文是对 Rahul Juliato 的文章 [[https://rahuljuliato.com/posts/proced-macos][Getting Emacs proced.el to Show CPU and Memory on macOS]] 的解读。原文解决了 macOS 上 Emacs =proced= 缺少 CPU 和内存列的问题，同时是一份很好的 Elisp 编程教学——涉及异步进程、hash table 缓存、自定义属性扩展等多个实用技巧。
+
+* 问题是怎样的
+
+Emacs 内置的 =proced= 是一个进程查看器，相当于彩色版的 =ps= 。在 Linux 上，它默认就能显示每个进程的 CPU 和内存占用。但在 macOS 上， =%CPU= 和 =%Mem= 两列是空的。
+
+原因在 Emacs 的 C 层： =proced= 通过 =system_process_attributes= 函数（定义在 =src/sysdep.c= 中）获取每个进程的属性列表。在 Linux 上，这个函数从 =/proc/*/stat= 读取 CPU 和内存数据；在 BSD 和 Windows 上，它通过系统 API 计算。但在 Darwin（macOS 内核）上，这个函数虽然调用了 =proc_pidinfo= 来获取虚拟内存和常驻内存大小，却从未填充 =pcpu= 和 =pmem= 两个字段——数据明明可以通过 =proc_pid_rusage= 、 =task_info= 和 =sysctl hw.memsize= 拿到，只是没人把线接上。
+
+Rahul Juliato 向上游提了一个 patch（[[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=80898][debbugs #80898]]），但在 patch 合并之前，他用纯 Elisp 给出了一个 workaround。
+
+* 解决思路
+
+整体方案很清晰：
+
+1. 用 =make-process= 异步运行 ~ps -axo pid=,%cpu=,%mem=~ 获取进程信息
+2. 把输出解析后存入 hash table（以 PID 为 key ）
+3. 通过 =proced-custom-attributes= 把 =pcpu= 和 =pmem= 两个属性注入 =proced=
+4. 用 timer 每 2 秒刷新一次 hash table
+
+* 异步运行 ps 并解析输出
+
+原文用 =(when (eq system-type 'darwin))= 把所有代码包在一起，确保只在 macOS 上执行。下面的代码片段省略了这个外层 guard ，实际使用时应当加上。
+
+核心是用 =make-process= 异步执行 =ps= ：
+
+#+begin_src emacs-lisp
+(defvar emacs-solo--proced-ps-cache (make-hash-table))
+(defvar emacs-solo--proced-ps-timer nil)
+
+(defun emacs-solo--proced-ps-do-refresh ()
+  (make-process
+   :name "proced-ps-refresh"
+   :buffer (generate-new-buffer " *proced-ps-temp*")
+   :command '("env" "LC_ALL=C" "ps" "-axo" "pid=,%cpu=,%mem=")
+   :noquery t
+   :sentinel
+   (lambda (proc _event)
+     (when (eq (process-status proc) 'exit)
+       (let ((new-cache (make-hash-table)))
+         (with-current-buffer (process-buffer proc)
+           (goto-char (point-min))
+           (while (not (eobp))
+             (when (looking-at (rx (* blank)
+                                   (group (+ digit))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))))
+               (puthash (string-to-number (match-string 1))
+                        (cons (string-to-number (match-string 2))
+                              (string-to-number (match-string 3)))
+                        new-cache))
+             (forward-line 1)))
+         (kill-buffer (process-buffer proc))
+         (setq emacs-solo--proced-ps-cache new-cache))))))
+#+end_src
+
+几个设计要点：
+
+- =LC_ALL=C= 强制 =ps= 使用固定的输出格式，不受用户 locale 影响。不同 locale 下数字的小数点可能变成逗号，解析就会出错。
+- sentinel 只在进程退出时触发（ =(eq (process-status proc) 'exit)= ），此时 buffer 中已有完整输出。
+- =rx= 宏让正则表达式更可读：三个分组分别匹配 PID（整数）、 =%CPU=（浮点数）、 =%Mem=（浮点数）。
+- =puthash= 以 PID 为 key ，以 =(%CPU . %Mem)= 这个 cons 为 value 。用 cons 而不是 list ，是因为 =car= 和 =cdr= 取值最快。
+
+为什么用 hash table 而不是 alist ？因为 =proced= 会为每个进程调用自定义属性函数，hash table 的查找时间是 O(1) ，即使有几百个进程也很快。
+
+* 查询函数
+
+简单的 wrapper ，从 hash table 中取值：
+
+#+begin_src emacs-lisp
+(defun emacs-solo--proced-pcpu (pid)
+  (car (gethash pid emacs-solo--proced-ps-cache)))
+
+(defun emacs-solo--proced-pmem (pid)
+  (cdr (gethash pid emacs-solo--proced-ps-cache)))
+#+end_src
+
+=car= 取 CPU ， =cdr= 取内存——这就是用 cons 存储的好处。
+
+* 注入到 proced
+
+这是把一切连起来的关键。 =proced-custom-attributes= 是一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 =(keyword . value)= 形式的 cons ， =proced= 会把它当作新列显示：
+
+#+begin_src emacs-lisp
+(add-hook 'proced-mode-hook
+  (lambda ()
+    (unless (file-remote-p default-directory)
+      (setq emacs-solo--proced-ps-timer
+            (run-with-timer 0 2 #'emacs-solo--proced-ps-do-refresh)))))
+
+(setq proced-custom-attributes
+  (list
+   (lambda (attrs)
+     (unless (file-remote-p default-directory)
+       (when-let* ((pid (cdr (assq 'pid attrs)))
+                   (v (emacs-solo--proced-pcpu pid)))
+         (cons 'pcpu v))))
+   (lambda (attrs)
+     (unless (file-remote-p default-directory)
+       (when-let* ((pid (cdr (assq 'pid attrs)))
+                   (v (emacs-solo--proced-pmem pid)))
+         (cons 'pmem v))))))
+#+end_src
+
+两个 lambda ，一个管 CPU 一个管内存。每个 lambda 做三件事：
+
+1. 用 =file-remote-p= 检测当前 buffer 是否在 TRAMP 远程主机上。如果是，本地的 =ps= 数据没有意义，而且本地 PID 可能跟远程 PID 冲突。
+2. 从 =attrs= 中提取 PID ，在 hash table 中查找值。
+3. 返回 =(pcpu . value)= 或 =(pmem . value)= 。
+
+timer 放在 =proced-mode-hook= 里启动，因为只有 =proced= buffer 存在时才需要刷新数据。
+
+* 清理 timer
+
+=proced= buffer 关闭时取消 timer ，避免悬空的定时器：
+
+#+begin_src emacs-lisp
+(add-hook 'kill-buffer-hook
+  (lambda ()
+    (when (and (derived-mode-p 'proced-mode)
+               (timerp emacs-solo--proced-ps-timer))
+      (cancel-timer emacs-solo--proced-ps-timer)
+      (setq emacs-solo--proced-ps-timer nil))))
+#+end_src
+
+guard 条件 =(derived-mode-p 'proced-mode)= 确保 =kill-buffer-hook= 不会在其他 buffer 关闭时误触发。
+
+* 学到了什么
+
+| 技巧 | 说明 |
+|------+------|
+| =proced-custom-attributes= | 接受 lambda 列表，每个 lambda 接收行属性 alist ，返回 =(keyword . value)= 即可添加新列 |
+| =make-process= + sentinel | Elisp 中异步执行外部命令的标准方式。sentinel 在进程状态变化时触发，通常只关心 ='exit= 状态 |
+| =run-with-timer= | 周期性执行任务。返回 timer 对象，可以用 =cancel-timer= 取消。比 =run-at-time= 更方便 |
+| =file-remote-p= | 检测当前 buffer 是否在 TRAMP 远程主机上。任何涉及本地系统状态的 hack 都应该加上这个 guard |
+| =rx= 宏 | 比 =regexp= 字符串更可读的正则写法，支持 S-expression 风格组合 |
