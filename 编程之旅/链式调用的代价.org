@@ -1,0 +1,154 @@
+#+TITLE: 链式调用的代价：JavaScript 和 Clojure 的共同教训
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: JavaScript, Clojure, 编程风格
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近读到 Matt Smith 的文章 [[https://allthingssmitty.com/2026/04/20/why-i-dont-chain-everything-in-javascript-anymore/][Why I Don't Chain Everything in JavaScript Anymore]]，核心观点是 JavaScript 的长方法链虽然优雅，但调试困难且容易造成不必要的计算。我发现 Clojure 的 =->>= 线程宏本质上也是链式调用，面临同样的取舍——只是在性能上有关键区别。
+
+* 两种语言，同一种写法
+
+JavaScript 用方法链把数据"串"起来：
+
+#+begin_src js
+users
+  .filter(u => u.active)
+  .map(u => u.name)
+  .sort()
+  .slice(0, 3)
+#+end_src
+
+Clojure 用 =->>= 线程宏做同样的事：
+
+#+begin_src clojure
+(->> users
+     (filter :active)
+     (map :name)
+     (sort)
+     (take 3))
+#+end_src
+
+两种写法的思路一样：数据像流水线上的产品，经过一道道工序加工。读起来流畅，写起来也爽。但当链条变长，问题就来了。
+
+* 难题一：调试要打断链
+
+假设结果不对，你想看 =filter= 之后的数据。
+
+在 JavaScript 里，要么在回调里塞 =console.log= （把调试代码混进业务逻辑），要么直接把链打断：
+
+#+begin_src js
+const activeUsers = users.filter(u => u.active);
+console.log(activeUsers); // 调试
+const result = activeUsers.map(u => u.name).sort().slice(0, 3);
+#+end_src
+
+Clojure 里也一样。你可以在链中间插入 =tap>= ，但更常见的做法还是拆成 =let= 绑定：
+
+#+begin_src clojure
+(let [active-users (filter :active users)
+      names       (map :name active-users)
+      sorted      (sort names)]
+  (take 3 sorted))
+#+end_src
+
+拆开之后，每个中间值都有了名字—— =active-users= 、 =names= 、 =sorted= 。调试时不用在脑子里模拟整条管道的执行过程，看变量名就知道当前步骤在处理什么。
+
+不管是 ~const x = ...~ 还是 ~let [x ...]~ ，思路都是一样的：给中间步骤一个名字。
+
+* 难题二：不必要的计算（这里两种语言有差异）
+
+JavaScript 的数组方法是 /立即求值/ 的——每次调用 =.filter()= 或 =.map()= 都会遍历整个数组并生成新数组。所以：
+
+#+begin_src js
+const users = [
+  {name: "Alice", active: true},
+  {name: "Bob", active: false},
+  {name: "Carol", active: true},
+  {name: "Dave", active: true},
+  {name: "Eve", active: false}
+];
+
+// filter 处理了全部 5 个元素，map 处理了 3 个结果
+// 最后只取 [0]，前面的工作大部分白费了
+const firstActiveName = users.filter(u => u.active).map(u => u.name)[0];
+console.log(firstActiveName);
+#+end_src
+
+#+begin_example
+Alice
+#+end_example
+
+即使只需要第一个结果， =filter= 和 =map= 也处理了整个数组。用 =find= 才能提前退出：
+
+#+begin_src js
+const user = users.find(u => u.active);
+console.log(user?.name);
+#+end_src
+
+#+begin_example
+Alice
+#+end_example
+
+Clojure 的 =filter= 和 =map= 返回惰性序列，理论上只在有消费者需要数据时才计算元素。但 Clojure 的惰性序列是 /分块/ （ chunked ）的——每次 realize 32 个元素，而不是严格地只 realize 需要的那一个。用一个带副作用的函数来看实际行为：
+
+#+begin_src clojure
+(defn process [x]
+  (println "Processing:" x)
+  (* x 2))
+
+(->> (range 100)
+     (map process)
+     (filter #(> % 4))
+     first)
+#+end_src
+
+#+begin_example
+Processing: 0
+Processing: 1
+Processing: 2
+Processing: 3
+Processing: 4
+Processing: 5
+Processing: 6
+Processing: 7
+Processing: 8
+Processing: 9
+Processing: 10
+Processing: 11
+Processing: 12
+Processing: 13
+Processing: 14
+Processing: 15
+Processing: 16
+Processing: 17
+Processing: 18
+Processing: 19
+Processing: 20
+Processing: 21
+Processing: 22
+Processing: 23
+Processing: 24
+Processing: 25
+Processing: 26
+Processing: 27
+Processing: 28
+Processing: 29
+Processing: 30
+Processing: 31
+6
+#+end_example
+
+处理了 32 个元素就停了——正好是一个 chunk 的大小。对比 JavaScript 对同样 100 个元素全部处理，Clojure 的惰性求值确实省了一些工作，只是没有"只算到第三个就停"那么理想。chunked seq 是 Clojure 在惰性开销和性能之间的折衷：逐元素 realize 每次都要检查是否需要计算下一个元素，开销比分块处理大得多。如果集合很小（小于 32 个元素），整个集合都在一个 chunk 里，惰性求值跟立即求值没有区别。
+
+所以 Clojure 的惰性序列更准确的说法是"按需分块计算"而不是"按需逐个计算"。但不管 Clojure 在性能上有多大优势，可读性问题依然存在——一条 5 步的 =->>= 链在 Clojure 里依然不如拆成 =let= 绑定好读。
+
+* 经验法则
+
+| 链长 | 建议 |
+|------+------|
+| 1-2 步 | 随便用，没有问题 |
+| 3-4 步 | 如果中间步骤有业务含义，就给它一个名字 |
+| 5+ 步 | 应该拆成 =let= 绑定或 =const= 赋值 |
+
+链式调用写起来快，拆成步骤的代码读起来快。写代码只花一次时间，读代码可能要反复很多次——这个账要算清楚。
