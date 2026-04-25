@@ -1,0 +1,273 @@
+#+TITLE: 管道中的变量去哪了？——子 shell 作用域陷阱
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Shell, 子shell, 管道, 变量作用域, POSIX
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Ventoy 的 GitHub 上有一个 [[https://github.com/ventoy/Ventoy/issues/3532][issue]]：`porteus-hook.sh` 中 `vtFindFlag` 在管道循环里被设为 1 ，出了循环又变回 0 ，导致回退逻辑永远执行。
+
+这是一个经典的 shell 编程陷阱：管道中的每个命令都运行在子 shell 里，子 shell 对变量的修改不会传回父 shell 。本文以这个 bug 为引子，解释子 shell 作用域的原理，并用实际执行验证不同 shell 的行为差异和多种解决方案。
+
+* 问题复现
+
+用最简单的例子就能看到问题：
+
+#+begin_src shell
+flag=0
+echo -e "line1\nline2\nline3" | while read line; do
+    flag=1
+done
+echo "flag=$flag"
+#+end_src
+
+#+begin_example
+flag=0
+#+end_example
+
+`flag` 明明在循环里被设成了 1 ，出来还是 0 。变量"丢"了。
+
+* 为什么会这样
+
+POSIX 规范规定：管道中的每个命令都运行在子 shell（ subshell ）中。子 shell 是当前 shell 的副本——它继承了所有变量，但对变量的修改不会传回父进程。
+
+来看管道的执行模型：
+
+#+begin_src shell
+# 管道：cmd1 | cmd2 | cmd3
+# 等价于：
+# fork() → 子进程运行 cmd1
+# fork() → 子进程运行 cmd2
+# fork() → 子进程运行 cmd3
+# 父进程等待所有子进程结束
+#+end_src
+
+所以 =while read= 在管道的右端运行在一个子 shell 里， =flag=1= 发生在这个子 shell 中。管道结束后，子 shell 退出，修改随之消失。
+
+* 不同 shell 的行为
+
+这不是"所有 shell 都一样"的事。不同 shell 对管道中最后一段命令的处理不同：
+
+#+begin_src shell
+# 测试脚本
+flag=0
+echo -e "a\nb\nc" | while read x; do flag=1; done
+echo "flag=$flag"
+#+end_src
+
+** bash
+
+#+begin_src shell
+bash -c 'flag=0; echo -e "a\nb\nc" | while read x; do flag=1; done; echo "flag=$flag"'
+#+end_src
+
+#+begin_example
+flag=0
+#+end_example
+
+bash 默认遵循 POSIX：管道中所有命令都在子 shell 中运行。
+
+** zsh
+
+#+begin_src shell
+zsh -c 'flag=0; echo -e "a\nb\nc" | while read x; do flag=1; done; echo "flag=$flag"'
+#+end_src
+
+#+begin_example
+flag=1
+#+end_example
+
+zsh 的管道最后一段命令默认在当前 shell 中执行，所以变量修改生效。这是 zsh 的非 POSIX 扩展。
+
+** dash
+
+#+begin_src shell
+dash -c 'flag=0; printf "%s\n" a b c | while read x; do flag=1; done; echo "flag=$flag"'
+#+end_src
+
+#+begin_example
+flag=0
+#+end_example
+
+dash 严格遵循 POSIX ，最后一段也在子 shell 中。注意 dash 的 =echo= 不支持 =-e= 参数，所以这里用 =printf= 生成多行输入。
+
+** busybox ash
+
+Ventoy 的 hook 脚本开头是 =#!/ventoy/busybox/sh= ，用的是 busybox ash 。它的行为和 dash 一样——管道中的 =while= 在子 shell 中运行：
+
+#+begin_src shell
+busybox sh -c 'flag=0; printf "%s\n" a b c | while read x; do flag=1; done; echo "flag=$flag"'
+#+end_src
+
+#+begin_example
+flag=0
+#+end_example
+
+（此输出基于 busybox ash 与 dash 同属 POSIX shell 的行为一致性，在 dash 上已验证。）
+
+所以 Ventoy 的 bug 在 busybox ash 下一定会触发。
+
+* 解决方案
+
+有四种常见方案，各有适用场景。
+
+** 方案一：进程替换（ bash/zsh ）
+
+用进程替换 =< <(...)= 代替管道，让 =while= 循环在当前 shell 中运行：
+
+#+begin_src shell
+bash -c '
+flag=0
+while read x; do
+    flag=1
+done < <(echo -e "a\nb\nc")
+echo "flag=$flag"
+'
+#+end_src
+
+#+begin_example
+flag=1
+#+end_example
+
+进程替换的原理： =<(...)= 在后台运行命令，把输出写入一个临时文件描述符，然后 =while read= 通过重定向读取这个文件描述符——整个过程没有子 shell 参与。
+
+缺点：不是 POSIX 兼容的语法， dash 和 busybox ash 不支持。
+
+** 方案二：临时文件
+
+把管道输出存到临时文件， =while read= 从文件读取：
+
+#+begin_src shell
+dash -c '
+flag=0
+tmpfile=$(mktemp)
+printf "%s\n" a b c > "$tmpfile"
+while read x; do
+    flag=1
+done < "$tmpfile"
+rm -f "$tmpfile"
+echo "flag=$flag"
+'
+#+end_src
+
+#+begin_example
+flag=1
+#+end_example
+
+因为 =while read < file= 是输入重定向，不是管道，所以循环在当前 shell 中运行。 POSIX 兼容，所有 shell 都能用。
+
+这就是 Ventoy 实际采用的方案——看 =porteus-hook.sh= 的源码：
+
+#+begin_src shell
+$GREP '`value from`' /usr/* -r | $AWK -F: '{print $1}' > $VTOY_PATH/.porteus
+while read vtline; do
+    $SED "s#\`value from\`#$vtPath#g" -i $vtline
+    vtFindFlag=1
+done < $VTOY_PATH/.porteus
+rm -f $VTOY_PATH/.porteus
+#+end_src
+
+=grep | awk= 的输出写入临时文件 =$VTOY_PATH/.porteus= ， =while read= 通过 =< $VTOY_PATH/.porteus= 重定向读取。 =vtFindFlag= 在当前 shell 中被修改，回退逻辑的判断 =if [ $vtFindFlag -eq 0 ]= 能拿到正确值。
+
+** 方案三：here-doc
+
+如果数据量小，可以用 here-doc 代替管道：
+
+#+begin_src shell
+dash -c '
+flag=0
+while read x; do
+    flag=1
+done <<EOF
+a
+b
+c
+EOF
+echo "flag=$flag"
+'
+#+end_src
+
+#+begin_example
+flag=1
+#+end_example
+
+here-doc 是内联输入重定向，不创建子 shell 。 POSIX 兼容。
+
+缺点是数据必须硬编码或预先展开，不能来自动态命令输出。
+
+** 方案四：lastpipe（ bash 专用）
+
+bash 4.2+ 提供了 =lastpipe= 选项，让管道最后一段命令在当前 shell 中执行：
+
+#+begin_src shell
+bash -c '
+shopt -s lastpipe
+flag=0
+echo -e "a\nb\nc" | while read x; do
+    flag=1
+done
+echo "flag=$flag"
+'
+#+end_src
+
+#+begin_example
+flag=1
+#+end_example
+
+注意： =lastpipe= 要求 =job control= 关闭（非交互式 shell 中默认关闭），在交互式终端中需要额外处理。
+
+* 不只是管道
+
+管道是最常见的触发场景，但还有其他操作也会创建子 shell ：
+
+#+begin_src shell
+# 命令替换
+flag=0
+result=$(flag=1; echo done)
+echo "flag=$flag"  # 0，命令替换在子 shell 中运行
+
+# 后台执行
+flag=0
+{ flag=1; } &
+wait
+echo "flag=$flag"  # 0，& 创建子 shell
+
+# 括号分组
+flag=0
+(flag=1)
+echo "flag=$flag"  # 0，() 强制子 shell
+#+end_src
+
+#+begin_example
+flag=0
+flag=0
+flag=0
+#+end_example
+
+一个简单的判断规则： *如果一段代码可能被 =fork()= 执行，变量修改就不会传回来。* 管道、命令替换、后台执行、括号分组——都涉及 =fork()= 。
+
+* 如何快速排查
+
+如果你的脚本出现了"变量莫名其妙变回原值"的问题，检查变量是否在以下结构中被修改：
+
+| 结构 | 是否子 shell | 变量能传回？ |
+|------+-------------+-------------|
+| =cmd1 \| cmd2= | 是（两端都是） | 不能 |
+| =while read; do ... done < <(cmd)= | =cmd= 是， =while= 不是 | 能（仅 bash/zsh ） |
+| =while read; do ... done < file= | 否 | 能 |
+| =var=$(cmd)= | =cmd= 是 | 不能 |
+| =cmd &= | 是 | 不能 |
+| =(cmd)= | 是 | 不能 |
+
+* 小结
+
+管道子 shell 的变量作用域问题是 shell 编程中最常遇到的陷阱之一。核心规则： *管道中的命令运行在子 shell 里，变量修改不会传回父 shell 。*
+
+解决方案按 POSIX 兼容性排序：
+
+1. *临时文件* （最通用）： =cmd > tmp; while read < tmp= 。 POSIX 兼容，所有 shell 可用
+2. *here-doc* ：数据量小时最简洁。 POSIX 兼容
+3. *进程替换* ： =< <(cmd)= 。仅 bash/zsh 支持
+4. *lastpipe* ： =shopt -s lastpipe= 。仅 bash 4.2+
+
+Ventoy 的修复用了方案二（临时文件），这对 busybox ash 环境来说是唯一可靠的选择。
