@@ -1,0 +1,194 @@
+#+TITLE: 用 Org Babel 写 Literate 博文：扩展执行 + 定制导出
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, Org-mode, Babel, literate programming, 导出
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Literate programming 的核心想法是：把代码和解释它的散文交织在一起，代码可以被实际执行，输出直接嵌入文档。Org mode 的 Babel 就是做这件事的工具——它比 Jupyter Notebook 更灵活（支持任何有 REPL 的语言），但开箱即用时缺少两个东西：REPL 风格的交互式代码块（逐行执行、交替显示输入和输出），以及把 Org 文档导出为静态站生成器能用的 Markdown（带 YAML frontmatter）。这篇文章分两部分解决这两个问题：教你为任意语言写一个自定义 Babel 执行函数，和派生一个自定义 Org 导出后端。
+
+* 第一部分：为任意语言扩展 Babel
+
+Babel 的执行机制很简单：只要定义一个名为 =org-babel-execute:lang= 的函数（把 =lang= 换成你的语言名），Babel 就知道怎么执行该语言的代码块。这个函数接收两个参数——代码体（body）和参数列表（params），返回执行结果的字符串。Babel 负责剩下的所有事情：解析代码块、收集参数、显示结果。
+
+** 最简执行函数
+
+假设你想为一种叫 =mylang= 的语言添加 Babel 支持。最简单的实现是调用外部命令执行代码：
+
+#+begin_src emacs-lisp
+(defun org-babel-execute:mylang (body params)
+  "Execute a block of MyLang code with org-babel."
+  (shell-command-to-string
+   (format "mylang -e %s" (shell-quote-argument body))))
+#+end_src
+
+定义了这个函数之后，Org 文件里的 =#+begin_src mylang= 代码块就能用 =C-c C-c= 执行了。
+
+有一个容易踩的坑：Babel 默认把代码包在一个函数里、调用函数、显示 *返回值* 而不是输出结果。如果你的代码用了 =print= 之类的 I/O 操作，默认行为不会显示 print 的内容。要改为显示输出结果，在src block 加上 =:results output= 参数后。
+
+** REPL 风格的代码块
+
+基本的执行函数把整个代码块当做一个单元执行。但写 literate 博文时，你通常想要 REPL 风格的效果：逐行执行代码，每一行下面紧接着显示输出。
+
+实现方式是定义一个新的结果类型 =repl= 。当代码块加上 =:results repl= 时，逐行发送代码到 REPL 进程，收集每行的输出，然后把输入和输出交替排列：
+
+#+begin_src emacs-lisp
+(defun org-babel-mylang--execute-repl (body)
+  "Execute BODY line-by-line, returning input/output pairs."
+  (let ((lines (split-string body "\n" t "[ \t]+")))
+    (mapconcat
+     (lambda (line)
+       (format "   %s\n%s" line (mylang-evaluate-command line)))
+     lines
+     "\n")))
+#+end_src
+
+然后在主执行函数里根据参数进行分支判断：遇到 =:results repl= 就走逐行执行，否则走整块执行。
+
+#+begin_src emacs-lisp
+(defun org-babel-execute:mylang (body params)
+  "Execute a block of MyLang code with org-babel.
+When PARAMS includes `:results repl', evaluate each line separately
+and return all results interleaved."
+  (let ((result-params (cdr (assq :results params))))
+    (if (and result-params (string-match-p "\\brepl\\b" result-params))
+        (org-babel-mylang--execute-repl body)
+      (mylang-evaluate-command body))))
+#+end_src
+
+使用时代码块头部写成这样：
+
+#+begin_src org
+,#+begin_src mylang :results repl :exports results :wrap SRC mylang
+  x = 1 + 2
+  x * 4
+,#+end_src
+#+end_src
+
+三个参数的作用： =:results repl= 触发逐行执行， =:exports results= 只导出结果不导出源码， =:wrap SRC mylang= 把结果包在一个 =mylang= 代码块里——这样导出到 Markdown 后语法高亮仍然生效。执行后得到：
+
+#+begin_src mylang
+   x = 1 + 2
+3
+   x * 4
+12
+#+end_src
+
+** 批量执行
+
+写完博文后，你可能想一次性执行所有代码块来更新结果。下面这个函数执行文件中所有 =mylang= 代码块，但跳过已经是结果块的一部分的代码块（避免重复执行）：
+
+#+begin_src emacs-lisp
+(defun org-babel-mylang-execute-all ()
+  "Execute all MyLang src blocks not part of a #+RESULTS block."
+  (interactive)
+  (org-babel-map-src-blocks nil
+    (when (and (string-equal "mylang"
+                             (car (org-babel-get-src-block-info 'no-eval)))
+               (not (progn (goto-char beg-block)
+                           (forward-line -1)
+                           (looking-at-p "#\\+RESULTS:"))))
+      (goto-char beg-block)
+      (org-babel-execute-src-block))))
+#+end_src
+
+=org-babel-map-src-blocks= 遍历文件中所有代码块， =beg-block= 是每个块的起始位置。通过向前看一行检查是否在 =#+RESULTS:= 下面，跳过那些只是结果的块。
+
+* 第二部分：派生自定义 Org 导出后端
+
+写完 literate 博文后，需要导出为静态站生成器能用的格式。如果你的站点用 Hakyll、Jekyll、Hugo 等工具，你需要带 YAML frontmatter 的 Markdown。默认的 =ox-gfm= 不支持自定义 frontmatter 字段，也不把脚注转为 GFM 格式。但可以通过派生后端来添加这些功能。
+
+** 派生后端的基本方法
+
+Org 的导出系统支持从已有后端派生新后端。 =ox-gfm= 继承自 =ox-md= ， =ox-md= 又继承自 =ox-html= 。你可以在任何一层上继续派生，只覆盖需要的部分：
+
+#+begin_src emacs-lisp
+(org-export-define-derived-backend 'my-gfm 'gfm
+  :options-alist
+  '((:tags "TAGS" nil nil split)
+    (:last-modified "LAST-MODIFIED" nil nil)
+    (:og-description "OG-DESCRIPTION" nil nil))
+  :translate-alist
+  '((template . my-gfm-template)
+    (footnote-reference . my-gfm-footnote-reference)))
+#+end_src
+
+两个关键参数：
+
+- =:options-alist= 定义新的导出选项。每个元素是 =(ALIST-KEY KEYWORD OPTION DEFAULT BEHAVIOR)= ，其中 =ALIST-KEY= 是导出信息 plist 中的键， =KEYWORD= 是 Org 文件里写的 =#+KEYWORD= 名， =BEHAVIOR= 告诉 Org 如何处理多个值—— =split= 会把空格分隔的字符串拆成列表（适用于 tags）
+- =:translate-alist= 把导出元素挂钩到自定义翻译函数。 =template= 控制整个文档的输出（适合插入 frontmatter）， =footnote-reference= 控制脚注引用的格式
+
+** 生成 YAML Frontmatter
+
+=template= 翻译函数接收最终转换后的文档内容（contents），是插入 preamble 的标准位置。下面这个函数从导出信息中提取 =title= 、 =date= 、 =tags= 等字段，组装成 YAML 格式：
+
+#+begin_src emacs-lisp
+(defun my-gfm--build-yaml (info)
+  "Build YAML front matter string from INFO plist."
+  (when-let*
+      ((lines
+        (seq-keep
+         (lambda (f)
+           (when-let*
+               ((field (plist-get info f))
+                (val (pcase f
+                       (:title          #'car)
+                       (:date           #'car)
+                       (:tags           (lambda (x)
+                                          (mapconcat #'identity x " ")))
+                       (:last-modified  #'identity)
+                       (:og-description #'identity))))
+             (format "%s: %s"
+                     (string-trim (pp-to-string f) ":" "\n")
+                     (funcall val field))))
+         '(:title :date :last-modified :tags :og-description))))
+    (concat "---\n" (mapconcat #'identity lines "\n") "\n---\n\n")))
+
+(defun my-gfm-template (contents info)
+  "Return complete document string after GFM conversion.
+CONTENTS is the transcoded contents string.
+INFO is a plist holding export options."
+  (concat (my-gfm--build-yaml info) contents))
+#+end_src
+
+=my-gfm--build-yaml= 的逻辑是：遍历字段名列表，对每个字段从 =info= plist 中取值，用 =pcase= 根据字段类型选择取值函数（ =:title= 和 =:date= 取 =car= ， =:tags= 把列表拼成空格分隔的字符串），格式化为 =key: value= 行，最后用 =---= 包裹成 YAML 块。 =seq-keep= 自动跳过值为 nil 的字段，所以只有 Org 文件中实际写了的字段才会出现在 frontmatter 里。
+
+** 处理脚注
+
+默认的 =ox-gfm= 会把 Org 脚注引用（ =[fn:1]= ）直接导出为 HTML（ =<sup><a ...>= ），这不是 GFM 格式。需要覆盖 =footnote-reference= 翻译函数，改为 GFM 的脚注语法 =[^n]= ：
+
+#+begin_src emacs-lisp
+(defun my-gfm-footnote-reference (footnote-reference _contents info)
+  "Transcode a FOOTNOTE-REFERENCE element into GFM format."
+  (format "[^%d]"
+          (org-export-get-footnote-number footnote-reference info)))
+#+end_src
+
+脚注内容部分，去掉默认的"Footnotes"标题（静态站生成器会自己处理），直接输出定义列表：
+
+#+begin_src emacs-lisp
+(defun my-gfm-footnote-section (info)
+  "Format the footnote section without header."
+  (and-let* ((fn-alist (org-export-collect-footnote-definitions info)))
+    (format "%s\n"
+            (mapconcat
+             (pcase-lambda (`(,n ,_type ,def))
+               (format "[^%d]: %s"
+                       n
+                       (org-trim (org-export-data def info))))
+             fn-alist
+             "\n\n"))))
+#+end_src
+
+=org-export-collect-footnote-definitions= 收集所有脚注定义， =org-export-data= 递归导出脚注内容。每个脚注格式化为 =[^n]: content= ，放在文档末尾。
+
+* 合在一起
+
+完整的工作流程是：
+
+1. 在 Org 文件中写代码块和散文，用 =:results repl= 获得交互式输出
+2. =C-c C-c= 执行单个块，或调用批量执行函数更新所有块
+3. 导出为 GFM，自动生成 YAML frontmatter，脚注转为 GFM 格式
+4. 静态站生成器接过 Markdown，继续后续处理
+
+两个扩展各自独立：你可以只用 REPL 风格的 Babel 块而不定制导出，也可以只定制导出后端而不用 REPL 块。但合在一起，就能在 Org mode 的舒适环境中写完整的 literate 博文，一键导出为静态站可用的 Markdown。
