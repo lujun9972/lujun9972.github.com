@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Hot-wiring the Lisp Machine —— 用纯 Elisp 构建零依赖的 Org 静态站点生成器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, Org-mode, SSG, org-export, Elisp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Hot-wiring the Lisp Machine —— 用纯 Elisp 构建零依赖的 Org 静态站点生成器</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga247d28">起点：为什么不用现成的 SSG</a></li>
+<li><a href="#org80a6efe">第一版：字符串模板的死胡同</a></li>
+<li><a href="#org7db8e10">转折：让 Lisp 闭包替代模板</a></li>
+<li><a href="#org006b0da">两遍编译器：跨路由链接</a></li>
+<li><a href="#orgf4dfb9b">状态隔离：用 cl-progv 防止全局变量污染</a></li>
+<li><a href="#orgc2cce07">函数式组合器：声明式过滤 API</a></li>
+<li><a href="#org304478a">性能优化：从 5 分半到 1 分 15 秒</a></li>
+<li><a href="#org35cbdd4">增量热重建</a></li>
+<li><a href="#org9a74eaa">几个值得注意的设计决策</a></li>
+<li><a href="#org3abb7ee">读完之后</a></li>
+</ul>
+</div>
+</div>
+<p>
+scheatkode 发表了一篇长文<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup>，记录了他用纯 Emacs Lisp 从零构建 Org-mode 静态站点生成器的全过程。这个项目叫 <code>ossg</code> （Org Static Site Generator），它的核心约束是 <b>零外部依赖</b> ——不依赖 Node.js、不依赖 Hugo、不依赖任何 Elisp 包，只用 Emacs 内置的 <code>org-export</code> 管线完成一切。
+</p>
+
+<p>
+这篇文章值得读，不光因为项目本身有意思，更因为它记录了一次完整的架构演进：从天真的字符串替换，到发现 Emacs 内置能力的真正价值，再到两遍编译器、增量热重建。每一步都是被现实逼出来的。
+</p>
+
+<div id="outline-container-orga247d28" class="outline-2">
+<h2 id="orga247d28">起点：为什么不用现成的 SSG</h2>
+<div class="outline-text-2" id="text-orga247d28">
+<p>
+作者试了一圈主流方案，发现没有一个是"原生 Emacs"的：
+</p>
+
+<ul class="org-ul">
+<li><code>org-publish</code> ：Emacs 内置的发布引擎，但它的 API 只暴露了很少的配置点——你想自定义 HTML 结构，只能通过几个固定的 hook 变量往里塞代码；想生成分页索引，得自己手写一大段补丁逻辑。换句话说，它给了你一个框架，但这个框架的骨架是焊死的，你只能在预留的槽位上插东西</li>
+<li>Hugo + <code>ox-hugo</code> ：先把 Org 转成 Markdown 再喂给 Hugo，等于多了一层没必要的抽象</li>
+<li>Weblorg：架构最接近理想，但依赖字符串模板引擎，没法直接用 Elisp 控制输出</li>
+</ul>
+
+<p>
+作者最终选择了 Weblorg 的路由架构作为骨架，但把它的模板引擎整个替换掉了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org80a6efe" class="outline-2">
+<h2 id="org80a6efe">第一版：字符串模板的死胡同</h2>
+<div class="outline-text-2" id="text-org80a6efe">
+<p>
+最初的方案用 <code>format-spec</code> 把变量塞进 HTML 模板：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(format-spec
+ template
+ `((?p . ,(<span class="org-keyword">or</span> (org-html--build-pre/postamble 'preamble info) <span class="org-string">""</span>))
+   (?P . ,(<span class="org-keyword">or</span> (org-html--build-pre/postamble 'postamble info) <span class="org-string">""</span>))
+   (?t . ,title-fragment)
+   (?d . ,date-fragment)
+   (?T . ,tags-fragment)
+   (?r . ,reading-time)
+   (?c . ,contents)))
+</pre>
+</div>
+
+<p>
+template长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-html">&lt;<span class="org-function-name">html</span><span class="org-variable-name">%a</span>&gt;
+  &lt;<span class="org-function-name">head</span>&gt;
+    &lt;<span class="org-function-name">title</span>&gt;<span class="org-variable-name"><span class="org-underline"><span class="org-bold">%t</span></span></span>&lt;/<span class="org-function-name">title</span>&gt;
+  &lt;/<span class="org-function-name">head</span>&gt;
+  &lt;<span class="org-function-name">body</span>&gt;
+    &lt;<span class="org-function-name">main</span> <span class="org-variable-name">id</span>=<span class="org-string">"content"</span>&gt;
+      &lt;<span class="org-function-name">article</span>&gt;
+        &lt;<span class="org-function-name">h1</span> <span class="org-variable-name">class</span>=<span class="org-string">"title"</span>&gt;<span class="org-variable-name"><span class="org-underline"><span class="org-bold">%t</span></span></span>&lt;/<span class="org-function-name">h1</span>&gt;
+        <span class="org-variable-name">%c</span>
+      &lt;/<span class="org-function-name">article</span>&gt;
+    &lt;/<span class="org-function-name">main</span>&gt;
+  &lt;/<span class="org-function-name">body</span>&gt;
+&lt;/<span class="org-function-name">html</span>&gt;
+</pre>
+</div>
+
+<p>
+这个方案一开始能用，但扩展性为零。每加一种元数据就要硬编码一个新的 <code>%X</code> 占位符。更致命的是， <code>format-spec</code> 会把 CSS 里的 <code>width: 100%;</code> 当成变量去替换，直接报错。
+</p>
+
+<p>
+作者试过让每个 <code>%X</code> 占位符不再对应一个固定字符串，而是对应一个闭包（延迟求值的函数）——这样模板引擎在替换 <code>%t</code> 时不是直接插入 <code>title-fragment</code> ，而是调用一个函数动态计算结果。这听起来像是"让字符串变聪明了"，但本质上仍然是在一个已经有强大解析器的编辑器里重新发明一个简陋的字符串格式化器。用原文的话说："给马车装曲速引擎。"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7db8e10" class="outline-2">
+<h2 id="org7db8e10">转折：让 Lisp 闭包替代模板</h2>
+<div class="outline-text-2" id="text-org7db8e10">
+<p>
+作者意识到问题的根源：不应该在 HTML 字符串里塞变量，应该直接用 Elisp 控制整个输出过程。
+</p>
+
+<p>
+关键改动是把路由的 <code>:template</code> 参数从文件路径改成了一个纯 Lisp 闭包：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">lambda</span> (ctx)
+  (<span class="org-keyword">when-let</span> ((path (alist-get 'abspath ctx)))
+    (insert-file-contents path)))
+</pre>
+</div>
+
+<p>
+这个闭包接收一个临时 buffer 和解析后的上下文数据，用 Elisp 往 buffer 里填内容。最简单的用法就是把文件内容倒进去，但你可以在里面做 <b>任何事</b> —— 条件判断、循环、调用外部函数、生成动态内容，全都是标准的 Elisp，不需要学任何模板语法。
+</p>
+
+<p>
+同样， <code>:exporter</code> 参数也是一个闭包，默认实现是把 buffer 交给 <code>org-export</code> 处理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">lambda</span> (_)
+  (org-export-as 'opd))
+</pre>
+</div>
+
+<p>
+这一步是整个架构的关键转折。因为 template 和 exporter 都是闭包，整个引擎不再需要自己的模板语言、插件系统或 hook 机制。它只是一个路由层：找到文件 → 喂给 template 闭包 → 喂给 exporter 闭包 → 写入磁盘。所有复杂逻辑都交给用户用 Elisp 自己写。
+</p>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+这个设计的精髓在于"站在 <code>org-export</code> 的肩膀上"。
+<code>ossg</code> 没有重新发明 HTML 生成，而是通过
+<code>org-export-define-derived-backend</code> 继承 <code>html</code> backend，
+只在需要的地方覆盖 transcoder（比如自定义链接解析）。
+这意味着 Org-mode 原生的所有导出能力——脚注、表格、代码高亮——都自动可用，
+不需要额外实现。
+`─────────────────────────────────────────────────`
+</p>
+
+<p>
+整个公开 API 缩减到四个原语： <code>opd-site</code> 、 <code>opd-route</code> 、 <code>opd-assets</code> 、 <code>opd-export</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org006b0da" class="outline-2">
+<h2 id="org006b0da">两遍编译器：跨路由链接</h2>
+<div class="outline-text-2" id="text-org006b0da">
+<p>
+一个网站不是一堆孤立的页面——页面之间有链接。作者不想手动维护链接路径，也不想让源文件目录结构跟部署 URL 一一对应。他希望写一个标准的 <code>[[file:somewhere/some-file.org]]</code> 链接，Emacs 编辑时能正常跳转，构建时自动替换成正确的 permalink。
+</p>
+
+<p>
+解决方案是"两遍编译器"：
+</p>
+
+<ol class="org-ol">
+<li><b>第一遍（扫描）</b> ：遍历所有文件，计算每个文件的目标 URL，填充到一个全局的 URL 注册表中</li>
+<li><b>第二遍（渲染）</b> ：渲染 HTML，此时注册表已经完整，可以解析所有跨路由链接</li>
+</ol>
+
+<p>
+链接替换通过自定义的 link transcoder 实现。 <code>transcoder</code> 是 <code>org-export</code> 中的一个概念：每个 Org 元素类型（标题、段落、链接等）在导出时都对应一个渲染函数，比如标题对应 <code>org-html-headline</code> ，链接对应 <code>org-html-link</code> 。你可以定义自己的渲染函数来替换默认行为，这个自定义渲染函数就叫 transcoder。下面这段代码就是一个专门处理链接的 transcoder：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">opd-translate-link</span> (link desc info)
+  <span class="org-doc">"Resolve cross-route Org links using the site's URL registry."</span>
+  (<span class="org-keyword">if-let*</span>
+      ((type (org-element-property <span class="org-builtin">:type</span> link))
+       (path (org-element-property <span class="org-builtin">:path</span> link))
+       ((<span class="org-keyword">and</span> (string= <span class="org-string">"file"</span> type)
+             (string-suffix-p <span class="org-string">".org"</span> path)))
+       (base (plist-get info <span class="org-builtin">:opd-base-url</span>))
+       (site (opd--site-get base))
+       (absp (expand-file-name path))
+       (url (<span class="org-keyword">and</span> site (gethash absp (gethash <span class="org-builtin">:registry</span> site)))))
+      (org-element-put-property link <span class="org-builtin">:path</span> url)
+    (org-html-link link desc info)))
+</pre>
+</div>
+
+<p>
+这段代码的逻辑是：如果链接指向一个 <code>.org</code> 文件，就去 URL 注册表里查它最终的 URL，替换掉原始路径；否则按默认的 <code>org-html-link</code> 处理。
+</p>
+
+<p>
+但有个问题： <code>org-export</code> 是 Emacs 内置模块，它只认得 Org 文件里的标准语法（ <code>#+TITLE</code> 、 <code>#+DATE</code> 等），对 <code>ossg</code> 自定义的站点 URL 注册表一无所知。而 link transcoder 在导出过程中需要知道"当前文件属于哪个站点"，才能去注册表里查链接。 <code>org-export</code> 又没有提供传递自定义数据的接口，那 transcoder 怎么拿到当前文件的站点信息？
+</p>
+
+<p>
+作者的解法很巧妙——在渲染前往临时 buffer 的元数据里注入一行 <code>#+OPD_BASE_URL:</code> ，Org 解析器会自动把它解析进 <code>info</code> plist 中：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-define-derived-backend
+ 'opd 'html
+  <span class="org-builtin">:options-alist</span>
+ '((<span class="org-builtin">:opd-base-url</span> <span class="org-string">"OPD_BASE_URL"</span>))
+ <span class="org-builtin">:translate-alist</span>
+ '((headline . opd-translate-headline)
+   (link     . opd-translate-link)))
+</pre>
+</div>
+
+<p>
+这样就把站点上下文"走私"进了 <code>org-export</code> 管线，不需要修改 <code>org-export</code> 本身。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf4dfb9b" class="outline-2">
+<h2 id="orgf4dfb9b">状态隔离：用 cl-progv 防止全局变量污染</h2>
+<div class="outline-text-2" id="text-orgf4dfb9b">
+<p>
+Emacs 的 <code>org-export</code> 大量依赖全局变量（比如 <code>org-export-with-toc</code> 控制是否生成目录）。不同路由需要不同的变量覆盖——博客路由要生成目录，RSS 路由不要。
+</p>
+
+<p>
+你可能会想，把变量绑定写在闭包里面不就行了？
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(opd-route
+ <span class="org-builtin">:name</span> <span class="org-string">"rss"</span>
+ <span class="org-builtin">:exporter</span>
+ (<span class="org-keyword">lambda</span> (_)
+   (<span class="org-keyword">let</span> ((org-export-with-toc nil)
+         (org-html-link-home <span class="org-string">"http://localhost:8080"</span>))
+     (org-export-as 'rss))))
+</pre>
+</div>
+
+<p>
+确实， <code>let</code> 在闭包体内部，闭包被调用时才执行，没有时序问题。但如果你有 20 个路由，每个覆盖不同的变量组合，就要写 20 份几乎一样的闭包，唯一的区别就是 <code>let</code> 里的变量名和值不同——纯粹是重复劳动。
+</p>
+
+<p>
+那把 <code>let</code> 写在 <code>opd-route</code> 外面，让闭包自动捕获变量值呢？
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let</span> ((org-export-with-toc nil))
+  (opd-route ...))   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#8592; &#21482;&#26159;&#27880;&#20876;&#65292;&#27809;&#26377;&#25191;&#34892;&#23548;&#20986;
+</span>(opd-export)          <span class="org-comment-delimiter">;; </span><span class="org-comment">&#8592; &#23548;&#20986;&#26102; let &#24050;&#32463;&#36807;&#26399;&#20102;</span>
+</pre>
+</div>
+
+<p>
+对于普通变量，闭包确实会捕获 <code>let</code> 的绑定，即使 <code>let</code> 结束后值也不会丢。但 <code>org-export-with-toc</code> 不是普通变量——它是用 <code>defcustom</code> 声明的 special variable（特殊变量）。在 Emacs Lisp 中，special variable（用 <code>defvar</code> 或 <code>defcustom</code> 声明的变量）始终是动态作用域，即使开了 <code>lexical-binding</code> ，闭包也不会捕获它们的 <code>let</code> 绑定。等 <code>opd-export</code> 真正开始工作时， <code>let</code> 作用域早就结束了，动态绑定也跟着消失。
+</p>
+
+<p>
+作者想要的是一种 <b>声明式</b> 的写法——把要覆盖的变量写在路由配置数据里，引擎自动在正确的时机绑定它们。这就是 <code>cl-progv</code> 的用武之地。这个宏接受一个变量名列表和一个值列表，在运行时动态绑定它们：
+</p>
+
+<p>
+作者用 Common Lisp 的 <code>cl-progv</code> 解决了这个问题。这个宏接受一个变量名列表和一个值列表，动态绑定它们：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defmacro</span> <span class="org-function-name">opd--with-env</span> (route <span class="org-type">&amp;rest</span> body)
+  <span class="org-doc">"Evaluate BODY with dynamic bindings specified in ROUTE's `</span><span class="org-doc"><span class="org-constant">:env</span></span><span class="org-doc">'."</span>
+  (<span class="org-keyword">declare</span> (indent 1))
+  (<span class="org-keyword">let</span> ((r-var (make-symbol <span class="org-string">"route"</span>)))
+    `(<span class="org-keyword">let*</span> ((,r-var ,route)
+            (env (plist-get ,r-var <span class="org-builtin">:env</span>))
+            (vars (mapcar #'car env))
+            (vals (mapcar #'cdr env)))
+       (<span class="org-keyword">cl-progv</span> vars vals ,@body))))
+</pre>
+</div>
+
+<p>
+这样每个路由可以声明自己的环境变量覆盖，互不干扰：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let</span> ((org-export-with-toc nil)
+      (org-html-html5-fancy t))
+  (opd-route ...)
+  (opd-route
+   <span class="org-builtin">:name</span> <span class="org-string">"rss"</span>
+   <span class="org-builtin">:env</span> '((org-html-link-home . <span class="org-string">"http://localhost:8080"</span>))
+   <span class="org-builtin">:exporter</span> (<span class="org-keyword">lambda</span> (_) (org-export-as 'rss))))
+</pre>
+</div>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+<code>cl-progv</code> 和 <code>let</code> 的区别在于 <b>什么时候</b> 决定绑定哪些变量。
+<code>let</code> 在编写时就知道变量名（词法作用域），而 <code>cl-progv</code> 在运行时
+从数据结构中读取变量名和值（动态作用域）。这正是处理路由级配置所需要的——
+不同路由可能覆盖不同的全局变量，而且变量名来自配置数据而非代码。
+`─────────────────────────────────────────────────`
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc2cce07" class="outline-2">
+<h2 id="orgc2cce07">函数式组合器：声明式过滤 API</h2>
+<div class="outline-text-2" id="text-orgc2cce07">
+<p>
+早期的过滤 API 用硬编码的具名函数（比如 <code>opd-input-filter-drafts</code> 专门过滤草稿、 <code>opd-input-aggregate-all-desc</code> 专门按日期倒序聚合），每加一种过滤条件就要在引擎里加一个新函数，用户没法组合它们。作者把这改成了布尔组合器和匹配谓词的分离设计：
+</p>
+
+<ul class="org-ul">
+<li>组合器： <code>opd-filter-any</code> 、 <code>opd-filter-all</code> 、 <code>opd-filter-omit</code></li>
+<li>匹配器： <code>opd-match-tag</code> 、 <code>opd-match-prop</code> 、 <code>opd-match-has-prop</code></li>
+</ul>
+
+<p>
+这就像 Lisp 里的布尔表达式一样，可以无限嵌套组合：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(opd-route
+ <span class="org-builtin">:name</span> <span class="org-string">"rss"</span>
+ <span class="org-builtin">:pattern</span> <span class="org-string">"*.org"</span>
+ <span class="org-builtin">:filter</span>
+ (opd-filter-all
+  (opd-filter-any
+   (opd-match-tag <span class="org-string">"blog"</span>)
+   (opd-match-tag <span class="org-string">"lore"</span>))
+  (opd-match-has-prop 'date)
+  (opd-filter-omit
+   (opd-match-tag <span class="org-string">"draft"</span>)
+   (opd-match-tag <span class="org-string">"archive"</span>))))
+</pre>
+</div>
+
+<p>
+这段代码的含义直白得像英语：匹配所有带 <code>blog</code> 或 <code>lore</code> 标签、有日期、且不是 <code>draft</code> 或 <code>archive</code> 的文件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org304478a" class="outline-2">
+<h2 id="org304478a">性能优化：从 5 分半到 1 分 15 秒</h2>
+<div class="outline-text-2" id="text-org304478a">
+<p>
+作者用 10,000 个文件做压力测试。初始版本跑完要 5 分 30 秒（每文件 32ms），经过一系列优化降到了 1 分 15 秒（每文件 7.5ms）。这部分的详细分析我之前写过一篇<a href="Elisp性能优化的六个实战教训.html">独立的博文</a>，这里只概述关键转折点。
+</p>
+
+<p>
+<b>第一轮优化：降低解析精度</b>
+</p>
+
+<p>
+<code>org-element-parse-buffer</code> 默认解析整个 buffer 的所有内容（ <code>object</code> 级别）。第一遍扫描只需要标题、日期等顶层元数据，不需要解析每个段落里的行内标记。把粒度降到 <code>greater-element</code> 后，时间从 5 分 30 秒降到 3 分 44 秒（22ms/文件）。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#40664;&#35748;&#65306;&#35299;&#26512;&#25152;&#26377;&#20869;&#23481;&#65288;&#26368;&#24930;&#65289;
+</span>(org-element-parse-buffer)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#35299;&#26512;&#39030;&#23618;&#20803;&#32032;&#65288;&#24555;&#24471;&#22810;&#65289;
+</span>(org-element-parse-buffer 'greater-element t)
+</pre>
+</div>
+
+<p>
+<b>第二轮优化：用 profiler 找到真正的瓶颈</b>
+</p>
+
+<p>
+用 <code>M-x profiler-start</code> 跑出的结果令人意外——最大的 CPU 消耗不是 <code>org-element-parse-buffer</code> ，而是 <code>find-file-noselect</code> （13%）和 <code>org-persist-write-all-buffer</code> （12%）。
+</p>
+
+<p>
+原因在于 <code>org-with-file-buffer</code> 内部调用 <code>find-file-noselect</code> ，它会把每个文件当作交互式 buffer 打开——触发文件锁、版本控制查询、major-mode hook 等一系列操作。 <code>org-persist</code> 还会为每个文件写缓存到磁盘。相当于为了读一个标题字符串，承担了整个交互式操作系统的行政开销。
+</p>
+
+<p>
+换成 <code>with-temp-buffer</code> + <code>insert-file-contents</code> 后，时间骤降到 1 分 15 秒（7.5ms/文件）。
+</p>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+这个发现对写 Elisp 性能敏感代码很有参考价值：
+<code>find-file-noselect</code> 是为交互使用设计的，它会触发所有 hook、
+缓存写入和版本控制操作。当你只是想读取文件内容时，
+<code>with-temp-buffer</code> + <code>insert-file-contents</code> 才是正确的选择。
+同理， <code>org-element-parse-buffer</code> 的 <code>granularity</code> 参数
+在只需要顶层元数据时能省下大量 CPU。
+`─────────────────────────────────────────────────`
+</p>
+
+<p>
+<b>第三轮优化：算法改进</b>
+</p>
+
+<p>
+把所有线性扫描替换成哈希表查找，用 <code>cl-loop</code> 替代 <code>maphash</code> + <code>lambda</code> 减少闭包开销，把模板编译提前到路由初始化阶段而非每次渲染时重复编译。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org35cbdd4" class="outline-2">
+<h2 id="org35cbdd4">增量热重建</h2>
+<div class="outline-text-2" id="text-org35cbdd4">
+<p>
+在经过改造后，压测的结果是10,000 篇博文全量构建花了 1 分 15 秒,这已经很快了，但实际使用中还不够。因为作者用 Emacs 内置的 <code>filenotify</code> 实现了文件监视,在每次保存文件时自动触发构建,每次保存都会触发一次全量构建。作者的博客大约 500 篇，全量构建需要 11 秒，也就是说改一个字母就要等 11 秒才能看到效果。原作者称之为"masochism"。
+</p>
+
+<p>
+为了解决这个问题，作者引入了增量逻辑，核心思路分三层：
+</p>
+
+<ol class="org-ol">
+<li><b>文件级缓存</b> ：每个文件独立缓存，改一个文件只重建那一个文件，不波及同路由的其他文件</li>
+<li><b>内容变更 vs 结构变更</b> ：只改文字（元数据不变）走快速路径，直接替换输出；改了标签或 <code>#+FILETAGS</code> 等结构性内容才需要重建聚合路由（索引页、RSS 等）</li>
+<li><b>依赖图</b> ：如果 <code>post.org</code> 通过 <code>#+SETUPFILE:</code> 引用了 <code>setup.org</code> ，修改 <code>setup.org</code> 时引擎会反向查找所有依赖它的文件，级联失效缓存并重建</li>
+</ol>
+
+<p>
+依赖图的实现用了一个 <code>:depcache</code> 哈希表。第一遍扫描时记录每个文件的 <code>#+SETUPFILE</code> 和 <code>#+INCLUDE</code> 指令，构建反向依赖关系。当文件变化时，用深度优先搜索遍历依赖图，找出所有需要重建的父文件。
+</p>
+
+<p>
+还有一个精巧的"duck-typed 路由"设计：引擎不需要手动标记哪个路由是"主路由"——它检查聚合后数据块的结构来判断。
+</p>
+
+<p>
+比如 <code>opd-aggregate-each</code> （每篇博文单独输出一个 HTML 文件）的返回值长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(((abspath . <span class="org-string">"/blog/post-a.org"</span>) (slug . <span class="org-string">"post-a"</span>) ...)
+ ((abspath . <span class="org-string">"/blog/post-b.org"</span>) (slug . <span class="org-string">"post-b"</span>) ...))
+</pre>
+</div>
+
+<p>
+每个数据块顶层就有 <code>abspath</code> ——这是一对一的路由，引擎只重建变化的那个文件。
+</p>
+
+<p>
+而 <code>opd-aggregate-all</code> （所有博文聚合到一个 RSS 文件）的返回值长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(((posts .
+   (((abspath . <span class="org-string">"/blog/post-a.org"</span>) (slug . <span class="org-string">"post-a"</span>) ...)
+    ((abspath . <span class="org-string">"/blog/post-b.org"</span>) (slug . <span class="org-string">"post-b"</span>) ...)))))
+</pre>
+</div>
+
+<p>
+<code>abspath</code> 被包裹在 <code>posts</code> 列表里——这是一对多的聚合路由，任何一个输入文件变化都可能影响最终输出，所以必须整体重建。
+</p>
+
+<p>
+引擎只需要递归搜索数据块树，检查 <code>abspath</code> 出现在什么位置，就能自动判断路由类型，不需要任何手动标记。
+</p>
+
+<p>
+最终效果：热重建时间降到 7~200 毫秒，取决于源文件的复杂度。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9a74eaa" class="outline-2">
+<h2 id="org9a74eaa">几个值得注意的设计决策</h2>
+<div class="outline-text-2" id="text-org9a74eaa">
+<p>
+<b>防御性编程变成进攻性编程</b>
+</p>
+
+<p>
+作者曾花了好几个小时调试一个诡异的构建失败，最后发现原因竟是自己配置文件里一段被注释掉的路由。这让他转向"进攻式"风格——到处插 <code>cl-assert</code> ，出错立刻中断并告诉你哪里错了，而不是静默恢复继续跑。因为静默恢复容易导致状态污染，让你更难找到真正的 bug。
+</p>
+
+<p>
+<b>静态资产统一到路由系统</b>
+</p>
+
+<p>
+图片、CSS 等静态文件最初走的是一个独立的"复制文件"循环，跟 Org 文件完全分离。后来作者意识到：一个静态文件就是一个没有元数据的 Org 文件。他用一个不解析 Org 的 dummy parser 把静态资产统一进了同一个路由系统，享受同样的缓存、监视和增量重建能力。
+</p>
+
+<p>
+<b>不实现垃圾回收</b>
+</p>
+
+<p>
+作者曾试图跟踪所有生成的文件，用于清理孤立文件。最后放弃了——直接删掉整个输出目录再全量重建，简单、无状态、正确。有时候最聪明的工程决策就是认出一个五十年前就被 shell 命令解决的问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3abb7ee" class="outline-2">
+<h2 id="org3abb7ee">读完之后</h2>
+<div class="outline-text-2" id="text-org3abb7ee">
+<p>
+这篇文章最打动人的不是最终的产品——一个静态站点生成器——而是整个过程。作者没有一开始就设计出完美的架构，而是从最朴素的字符串替换开始，一步步被现实逼着改进。每个转折点都有明确的"为什么旧方案不行"和"为什么新方案更好"。
+</p>
+
+<p>
+对于 Emacs 用户来说，这篇文章还提供了一个实用的启示： <code>org-export</code> 的可扩展性远比大多数人想象的大。通过 <code>org-export-define-derived-backend</code> 和自定义 transcoder，你可以在不修改 Org 源码的情况下深度定制 HTML 输出。 <code>ossg</code> 整个项目就是建立在这个能力之上的。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+原文：<a href="https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/">https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-24</span>
+    <span class="post-info">2026-04-24</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/org-mode">Org-mode</a> : <a href="../../../../../tags/ssg">SSG</a> : <a href="../../../../../tags/org-export">org-export</a> : <a href="../../../../../tags/elisp">Elisp</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5sxnvrt2b4renhybvktad5tjzd &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

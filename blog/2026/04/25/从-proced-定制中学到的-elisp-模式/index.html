@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>从 proced 定制中学到的 Elisp 模式 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Emacs, Elisp, 编程模式" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">从 proced 定制中学到的 Elisp 模式</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2087a1d">模式一：异步进程 + sentinel</a></li>
+<li><a href="#orgb464e26">模式二：hash table 做进程级缓存</a></li>
+<li><a href="#orga9fd469">模式三： <code>rx</code> 宏写可读正则</a></li>
+<li><a href="#orgac0a52a">模式四：timer 生命周期管理</a></li>
+<li><a href="#org401c8cd">模式五： <code>file-remote-p</code> 做 TRAMP 感知</a></li>
+<li><a href="#orgf02bf79">模式六：通过 custom attributes 扩展第三方包</a></li>
+<li><a href="#orgfb14d1a">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Rahul Juliato 的 <a href="https://rahuljuliato.com/posts/proced-macos">Getting Emacs proced.el to Show CPU and Memory on macOS</a> 表面上是解决 macOS 上 <code>proced</code> 缺少 CPU/Mem 列的问题，实际上是一份很好的 Elisp 编程教学。本文从中提取六个可复用的编程模式——它们跟 <code>proced</code> 和 macOS 无关，你在任何需要异步调用外部命令、缓存数据、扩展第三方包的场景都能用。
+</p>
+
+<div id="outline-container-org2087a1d" class="outline-2">
+<h2 id="org2087a1d">模式一：异步进程 + sentinel</h2>
+<div class="outline-text-2" id="text-org2087a1d">
+<p>
+Elisp 中执行外部命令有两种方式： <code>call-process</code> （同步，会阻塞 Emacs ）和 <code>make-process</code> （异步，不阻塞）。凡是执行时间不确定的命令，都应该用 <code>make-process</code> 。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(make-process
+ <span class="org-builtin">:name</span> <span class="org-string">"my-process"</span>
+ <span class="org-builtin">:buffer</span> (generate-new-buffer <span class="org-string">" *my-process-temp*"</span>)
+ <span class="org-builtin">:command</span> '(<span class="org-string">"env"</span> <span class="org-string">"LC_ALL=C"</span> <span class="org-string">"ps"</span> <span class="org-string">"-eo"</span> <span class="org-string">"pid=,%cpu=,%mem="</span>)
+ <span class="org-builtin">:noquery</span> t
+ <span class="org-builtin">:sentinel</span>
+ (<span class="org-keyword">lambda</span> (proc _event)
+   (<span class="org-keyword">when</span> (eq (process-status proc) 'exit)
+     (<span class="org-keyword">with-current-buffer</span> (process-buffer proc)
+       (goto-char (point-min))
+       <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#36825;&#37324;&#22788;&#29702;&#36755;&#20986;
+</span>       (buffer-string))
+     (kill-buffer (process-buffer proc)))))
+</pre>
+</div>
+
+<p>
+关键设计：
+</p>
+
+<ul class="org-ul">
+<li><code>sentinel</code> 是一个回调函数，在进程状态变化时触发。通常只关心 <code>'exit</code> 状态——此时 buffer 中已有完整输出。</li>
+<li><code>:noquery t</code> 防止 Emacs 退出时弹出"还有进程在运行"的确认框。</li>
+<li><code>generate-new-buffer</code> 创建临时 buffer 承接输出，名称以空格开头（ <code>" "</code> ）的 buffer 在 <code>list-buffers</code> 中默认隐藏。</li>
+<li>处理完后 <code>kill-buffer</code> 清理临时 buffer ，避免 buffer 堆积。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb464e26" class="outline-2">
+<h2 id="orgb464e26">模式二：hash table 做进程级缓存</h2>
+<div class="outline-text-2" id="text-orgb464e26">
+<p>
+当你需要频繁按 key 查找数据时，hash table 比 alist 快得多（ O(1) vs O(n) ）。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#21019;&#24314;
+</span>(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-cache</span> (make-hash-table))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#20889;&#20837;&#65288;&#29992; cons &#23384;&#20004;&#20010;&#20540;&#65292;car &#21644; cdr &#20998;&#21035;&#21462;&#65289;
+</span>(puthash 1234 (cons 2.5 1.3) my-cache)
+(puthash 5678 (cons 0.1 0.5) my-cache)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#35835;&#21462;
+</span>(car (gethash 1234 my-cache))   <span class="org-comment-delimiter">;; </span><span class="org-comment">=&gt; 2.5
+</span>(cdr (gethash 1234 my-cache))   <span class="org-comment-delimiter">;; </span><span class="org-comment">=&gt; 1.3
+</span>(gethash 9999 my-cache)          <span class="org-comment-delimiter">;; </span><span class="org-comment">=&gt; nil</span>
+</pre>
+</div>
+
+<pre class="example" id="org4eb7d8c">
+2.5
+1.3
+nil
+</pre>
+
+<p>
+为什么用 cons 存值？因为 <code>car</code> 和 <code>cdr</code> 是 Elisp 中最快的取值操作之一，比 <code>plist-get</code> 或 <code>alist-get</code> 快。当你只需要存两个值时，cons 是最佳选择。
+</p>
+
+<p>
+刷新时不要原地修改 hash table ，而是创建一个新的再替换——这样即使有并发的读操作也不会读到半更新的状态：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-refresh-cache</span> ()
+  (<span class="org-keyword">let</span> ((new-cache (make-hash-table)))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22635;&#20805; new-cache ...
+</span>    (<span class="org-keyword">setq</span> my-cache new-cache)))  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21407;&#23376;&#26367;&#25442;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga9fd469" class="outline-2">
+<h2 id="orga9fd469">模式三： <code>rx</code> 宏写可读正则</h2>
+<div class="outline-text-2" id="text-orga9fd469">
+<p>
+Elisp 的 <code>rx</code> 宏用 S-expression 写正则，比字符串正则更容易读和维护。对比一下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#23383;&#31526;&#20018;&#27491;&#21017;&#65306;&#19981;&#30452;&#35266;&#65292;&#38656;&#35201;&#33041;&#20869;&#35299;&#26512;
+</span><span class="org-string">"^[[:blank:]]*</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">[[:digit:]]+</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string">[[:blank:]]+</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">(</span></span><span class="org-string">[.[:digit:]]+</span><span class="org-string"><span class="org-regexp-grouping-backslash">\\</span></span><span class="org-string"><span class="org-regexp-grouping-construct">)</span></span><span class="org-string">"</span>
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">rx &#23439;&#65306;&#33258;&#35299;&#37322;
+</span>(<span class="org-keyword">rx</span> (* blank)
+    (group (+ digit))
+    (+ blank)
+    (group (+ (any digit ?.))))
+</pre>
+</div>
+
+<p>
+<code>rx</code> 编译出来的结果跟手写字符串正则完全一样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">rx</span> (* blank)
+    (group (+ digit))
+    (+ blank)
+    (group (+ (any digit ?.)))
+    (+ blank)
+    (group (+ (any digit ?.))))
+</pre>
+</div>
+
+<pre class="example" id="org0b30a99">
+[[:blank:]]*\([[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)
+</pre>
+
+<p>
+常用 <code>rx</code> 组合：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left"><code>rx</code> 写法</th>
+<th scope="col" class="org-left">匹配内容</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>(+ digit)</code></td>
+<td class="org-left">一个或多个数字</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>(* blank)</code></td>
+<td class="org-left">零或多个空白</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>(any digit ?.)</code></td>
+<td class="org-left">数字或小数点</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>(group ...)</code></td>
+<td class="org-left">捕获组，对应 <code>match-string</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-orgac0a52a" class="outline-2">
+<h2 id="orgac0a52a">模式四：timer 生命周期管理</h2>
+<div class="outline-text-2" id="text-orgac0a52a">
+<p>
+Emacs 的 <code>run-with-timer</code> 可以周期性执行任务，但如果不在合适的时机取消，timer 会一直运行下去（即使对应的 buffer 已经关了）。正确的做法是在 mode hook 里启动，在 <code>kill-buffer-hook</code> 里取消：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-timer</span> nil)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312; mode hook &#20013;&#21551;&#21160;
+</span>(add-hook 'my-mode-hook
+  (<span class="org-keyword">lambda</span> ()
+    (<span class="org-keyword">setq</span> my-timer
+          (run-with-timer 0 2 #'my-refresh-function))))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312; kill-buffer-hook &#20013;&#28165;&#29702;
+</span>(add-hook 'kill-buffer-hook
+  (<span class="org-keyword">lambda</span> ()
+    (<span class="org-keyword">when</span> (<span class="org-keyword">and</span> (derived-mode-p 'my-mode)
+               (timerp my-timer))
+      (cancel-timer my-timer)
+      (<span class="org-keyword">setq</span> my-timer nil))))
+</pre>
+</div>
+
+<p>
+三个要点：
+</p>
+
+<ul class="org-ul">
+<li><code>run-with-timer</code> 的参数是 <code>(延迟秒数 重复间隔 函数)</code> ，第一个参数 <code>0</code> 表示立即执行第一次。</li>
+<li><code>cancel-timer</code> 取消后要把变量设为 <code>nil</code> ，避免悬空引用。</li>
+<li>guard 条件 <code>(derived-mode-p 'my-mode)</code> 确保 <code>kill-buffer-hook</code> 不会在其他类型的 buffer 中误触发。 <code>kill-buffer-hook</code> 是全局的，每次任何 buffer 关闭都会触发，所以必须有 mode 判断。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org401c8cd" class="outline-2">
+<h2 id="org401c8cd">模式五： <code>file-remote-p</code> 做 TRAMP 感知</h2>
+<div class="outline-text-2" id="text-org401c8cd">
+<p>
+当你的代码依赖本地系统状态（比如执行本地 <code>ps</code> ），必须考虑 buffer 可能在 TRAMP 远程主机上运行的情况。 <code>file-remote-p</code> 检测 <code>default-directory</code> 是否指向远程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">unless</span> (file-remote-p default-directory)
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#22312;&#26412;&#22320;&#25191;&#34892;
+</span>  (my-run-local-command))
+</pre>
+</div>
+
+<p>
+为什么这很重要？如果你不加检测，可能会用本地 <code>ps</code> 的输出作为参数在远程主机上执行命令。轻则数据显示错误，重则本地 PID 跟远程 PID 碰撞导致误操作。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf02bf79" class="outline-2">
+<h2 id="orgf02bf79">模式六：通过 custom attributes 扩展第三方包</h2>
+<div class="outline-text-2" id="text-orgf02bf79">
+<p>
+很多 Emacs 包提供 <code>*-custom-attributes</code> 或类似的扩展点，让你不用修改包的源码就能添加功能。 <code>proced</code> 的 <code>proced-custom-attributes</code> 就是一个例子：它接受一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 <code>(keyword . value)</code> 就能添加新列。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> proced-custom-attributes
+  (list
+   (<span class="org-keyword">lambda</span> (attrs)
+     (<span class="org-keyword">when-let*</span> ((pid (cdr (assq 'pid attrs)))
+                 (v (my-lookup pid)))
+       (cons 'my-attribute v)))))
+</pre>
+</div>
+
+<p>
+这个模式不限于 <code>proced</code> 。当你需要给某个包添加自定义字段时，先看看它有没有类似的扩展点——很多设计良好的包都会提供。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfb14d1a" class="outline-2">
+<h2 id="orgfb14d1a">小结</h2>
+<div class="outline-text-2" id="text-orgfb14d1a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">模式</th>
+<th scope="col" class="org-left">一句话</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">异步进程 + sentinel</td>
+<td class="org-left">用 <code>make-process</code> 代替 <code>call-process</code> ，在 sentinel 中处理输出</td>
+</tr>
+
+<tr>
+<td class="org-left">hash table 缓存</td>
+<td class="org-left">高频查找用 hash table ，刷新时整体替换而非原地修改</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rx</code> 宏</td>
+<td class="org-left">用 S-expression 写正则，比字符串更可读更易维护</td>
+</tr>
+
+<tr>
+<td class="org-left">timer 生命周期</td>
+<td class="org-left">hook 启动、hook 清理、 <code>derived-mode-p</code> guard 三件套</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>file-remote-p</code></td>
+<td class="org-left">任何依赖本地系统状态的代码都要加 TRAMP 检测</td>
+</tr>
+
+<tr>
+<td class="org-left">custom attributes</td>
+<td class="org-left">用 lambda 返回 <code>(keyword . value)</code> 扩展第三方包的显示</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-25</span>
+    <span class="post-info">2026-04-25</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/编程模式">编程模式</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5sxnvrt2b4renhybvktad5tjzd &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

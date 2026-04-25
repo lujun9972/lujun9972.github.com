@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：让 Emacs proced 在 macOS 上显示 CPU 和内存 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Emacs, proced, macOS, Elisp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：让 Emacs proced 在 macOS 上显示 CPU 和内存</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd1e0f57">问题是怎样的</a></li>
+<li><a href="#org504d9d9">解决思路</a></li>
+<li><a href="#org1d6d611">异步运行 ps 并解析输出</a></li>
+<li><a href="#org6ba0a07">查询函数</a></li>
+<li><a href="#orgd41ceb8">注入到 proced</a></li>
+<li><a href="#org231089d">清理 timer</a></li>
+<li><a href="#org5c092aa">学到了什么</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文是对 Rahul Juliato 的文章 <a href="https://rahuljuliato.com/posts/proced-macos">Getting Emacs proced.el to Show CPU and Memory on macOS</a> 的解读。原文解决了 macOS 上 Emacs <code>proced</code> 缺少 CPU 和内存列的问题，同时是一份很好的 Elisp 编程教学——涉及异步进程、hash table 缓存、自定义属性扩展等多个实用技巧。
+</p>
+
+<div id="outline-container-orgd1e0f57" class="outline-2">
+<h2 id="orgd1e0f57">问题是怎样的</h2>
+<div class="outline-text-2" id="text-orgd1e0f57">
+<p>
+Emacs 内置的 <code>proced</code> 是一个进程查看器，相当于彩色版的 <code>ps</code> 。在 Linux 上，它默认就能显示每个进程的 CPU 和内存占用。但在 macOS 上， <code>%CPU</code> 和 <code>%Mem</code> 两列是空的。
+</p>
+
+<p>
+原因在 Emacs 的 C 层： <code>proced</code> 通过 <code>system_process_attributes</code> 函数（定义在 <code>src/sysdep.c</code> 中）获取每个进程的属性列表。在 Linux 上，这个函数从 <code>/proc/*/stat</code> 读取 CPU 和内存数据；在 BSD 和 Windows 上，它通过系统 API 计算。但在 Darwin（macOS 内核）上，这个函数虽然调用了 <code>proc_pidinfo</code> 来获取虚拟内存和常驻内存大小，却从未填充 <code>pcpu</code> 和 <code>pmem</code> 两个字段——数据明明可以通过 <code>proc_pid_rusage</code> 、 <code>task_info</code> 和 <code>sysctl hw.memsize</code> 拿到，只是没人把线接上。
+</p>
+
+<p>
+Rahul Juliato 向上游提了一个 patch（<a href="https://debbugs.gnu.org/cgi/bugreport.cgi?bug=80898">debbugs #80898</a>），但在 patch 合并之前，他用纯 Elisp 给出了一个 workaround。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org504d9d9" class="outline-2">
+<h2 id="org504d9d9">解决思路</h2>
+<div class="outline-text-2" id="text-org504d9d9">
+<p>
+整体方案很清晰：
+</p>
+
+<ol class="org-ol">
+<li>用 <code>make-process</code> 异步运行 <code>ps -axo pid=,%cpu=,%mem=</code> 获取进程信息</li>
+<li>把输出解析后存入 hash table（以 PID 为 key ）</li>
+<li>通过 <code>proced-custom-attributes</code> 把 <code>pcpu</code> 和 <code>pmem</code> 两个属性注入 <code>proced</code></li>
+<li>用 timer 每 2 秒刷新一次 hash table</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org1d6d611" class="outline-2">
+<h2 id="org1d6d611">异步运行 ps 并解析输出</h2>
+<div class="outline-text-2" id="text-org1d6d611">
+<p>
+原文用 <code>(when (eq system-type 'darwin))</code> 把所有代码包在一起，确保只在 macOS 上执行。下面的代码片段省略了这个外层 guard ，实际使用时应当加上。
+</p>
+
+<p>
+核心是用 <code>make-process</code> 异步执行 <code>ps</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">emacs-solo--proced-ps-cache</span> (make-hash-table))
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">emacs-solo--proced-ps-timer</span> nil)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">emacs-solo--proced-ps-do-refresh</span> ()
+  (make-process
+   <span class="org-builtin">:name</span> <span class="org-string">"proced-ps-refresh"</span>
+   <span class="org-builtin">:buffer</span> (generate-new-buffer <span class="org-string">" *proced-ps-temp*"</span>)
+   <span class="org-builtin">:command</span> '(<span class="org-string">"env"</span> <span class="org-string">"LC_ALL=C"</span> <span class="org-string">"ps"</span> <span class="org-string">"-axo"</span> <span class="org-string">"pid=,%cpu=,%mem="</span>)
+   <span class="org-builtin">:noquery</span> t
+   <span class="org-builtin">:sentinel</span>
+   (<span class="org-keyword">lambda</span> (proc _event)
+     (<span class="org-keyword">when</span> (eq (process-status proc) 'exit)
+       (<span class="org-keyword">let</span> ((new-cache (make-hash-table)))
+         (<span class="org-keyword">with-current-buffer</span> (process-buffer proc)
+           (goto-char (point-min))
+           (<span class="org-keyword">while</span> (not (eobp))
+             (<span class="org-keyword">when</span> (looking-at (<span class="org-keyword">rx</span> (* blank)
+                                   (group (+ digit))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))))
+               (puthash (string-to-number (match-string 1))
+                        (cons (string-to-number (match-string 2))
+                              (string-to-number (match-string 3)))
+                        new-cache))
+             (forward-line 1)))
+         (kill-buffer (process-buffer proc))
+         (<span class="org-keyword">setq</span> emacs-solo--proced-ps-cache new-cache))))))
+</pre>
+</div>
+
+<p>
+几个设计要点：
+</p>
+
+<ul class="org-ul">
+<li><code>LC_ALL=C</code> 强制 <code>ps</code> 使用固定的输出格式，不受用户 locale 影响。不同 locale 下数字的小数点可能变成逗号，解析就会出错。</li>
+<li>sentinel 只在进程退出时触发（ <code>(eq (process-status proc) 'exit)</code> ），此时 buffer 中已有完整输出。</li>
+<li><code>rx</code> 宏让正则表达式更可读：三个分组分别匹配 PID（整数）、 =%CPU=（浮点数）、 =%Mem=（浮点数）。</li>
+<li><code>puthash</code> 以 PID 为 key ，以 <code>(%CPU . %Mem)</code> 这个 cons 为 value 。用 cons 而不是 list ，是因为 <code>car</code> 和 <code>cdr</code> 取值最快。</li>
+</ul>
+
+<p>
+为什么用 hash table 而不是 alist ？因为 <code>proced</code> 会为每个进程调用自定义属性函数，hash table 的查找时间是 O(1) ，即使有几百个进程也很快。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6ba0a07" class="outline-2">
+<h2 id="org6ba0a07">查询函数</h2>
+<div class="outline-text-2" id="text-org6ba0a07">
+<p>
+简单的 wrapper ，从 hash table 中取值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">emacs-solo--proced-pcpu</span> (pid)
+  (car (gethash pid emacs-solo--proced-ps-cache)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">emacs-solo--proced-pmem</span> (pid)
+  (cdr (gethash pid emacs-solo--proced-ps-cache)))
+</pre>
+</div>
+
+<p>
+<code>car</code> 取 CPU ， <code>cdr</code> 取内存——这就是用 cons 存储的好处。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd41ceb8" class="outline-2">
+<h2 id="orgd41ceb8">注入到 proced</h2>
+<div class="outline-text-2" id="text-orgd41ceb8">
+<p>
+这是把一切连起来的关键。 <code>proced-custom-attributes</code> 是一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 <code>(keyword . value)</code> 形式的 cons ， <code>proced</code> 会把它当作新列显示：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-hook 'proced-mode-hook
+  (<span class="org-keyword">lambda</span> ()
+    (<span class="org-keyword">unless</span> (file-remote-p default-directory)
+      (<span class="org-keyword">setq</span> emacs-solo--proced-ps-timer
+            (run-with-timer 0 2 #'emacs-solo--proced-ps-do-refresh)))))
+
+(<span class="org-keyword">setq</span> proced-custom-attributes
+  (list
+   (<span class="org-keyword">lambda</span> (attrs)
+     (<span class="org-keyword">unless</span> (file-remote-p default-directory)
+       (<span class="org-keyword">when-let*</span> ((pid (cdr (assq 'pid attrs)))
+                   (v (emacs-solo--proced-pcpu pid)))
+         (cons 'pcpu v))))
+   (<span class="org-keyword">lambda</span> (attrs)
+     (<span class="org-keyword">unless</span> (file-remote-p default-directory)
+       (<span class="org-keyword">when-let*</span> ((pid (cdr (assq 'pid attrs)))
+                   (v (emacs-solo--proced-pmem pid)))
+         (cons 'pmem v))))))
+</pre>
+</div>
+
+<p>
+两个 lambda ，一个管 CPU 一个管内存。每个 lambda 做三件事：
+</p>
+
+<ol class="org-ol">
+<li>用 <code>file-remote-p</code> 检测当前 buffer 是否在 TRAMP 远程主机上。如果是，本地的 <code>ps</code> 数据没有意义，而且本地 PID 可能跟远程 PID 冲突。</li>
+<li>从 <code>attrs</code> 中提取 PID ，在 hash table 中查找值。</li>
+<li>返回 <code>(pcpu . value)</code> 或 <code>(pmem . value)</code> 。</li>
+</ol>
+
+<p>
+timer 放在 <code>proced-mode-hook</code> 里启动，因为只有 <code>proced</code> buffer 存在时才需要刷新数据。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org231089d" class="outline-2">
+<h2 id="org231089d">清理 timer</h2>
+<div class="outline-text-2" id="text-org231089d">
+<p>
+<code>proced</code> buffer 关闭时取消 timer ，避免悬空的定时器：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-hook 'kill-buffer-hook
+  (<span class="org-keyword">lambda</span> ()
+    (<span class="org-keyword">when</span> (<span class="org-keyword">and</span> (derived-mode-p 'proced-mode)
+               (timerp emacs-solo--proced-ps-timer))
+      (cancel-timer emacs-solo--proced-ps-timer)
+      (<span class="org-keyword">setq</span> emacs-solo--proced-ps-timer nil))))
+</pre>
+</div>
+
+<p>
+guard 条件 <code>(derived-mode-p 'proced-mode)</code> 确保 <code>kill-buffer-hook</code> 不会在其他 buffer 关闭时误触发。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5c092aa" class="outline-2">
+<h2 id="org5c092aa">学到了什么</h2>
+<div class="outline-text-2" id="text-org5c092aa">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">技巧</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>proced-custom-attributes</code></td>
+<td class="org-left">接受 lambda 列表，每个 lambda 接收行属性 alist ，返回 <code>(keyword . value)</code> 即可添加新列</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>make-process</code> + sentinel</td>
+<td class="org-left">Elisp 中异步执行外部命令的标准方式。sentinel 在进程状态变化时触发，通常只关心 <code>'exit</code> 状态</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>run-with-timer</code></td>
+<td class="org-left">周期性执行任务。返回 timer 对象，可以用 <code>cancel-timer</code> 取消。比 <code>run-at-time</code> 更方便</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>file-remote-p</code></td>
+<td class="org-left">检测当前 buffer 是否在 TRAMP 远程主机上。任何涉及本地系统状态的 hack 都应该加上这个 guard</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>rx</code> 宏</td>
+<td class="org-left">比 <code>regexp</code> 字符串更可读的正则写法，支持 S-expression 风格组合</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-25</span>
+    <span class="post-info">2026-04-25</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/proced">proced</a> : <a href="../../../../../tags/macos">macOS</a> : <a href="../../../../../tags/elisp">Elisp</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5sxnvrt2b4renhybvktad5tjzd &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

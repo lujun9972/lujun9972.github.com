@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 ox.el 做你想做的事 —— org-export 高级编程指南 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, Org-mode, org-export, Elisp, HTML" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 ox.el 做你想做的事 —— org-export 高级编程指南</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc6e0b14">基础概念：backend 和 transcoder</a></li>
+<li><a href="#org3113329">技巧一：继承 backend 并覆盖 transcoder</a></li>
+<li><a href="#orgca43395">技巧二：通过 #+KEYWORD 注入自定义数据到导出管线</a></li>
+<li><a href="#org52f9e50">技巧三：自定义 link transcoder</a></li>
+<li><a href="#org6745835">技巧四：用 cl-progv 做动态变量绑定</a></li>
+<li><a href="#org124f257">技巧五：org-element-parse-buffer 的 granularity 控制</a></li>
+<li><a href="#orgc07c259">组合起来：一个自定义导出 pipeline</a></li>
+<li><a href="#org016deb9">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+大多数 Emacs 用户只知道 <code>org-export</code> 能把 Org 文件转成 HTML/PDF，但很少有人意识到它其实是一个高度可扩展的编译框架。你可以继承已有的 backend，覆盖特定元素的渲染逻辑，注入自定义元数据，甚至完全重定义链接的解析方式——所有这些都不需要修改 Org 源码。
+</p>
+
+<p>
+本文从 scheatkode 的 ossg 项目<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup> 中提炼出几个实用的 <code>org-export</code> 高级技巧，每个技巧都配有可独立运行的代码。读完之后你会对 <code>ox.el</code> 的架构有一个清晰的认识，知道什么时候该用它、怎么用它。
+</p>
+
+<div id="outline-container-orgc6e0b14" class="outline-2">
+<h2 id="orgc6e0b14">基础概念：backend 和 transcoder</h2>
+<div class="outline-text-2" id="text-orgc6e0b14">
+<p>
+<code>org-export</code> 用"backend"来定义如何把 Org AST（抽象语法树）转换成目标格式。每个 backend 本质上是一个从"Org 元素类型"到"渲染函数"的映射表。比如 <code>html</code> backend 里， <code>headline</code> 元素对应 <code>org-html-headline</code> 函数， <code>link</code> 元素对应 <code>org-html-link</code> 函数。
+</p>
+
+<p>
+这些渲染函数叫 <b>transcoder</b> 。每个 transcoder 接收三个参数：元素本身、可选的描述文字、和一个 <code>info</code> plist（贯穿整个导出过程的通信管道）。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#26597;&#30475;&#20869;&#32622; html backend &#30340; transcoder &#21015;&#34920;
+</span>(org-export-backend-transcoders (org-export-get-backend 'html))
+</pre>
+</div>
+
+<pre class="example" id="orgc3d191d">
+((bold . org-html-bold)
+ (center-block . org-html-center-block)
+ (clock . org-html-clock)
+ (code . org-html-code)
+ (drawer . org-html-drawer)
+ (dynamic-block . org-html-dynamic-block)
+ (entity . org-html-entity)
+ (example-block . org-html-example-block)
+ (export-block . org-html-export-block)
+ (export-snippet . org-html-export-snippet)
+ (fixed-width . org-html-fixed-width)
+ (footnote-reference . org-html-footnote-reference)
+ (headline . org-html-headline)
+ (horizontal-rule . org-html-horizontal-rule)
+ (inline-src-block . org-html-inline-src-block)
+ (inlinetask . org-html-inlinetask)
+ (inner-template . org-html-inner-template)
+ (italic . org-html-italic)
+ (item . org-html-item)
+ (keyword . org-html-keyword)
+ (latex-environment . org-html-latex-environment)
+ (latex-fragment . org-html-latex-fragment)
+ (line-break . org-html-line-break)
+ (link . org-html-link)
+ (node-property . org-html-node-property)
+ (paragraph . org-html-paragraph)
+ (plain-list . org-html-plain-list)
+ (plain-text . org-html-plain-text)
+ (planning . org-html-planning)
+ (property-drawer . org-html-property-drawer)
+ (quote-block . org-html-quote-block)
+ (radio-target . org-html-radio-target)
+ (section . org-html-section)
+ (special-block . org-html-special-block)
+ (src-block . org-html-src-block)
+ (statistics-cookie . org-html-statistics-cookie)
+ (strike-through . org-html-strike-through)
+ (subscript . org-html-subscript)
+ (superscript . org-html-superscript)
+ (table . org-html-table)
+ (table-cell . org-html-table-cell)
+ (table-row . org-html-table-row)
+ (target . org-html-target)
+ (template . org-html-template)
+ (timestamp . org-html-timestamp)
+ (underline . org-html-underline)
+ (verbatim . org-html-verbatim)
+ (verse-block . org-html-verse-block))
+</pre>
+
+<p>
+这意味着只要覆盖其中任何一个 transcoder，就能改变对应元素的输出方式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3113329" class="outline-2">
+<h2 id="org3113329">技巧一：继承 backend 并覆盖 transcoder</h2>
+<div class="outline-text-2" id="text-org3113329">
+<p>
+<code>org-export-define-derived-backend</code> 是整个扩展机制的入口。它从父 backend 继承所有默认行为，然后你只需覆盖想要改动的部分。
+</p>
+
+<p>
+下面是一个最小示例：继承 <code>html</code> backend，把所有 <code>verbatim</code> （用 <code>= 包裹的行内代码）渲染成带有 CSS class 的 =&lt;code&gt;</code> 标签，方便自定义样式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#23450;&#20041;&#19968;&#20010;&#33258;&#23450;&#20041; backend&#65292;&#32487;&#25215;&#33258; html
+</span>(org-export-define-derived-backend 'my-html 'html
+  <span class="org-builtin">:translate-alist</span>
+  '((verbatim . my-html-verbatim)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-html-verbatim</span> (verbatim _contents _info)
+  <span class="org-doc">"Render VERBATIM with a custom CSS class."</span>
+  (format <span class="org-string">"&lt;code class=\"inline-code\"&gt;%s&lt;/code&gt;"</span>
+          (org-element-property <span class="org-builtin">:value</span> verbatim)))
+</pre>
+</div>
+
+<p>
+验证一下效果：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#20020;&#26102; buffer &#20013;&#27979;&#35797;&#23548;&#20986;
+</span>(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"=hello world=\n"</span>)
+  (org-mode)
+  (org-export-as 'my-html))
+</pre>
+</div>
+
+<pre class="example" id="orgfb54ccd">
+&lt;p&gt;
+&lt;code class="inline-code"&gt;hello world&lt;/code&gt;
+&lt;/p&gt;
+</pre>
+
+<p>
+对比默认的 <code>html</code> backend 输出：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"=hello world=\n"</span>)
+  (org-mode)
+  (org-export-as 'html))
+</pre>
+</div>
+
+<pre class="example" id="org52d97f2">
+&lt;p&gt;
+&lt;code&gt;hello world&lt;/code&gt;
+&lt;/p&gt;
+</pre>
+
+<p>
+区别在于默认输出没有任何 CSS class，而我们的自定义版本加上了 <code>inline-code</code> class，方便统一设置样式。
+</p>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+<code>org-export-define-derived-backend</code> 的 <code>:translate-alist</code> 只需要列出你要覆盖的
+transcoder。没有列出的元素类型自动继承父 backend 的行为。这意味着你的自定义
+backend 可以只改一个元素（比如只改 <code>verbatim</code> 的渲染），其他所有元素都跟
+标准 HTML 导出一模一样。
+`─────────────────────────────────────────────────`
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgca43395" class="outline-2">
+<h2 id="orgca43395">技巧二：通过 #+KEYWORD 注入自定义数据到导出管线</h2>
+<div class="outline-text-2" id="text-orgca43395">
+<p>
+<code>ossg</code> 用了一个巧妙的技巧：往 Org 文件里插入 <code>#+OPD_BASE_URL:</code> 这样的自定义 keyword，Org 解析器会自动把它解析进 <code>info</code> plist，transcoder 就能读取到。
+</p>
+
+<p>
+<code>org-export-define-derived-backend</code> 的 <code>:options-alist</code> 参数定义了 keyword 到 plist key 的映射：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-define-derived-backend 'my-html 'html
+  <span class="org-builtin">:options-alist</span>
+  '((<span class="org-builtin">:my-color</span> <span class="org-string">"MY_COLOR"</span>))     <span class="org-comment-delimiter">; </span><span class="org-comment">#+MY_COLOR: blue &#8594; (:my-color . "blue")
+</span>  <span class="org-builtin">:translate-alist</span>
+  '((verbatim . my-html-verbatim)))
+</pre>
+</div>
+
+<p>
+这样，如果 Org 文件里有 <code>#+MY_COLOR: blue</code> ，transcoder 就能通过 <code>(plist-get info :my-color)</code> 拿到 <code>blue</code> 。
+</p>
+
+<p>
+来做一个完整的例子：根据文件中的 <code>#+MY_COLOR</code> keyword 来改变 <code>verbatim</code> 的输出颜色。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-define-derived-backend 'my-html 'html
+  <span class="org-builtin">:options-alist</span>
+  '((<span class="org-builtin">:my-color</span> <span class="org-string">"MY_COLOR"</span>))
+  <span class="org-builtin">:translate-alist</span>
+  '((verbatim . my-html-colored-verbatim)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-html-colored-verbatim</span> (verbatim _contents info)
+  <span class="org-doc">"Render VERBATIM with color from MY_COLOR keyword."</span>
+  (<span class="org-keyword">let</span> ((color (<span class="org-keyword">or</span> (plist-get info <span class="org-builtin">:my-color</span>) <span class="org-string">"inherit"</span>)))
+    (format <span class="org-string">"&lt;code style=\"color: %s;\"&gt;%s&lt;/code&gt;"</span>
+            color
+            (org-element-property <span class="org-builtin">:value</span> verbatim))))
+</pre>
+</div>
+
+<p>
+测试：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"#+MY_COLOR: red\n\n=colorized text=\n"</span>)
+  (org-mode)
+  (org-export-as 'my-html))
+</pre>
+</div>
+
+<pre class="example" id="org82ccc14">
+&lt;p&gt;
+&lt;code style="color: red;"&gt;colorized text&lt;/code&gt;
+&lt;/p&gt;
+</pre>
+
+<p>
+如果没有设置 <code>#+MY_COLOR</code> ，则回退到 <code>inherit</code> （继承父元素颜色）。
+</p>
+
+<p>
+这个技巧的威力在于：你可以在不修改 Org 文件内容的情况下，在构建脚本里动态插入 <code>#+KEYWORD</code> 行，把外部上下文"走私"进导出管线。ossg 就是这样把站点 URL 注入进去的——在渲染前往临时 buffer 里插入一行 <code>#+OPD_BASE_URL:</code> ，org-export 自动解析它，link transcoder 就能读到。
+</p>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+<code>info</code> plist 是贯穿整个导出过程的"通信管道"。它包含文件的所有元数据
+（标题、作者、日期、选项等），加上你在 <code>:options-alist</code> 里声明的自定义字段。
+每个 transcoder 的第三个参数就是这个 plist。通过往里面注入自定义数据，
+你可以实现 transcoder 和外部世界的通信，而不需要全局变量。
+`─────────────────────────────────────────────────`
+</p>
+</div>
+</div>
+
+<div id="outline-container-org52f9e50" class="outline-2">
+<h2 id="org52f9e50">技巧三：自定义 link transcoder</h2>
+<div class="outline-text-2" id="text-org52f9e50">
+<p>
+<code>ossg</code> 最核心的技巧之一是自定义 link transcoder，把 Org 文件间的 <code>[[file:xxx.org]]</code> 链接自动替换成最终的 permalink。
+</p>
+
+<p>
+link transcoder 接收的 <code>link</code> 参数是一个 org-element 对象，你可以用 <code>org-element-property</code> 读取它的属性：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-link-info</span> (link desc info)
+  <span class="org-doc">"Demonstrate link element properties."</span>
+  (<span class="org-keyword">let</span> ((type (org-element-property <span class="org-builtin">:type</span> link))
+        (path (org-element-property <span class="org-builtin">:path</span> link))
+        (raw-link (org-element-property <span class="org-builtin">:raw-link</span> link)))
+    (format <span class="org-string">"&lt;!-- type=%s path=%s raw=%s --&gt;%s"</span>
+            type path raw-link
+            (org-html-link link desc info))))
+</pre>
+</div>
+
+<p>
+先看看 Org 是怎么解析不同类型的链接的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-export-define-derived-backend 'debug-html 'html
+  <span class="org-builtin">:translate-alist</span>
+  '((link . my-link-info)))
+
+(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"* Test links
+- [[https://example.com][external link]]
+- [[file:other.org][file link]]
+- [[file:images/photo.png][image link]]
+- [[#my-heading][internal heading link]]
+
+* My Heading
+:PROPERTIES:
+:CUSTOM_ID: my-heading
+:END:
+"</span>)
+  (org-mode)
+  (org-export-as 'debug-html))
+</pre>
+</div>
+
+<pre class="example" id="org1cfa6af">
+&lt;ul&gt;
+&lt;li&gt;&lt;!-- type=https path=//example.com raw=https://example.com --&gt;&lt;a href="https://example.com"&gt;external link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=file path=other.org raw=file:other.org --&gt;&lt;a href="other.html"&gt;file link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=file path=images/photo.png raw=file:images/photo.png --&gt;&lt;a href="images/photo.png"&gt;image link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=custom-id path=my-heading raw=#my-heading --&gt;&lt;a href="#my-heading"&gt;internal heading link&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+</pre>
+
+<p>
+可以看到：
+</p>
+<ul class="org-ul">
+<li>外部 URL 的 <code>type</code> 是 <code>https</code> ， <code>path</code> 是 <code>//</code> 开头的地址部分（不含 scheme）</li>
+<li>文件链接的 <code>type</code> 是 <code>file</code> ， <code>path</code> 是文件路径</li>
+<li>内部标题链接的 <code>type</code> 是 <code>custom-id</code></li>
+</ul>
+
+<p>
+有了这些信息，就可以实现 ossg 那样的链接重写——检测到 <code>type</code> 为 <code>file</code> 且 <code>path</code> 以 <code>.org</code> 结尾时，查表替换成 permalink：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-url-registry</span> (make-hash-table <span class="org-builtin">:test</span> 'equal)
+  <span class="org-doc">"Maps absolute file paths to their final URLs."</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#20551;&#35774;&#25105;&#20204;&#24050;&#32463;&#27880;&#20876;&#20102;&#19968;&#20123; URL
+</span>(puthash <span class="org-string">"/home/user/blog/posts/hello.org"</span> <span class="org-string">"/posts/hello.html"</span> my-url-registry)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-translate-link</span> (link desc info)
+  <span class="org-doc">"Resolve file: links to .org files using the URL registry."</span>
+  (<span class="org-keyword">let</span> ((type (org-element-property <span class="org-builtin">:type</span> link))
+        (path (org-element-property <span class="org-builtin">:path</span> link)))
+    (<span class="org-keyword">if</span> (<span class="org-keyword">and</span> (string= type <span class="org-string">"file"</span>)
+             (string-suffix-p <span class="org-string">".org"</span> path))
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#26597;&#34920;&#26367;&#25442;
+</span>        (<span class="org-keyword">let*</span> ((abspath (expand-file-name path))
+               (url (gethash abspath my-url-registry)))
+          (<span class="org-keyword">if</span> url
+              (format <span class="org-string">"&lt;a href=\"%s\"&gt;%s&lt;/a&gt;"</span> url (<span class="org-keyword">or</span> desc url))
+            <span class="org-comment-delimiter">;; </span><span class="org-comment">&#25214;&#19981;&#21040;&#23601;&#22238;&#36864;&#21040;&#40664;&#35748;&#34892;&#20026;
+</span>            (org-html-link link desc info)))
+      <span class="org-comment-delimiter">;; </span><span class="org-comment">&#38750; .org &#38142;&#25509;&#65292;&#29992;&#40664;&#35748;&#22788;&#29702;
+</span>      (org-html-link link desc info))))
+</pre>
+</div>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+link transcoder 是 <code>org-export</code> 最强大的扩展点之一。
+通过检查 <code>type</code> 和 <code>path</code> 属性，你可以精确控制不同类型链接的输出。
+ossg 用它实现了跨路由链接解析，但同样的技巧也可以用于：
+把 <code>[[file:*.pdf]]</code> 链接渲染成嵌入式的 PDF 查看器、
+把 <code>[[doi:xxx]]</code> 链接渲染成学术引用格式、
+或者把特定路径的文件链接渲染成缩略图。
+`─────────────────────────────────────────────────`
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6745835" class="outline-2">
+<h2 id="org6745835">技巧四：用 cl-progv 做动态变量绑定</h2>
+<div class="outline-text-2" id="text-org6745835">
+<p>
+<code>ossg</code> 需要在不同路由中覆盖不同的 <code>org-export</code> 全局变量（比如 <code>org-export-with-toc</code> ），但普通的 <code>let</code> 绑定在延迟执行的场景下会失效——因为 <code>let</code> 在求值时就确定了绑定，而实际导出可能在很久之后才发生。
+</p>
+
+<p>
+<code>cl-progv</code> 解决了这个问题：它接受一个 <b>运行时</b> 生成的变量名列表和值列表，动态绑定它们。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">cl-progv &#30340;&#22522;&#26412;&#29992;&#27861;
+</span>(<span class="org-keyword">cl-progv</span>
+    '(org-export-with-toc org-export-with-section-numbers)
+    '(nil nil)
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#36825;&#20010;&#20316;&#29992;&#22495;&#20869;&#65292;org-export-with-toc &#20026; nil
+</span>  <span class="org-comment-delimiter">;; </span><span class="org-comment">org-export-with-section-numbers &#20063;&#20026; nil
+</span>  (list org-export-with-toc org-export-with-section-numbers))
+</pre>
+</div>
+
+<pre class="example" id="orga7b9bbe">
+(nil nil)
+</pre>
+
+<p>
+这和 <code>let</code> 的区别在哪？关键在于变量名可以是 <b>数据驱动的</b> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#29992; let&#65306;&#21464;&#37327;&#21517;&#22312;&#32534;&#20889;&#26102;&#23601;&#30830;&#23450;&#20102;&#65288;&#35789;&#27861;&#65289;
+</span>(<span class="org-keyword">let</span> ((org-export-with-toc nil))
+  org-export-with-toc)  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#8594; nil
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#29992; cl-progv&#65306;&#21464;&#37327;&#21517;&#26469;&#33258;&#25968;&#25454;&#32467;&#26500;&#65288;&#21160;&#24577;&#65289;
+</span>(<span class="org-keyword">let</span> ((env '((org-export-with-toc . nil)
+             (org-html-link-home . <span class="org-string">"https://example.com"</span>))))
+  (<span class="org-keyword">cl-progv</span>
+      (mapcar #'car env)    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21464;&#37327;&#21517;&#21015;&#34920;
+</span>      (mapcar #'cdr env)    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20540;&#21015;&#34920;
+</span>    (list org-export-with-toc org-html-link-home)))
+</pre>
+</div>
+
+<pre class="example" id="org8c2ace2">
+(nil "https://example.com")
+</pre>
+
+<p>
+实际应用中， <code>env</code> 可以来自配置数据（比如路由的 <code>:env</code> 属性），不同的路由覆盖不同的变量组合。这让每个路由有自己独立的导出环境，互不污染。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org124f257" class="outline-2">
+<h2 id="org124f257">技巧五：org-element-parse-buffer 的 granularity 控制</h2>
+<div class="outline-text-2" id="text-org124f257">
+<p>
+<code>ossg</code> 在性能优化中发现了一个关键细节： <code>org-element-parse-buffer</code> 的第一个参数控制解析深度。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#23436;&#25972;&#35299;&#26512;&#65288;&#40664;&#35748;&#65289;&#8212;&#8212; &#35299;&#26512;&#25152;&#26377;&#20869;&#23481;&#65292;&#21253;&#25324;&#34892;&#20869;&#26631;&#35760;
+</span>(org-element-parse-buffer)              <span class="org-comment-delimiter">; </span><span class="org-comment">&#31561;&#20215;&#20110; (org-element-parse-buffer 'object)
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#35299;&#26512;&#21040;&#20803;&#32032;&#32423; &#8212;&#8212; &#19981;&#35299;&#26512;&#34892;&#20869;&#23545;&#35937;
+</span>(org-element-parse-buffer 'element)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#35299;&#26512;&#22823;&#20803;&#32032; &#8212;&#8212; &#19981;&#36882;&#24402;&#36827;&#20837;&#27573;&#33853;&#20869;&#37096;
+</span>(org-element-parse-buffer 'greater-element)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#35299;&#26512;&#26631;&#39064;
+</span>(org-element-parse-buffer 'headline)
+</pre>
+</div>
+
+<p>
+来看一个具体的例子，感受不同粒度返回的 AST 结构差异：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+** Sub heading
+Another paragraph.
+"</span>)
+  (org-mode)
+  (<span class="org-keyword">let</span> ((ast (org-element-parse-buffer 'greater-element)))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">greater-element &#31890;&#24230;&#19979;&#65292;&#27573;&#33853;&#23384;&#22312;&#20294;&#27809;&#26377;&#23376;&#23545;&#35937;
+</span>    (format <span class="org-string">"paragraphs: %d, bold objects: %d"</span>
+            (length (org-element-map ast 'paragraph #'identity))
+            (length (org-element-map ast 'bold #'identity)))))
+</pre>
+</div>
+
+<pre class="example" id="orge6bc60c">
+"paragraphs: 2, bold objects: 0"
+</pre>
+
+<p>
+注意 <code>*bold text*</code> 没有被解析成独立的 bold 对象——在 <code>greater-element</code> 粒度下段落内部不会被递归解析。这比完整解析快得多，当你只需要提取标题、日期、标签等顶层元数据时完全够用。
+</p>
+
+<p>
+对比完整解析的结果：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-temp-buffer</span>
+  (insert <span class="org-string">"* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+** Sub heading
+Another paragraph.
+"</span>)
+  (org-mode)
+  (<span class="org-keyword">let</span> ((ast (org-element-parse-buffer)))  <span class="org-comment-delimiter">; </span><span class="org-comment">&#40664;&#35748; 'object &#31890;&#24230;
+</span>    (format <span class="org-string">"paragraphs: %d, bold objects: %d"</span>
+            (length (org-element-map ast 'paragraph #'identity))
+            (length (org-element-map ast 'bold #'identity))))
+</pre>
+</div>
+
+<pre class="example" id="org505080f">
+"paragraphs: 2, bold objects: 1"
+</pre>
+
+<p>
+完整解析时， <code>*bold text*</code> 被识别为一个独立的 <code>bold</code> 对象。这种精度在你需要精确控制行内标记的 HTML 输出时是必要的，但在只需要元数据的场景下就是浪费。
+</p>
+
+<p>
+`★ Insight ─────────────────────────────────────`
+选择合适的 <code>granularity</code> 是 <code>org-element</code> 性能优化的关键。
+规则很简单：如果你只需要标题、属性、keyword 等结构性数据，
+用 <code>greater-element</code> ；如果你需要操作段落内的行内标记（粗体、链接、代码等），
+用 <code>element</code> 或默认的 <code>object</code> 。对于大文件的元数据提取，
+这个选择可能带来数倍的性能差异。
+`─────────────────────────────────────────────────`
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc07c259" class="outline-2">
+<h2 id="orgc07c259">组合起来：一个自定义导出 pipeline</h2>
+<div class="outline-text-2" id="text-orgc07c259">
+<p>
+把上面几个技巧组合起来，你可以构建一个完整的自定义导出 pipeline。下面是一个简化的示例，演示了 ossg 的核心思路：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">1. &#23450;&#20041; URL &#27880;&#20876;&#34920;
+</span>(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-url-registry</span> (make-hash-table <span class="org-builtin">:test</span> 'equal))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">2. &#23450;&#20041;&#33258;&#23450;&#20041; backend
+</span>(org-export-define-derived-backend 'site-html 'html
+  <span class="org-builtin">:options-alist</span>
+  '((<span class="org-builtin">:site-base-url</span> <span class="org-string">"SITE_BASE_URL"</span>))
+  <span class="org-builtin">:translate-alist</span>
+  '((link . my-site-translate-link)))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">3. Link transcoder&#65306;&#22788;&#29702;&#25991;&#20214;&#38388;&#38142;&#25509;
+</span>(<span class="org-keyword">defun</span> <span class="org-function-name">my-site-translate-link</span> (link desc info)
+  <span class="org-doc">"Resolve .org file links using the URL registry."</span>
+  (<span class="org-keyword">let</span> ((type (org-element-property <span class="org-builtin">:type</span> link))
+        (path (org-element-property <span class="org-builtin">:path</span> link)))
+    (<span class="org-keyword">if</span> (<span class="org-keyword">and</span> (string= type <span class="org-string">"file"</span>)
+             (string-suffix-p <span class="org-string">".org"</span> path))
+        (<span class="org-keyword">let</span> ((url (gethash (expand-file-name path) my-url-registry)))
+          (<span class="org-keyword">if</span> url
+              (format <span class="org-string">"&lt;a href=\"%s\"&gt;%s&lt;/a&gt;"</span> url (<span class="org-keyword">or</span> desc url))
+            (org-html-link link desc info)))
+      (org-html-link link desc info))))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">4. &#23548;&#20986;&#19968;&#20010;&#25991;&#20214;&#65288;&#27880;&#20837; SITE_BASE_URL&#65289;
+</span>(<span class="org-keyword">defun</span> <span class="org-function-name">my-site-export-file</span> (filepath output-path base-url)
+  <span class="org-doc">"Export FILEPATH to OUTPUT-PATH with BASE-URL injected."</span>
+  (<span class="org-keyword">with-temp-buffer</span>
+    (insert-file-contents filepath)
+    (org-mode)
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#27880;&#20837;&#33258;&#23450;&#20041; keyword&#65292;&#25226;&#31449;&#28857; URL &#36208;&#31169;&#36827;&#23548;&#20986;&#31649;&#32447;
+</span>    (goto-char (point-min))
+    (forward-line)
+    (insert (format <span class="org-string">"#+SITE_BASE_URL: %s\n"</span> base-url))
+    (<span class="org-keyword">let</span> ((html (org-export-as 'site-html)))
+      (<span class="org-keyword">with-temp-file</span> output-path
+        (insert html)))))
+</pre>
+</div>
+
+<p>
+这就是 ossg 导出管线的最小核心：一个自定义 backend + 一个 link transcoder + 一个注入元数据的导出函数。ossg 在此基础上加了两遍编译（第一遍注册 URL、第二遍渲染）、路由系统、增量缓存等，但骨架就是这些。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org016deb9" class="outline-2">
+<h2 id="org016deb9">小结</h2>
+<div class="outline-text-2" id="text-org016deb9">
+<p>
+<code>org-export</code> 的可扩展性来自三个核心机制：
+</p>
+
+<ol class="org-ol">
+<li><b>Backend 继承</b> ：通过 <code>org-export-define-derived-backend</code> 继承已有 backend，只覆盖需要的部分</li>
+<li><b>Keyword 注入</b> ：通过 <code>:options-alist</code> 声明自定义 keyword，让 Org 解析器自动把文件元数据传进 transcoder 的 <code>info</code> plist</li>
+<li><b>Transcoder 覆盖</b> ：在 <code>:translate-alist</code> 里指定自定义渲染函数，精确控制特定元素类型的输出</li>
+</ol>
+
+<p>
+这三个机制组合起来，足以在不修改 Org 源码的前提下实现几乎所有自定义导出需求。下次你需要定制 HTML 输出时，不妨先看看能不能用这些机制解决，而不是写后处理脚本。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+原文：<a href="https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/">https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-24</span>
+    <span class="post-info">2026-04-24</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/org-mode">Org-mode</a> : <a href="../../../../../tags/org-export">org-export</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/html">HTML</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5sxnvrt2b4renhybvktad5tjzd &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

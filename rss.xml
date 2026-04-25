@@ -4,10 +4,1738 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Thu, 23 Apr 2026 23:34:58 UTC</pubDate>
-    <lastBuildDate>Thu, 23 Apr 2026 23:34:58 UTC</lastBuildDate>
+    <pubDate>Sat, 25 Apr 2026 04:29:12 UTC</pubDate>
+    <lastBuildDate>Sat, 25 Apr 2026 04:29:12 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>用 Org Babel 写 Literate 博文：扩展执行 + 定制导出</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/用-org-babel-写-literate-博文：扩展执行-+-定制导出/index.html</link>
+<description>Literate programming 的核心想法是：把代码和解释它的散文交织在一起，代码可以被实际执行，输出直接嵌入文档。Org mode 的 Babel 就是做这件事的工具——它比 Jupyter Notebook 更灵活（支持任何有 REPL 的语言），但开箱即用时缺少两个东西：REPL 风格的交互式代码块（逐行执行、交替显示输入和输出），以及把 Org 文档导出为静态站生成器能用的 Markdown（带 YAML frontmatter）。这篇文章分两部分解决这两个问题：教你为任意语言写一个自定义 Babel 执行函数，和派生一个自定义 Org 导出后端。
+
+* 第一部分：为任意语言扩展 Babel
+
+Babel 的执行机制很简单：只要定义一个名为 =org-babel-execute:lang= 的函数（把 =lang= 换成你的语言名），Babel 就知道怎么执行该语言的代码块。这个函数接收两个参数——代码体（body）和参数列表（params），返回执行结果的字符串。Babel 负责剩下的所有事情：解析代码块、收集参数、显示结果。
+
+** 最简执行函数
+
+假设你想为一种叫 =mylang= 的语言添加 Babel 支持。最简单的实现是调用外部命令执行代码：
+
+#+begin_src emacs-lisp
+(defun org-babel-execute:mylang (body params)
+  &quot;Execute a block of MyLang code with org-babel.&quot;
+  (shell-command-to-string
+   (format &quot;mylang -e %s&quot; (shell-quote-argument body))))
+#+end_src
+
+定义了这个函数之后，Org 文件里的 =#+begin_src mylang= 代码块就能用 =C-c C-c= 执行了。
+
+有一个容易踩的坑：Babel 默认把代码包在一个函数里、调用函数、显示 *返回值* 而不是输出结果。如果你的代码用了 =print= 之类的 I/O 操作，默认行为不会显示 print 的内容。要改为显示输出结果，在src block 加上 =:results output= 参数后。
+
+** REPL 风格的代码块
+
+基本的执行函数把整个代码块当做一个单元执行。但写 literate 博文时，你通常想要 REPL 风格的效果：逐行执行代码，每一行下面紧接着显示输出。
+
+实现方式是定义一个新的结果类型 =repl= 。当代码块加上 =:results repl= 时，逐行发送代码到 REPL 进程，收集每行的输出，然后把输入和输出交替排列：
+
+#+begin_src emacs-lisp
+(defun org-babel-mylang--execute-repl (body)
+  &quot;Execute BODY line-by-line, returning input/output pairs.&quot;
+  (let ((lines (split-string body &quot;\n&quot; t &quot;[ \t]+&quot;)))
+    (mapconcat
+     (lambda (line)
+       (format &quot;   %s\n%s&quot; line (mylang-evaluate-command line)))
+     lines
+     &quot;\n&quot;)))
+#+end_src
+
+然后在主执行函数里根据参数进行分支判断：遇到 =:results repl= 就走逐行执行，否则走整块执行。
+
+#+begin_src emacs-lisp
+(defun org-babel-execute:mylang (body params)
+  &quot;Execute a block of MyLang code with org-babel.
+When PARAMS includes `:results repl&#39;, evaluate each line separately
+and return all results interleaved.&quot;
+  (let ((result-params (cdr (assq :results params))))
+    (if (and result-params (string-match-p &quot;\\brepl\\b&quot; result-params))
+        (org-babel-mylang--execute-repl body)
+      (mylang-evaluate-command body))))
+#+end_src
+
+使用时代码块头部写成这样：
+
+#+begin_src org
+,#+begin_src mylang :results repl :exports results :wrap SRC mylang
+  x = 1 + 2
+  x * 4
+,#+end_src
+#+end_src
+
+三个参数的作用： =:results repl= 触发逐行执行， =:exports results= 只导出结果不导出源码， =:wrap SRC mylang= 把结果包在一个 =mylang= 代码块里——这样导出到 Markdown 后语法高亮仍然生效。执行后得到：
+
+#+begin_src mylang
+   x = 1 + 2
+3
+   x * 4
+12
+#+end_src
+
+** 批量执行
+
+写完博文后，你可能想一次性执行所有代码块来更新结果。下面这个函数执行文件中所有 =mylang= 代码块，但跳过已经是结果块的一部分的代码块（避免重复执行）：
+
+#+begin_src emacs-lisp
+(defun org-babel-mylang-execute-all ()
+  &quot;Execute all MyLang src blocks not part of a #+RESULTS block.&quot;
+  (interactive)
+  (org-babel-map-src-blocks nil
+    (when (and (string-equal &quot;mylang&quot;
+                             (car (org-babel-get-src-block-info &#39;no-eval)))
+               (not (progn (goto-char beg-block)
+                           (forward-line -1)
+                           (looking-at-p &quot;#\\+RESULTS:&quot;))))
+      (goto-char beg-block)
+      (org-babel-execute-src-block))))
+#+end_src
+
+=org-babel-map-src-blocks= 遍历文件中所有代码块， =beg-block= 是每个块的起始位置。通过向前看一行检查是否在 =#+RESULTS:= 下面，跳过那些只是结果的块。
+
+* 第二部分：派生自定义 Org 导出后端
+
+写完 literate 博文后，需要导出为静态站生成器能用的格式。如果你的站点用 Hakyll、Jekyll、Hugo 等工具，你需要带 YAML frontmatter 的 Markdown。默认的 =ox-gfm= 不支持自定义 frontmatter 字段，也不把脚注转为 GFM 格式。但可以通过派生后端来添加这些功能。
+
+** 派生后端的基本方法
+
+Org 的导出系统支持从已有后端派生新后端。 =ox-gfm= 继承自 =ox-md= ， =ox-md= 又继承自 =ox-html= 。你可以在任何一层上继续派生，只覆盖需要的部分：
+
+#+begin_src emacs-lisp
+(org-export-define-derived-backend &#39;my-gfm &#39;gfm
+  :options-alist
+  &#39;((:tags &quot;TAGS&quot; nil nil split)
+    (:last-modified &quot;LAST-MODIFIED&quot; nil nil)
+    (:og-description &quot;OG-DESCRIPTION&quot; nil nil))
+  :translate-alist
+  &#39;((template . my-gfm-template)
+    (footnote-reference . my-gfm-footnote-reference)))
+#+end_src
+
+两个关键参数：
+
+- =:options-alist= 定义新的导出选项。每个元素是 =(ALIST-KEY KEYWORD OPTION DEFAULT BEHAVIOR)= ，其中 =ALIST-KEY= 是导出信息 plist 中的键， =KEYWORD= 是 Org 文件里写的 =#+KEYWORD= 名， =BEHAVIOR= 告诉 Org 如何处理多个值—— =split= 会把空格分隔的字符串拆成列表（适用于 tags）
+- =:translate-alist= 把导出元素挂钩到自定义翻译函数。 =template= 控制整个文档的输出（适合插入 frontmatter）， =footnote-reference= 控制脚注引用的格式
+
+** 生成 YAML Frontmatter
+
+=template= 翻译函数接收最终转换后的文档内容（contents），是插入 preamble 的标准位置。下面这个函数从导出信息中提取 =title= 、 =date= 、 =tags= 等字段，组装成 YAML 格式：
+
+#+begin_src emacs-lisp
+(defun my-gfm--build-yaml (info)
+  &quot;Build YAML front matter string from INFO plist.&quot;
+  (when-let*
+      ((lines
+        (seq-keep
+         (lambda (f)
+           (when-let*
+               ((field (plist-get info f))
+                (val (pcase f
+                       (:title          #&#39;car)
+                       (:date           #&#39;car)
+                       (:tags           (lambda (x)
+                                          (mapconcat #&#39;identity x &quot; &quot;)))
+                       (:last-modified  #&#39;identity)
+                       (:og-description #&#39;identity))))
+             (format &quot;%s: %s&quot;
+                     (string-trim (pp-to-string f) &quot;:&quot; &quot;\n&quot;)
+                     (funcall val field))))
+         &#39;(:title :date :last-modified :tags :og-description))))
+    (concat &quot;---\n&quot; (mapconcat #&#39;identity lines &quot;\n&quot;) &quot;\n---\n\n&quot;)))
+
+(defun my-gfm-template (contents info)
+  &quot;Return complete document string after GFM conversion.
+CONTENTS is the transcoded contents string.
+INFO is a plist holding export options.&quot;
+  (concat (my-gfm--build-yaml info) contents))
+#+end_src
+
+=my-gfm--build-yaml= 的逻辑是：遍历字段名列表，对每个字段从 =info= plist 中取值，用 =pcase= 根据字段类型选择取值函数（ =:title= 和 =:date= 取 =car= ， =:tags= 把列表拼成空格分隔的字符串），格式化为 =key: value= 行，最后用 =---= 包裹成 YAML 块。 =seq-keep= 自动跳过值为 nil 的字段，所以只有 Org 文件中实际写了的字段才会出现在 frontmatter 里。
+
+** 处理脚注
+
+默认的 =ox-gfm= 会把 Org 脚注引用（ =[fn:1]= ）直接导出为 HTML（ =&lt;sup&gt;&lt;a ...&gt;= ），这不是 GFM 格式。需要覆盖 =footnote-reference= 翻译函数，改为 GFM 的脚注语法 =[^n]= ：
+
+#+begin_src emacs-lisp
+(defun my-gfm-footnote-reference (footnote-reference _contents info)
+  &quot;Transcode a FOOTNOTE-REFERENCE element into GFM format.&quot;
+  (format &quot;[^%d]&quot;
+          (org-export-get-footnote-number footnote-reference info)))
+#+end_src
+
+脚注内容部分，去掉默认的&quot;Footnotes&quot;标题（静态站生成器会自己处理），直接输出定义列表：
+
+#+begin_src emacs-lisp
+(defun my-gfm-footnote-section (info)
+  &quot;Format the footnote section without header.&quot;
+  (and-let* ((fn-alist (org-export-collect-footnote-definitions info)))
+    (format &quot;%s\n&quot;
+            (mapconcat
+             (pcase-lambda (`(,n ,_type ,def))
+               (format &quot;[^%d]: %s&quot;
+                       n
+                       (org-trim (org-export-data def info))))
+             fn-alist
+             &quot;\n\n&quot;))))
+#+end_src
+
+=org-export-collect-footnote-definitions= 收集所有脚注定义， =org-export-data= 递归导出脚注内容。每个脚注格式化为 =[^n]: content= ，放在文档末尾。
+
+* 合在一起
+
+完整的工作流程是：
+
+1. 在 Org 文件中写代码块和散文，用 =:results repl= 获得交互式输出
+2. =C-c C-c= 执行单个块，或调用批量执行函数更新所有块
+3. 导出为 GFM，自动生成 YAML frontmatter，脚注转为 GFM 格式
+4. 静态站生成器接过 Markdown，继续后续处理
+
+两个扩展各自独立：你可以只用 REPL 风格的 Babel 块而不定制导出，也可以只定制导出后端而不用 REPL 块。但合在一起，就能在 Org mode 的舒适环境中写完整的 literate 博文，一键导出为静态站可用的 Markdown。
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/用-org-babel-写-literate-博文：扩展执行-+-定制导出/index.html</guid>
+</item>
+<item>
+<title>proced：Emacs 内置的进程查看器</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/proced：emacs-内置的进程查看器/index.html</link>
+<description>=proced= 是 Emacs 内置的进程查看器，相当于一个可以直接在 Emacs 里操作的彩色版 =ps= 。它支持自动刷新、树状视图、按列排序、发送信号，还可以通过 =proced-custom-attributes= 扩展自定义列。本文介绍 =proced= 的基本用法和常用配置。
+
+* 启动
+
+=M-x proced= 即可打开。 =proced= 会列出当前系统的进程，默认只显示当前用户的进程（ =proced-filter= 默认值为 =user= ）。
+
+* 常用按键
+
+=proced= buffer 中的按键分为几类：
+
+** 导航
+
+| 按键 | 功能 |
+|------+------|
+| =n= / =p= | 上下移动 |
+| =SPC= | 移动到下一行 |
+
+** 标记
+
+| 按键 | 功能 |
+|------+------|
+| =m= / =d= | 标记当前行（ =d= 是&quot;标记准备操作&quot;的习惯按键） |
+| =u= | 取消当前行标记 |
+| =U= | 取消所有标记 |
+| =M= | 标记所有行 |
+| =t= | 反转标记 |
+| =C= | 标记子进程 |
+| =P= | 标记父进程 |
+
+** 视图控制
+
+| 按键 | 功能 |
+|------+------|
+| =f= | 切换过滤器（user / user-running / all / all-running / emacs） |
+| =F= | 切换显示格式（short / medium / long / verbose） |
+| =T= | 切换树状视图 |
+| =o= | 隐藏/显示被标记的进程 |
+| =RET= | 在当前列上细化筛选 |
+
+** 操作
+
+| 按键 | 功能 |
+|------+------|
+| =k= / =x= | 向标记的进程发送信号 |
+| =r= | 修改进程的 nice 值 |
+
+** 其他
+
+| 按键 | 功能 |
+|------+------|
+| =?= / =h= | 查看帮助 |
+
+* 发送信号
+
+按 =k= 或 =x= 会弹出一个信号列表，让你选择要发送的信号。你可以直接输入信号名（如 =SIGTERM= 、 =SIGKILL= ），也可以从列表中选择。如果事先用 =m= 标记了多个进程，信号会发给所有被标记的进程。
+
+* 排序
+
+在 =proced= 中，用鼠标点击列头就能按该列排序。再次点击同一列头会反转排序顺序。
+
+把光标移到某个属性值上按 =RET= （ =proced-refine= ）则会根据当前值细化筛选——比如把光标放在某个进程的 USER 列上按 =RET= ，可以只显示同一用户的进程。
+
+* 常用配置
+
+以下是一套推荐的 =proced= 配置：
+
+#+begin_src emacs-lisp
+(use-package proced
+  :ensure nil
+  :defer t
+  :custom
+  (proced-enable-color-flag t)      ;; 启用颜色
+  (proced-tree-flag t)              ;; 默认启用树状视图
+  (proced-auto-update-flag &#39;visible) ;; 只在 buffer 可见时自动刷新
+  (proced-auto-update-interval 1)    ;; 每秒刷新
+  (proced-descend t)                 ;; 树状视图降序排列
+  (proced-format &#39;medium)            ;; 中等详细度的显示格式
+  (proced-filter &#39;user))             ;; 只显示当前用户的进程
+#+end_src
+
+几个关键变量说明：
+
+- =proced-auto-update-flag= ：设为 =&#39;visible= 表示只在 buffer 可见时刷新，比 =t= 更省资源。 =proced= 会按 =proced-auto-update-interval= 指定的秒数定期重新读取进程列表。
+- =proced-format= ：控制显示哪些列。 =short= 最精简， =verbose= 最详细。运行时可以用 =F= 键切换，不需要重启。
+- =proced-filter= ：控制显示哪些进程。 =user= 只显示当前用户的， =all= 显示所有， =emacs= 只显示 Emacs 相关进程。运行时用 =f= 键切换。
+- =proced-tree-flag= ： =t= 启用树状视图，可以直观看到进程的父子关系。
+
+* 自定义扩展
+
+=proced= 支持通过 =proced-custom-attributes= 添加自定义列。这个功能在某些场景下很有用——比如 macOS 上 =proced= 默认缺少 CPU 和内存列，就可以通过这个机制补上。具体的实现思路见[[file:读：让proced在macOS上显示CPU和内存.org][上一篇博文]]。
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/proced：emacs-内置的进程查看器/index.html</guid>
+</item>
+<item>
+<title>从 proced 定制中学到的 Elisp 模式</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/从-proced-定制中学到的-elisp-模式/index.html</link>
+<description>Rahul Juliato 的 [[https://rahuljuliato.com/posts/proced-macos][Getting Emacs proced.el to Show CPU and Memory on macOS]] 表面上是解决 macOS 上 =proced= 缺少 CPU/Mem 列的问题，实际上是一份很好的 Elisp 编程教学。本文从中提取六个可复用的编程模式——它们跟 =proced= 和 macOS 无关，你在任何需要异步调用外部命令、缓存数据、扩展第三方包的场景都能用。
+
+* 模式一：异步进程 + sentinel
+
+Elisp 中执行外部命令有两种方式： =call-process= （同步，会阻塞 Emacs ）和 =make-process= （异步，不阻塞）。凡是执行时间不确定的命令，都应该用 =make-process= 。
+
+#+begin_src emacs-lisp
+(make-process
+ :name &quot;my-process&quot;
+ :buffer (generate-new-buffer &quot; *my-process-temp*&quot;)
+ :command &#39;(&quot;env&quot; &quot;LC_ALL=C&quot; &quot;ps&quot; &quot;-eo&quot; &quot;pid=,%cpu=,%mem=&quot;)
+ :noquery t
+ :sentinel
+ (lambda (proc _event)
+   (when (eq (process-status proc) &#39;exit)
+     (with-current-buffer (process-buffer proc)
+       (goto-char (point-min))
+       ;; 在这里处理输出
+       (buffer-string))
+     (kill-buffer (process-buffer proc)))))
+#+end_src
+
+关键设计：
+
+- =sentinel= 是一个回调函数，在进程状态变化时触发。通常只关心 =&#39;exit= 状态——此时 buffer 中已有完整输出。
+- =:noquery t= 防止 Emacs 退出时弹出&quot;还有进程在运行&quot;的确认框。
+- =generate-new-buffer= 创建临时 buffer 承接输出，名称以空格开头（ =&quot; &quot;= ）的 buffer 在 =list-buffers= 中默认隐藏。
+- 处理完后 =kill-buffer= 清理临时 buffer ，避免 buffer 堆积。
+
+* 模式二：hash table 做进程级缓存
+
+当你需要频繁按 key 查找数据时，hash table 比 alist 快得多（ O(1) vs O(n) ）。
+
+#+begin_src emacs-lisp
+;; 创建
+(defvar my-cache (make-hash-table))
+
+;; 写入（用 cons 存两个值，car 和 cdr 分别取）
+(puthash 1234 (cons 2.5 1.3) my-cache)
+(puthash 5678 (cons 0.1 0.5) my-cache)
+
+;; 读取
+(car (gethash 1234 my-cache))   ;; =&gt; 2.5
+(cdr (gethash 1234 my-cache))   ;; =&gt; 1.3
+(gethash 9999 my-cache)          ;; =&gt; nil
+#+end_src
+
+#+begin_example
+2.5
+1.3
+nil
+#+end_example
+
+为什么用 cons 存值？因为 =car= 和 =cdr= 是 Elisp 中最快的取值操作之一，比 =plist-get= 或 =alist-get= 快。当你只需要存两个值时，cons 是最佳选择。
+
+刷新时不要原地修改 hash table ，而是创建一个新的再替换——这样即使有并发的读操作也不会读到半更新的状态：
+
+#+begin_src emacs-lisp
+(defun my-refresh-cache ()
+  (let ((new-cache (make-hash-table)))
+    ;; 填充 new-cache ...
+    (setq my-cache new-cache)))  ;; 原子替换
+#+end_src
+
+* 模式三： =rx= 宏写可读正则
+
+Elisp 的 =rx= 宏用 S-expression 写正则，比字符串正则更容易读和维护。对比一下：
+
+#+begin_src emacs-lisp
+;; 字符串正则：不直观，需要脑内解析
+&quot;^[[:blank:]]*\\([[:digit:]]+\\)[[:blank:]]+\\([.[:digit:]]+\\)&quot;
+
+;; rx 宏：自解释
+(rx (* blank)
+    (group (+ digit))
+    (+ blank)
+    (group (+ (any digit ?.))))
+#+end_src
+
+=rx= 编译出来的结果跟手写字符串正则完全一样：
+
+#+begin_src emacs-lisp
+(rx (* blank)
+    (group (+ digit))
+    (+ blank)
+    (group (+ (any digit ?.)))
+    (+ blank)
+    (group (+ (any digit ?.))))
+#+end_src
+
+#+begin_example
+[[:blank:]]*\([[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)
+#+end_example
+
+常用 =rx= 组合：
+
+| =rx= 写法 | 匹配内容 |
+|-----------+----------|
+| =(+ digit)= | 一个或多个数字 |
+| =(* blank)= | 零或多个空白 |
+| =(any digit ?.)= | 数字或小数点 |
+| =(group ...)= | 捕获组，对应 =match-string= |
+
+* 模式四：timer 生命周期管理
+
+Emacs 的 =run-with-timer= 可以周期性执行任务，但如果不在合适的时机取消，timer 会一直运行下去（即使对应的 buffer 已经关了）。正确的做法是在 mode hook 里启动，在 =kill-buffer-hook= 里取消：
+
+#+begin_src emacs-lisp
+(defvar my-timer nil)
+
+;; 在 mode hook 中启动
+(add-hook &#39;my-mode-hook
+  (lambda ()
+    (setq my-timer
+          (run-with-timer 0 2 #&#39;my-refresh-function))))
+
+;; 在 kill-buffer-hook 中清理
+(add-hook &#39;kill-buffer-hook
+  (lambda ()
+    (when (and (derived-mode-p &#39;my-mode)
+               (timerp my-timer))
+      (cancel-timer my-timer)
+      (setq my-timer nil))))
+#+end_src
+
+三个要点：
+
+- =run-with-timer= 的参数是 =(延迟秒数 重复间隔 函数)= ，第一个参数 =0= 表示立即执行第一次。
+- =cancel-timer= 取消后要把变量设为 =nil= ，避免悬空引用。
+- guard 条件 =(derived-mode-p &#39;my-mode)= 确保 =kill-buffer-hook= 不会在其他类型的 buffer 中误触发。 =kill-buffer-hook= 是全局的，每次任何 buffer 关闭都会触发，所以必须有 mode 判断。
+
+* 模式五： =file-remote-p= 做 TRAMP 感知
+
+当你的代码依赖本地系统状态（比如执行本地 =ps= ），必须考虑 buffer 可能在 TRAMP 远程主机上运行的情况。 =file-remote-p= 检测 =default-directory= 是否指向远程：
+
+#+begin_src emacs-lisp
+(unless (file-remote-p default-directory)
+  ;; 只在本地执行
+  (my-run-local-command))
+#+end_src
+
+为什么这很重要？如果你不加检测，可能会用本地 =ps= 的输出作为参数在远程主机上执行命令。轻则数据显示错误，重则本地 PID 跟远程 PID 碰撞导致误操作。
+
+* 模式六：通过 custom attributes 扩展第三方包
+
+很多 Emacs 包提供 =*-custom-attributes= 或类似的扩展点，让你不用修改包的源码就能添加功能。 =proced= 的 =proced-custom-attributes= 就是一个例子：它接受一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 =(keyword . value)= 就能添加新列。
+
+#+begin_src emacs-lisp
+(setq proced-custom-attributes
+  (list
+   (lambda (attrs)
+     (when-let* ((pid (cdr (assq &#39;pid attrs)))
+                 (v (my-lookup pid)))
+       (cons &#39;my-attribute v)))))
+#+end_src
+
+这个模式不限于 =proced= 。当你需要给某个包添加自定义字段时，先看看它有没有类似的扩展点——很多设计良好的包都会提供。
+
+* 小结
+
+| 模式 | 一句话 |
+|------+--------|
+| 异步进程 + sentinel | 用 =make-process= 代替 =call-process= ，在 sentinel 中处理输出 |
+| hash table 缓存 | 高频查找用 hash table ，刷新时整体替换而非原地修改 |
+| =rx= 宏 | 用 S-expression 写正则，比字符串更可读更易维护 |
+| timer 生命周期 | hook 启动、hook 清理、 =derived-mode-p= guard 三件套 |
+| =file-remote-p= | 任何依赖本地系统状态的代码都要加 TRAMP 检测 |
+| custom attributes | 用 lambda 返回 =(keyword . value)= 扩展第三方包的显示 |
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/从-proced-定制中学到的-elisp-模式/index.html</guid>
+</item>
+<item>
+<title>读：让 Emacs proced 在 macOS 上显示 CPU 和内存</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/读：让-emacs-proced-在-macos-上显示-cpu-和内存/index.html</link>
+<description>本文是对 Rahul Juliato 的文章 [[https://rahuljuliato.com/posts/proced-macos][Getting Emacs proced.el to Show CPU and Memory on macOS]] 的解读。原文解决了 macOS 上 Emacs =proced= 缺少 CPU 和内存列的问题，同时是一份很好的 Elisp 编程教学——涉及异步进程、hash table 缓存、自定义属性扩展等多个实用技巧。
+
+* 问题是怎样的
+
+Emacs 内置的 =proced= 是一个进程查看器，相当于彩色版的 =ps= 。在 Linux 上，它默认就能显示每个进程的 CPU 和内存占用。但在 macOS 上， =%CPU= 和 =%Mem= 两列是空的。
+
+原因在 Emacs 的 C 层： =proced= 通过 =system_process_attributes= 函数（定义在 =src/sysdep.c= 中）获取每个进程的属性列表。在 Linux 上，这个函数从 =/proc/*/stat= 读取 CPU 和内存数据；在 BSD 和 Windows 上，它通过系统 API 计算。但在 Darwin（macOS 内核）上，这个函数虽然调用了 =proc_pidinfo= 来获取虚拟内存和常驻内存大小，却从未填充 =pcpu= 和 =pmem= 两个字段——数据明明可以通过 =proc_pid_rusage= 、 =task_info= 和 =sysctl hw.memsize= 拿到，只是没人把线接上。
+
+Rahul Juliato 向上游提了一个 patch（[[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=80898][debbugs #80898]]），但在 patch 合并之前，他用纯 Elisp 给出了一个 workaround。
+
+* 解决思路
+
+整体方案很清晰：
+
+1. 用 =make-process= 异步运行 ~ps -axo pid=,%cpu=,%mem=~ 获取进程信息
+2. 把输出解析后存入 hash table（以 PID 为 key ）
+3. 通过 =proced-custom-attributes= 把 =pcpu= 和 =pmem= 两个属性注入 =proced=
+4. 用 timer 每 2 秒刷新一次 hash table
+
+* 异步运行 ps 并解析输出
+
+原文用 =(when (eq system-type &#39;darwin))= 把所有代码包在一起，确保只在 macOS 上执行。下面的代码片段省略了这个外层 guard ，实际使用时应当加上。
+
+核心是用 =make-process= 异步执行 =ps= ：
+
+#+begin_src emacs-lisp
+(defvar emacs-solo--proced-ps-cache (make-hash-table))
+(defvar emacs-solo--proced-ps-timer nil)
+
+(defun emacs-solo--proced-ps-do-refresh ()
+  (make-process
+   :name &quot;proced-ps-refresh&quot;
+   :buffer (generate-new-buffer &quot; *proced-ps-temp*&quot;)
+   :command &#39;(&quot;env&quot; &quot;LC_ALL=C&quot; &quot;ps&quot; &quot;-axo&quot; &quot;pid=,%cpu=,%mem=&quot;)
+   :noquery t
+   :sentinel
+   (lambda (proc _event)
+     (when (eq (process-status proc) &#39;exit)
+       (let ((new-cache (make-hash-table)))
+         (with-current-buffer (process-buffer proc)
+           (goto-char (point-min))
+           (while (not (eobp))
+             (when (looking-at (rx (* blank)
+                                   (group (+ digit))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))
+                                   (+ blank)
+                                   (group (+ (any digit ?.)))))
+               (puthash (string-to-number (match-string 1))
+                        (cons (string-to-number (match-string 2))
+                              (string-to-number (match-string 3)))
+                        new-cache))
+             (forward-line 1)))
+         (kill-buffer (process-buffer proc))
+         (setq emacs-solo--proced-ps-cache new-cache))))))
+#+end_src
+
+几个设计要点：
+
+- =LC_ALL=C= 强制 =ps= 使用固定的输出格式，不受用户 locale 影响。不同 locale 下数字的小数点可能变成逗号，解析就会出错。
+- sentinel 只在进程退出时触发（ =(eq (process-status proc) &#39;exit)= ），此时 buffer 中已有完整输出。
+- =rx= 宏让正则表达式更可读：三个分组分别匹配 PID（整数）、 =%CPU=（浮点数）、 =%Mem=（浮点数）。
+- =puthash= 以 PID 为 key ，以 =(%CPU . %Mem)= 这个 cons 为 value 。用 cons 而不是 list ，是因为 =car= 和 =cdr= 取值最快。
+
+为什么用 hash table 而不是 alist ？因为 =proced= 会为每个进程调用自定义属性函数，hash table 的查找时间是 O(1) ，即使有几百个进程也很快。
+
+* 查询函数
+
+简单的 wrapper ，从 hash table 中取值：
+
+#+begin_src emacs-lisp
+(defun emacs-solo--proced-pcpu (pid)
+  (car (gethash pid emacs-solo--proced-ps-cache)))
+
+(defun emacs-solo--proced-pmem (pid)
+  (cdr (gethash pid emacs-solo--proced-ps-cache)))
+#+end_src
+
+=car= 取 CPU ， =cdr= 取内存——这就是用 cons 存储的好处。
+
+* 注入到 proced
+
+这是把一切连起来的关键。 =proced-custom-attributes= 是一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 =(keyword . value)= 形式的 cons ， =proced= 会把它当作新列显示：
+
+#+begin_src emacs-lisp
+(add-hook &#39;proced-mode-hook
+  (lambda ()
+    (unless (file-remote-p default-directory)
+      (setq emacs-solo--proced-ps-timer
+            (run-with-timer 0 2 #&#39;emacs-solo--proced-ps-do-refresh)))))
+
+(setq proced-custom-attributes
+  (list
+   (lambda (attrs)
+     (unless (file-remote-p default-directory)
+       (when-let* ((pid (cdr (assq &#39;pid attrs)))
+                   (v (emacs-solo--proced-pcpu pid)))
+         (cons &#39;pcpu v))))
+   (lambda (attrs)
+     (unless (file-remote-p default-directory)
+       (when-let* ((pid (cdr (assq &#39;pid attrs)))
+                   (v (emacs-solo--proced-pmem pid)))
+         (cons &#39;pmem v))))))
+#+end_src
+
+两个 lambda ，一个管 CPU 一个管内存。每个 lambda 做三件事：
+
+1. 用 =file-remote-p= 检测当前 buffer 是否在 TRAMP 远程主机上。如果是，本地的 =ps= 数据没有意义，而且本地 PID 可能跟远程 PID 冲突。
+2. 从 =attrs= 中提取 PID ，在 hash table 中查找值。
+3. 返回 =(pcpu . value)= 或 =(pmem . value)= 。
+
+timer 放在 =proced-mode-hook= 里启动，因为只有 =proced= buffer 存在时才需要刷新数据。
+
+* 清理 timer
+
+=proced= buffer 关闭时取消 timer ，避免悬空的定时器：
+
+#+begin_src emacs-lisp
+(add-hook &#39;kill-buffer-hook
+  (lambda ()
+    (when (and (derived-mode-p &#39;proced-mode)
+               (timerp emacs-solo--proced-ps-timer))
+      (cancel-timer emacs-solo--proced-ps-timer)
+      (setq emacs-solo--proced-ps-timer nil))))
+#+end_src
+
+guard 条件 =(derived-mode-p &#39;proced-mode)= 确保 =kill-buffer-hook= 不会在其他 buffer 关闭时误触发。
+
+* 学到了什么
+
+| 技巧 | 说明 |
+|------+------|
+| =proced-custom-attributes= | 接受 lambda 列表，每个 lambda 接收行属性 alist ，返回 =(keyword . value)= 即可添加新列 |
+| =make-process= + sentinel | Elisp 中异步执行外部命令的标准方式。sentinel 在进程状态变化时触发，通常只关心 =&#39;exit= 状态 |
+| =run-with-timer= | 周期性执行任务。返回 timer 对象，可以用 =cancel-timer= 取消。比 =run-at-time= 更方便 |
+| =file-remote-p= | 检测当前 buffer 是否在 TRAMP 远程主机上。任何涉及本地系统状态的 hack 都应该加上这个 guard |
+| =rx= 宏 | 比 =regexp= 字符串更可读的正则写法，支持 S-expression 风格组合 |
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/读：让-emacs-proced-在-macos-上显示-cpu-和内存/index.html</guid>
+</item>
+<item>
+<title>异步编程的函数着色税</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</link>
+<description>异步编程经历了三波演进：回调 → Promise → async/await，每波都让写异步代码更顺手。但 async/await 引入了一个前两波都没有的结构性问题——函数着色（function coloring）：一个函数是否 async 不再只取决于业务逻辑，还取决于它内部做了什么类型的 I/O。这个&quot;颜色&quot;会沿着调用链传染，从函数蔓延到库，从库蔓延到生态。这篇文章要回答两个问题：函数着色具体是怎么蔓延的，以及哪些语言选择了不同的路。
+
+* 红蓝函数的比喻
+
+2015 年，Bob Nystrom 发了一篇文章 &quot;What Color is Your Function?&quot;，用一个思想实验描述了 async/await 的核心约束：
+
+想象一门语言里每个函数都有颜色——红色或蓝色。规则是：红色函数可以调用蓝色函数，但蓝色函数不能直接调用红色函数。如果想调用，蓝色函数必须把自己也变成红色。而一旦变红，所有调用它的函数也必须跟着变红，沿着调用链一路传染到程序入口。
+
+对应到实际编程中： =async= 函数是红色，普通（同步）函数是蓝色。从普通函数里调用 =async= 函数，要么用 =await= （这要求调用者本身也是 =async= ），要么阻塞线程（违背了用 async 的初衷）。没有第三种选择。
+
+下面用一个具体的 JavaScript 例子展示这个传染过程：
+
+#+begin_src javascript
+// 原本是一个同步函数，只做纯计算
+function formatUserName(user) {
+  return `${user.firstName} ${user.lastName}`;
+}
+
+// 需求变了：格式化之前需要从数据库查用户信息
+// 加了一行 I/O 调用，函数就必须变成 async
+async function formatUserName(userId) {
+  const user = await db.getUser(userId);      // 新增这一行
+  return `${user.firstName} ${user.lastName}`; // 其余逻辑没变
+}
+
+// 调用 formatUserName 的函数也必须跟着变
+async function displayHeader(userId) {         // 被迫加 async
+  const name = await formatUserName(userId);   // 被迫加 await
+  console.log(`Hello, ${name}`);
+}
+
+// displayHeader 的调用者也跑不掉
+async function renderPage(userId) {            // 被迫加 async
+  await displayHeader(userId);                 // 被迫加 await
+  // ... 其他渲染逻辑
+}
+#+end_src
+
+一个函数加了一行数据库查询，三条调用链全部改了签名。这就是函数着色的传染性：你的函数签名不再只取决于&quot;做什么&quot;，还取决于&quot;内部怎么执行&quot;。
+
+* 三级蔓延
+
+函数着色不只是函数签名的问题。它在三个层面逐级放大。
+
+** 函数级：一行改动，全链重写
+
+上例已经展示了函数级的影响：给一个同步函数加上 =async= ，返回类型从值变成了 Promise，调用约定从直接调用变成了 =await= 。改动沿着调用图向上传播，直到遇到 =main= 函数或框架入口。在实践中，一个同步函数加一行数据库查询，可能需要改几十个文件。
+
+** 库级：作者被迫选边站
+
+函数着色到了库的层面，变成一个两难选择：写同步库，异步用户用不了；写异步库，同步用户要调用就必须引入一整套异步运行时——比如 Rust 的 Tokio 或 Python 的 asyncio 事件循环，原本简单的调用变成了先初始化运行时、再注册回调、再处理异常；两个都写，API 面积翻倍，测试矩阵翻倍，维护负担翻倍。
+
+Python 是最典型的例子： =requests= 库（同步）和 =aiohttp= 库（异步）是两个独立项目，由不同作者分别实现同一个功能——发 HTTP 请求。后来 =httpx= 出现，同时提供同步和异步接口。但这恰恰说明函数着色把事情搞复杂了： =httpx= 的&quot;统一&quot;是对分裂问题的补救，而不是分裂不存在。
+
+** 生态级：运行时分裂
+
+到了生态层面，函数着色直接导致运行时分裂。Rust 的异步生态围绕 Tokio、async-std、smol 三个互不兼容的运行时被割裂了。它们各自实现了 TCP 流、定时器等基础类型，一个为 Tokio 写的库没法直接在 async-std 上跑。流行的 HTTP 客户端 reqwest 直接绑定了 Tokio。
+
+这意味着库作者面临两难：选 Tokio，锁定用户选择；写运行时无关的抽象层，增加复杂度和性能开销。结果是生态围绕&quot;颜色&quot;割裂，而不是围绕功能分工。
+
+* 顺序陷阱：async/await 隐藏的并行机会
+
+函数着色之外，async/await 还有一个容易被忽视的副作用：它让异步代码看起来像同步代码，反而隐藏了并行机会。
+
+要理解这个陷阱，先要弄清 =await= 到底做了什么： =await= 不是&quot;发起异步操作然后立刻继续下一行&quot;，而是 *暂停当前函数的执行* ，等 Promise 完成后才继续往下跑。跟同步代码的区别在于：同步代码在等待 I/O 时线程被阻塞、什么也干不了； =await= 在暂停当前函数的同时 *释放线程* ，让线程去处理其他请求，等 I/O 完成后再回来继续执行。所以 async/await 的设计目的是：让异步代码 *读起来* 像同步代码（语法上顺序执行），但底层仍然是非阻塞的。
+
+#+begin_src javascript
+async function loadDashboard(userId) {
+  const user = await getUser(userId);
+  const orders = await getOrders(user.id);            // 等 100ms
+  const recommendations = await getRecommendations(user.id); // 再等 100ms
+  return { user, orders, recommendations };
+}
+#+end_src
+
+这段代码看起来清晰正确，但 =getOrders= 和 =getRecommendations= 之间没有依赖关系——推荐数据不需要等订单查完才能开始获取。然而 =await= 会暂停函数执行， =getRecommendations= 要等 =getOrders= 完成后才会开始——注意，不是&quot;线程在忙别的所以推荐查询没排上&quot;，而是这个函数被暂停了， =getRecommendations= 那一行代码根本还没执行到，连请求都还没发出去。两个本可以同时发起的 I/O 操作被强制串行了：串行耗时约 200ms（两个 100ms 的操作依次执行），而并行只需约 100ms（同时发起）。
+
+下面的脚本用模拟的异步函数实际演示了这个差距：
+
+#+begin_src javascript
+// 模拟异步 I/O 操作（每个耗时 100ms）
+function getUser(id) {
+  return new Promise(r =&gt; setTimeout(() =&gt; r({id, name: &#39;Alice&#39;}), 100));
+}
+
+function getOrders(userId) {
+  return new Promise(r =&gt; setTimeout(() =&gt; r([&#39;order1&#39;, &#39;order2&#39;]), 100));
+}
+
+function getRecommendations(userId) {
+  return new Promise(r =&gt; setTimeout(() =&gt; r([&#39;rec1&#39;, &#39;rec2&#39;]), 100));
+}
+
+// 顺序执行：getOrders 完成后才开始 getRecommendations
+async function loadSequential(userId) {
+  const start = Date.now();
+  const user = await getUser(userId);
+  const orders = await getOrders(user.id);
+  const recommendations = await getRecommendations(user.id);
+  console.log(`顺序执行耗时: ${Date.now() - start}ms`);
+  return { user, orders, recommendations };
+}
+
+// 并行执行：getOrders 和 getRecommendations 同时发起
+async function loadParallel(userId) {
+  const start = Date.now();
+  const user = await getUser(userId);
+  const [orders, recommendations] = await Promise.all([
+    getOrders(user.id),
+    getRecommendations(user.id)
+  ]);
+  console.log(`并行执行耗时: ${Date.now() - start}ms`);
+  return { user, orders, recommendations };
+}
+
+(async () =&gt; {
+  await loadSequential(1);
+  await loadParallel(1);
+})();
+#+end_src
+
+#+begin_example
+顺序执行耗时: 302ms
+并行执行耗时: 201ms
+#+end_example
+
+* 哪些语言选择了不同的路
+
+函数着色不是不可避免的。一些语言的设计者研究了 async/await 在其他生态中的代价后，选择了不同的方案。
+
+** Go：goroutine 回避着色
+
+Go 用 goroutine 回避了着色问题。goroutine 是 Go 运行时调度的轻量级线程，所有函数都是&quot;蓝色&quot;的——没有 =async= 关键字，没有颜色传染。调用 I/O 操作时，运行时自动把当前 goroutine 挂起，不需要函数签名做任何标记。代价是运行时更重（内置调度器和垃圾回收器），但换来的是零着色。
+
+** Java：虚拟线程消除着色
+
+Java 21 的 Project Loom 走了类似的路。虚拟线程（virtual threads）是 JVM 管理的轻量级线程，行为和普通线程完全一致——现有代码无需修改就能享受高并发。Loom 团队明确引用了函数着色问题作为他们想要避免的东西。
+
+** Zig：从语言关键字退格为库函数
+
+Zig 的做法更激进：它曾经有 =async= / =await= 关键字，后来在编译器层面直接移除，改为让 I/O 操作接受一个 =Io= 接口参数。运行时（线程池、事件循环、用户自定义）来实现这个接口。函数签名不因调度方式而改变， =async= 和 =await= 从语言关键字变成了库函数。不过也有人认为 =Io= 参数本身就是另一种形式的着色。
+
+** Clojure：channel 作为统一接口
+
+Clojure 的 core.async 库用了另一种方式回避着色。它的核心抽象是 channel（通道），函数返回 channel 而不是 Promise 或值。调用者自行决定怎么消费这个 channel：同步调用者用 =&lt;!!= 阻塞线程取值，异步调用者在 =go= 块里用 =&lt;=!= 暂停状态机取值。
+
+#+begin_src clojure
+;; 函数返回 channel，不区分 sync/async
+(defn fetch-user [id]
+  (let [ch (chan)]
+    (thread                              ;; 在独立线程中执行 I/O
+      (&gt;!! ch {:id id :name &quot;Alice&quot;}))   ;; 结果放入 channel
+    ch))                                 ;; 返回 channel
+
+;; 同步调用者：阻塞等待结果
+(let [user (&lt;!! (fetch-user 1))]
+  (println user))
+
+;; 异步调用者：在 go 块中非阻塞等待
+(go
+  (let [user (&lt;! (fetch-user 1))]
+    (println user)))
+#+end_src
+
+=fetch-user= 的签名不包含任何颜色标记——它只返回一个 channel。同步和异步调用者用各自的取值方式消费同一个 channel，函数本身不需要改变。Clojure 把&quot;怎么执行&quot;的决定权交给了调用者，而不是强制编码在函数签名里。
+
+** Elisp：单线程回避着色
+
+Elisp 从未引入 async/await。Emacs 是单线程运行的，异步操作通过回调（ =make-process= 、 =make-network-process= ）或子进程实现。所有函数都是&quot;蓝色&quot;的，不存在着色问题。代价是 Emacs 主线程内部无法真正并行处理 I/O（子进程可以并行，但 Elisp 代码本身只能串行执行）。
+
+这些方案的共同思路是：不让&quot;怎么执行&quot;的细节泄漏到&quot;做什么&quot;的接口里。函数签名应该表达业务意图，而不是执行策略。
+
+* 着色税的本质
+
+函数着色的核心矛盾是：函数签名不应该取决于内部用了什么类型的 I/O，但 async/await 恰恰把这个实现细节变成了接口的一部分。
+
+从函数级（一行改动导致全链重写）到库级（被迫维护同步和异步两套 API），再到生态级（运行时碎片化），每一层都在支付着色税。这不是工程失误——回调、Promise、async/await 每一步都在解决真实问题。但从 2012 年 C# 5.0 引入 async/await 算起，十四年过去了，累积的代价已经很大：维护两套 API、处理运行时兼容性、在顺序语法中寻找并行机会、应对全新的死锁类型（Rust 生态中出现了一种特有的死锁模式：一个 future 持有锁后停止被轮询，另一个 future 试图获取同一把锁，诊断这种问题需要 core dump 和反汇编）。
+
+Go、Java、Zig、Clojure 的探索表明，函数着色不是异步的固有代价，而是一种特定实现的代价。问题是：你愿不愿意为更轻的运行时承受更重的着色税？
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</guid>
+</item>
+<item>
+<title>链式调用的代价：JavaScript 和 Clojure 的共同教训</title>
+<link>https://lujun9972.github.io/blog/2026/04/25/链式调用的代价：javascript-和-clojure-的共同教训/index.html</link>
+<description>最近读到 Matt Smith 的文章 [[https://allthingssmitty.com/2026/04/20/why-i-dont-chain-everything-in-javascript-anymore/][Why I Don&#39;t Chain Everything in JavaScript Anymore]]，核心观点是 JavaScript 的长方法链虽然优雅，但调试困难且容易造成不必要的计算。我发现 Clojure 的 =-&gt;&gt;= 线程宏本质上也是链式调用，面临同样的取舍——只是在性能上有关键区别。
+
+* 两种语言，同一种写法
+
+JavaScript 用方法链把数据&quot;串&quot;起来：
+
+#+begin_src js
+users
+  .filter(u =&gt; u.active)
+  .map(u =&gt; u.name)
+  .sort()
+  .slice(0, 3)
+#+end_src
+
+Clojure 用 =-&gt;&gt;= 线程宏做同样的事：
+
+#+begin_src clojure
+(-&gt;&gt; users
+     (filter :active)
+     (map :name)
+     (sort)
+     (take 3))
+#+end_src
+
+两种写法的思路一样：数据像流水线上的产品，经过一道道工序加工。读起来流畅，写起来也爽。但当链条变长，问题就来了。
+
+* 难题一：调试要打断链
+
+假设结果不对，你想看 =filter= 之后的数据。
+
+在 JavaScript 里，要么在回调里塞 =console.log= （把调试代码混进业务逻辑），要么直接把链打断：
+
+#+begin_src js
+const activeUsers = users.filter(u =&gt; u.active);
+console.log(activeUsers); // 调试
+const result = activeUsers.map(u =&gt; u.name).sort().slice(0, 3);
+#+end_src
+
+Clojure 里也一样。你可以在链中间插入 =tap&gt;= ，但更常见的做法还是拆成 =let= 绑定：
+
+#+begin_src clojure
+(let [active-users (filter :active users)
+      names       (map :name active-users)
+      sorted      (sort names)]
+  (take 3 sorted))
+#+end_src
+
+拆开之后，每个中间值都有了名字—— =active-users= 、 =names= 、 =sorted= 。调试时不用在脑子里模拟整条管道的执行过程，看变量名就知道当前步骤在处理什么。
+
+不管是 ~const x = ...~ 还是 ~let [x ...]~ ，思路都是一样的：给中间步骤一个名字。
+
+* 难题二：不必要的计算（这里两种语言有差异）
+
+JavaScript 的数组方法是 /立即求值/ 的——每次调用 =.filter()= 或 =.map()= 都会遍历整个数组并生成新数组。所以：
+
+#+begin_src js
+const users = [
+  {name: &quot;Alice&quot;, active: true},
+  {name: &quot;Bob&quot;, active: false},
+  {name: &quot;Carol&quot;, active: true},
+  {name: &quot;Dave&quot;, active: true},
+  {name: &quot;Eve&quot;, active: false}
+];
+
+// filter 处理了全部 5 个元素，map 处理了 3 个结果
+// 最后只取 [0]，前面的工作大部分白费了
+const firstActiveName = users.filter(u =&gt; u.active).map(u =&gt; u.name)[0];
+console.log(firstActiveName);
+#+end_src
+
+#+begin_example
+Alice
+#+end_example
+
+即使只需要第一个结果， =filter= 和 =map= 也处理了整个数组。用 =find= 才能提前退出：
+
+#+begin_src js
+const user = users.find(u =&gt; u.active);
+console.log(user?.name);
+#+end_src
+
+#+begin_example
+Alice
+#+end_example
+
+Clojure 的 =filter= 和 =map= 返回惰性序列，理论上只在有消费者需要数据时才计算元素。但 Clojure 的惰性序列是 /分块/ （ chunked ）的——每次 realize 32 个元素，而不是严格地只 realize 需要的那一个。用一个带副作用的函数来看实际行为：
+
+#+begin_src clojure
+(defn process [x]
+  (println &quot;Processing:&quot; x)
+  (* x 2))
+
+(-&gt;&gt; (range 100)
+     (map process)
+     (filter #(&gt; % 4))
+     first)
+#+end_src
+
+#+begin_example
+Processing: 0
+Processing: 1
+Processing: 2
+Processing: 3
+Processing: 4
+Processing: 5
+Processing: 6
+Processing: 7
+Processing: 8
+Processing: 9
+Processing: 10
+Processing: 11
+Processing: 12
+Processing: 13
+Processing: 14
+Processing: 15
+Processing: 16
+Processing: 17
+Processing: 18
+Processing: 19
+Processing: 20
+Processing: 21
+Processing: 22
+Processing: 23
+Processing: 24
+Processing: 25
+Processing: 26
+Processing: 27
+Processing: 28
+Processing: 29
+Processing: 30
+Processing: 31
+6
+#+end_example
+
+处理了 32 个元素就停了——正好是一个 chunk 的大小。对比 JavaScript 对同样 100 个元素全部处理，Clojure 的惰性求值确实省了一些工作，只是没有&quot;只算到第三个就停&quot;那么理想。chunked seq 是 Clojure 在惰性开销和性能之间的折衷：逐元素 realize 每次都要检查是否需要计算下一个元素，开销比分块处理大得多。如果集合很小（小于 32 个元素），整个集合都在一个 chunk 里，惰性求值跟立即求值没有区别。
+
+所以 Clojure 的惰性序列更准确的说法是&quot;按需分块计算&quot;而不是&quot;按需逐个计算&quot;。但不管 Clojure 在性能上有多大优势，可读性问题依然存在——一条 5 步的 =-&gt;&gt;= 链在 Clojure 里依然不如拆成 =let= 绑定好读。
+
+* 经验法则
+
+| 链长 | 建议 |
+|------+------|
+| 1-2 步 | 随便用，没有问题 |
+| 3-4 步 | 如果中间步骤有业务含义，就给它一个名字 |
+| 5+ 步 | 应该拆成 =let= 绑定或 =const= 赋值 |
+
+链式调用写起来快，拆成步骤的代码读起来快。写代码只花一次时间，读代码可能要反复很多次——这个账要算清楚。
+</description>
+<pubDate>2026-04-25</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/25/链式调用的代价：javascript-和-clojure-的共同教训/index.html</guid>
+</item>
+<item>
+<title>用 ox.el 做你想做的事 —— org-export 高级编程指南</title>
+<link>https://lujun9972.github.io/blog/2026/04/24/用-ox.el-做你想做的事-——-org-export-高级编程指南/index.html</link>
+<description>大多数 Emacs 用户只知道 =org-export= 能把 Org 文件转成 HTML/PDF，但很少有人意识到它其实是一个高度可扩展的编译框架。你可以继承已有的 backend，覆盖特定元素的渲染逻辑，注入自定义元数据，甚至完全重定义链接的解析方式——所有这些都不需要修改 Org 源码。
+
+本文从 scheatkode 的 ossg 项目[fn:1] 中提炼出几个实用的 =org-export= 高级技巧，每个技巧都配有可独立运行的代码。读完之后你会对 =ox.el= 的架构有一个清晰的认识，知道什么时候该用它、怎么用它。
+
+* 基础概念：backend 和 transcoder
+
+=org-export= 用&quot;backend&quot;来定义如何把 Org AST（抽象语法树）转换成目标格式。每个 backend 本质上是一个从&quot;Org 元素类型&quot;到&quot;渲染函数&quot;的映射表。比如 =html= backend 里， =headline= 元素对应 =org-html-headline= 函数， =link= 元素对应 =org-html-link= 函数。
+
+这些渲染函数叫 *transcoder* 。每个 transcoder 接收三个参数：元素本身、可选的描述文字、和一个 =info= plist（贯穿整个导出过程的通信管道）。
+
+#+BEGIN_SRC emacs-lisp
+;; 查看内置 html backend 的 transcoder 列表
+(org-export-backend-transcoders (org-export-get-backend &#39;html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+((bold . org-html-bold)
+ (center-block . org-html-center-block)
+ (clock . org-html-clock)
+ (code . org-html-code)
+ (drawer . org-html-drawer)
+ (dynamic-block . org-html-dynamic-block)
+ (entity . org-html-entity)
+ (example-block . org-html-example-block)
+ (export-block . org-html-export-block)
+ (export-snippet . org-html-export-snippet)
+ (fixed-width . org-html-fixed-width)
+ (footnote-reference . org-html-footnote-reference)
+ (headline . org-html-headline)
+ (horizontal-rule . org-html-horizontal-rule)
+ (inline-src-block . org-html-inline-src-block)
+ (inlinetask . org-html-inlinetask)
+ (inner-template . org-html-inner-template)
+ (italic . org-html-italic)
+ (item . org-html-item)
+ (keyword . org-html-keyword)
+ (latex-environment . org-html-latex-environment)
+ (latex-fragment . org-html-latex-fragment)
+ (line-break . org-html-line-break)
+ (link . org-html-link)
+ (node-property . org-html-node-property)
+ (paragraph . org-html-paragraph)
+ (plain-list . org-html-plain-list)
+ (plain-text . org-html-plain-text)
+ (planning . org-html-planning)
+ (property-drawer . org-html-property-drawer)
+ (quote-block . org-html-quote-block)
+ (radio-target . org-html-radio-target)
+ (section . org-html-section)
+ (special-block . org-html-special-block)
+ (src-block . org-html-src-block)
+ (statistics-cookie . org-html-statistics-cookie)
+ (strike-through . org-html-strike-through)
+ (subscript . org-html-subscript)
+ (superscript . org-html-superscript)
+ (table . org-html-table)
+ (table-cell . org-html-table-cell)
+ (table-row . org-html-table-row)
+ (target . org-html-target)
+ (template . org-html-template)
+ (timestamp . org-html-timestamp)
+ (underline . org-html-underline)
+ (verbatim . org-html-verbatim)
+ (verse-block . org-html-verse-block))
+#+END_EXAMPLE
+
+这意味着只要覆盖其中任何一个 transcoder，就能改变对应元素的输出方式。
+
+* 技巧一：继承 backend 并覆盖 transcoder
+
+=org-export-define-derived-backend= 是整个扩展机制的入口。它从父 backend 继承所有默认行为，然后你只需覆盖想要改动的部分。
+
+下面是一个最小示例：继承 =html= backend，把所有 =verbatim= （用 == 包裹的行内代码）渲染成带有 CSS class 的 =&lt;code&gt;= 标签，方便自定义样式：
+
+#+BEGIN_SRC emacs-lisp
+;; 定义一个自定义 backend，继承自 html
+(org-export-define-derived-backend &#39;my-html &#39;html
+  :translate-alist
+  &#39;((verbatim . my-html-verbatim)))
+
+(defun my-html-verbatim (verbatim _contents _info)
+  &quot;Render VERBATIM with a custom CSS class.&quot;
+  (format &quot;&lt;code class=\&quot;inline-code\&quot;&gt;%s&lt;/code&gt;&quot;
+          (org-element-property :value verbatim)))
+#+END_SRC
+
+验证一下效果：
+
+#+BEGIN_SRC emacs-lisp
+;; 在临时 buffer 中测试导出
+(with-temp-buffer
+  (insert &quot;=hello world=\n&quot;)
+  (org-mode)
+  (org-export-as &#39;my-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&lt;p&gt;
+&lt;code class=&quot;inline-code&quot;&gt;hello world&lt;/code&gt;
+&lt;/p&gt;
+#+END_EXAMPLE
+
+对比默认的 =html= backend 输出：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert &quot;=hello world=\n&quot;)
+  (org-mode)
+  (org-export-as &#39;html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&lt;p&gt;
+&lt;code&gt;hello world&lt;/code&gt;
+&lt;/p&gt;
+#+END_EXAMPLE
+
+区别在于默认输出没有任何 CSS class，而我们的自定义版本加上了 =inline-code= class，方便统一设置样式。
+
+`★ Insight ─────────────────────────────────────`
+=org-export-define-derived-backend= 的 =:translate-alist= 只需要列出你要覆盖的
+transcoder。没有列出的元素类型自动继承父 backend 的行为。这意味着你的自定义
+backend 可以只改一个元素（比如只改 =verbatim= 的渲染），其他所有元素都跟
+标准 HTML 导出一模一样。
+`─────────────────────────────────────────────────`
+
+* 技巧二：通过 #+KEYWORD 注入自定义数据到导出管线
+
+=ossg= 用了一个巧妙的技巧：往 Org 文件里插入 =#+OPD_BASE_URL:= 这样的自定义 keyword，Org 解析器会自动把它解析进 =info= plist，transcoder 就能读取到。
+
+=org-export-define-derived-backend= 的 =:options-alist= 参数定义了 keyword 到 plist key 的映射：
+
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend &#39;my-html &#39;html
+  :options-alist
+  &#39;((:my-color &quot;MY_COLOR&quot;))     ; #+MY_COLOR: blue → (:my-color . &quot;blue&quot;)
+  :translate-alist
+  &#39;((verbatim . my-html-verbatim)))
+#+END_SRC
+
+这样，如果 Org 文件里有 =#+MY_COLOR: blue= ，transcoder 就能通过 =(plist-get info :my-color)= 拿到 =blue= 。
+
+来做一个完整的例子：根据文件中的 =#+MY_COLOR= keyword 来改变 =verbatim= 的输出颜色。
+
+#+BEGIN_SRC emacs-lisp
+(org-export-define-derived-backend &#39;my-html &#39;html
+  :options-alist
+  &#39;((:my-color &quot;MY_COLOR&quot;))
+  :translate-alist
+  &#39;((verbatim . my-html-colored-verbatim)))
+
+(defun my-html-colored-verbatim (verbatim _contents info)
+  &quot;Render VERBATIM with color from MY_COLOR keyword.&quot;
+  (let ((color (or (plist-get info :my-color) &quot;inherit&quot;)))
+    (format &quot;&lt;code style=\&quot;color: %s;\&quot;&gt;%s&lt;/code&gt;&quot;
+            color
+            (org-element-property :value verbatim))))
+#+END_SRC
+
+测试：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert &quot;#+MY_COLOR: red\n\n=colorized text=\n&quot;)
+  (org-mode)
+  (org-export-as &#39;my-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&lt;p&gt;
+&lt;code style=&quot;color: red;&quot;&gt;colorized text&lt;/code&gt;
+&lt;/p&gt;
+#+END_EXAMPLE
+
+如果没有设置 =#+MY_COLOR= ，则回退到 =inherit= （继承父元素颜色）。
+
+这个技巧的威力在于：你可以在不修改 Org 文件内容的情况下，在构建脚本里动态插入 =#+KEYWORD= 行，把外部上下文&quot;走私&quot;进导出管线。ossg 就是这样把站点 URL 注入进去的——在渲染前往临时 buffer 里插入一行 =#+OPD_BASE_URL:= ，org-export 自动解析它，link transcoder 就能读到。
+
+`★ Insight ─────────────────────────────────────`
+=info= plist 是贯穿整个导出过程的&quot;通信管道&quot;。它包含文件的所有元数据
+（标题、作者、日期、选项等），加上你在 =:options-alist= 里声明的自定义字段。
+每个 transcoder 的第三个参数就是这个 plist。通过往里面注入自定义数据，
+你可以实现 transcoder 和外部世界的通信，而不需要全局变量。
+`─────────────────────────────────────────────────`
+
+* 技巧三：自定义 link transcoder
+
+=ossg= 最核心的技巧之一是自定义 link transcoder，把 Org 文件间的 =[[file:xxx.org]]= 链接自动替换成最终的 permalink。
+
+link transcoder 接收的 =link= 参数是一个 org-element 对象，你可以用 =org-element-property= 读取它的属性：
+
+#+BEGIN_SRC emacs-lisp
+(defun my-link-info (link desc info)
+  &quot;Demonstrate link element properties.&quot;
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link))
+        (raw-link (org-element-property :raw-link link)))
+    (format &quot;&lt;!-- type=%s path=%s raw=%s --&gt;%s&quot;
+            type path raw-link
+            (org-html-link link desc info))))
+#+END_SRC
+
+先看看 Org 是怎么解析不同类型的链接的：
+
+#+BEGIN_SRC emacs-lisp
+  (org-export-define-derived-backend &#39;debug-html &#39;html
+    :translate-alist
+    &#39;((link . my-link-info)))
+
+  (with-temp-buffer
+    (insert &quot;* Test links
+  - [[https://example.com][external link]]
+  - [[file:other.org][file link]]
+  - [[file:images/photo.png][image link]]
+  - [[#my-heading][internal heading link]]
+
+  ,* My Heading
+  :PROPERTIES:
+  :CUSTOM_ID: my-heading
+  :END:
+  &quot;)
+    (org-mode)
+    (org-export-as &#39;debug-html))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&lt;ul&gt;
+&lt;li&gt;&lt;!-- type=https path=//example.com raw=https://example.com --&gt;&lt;a href=&quot;https://example.com&quot;&gt;external link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=file path=other.org raw=file:other.org --&gt;&lt;a href=&quot;other.html&quot;&gt;file link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=file path=images/photo.png raw=file:images/photo.png --&gt;&lt;a href=&quot;images/photo.png&quot;&gt;image link&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;&lt;!-- type=custom-id path=my-heading raw=#my-heading --&gt;&lt;a href=&quot;#my-heading&quot;&gt;internal heading link&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+#+END_EXAMPLE
+
+可以看到：
+- 外部 URL 的 =type= 是 =https= ， =path= 是 =//= 开头的地址部分（不含 scheme）
+- 文件链接的 =type= 是 =file= ， =path= 是文件路径
+- 内部标题链接的 =type= 是 =custom-id=
+
+有了这些信息，就可以实现 ossg 那样的链接重写——检测到 =type= 为 =file= 且 =path= 以 =.org= 结尾时，查表替换成 permalink：
+
+#+BEGIN_SRC emacs-lisp
+(defvar my-url-registry (make-hash-table :test &#39;equal)
+  &quot;Maps absolute file paths to their final URLs.&quot;)
+
+;; 假设我们已经注册了一些 URL
+(puthash &quot;/home/user/blog/posts/hello.org&quot; &quot;/posts/hello.html&quot; my-url-registry)
+
+(defun my-translate-link (link desc info)
+  &quot;Resolve file: links to .org files using the URL registry.&quot;
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link)))
+    (if (and (string= type &quot;file&quot;)
+             (string-suffix-p &quot;.org&quot; path))
+        ;; 查表替换
+        (let* ((abspath (expand-file-name path))
+               (url (gethash abspath my-url-registry)))
+          (if url
+              (format &quot;&lt;a href=\&quot;%s\&quot;&gt;%s&lt;/a&gt;&quot; url (or desc url))
+            ;; 找不到就回退到默认行为
+            (org-html-link link desc info)))
+      ;; 非 .org 链接，用默认处理
+      (org-html-link link desc info))))
+#+END_SRC
+
+`★ Insight ─────────────────────────────────────`
+link transcoder 是 =org-export= 最强大的扩展点之一。
+通过检查 =type= 和 =path= 属性，你可以精确控制不同类型链接的输出。
+ossg 用它实现了跨路由链接解析，但同样的技巧也可以用于：
+把 =[[file:*.pdf]]= 链接渲染成嵌入式的 PDF 查看器、
+把 =[[doi:xxx]]= 链接渲染成学术引用格式、
+或者把特定路径的文件链接渲染成缩略图。
+`─────────────────────────────────────────────────`
+
+* 技巧四：用 cl-progv 做动态变量绑定
+
+=ossg= 需要在不同路由中覆盖不同的 =org-export= 全局变量（比如 =org-export-with-toc= ），但普通的 =let= 绑定在延迟执行的场景下会失效——因为 =let= 在求值时就确定了绑定，而实际导出可能在很久之后才发生。
+
+=cl-progv= 解决了这个问题：它接受一个 *运行时* 生成的变量名列表和值列表，动态绑定它们。
+
+#+BEGIN_SRC emacs-lisp
+;; cl-progv 的基本用法
+(cl-progv
+    &#39;(org-export-with-toc org-export-with-section-numbers)
+    &#39;(nil nil)
+  ;; 在这个作用域内，org-export-with-toc 为 nil
+  ;; org-export-with-section-numbers 也为 nil
+  (list org-export-with-toc org-export-with-section-numbers))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+(nil nil)
+#+END_EXAMPLE
+
+这和 =let= 的区别在哪？关键在于变量名可以是 *数据驱动的* ：
+
+#+BEGIN_SRC emacs-lisp
+;; 用 let：变量名在编写时就确定了（词法）
+(let ((org-export-with-toc nil))
+  org-export-with-toc)  ;; → nil
+
+;; 用 cl-progv：变量名来自数据结构（动态）
+(let ((env &#39;((org-export-with-toc . nil)
+             (org-html-link-home . &quot;https://example.com&quot;))))
+  (cl-progv
+      (mapcar #&#39;car env)    ;; 变量名列表
+      (mapcar #&#39;cdr env)    ;; 值列表
+    (list org-export-with-toc org-html-link-home)))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+(nil &quot;https://example.com&quot;)
+#+END_EXAMPLE
+
+实际应用中， =env= 可以来自配置数据（比如路由的 =:env= 属性），不同的路由覆盖不同的变量组合。这让每个路由有自己独立的导出环境，互不污染。
+
+* 技巧五：org-element-parse-buffer 的 granularity 控制
+
+=ossg= 在性能优化中发现了一个关键细节： =org-element-parse-buffer= 的第一个参数控制解析深度。
+
+#+BEGIN_SRC emacs-lisp
+;; 完整解析（默认）—— 解析所有内容，包括行内标记
+(org-element-parse-buffer)              ; 等价于 (org-element-parse-buffer &#39;object)
+
+;; 只解析到元素级 —— 不解析行内对象
+(org-element-parse-buffer &#39;element)
+
+;; 只解析大元素 —— 不递归进入段落内部
+(org-element-parse-buffer &#39;greater-element)
+
+;; 只解析标题
+(org-element-parse-buffer &#39;headline)
+#+END_SRC
+
+来看一个具体的例子，感受不同粒度返回的 AST 结构差异：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert &quot;* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+,** Sub heading
+Another paragraph.
+&quot;)
+  (org-mode)
+  (let ((ast (org-element-parse-buffer &#39;greater-element)))
+    ;; greater-element 粒度下，段落存在但没有子对象
+    (format &quot;paragraphs: %d, bold objects: %d&quot;
+            (length (org-element-map ast &#39;paragraph #&#39;identity))
+            (length (org-element-map ast &#39;bold #&#39;identity)))))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&quot;paragraphs: 2, bold objects: 0&quot;
+#+END_EXAMPLE
+
+注意 =*bold text*= 没有被解析成独立的 bold 对象——在 =greater-element= 粒度下段落内部不会被递归解析。这比完整解析快得多，当你只需要提取标题、日期、标签等顶层元数据时完全够用。
+
+对比完整解析的结果：
+
+#+BEGIN_SRC emacs-lisp
+(with-temp-buffer
+  (insert &quot;* My Title
+#+DATE: 2026-04-24
+
+Some paragraph with *bold text* and =code=.
+
+,** Sub heading
+Another paragraph.
+&quot;)
+  (org-mode)
+  (let ((ast (org-element-parse-buffer)))  ; 默认 &#39;object 粒度
+    (format &quot;paragraphs: %d, bold objects: %d&quot;
+            (length (org-element-map ast &#39;paragraph #&#39;identity))
+            (length (org-element-map ast &#39;bold #&#39;identity))))
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+&quot;paragraphs: 2, bold objects: 1&quot;
+#+END_EXAMPLE
+
+完整解析时， =*bold text*= 被识别为一个独立的 =bold= 对象。这种精度在你需要精确控制行内标记的 HTML 输出时是必要的，但在只需要元数据的场景下就是浪费。
+
+`★ Insight ─────────────────────────────────────`
+选择合适的 =granularity= 是 =org-element= 性能优化的关键。
+规则很简单：如果你只需要标题、属性、keyword 等结构性数据，
+用 =greater-element= ；如果你需要操作段落内的行内标记（粗体、链接、代码等），
+用 =element= 或默认的 =object= 。对于大文件的元数据提取，
+这个选择可能带来数倍的性能差异。
+`─────────────────────────────────────────────────`
+
+* 组合起来：一个自定义导出 pipeline
+
+把上面几个技巧组合起来，你可以构建一个完整的自定义导出 pipeline。下面是一个简化的示例，演示了 ossg 的核心思路：
+
+#+BEGIN_SRC emacs-lisp
+;; 1. 定义 URL 注册表
+(defvar my-url-registry (make-hash-table :test &#39;equal))
+
+;; 2. 定义自定义 backend
+(org-export-define-derived-backend &#39;site-html &#39;html
+  :options-alist
+  &#39;((:site-base-url &quot;SITE_BASE_URL&quot;))
+  :translate-alist
+  &#39;((link . my-site-translate-link)))
+
+;; 3. Link transcoder：处理文件间链接
+(defun my-site-translate-link (link desc info)
+  &quot;Resolve .org file links using the URL registry.&quot;
+  (let ((type (org-element-property :type link))
+        (path (org-element-property :path link)))
+    (if (and (string= type &quot;file&quot;)
+             (string-suffix-p &quot;.org&quot; path))
+        (let ((url (gethash (expand-file-name path) my-url-registry)))
+          (if url
+              (format &quot;&lt;a href=\&quot;%s\&quot;&gt;%s&lt;/a&gt;&quot; url (or desc url))
+            (org-html-link link desc info)))
+      (org-html-link link desc info))))
+
+;; 4. 导出一个文件（注入 SITE_BASE_URL）
+(defun my-site-export-file (filepath output-path base-url)
+  &quot;Export FILEPATH to OUTPUT-PATH with BASE-URL injected.&quot;
+  (with-temp-buffer
+    (insert-file-contents filepath)
+    (org-mode)
+    ;; 注入自定义 keyword，把站点 URL 走私进导出管线
+    (goto-char (point-min))
+    (forward-line)
+    (insert (format &quot;#+SITE_BASE_URL: %s\n&quot; base-url))
+    (let ((html (org-export-as &#39;site-html)))
+      (with-temp-file output-path
+        (insert html)))))
+#+END_SRC
+
+这就是 ossg 导出管线的最小核心：一个自定义 backend + 一个 link transcoder + 一个注入元数据的导出函数。ossg 在此基础上加了两遍编译（第一遍注册 URL、第二遍渲染）、路由系统、增量缓存等，但骨架就是这些。
+
+* 小结
+
+=org-export= 的可扩展性来自三个核心机制：
+
+1. *Backend 继承* ：通过 =org-export-define-derived-backend= 继承已有 backend，只覆盖需要的部分
+2. *Keyword 注入* ：通过 =:options-alist= 声明自定义 keyword，让 Org 解析器自动把文件元数据传进 transcoder 的 =info= plist
+3. *Transcoder 覆盖* ：在 =:translate-alist= 里指定自定义渲染函数，精确控制特定元素类型的输出
+
+这三个机制组合起来，足以在不修改 Org 源码的前提下实现几乎所有自定义导出需求。下次你需要定制 HTML 输出时，不妨先看看能不能用这些机制解决，而不是写后处理脚本。
+
+[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/
+</description>
+<pubDate>2026-04-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/24/用-ox.el-做你想做的事-——-org-export-高级编程指南/index.html</guid>
+</item>
+<item>
+<title>读：Hot-wiring the Lisp Machine —— 用纯 Elisp 构建零依赖的 Org 静态站点生成器</title>
+<link>https://lujun9972.github.io/blog/2026/04/24/读：hot-wiring-the-lisp-machine-——-用纯-elisp-构建零依赖的-org-静态站点生成器/index.html</link>
+<description>scheatkode 发表了一篇长文[fn:1]，记录了他用纯 Emacs Lisp 从零构建 Org-mode 静态站点生成器的全过程。这个项目叫 =ossg= （Org Static Site Generator），它的核心约束是 *零外部依赖* ——不依赖 Node.js、不依赖 Hugo、不依赖任何 Elisp 包，只用 Emacs 内置的 =org-export= 管线完成一切。
+
+这篇文章值得读，不光因为项目本身有意思，更因为它记录了一次完整的架构演进：从天真的字符串替换，到发现 Emacs 内置能力的真正价值，再到两遍编译器、增量热重建。每一步都是被现实逼出来的。
+
+* 起点：为什么不用现成的 SSG
+
+作者试了一圈主流方案，发现没有一个是&quot;原生 Emacs&quot;的：
+
+- =org-publish= ：Emacs 内置的发布引擎，但它的 API 只暴露了很少的配置点——你想自定义 HTML 结构，只能通过几个固定的 hook 变量往里塞代码；想生成分页索引，得自己手写一大段补丁逻辑。换句话说，它给了你一个框架，但这个框架的骨架是焊死的，你只能在预留的槽位上插东西
+- Hugo + =ox-hugo= ：先把 Org 转成 Markdown 再喂给 Hugo，等于多了一层没必要的抽象
+- Weblorg：架构最接近理想，但依赖字符串模板引擎，没法直接用 Elisp 控制输出
+
+作者最终选择了 Weblorg 的路由架构作为骨架，但把它的模板引擎整个替换掉了。
+
+* 第一版：字符串模板的死胡同
+
+最初的方案用 =format-spec= 把变量塞进 HTML 模板：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(format-spec
+ template
+ `((?p . ,(or (org-html--build-pre/postamble &#39;preamble info) &quot;&quot;))
+   (?P . ,(or (org-html--build-pre/postamble &#39;postamble info) &quot;&quot;))
+   (?t . ,title-fragment)
+   (?d . ,date-fragment)
+   (?T . ,tags-fragment)
+   (?r . ,reading-time)
+   (?c . ,contents)))
+#+END_SRC
+
+template长这样：
+
+#+BEGIN_SRC html :eval never
+&lt;html%a&gt;
+  &lt;head&gt;
+    &lt;title&gt;%t&lt;/title&gt;
+  &lt;/head&gt;
+  &lt;body&gt;
+    &lt;main id=&quot;content&quot;&gt;
+      &lt;article&gt;
+        &lt;h1 class=&quot;title&quot;&gt;%t&lt;/h1&gt;
+        %c
+      &lt;/article&gt;
+    &lt;/main&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+#+END_SRC
+
+这个方案一开始能用，但扩展性为零。每加一种元数据就要硬编码一个新的 =%X= 占位符。更致命的是， =format-spec= 会把 CSS 里的 =width: 100%;= 当成变量去替换，直接报错。
+
+作者试过让每个 =%X= 占位符不再对应一个固定字符串，而是对应一个闭包（延迟求值的函数）——这样模板引擎在替换 =%t= 时不是直接插入 =title-fragment= ，而是调用一个函数动态计算结果。这听起来像是&quot;让字符串变聪明了&quot;，但本质上仍然是在一个已经有强大解析器的编辑器里重新发明一个简陋的字符串格式化器。用原文的话说：&quot;给马车装曲速引擎。&quot;
+
+* 转折：让 Lisp 闭包替代模板
+
+作者意识到问题的根源：不应该在 HTML 字符串里塞变量，应该直接用 Elisp 控制整个输出过程。
+
+关键改动是把路由的 =:template= 参数从文件路径改成了一个纯 Lisp 闭包：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(lambda (ctx)
+  (when-let ((path (alist-get &#39;abspath ctx)))
+    (insert-file-contents path)))
+#+END_SRC
+
+这个闭包接收一个临时 buffer 和解析后的上下文数据，用 Elisp 往 buffer 里填内容。最简单的用法就是把文件内容倒进去，但你可以在里面做 *任何事* —— 条件判断、循环、调用外部函数、生成动态内容，全都是标准的 Elisp，不需要学任何模板语法。
+
+同样， =:exporter= 参数也是一个闭包，默认实现是把 buffer 交给 =org-export= 处理：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(lambda (_)
+  (org-export-as &#39;opd))
+#+END_SRC
+
+这一步是整个架构的关键转折。因为 template 和 exporter 都是闭包，整个引擎不再需要自己的模板语言、插件系统或 hook 机制。它只是一个路由层：找到文件 → 喂给 template 闭包 → 喂给 exporter 闭包 → 写入磁盘。所有复杂逻辑都交给用户用 Elisp 自己写。
+
+`★ Insight ─────────────────────────────────────`
+这个设计的精髓在于&quot;站在 =org-export= 的肩膀上&quot;。
+=ossg= 没有重新发明 HTML 生成，而是通过
+=org-export-define-derived-backend= 继承 =html= backend，
+只在需要的地方覆盖 transcoder（比如自定义链接解析）。
+这意味着 Org-mode 原生的所有导出能力——脚注、表格、代码高亮——都自动可用，
+不需要额外实现。
+`─────────────────────────────────────────────────`
+
+整个公开 API 缩减到四个原语： =opd-site= 、 =opd-route= 、 =opd-assets= 、 =opd-export= 。
+
+* 两遍编译器：跨路由链接
+
+一个网站不是一堆孤立的页面——页面之间有链接。作者不想手动维护链接路径，也不想让源文件目录结构跟部署 URL 一一对应。他希望写一个标准的 =[[file:somewhere/some-file.org]]= 链接，Emacs 编辑时能正常跳转，构建时自动替换成正确的 permalink。
+
+解决方案是&quot;两遍编译器&quot;：
+
+1. *第一遍（扫描）* ：遍历所有文件，计算每个文件的目标 URL，填充到一个全局的 URL 注册表中
+2. *第二遍（渲染）* ：渲染 HTML，此时注册表已经完整，可以解析所有跨路由链接
+
+链接替换通过自定义的 link transcoder 实现。 =transcoder= 是 =org-export= 中的一个概念：每个 Org 元素类型（标题、段落、链接等）在导出时都对应一个渲染函数，比如标题对应 =org-html-headline= ，链接对应 =org-html-link= 。你可以定义自己的渲染函数来替换默认行为，这个自定义渲染函数就叫 transcoder。下面这段代码就是一个专门处理链接的 transcoder：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(defun opd-translate-link (link desc info)
+  &quot;Resolve cross-route Org links using the site&#39;s URL registry.&quot;
+  (if-let*
+      ((type (org-element-property :type link))
+       (path (org-element-property :path link))
+       ((and (string= &quot;file&quot; type)
+             (string-suffix-p &quot;.org&quot; path)))
+       (base (plist-get info :opd-base-url))
+       (site (opd--site-get base))
+       (absp (expand-file-name path))
+       (url (and site (gethash absp (gethash :registry site)))))
+      (org-element-put-property link :path url)
+    (org-html-link link desc info)))
+#+END_SRC
+
+这段代码的逻辑是：如果链接指向一个 =.org= 文件，就去 URL 注册表里查它最终的 URL，替换掉原始路径；否则按默认的 =org-html-link= 处理。
+
+但有个问题： =org-export= 是 Emacs 内置模块，它只认得 Org 文件里的标准语法（ =#+TITLE= 、 =#+DATE= 等），对 =ossg= 自定义的站点 URL 注册表一无所知。而 link transcoder 在导出过程中需要知道&quot;当前文件属于哪个站点&quot;，才能去注册表里查链接。 =org-export= 又没有提供传递自定义数据的接口，那 transcoder 怎么拿到当前文件的站点信息？
+
+作者的解法很巧妙——在渲染前往临时 buffer 的元数据里注入一行 =#+OPD_BASE_URL:= ，Org 解析器会自动把它解析进 =info= plist 中：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(org-export-define-derived-backend
+ &#39;opd &#39;html
+  :options-alist
+ &#39;((:opd-base-url &quot;OPD_BASE_URL&quot;))
+ :translate-alist
+ &#39;((headline . opd-translate-headline)
+   (link     . opd-translate-link)))
+#+END_SRC
+
+这样就把站点上下文&quot;走私&quot;进了 =org-export= 管线，不需要修改 =org-export= 本身。
+
+* 状态隔离：用 cl-progv 防止全局变量污染
+
+Emacs 的 =org-export= 大量依赖全局变量（比如 =org-export-with-toc= 控制是否生成目录）。不同路由需要不同的变量覆盖——博客路由要生成目录，RSS 路由不要。
+
+你可能会想，把变量绑定写在闭包里面不就行了？
+
+#+BEGIN_SRC emacs-lisp :eval never
+(opd-route
+ :name &quot;rss&quot;
+ :exporter
+ (lambda (_)
+   (let ((org-export-with-toc nil)
+         (org-html-link-home &quot;http://localhost:8080&quot;))
+     (org-export-as &#39;rss))))
+#+END_SRC
+
+确实， =let= 在闭包体内部，闭包被调用时才执行，没有时序问题。但如果你有 20 个路由，每个覆盖不同的变量组合，就要写 20 份几乎一样的闭包，唯一的区别就是 =let= 里的变量名和值不同——纯粹是重复劳动。
+
+那把 =let= 写在 =opd-route= 外面，让闭包自动捕获变量值呢？
+
+#+BEGIN_SRC emacs-lisp :eval never
+(let ((org-export-with-toc nil))
+  (opd-route ...))   ;; ← 只是注册，没有执行导出
+(opd-export)          ;; ← 导出时 let 已经过期了
+#+END_SRC
+
+对于普通变量，闭包确实会捕获 =let= 的绑定，即使 =let= 结束后值也不会丢。但 =org-export-with-toc= 不是普通变量——它是用 =defcustom= 声明的 special variable（特殊变量）。在 Emacs Lisp 中，special variable（用 =defvar= 或 =defcustom= 声明的变量）始终是动态作用域，即使开了 =lexical-binding= ，闭包也不会捕获它们的 =let= 绑定。等 =opd-export= 真正开始工作时， =let= 作用域早就结束了，动态绑定也跟着消失。
+
+作者想要的是一种 *声明式* 的写法——把要覆盖的变量写在路由配置数据里，引擎自动在正确的时机绑定它们。这就是 =cl-progv= 的用武之地。这个宏接受一个变量名列表和一个值列表，在运行时动态绑定它们：
+
+作者用 Common Lisp 的 =cl-progv= 解决了这个问题。这个宏接受一个变量名列表和一个值列表，动态绑定它们：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(defmacro opd--with-env (route &amp;rest body)
+  &quot;Evaluate BODY with dynamic bindings specified in ROUTE&#39;s `:env&#39;.&quot;
+  (declare (indent 1))
+  (let ((r-var (make-symbol &quot;route&quot;)))
+    `(let* ((,r-var ,route)
+            (env (plist-get ,r-var :env))
+            (vars (mapcar #&#39;car env))
+            (vals (mapcar #&#39;cdr env)))
+       (cl-progv vars vals ,@body))))
+#+END_SRC
+
+这样每个路由可以声明自己的环境变量覆盖，互不干扰：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(let ((org-export-with-toc nil)
+      (org-html-html5-fancy t))
+  (opd-route ...)
+  (opd-route
+   :name &quot;rss&quot;
+   :env &#39;((org-html-link-home . &quot;http://localhost:8080&quot;))
+   :exporter (lambda (_) (org-export-as &#39;rss))))
+#+END_SRC
+
+`★ Insight ─────────────────────────────────────`
+=cl-progv= 和 =let= 的区别在于 *什么时候* 决定绑定哪些变量。
+=let= 在编写时就知道变量名（词法作用域），而 =cl-progv= 在运行时
+从数据结构中读取变量名和值（动态作用域）。这正是处理路由级配置所需要的——
+不同路由可能覆盖不同的全局变量，而且变量名来自配置数据而非代码。
+`─────────────────────────────────────────────────`
+
+* 函数式组合器：声明式过滤 API
+
+早期的过滤 API 用硬编码的具名函数（比如 =opd-input-filter-drafts= 专门过滤草稿、 =opd-input-aggregate-all-desc= 专门按日期倒序聚合），每加一种过滤条件就要在引擎里加一个新函数，用户没法组合它们。作者把这改成了布尔组合器和匹配谓词的分离设计：
+
+- 组合器： =opd-filter-any= 、 =opd-filter-all= 、 =opd-filter-omit=
+- 匹配器： =opd-match-tag= 、 =opd-match-prop= 、 =opd-match-has-prop=
+
+这就像 Lisp 里的布尔表达式一样，可以无限嵌套组合：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(opd-route
+ :name &quot;rss&quot;
+ :pattern &quot;*.org&quot;
+ :filter
+ (opd-filter-all
+  (opd-filter-any
+   (opd-match-tag &quot;blog&quot;)
+   (opd-match-tag &quot;lore&quot;))
+  (opd-match-has-prop &#39;date)
+  (opd-filter-omit
+   (opd-match-tag &quot;draft&quot;)
+   (opd-match-tag &quot;archive&quot;))))
+#+END_SRC
+
+这段代码的含义直白得像英语：匹配所有带 =blog= 或 =lore= 标签、有日期、且不是 =draft= 或 =archive= 的文件。
+
+* 性能优化：从 5 分半到 1 分 15 秒
+
+作者用 10,000 个文件做压力测试。初始版本跑完要 5 分 30 秒（每文件 32ms），经过一系列优化降到了 1 分 15 秒（每文件 7.5ms）。这部分的详细分析我之前写过一篇[[file:Elisp性能优化的六个实战教训.org][独立的博文]]，这里只概述关键转折点。
+
+*第一轮优化：降低解析精度*
+
+=org-element-parse-buffer= 默认解析整个 buffer 的所有内容（ =object= 级别）。第一遍扫描只需要标题、日期等顶层元数据，不需要解析每个段落里的行内标记。把粒度降到 =greater-element= 后，时间从 5 分 30 秒降到 3 分 44 秒（22ms/文件）。
+
+#+BEGIN_SRC emacs-lisp :eval never
+;; 默认：解析所有内容（最慢）
+(org-element-parse-buffer)
+
+;; 只解析顶层元素（快得多）
+(org-element-parse-buffer &#39;greater-element t)
+#+END_SRC
+
+*第二轮优化：用 profiler 找到真正的瓶颈*
+
+用 =M-x profiler-start= 跑出的结果令人意外——最大的 CPU 消耗不是 =org-element-parse-buffer= ，而是 =find-file-noselect= （13%）和 =org-persist-write-all-buffer= （12%）。
+
+原因在于 =org-with-file-buffer= 内部调用 =find-file-noselect= ，它会把每个文件当作交互式 buffer 打开——触发文件锁、版本控制查询、major-mode hook 等一系列操作。 =org-persist= 还会为每个文件写缓存到磁盘。相当于为了读一个标题字符串，承担了整个交互式操作系统的行政开销。
+
+换成 =with-temp-buffer= + =insert-file-contents= 后，时间骤降到 1 分 15 秒（7.5ms/文件）。
+
+`★ Insight ─────────────────────────────────────`
+这个发现对写 Elisp 性能敏感代码很有参考价值：
+=find-file-noselect= 是为交互使用设计的，它会触发所有 hook、
+缓存写入和版本控制操作。当你只是想读取文件内容时，
+=with-temp-buffer= + =insert-file-contents= 才是正确的选择。
+同理， =org-element-parse-buffer= 的 =granularity= 参数
+在只需要顶层元数据时能省下大量 CPU。
+`─────────────────────────────────────────────────`
+
+*第三轮优化：算法改进*
+
+把所有线性扫描替换成哈希表查找，用 =cl-loop= 替代 =maphash= + =lambda= 减少闭包开销，把模板编译提前到路由初始化阶段而非每次渲染时重复编译。
+
+* 增量热重建
+
+在经过改造后，压测的结果是10,000 篇博文全量构建花了 1 分 15 秒,这已经很快了，但实际使用中还不够。因为作者用 Emacs 内置的 =filenotify= 实现了文件监视,在每次保存文件时自动触发构建,每次保存都会触发一次全量构建。作者的博客大约 500 篇，全量构建需要 11 秒，也就是说改一个字母就要等 11 秒才能看到效果。原作者称之为&quot;masochism&quot;。
+
+为了解决这个问题，作者引入了增量逻辑，核心思路分三层：
+
+1. *文件级缓存* ：每个文件独立缓存，改一个文件只重建那一个文件，不波及同路由的其他文件
+2. *内容变更 vs 结构变更* ：只改文字（元数据不变）走快速路径，直接替换输出；改了标签或 =#+FILETAGS= 等结构性内容才需要重建聚合路由（索引页、RSS 等）
+3. *依赖图* ：如果 =post.org= 通过 =#+SETUPFILE:= 引用了 =setup.org= ，修改 =setup.org= 时引擎会反向查找所有依赖它的文件，级联失效缓存并重建
+
+依赖图的实现用了一个 =:depcache= 哈希表。第一遍扫描时记录每个文件的 =#+SETUPFILE= 和 =#+INCLUDE= 指令，构建反向依赖关系。当文件变化时，用深度优先搜索遍历依赖图，找出所有需要重建的父文件。
+
+还有一个精巧的&quot;duck-typed 路由&quot;设计：引擎不需要手动标记哪个路由是&quot;主路由&quot;——它检查聚合后数据块的结构来判断。
+
+比如 =opd-aggregate-each= （每篇博文单独输出一个 HTML 文件）的返回值长这样：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(((abspath . &quot;/blog/post-a.org&quot;) (slug . &quot;post-a&quot;) ...)
+ ((abspath . &quot;/blog/post-b.org&quot;) (slug . &quot;post-b&quot;) ...))
+#+END_SRC
+
+每个数据块顶层就有 =abspath= ——这是一对一的路由，引擎只重建变化的那个文件。
+
+而 =opd-aggregate-all= （所有博文聚合到一个 RSS 文件）的返回值长这样：
+
+#+BEGIN_SRC emacs-lisp :eval never
+(((posts .
+   (((abspath . &quot;/blog/post-a.org&quot;) (slug . &quot;post-a&quot;) ...)
+    ((abspath . &quot;/blog/post-b.org&quot;) (slug . &quot;post-b&quot;) ...)))))
+#+END_SRC
+
+=abspath= 被包裹在 =posts= 列表里——这是一对多的聚合路由，任何一个输入文件变化都可能影响最终输出，所以必须整体重建。
+
+引擎只需要递归搜索数据块树，检查 =abspath= 出现在什么位置，就能自动判断路由类型，不需要任何手动标记。
+
+最终效果：热重建时间降到 7~200 毫秒，取决于源文件的复杂度。
+
+* 几个值得注意的设计决策
+
+*防御性编程变成进攻性编程*
+
+作者曾花了好几个小时调试一个诡异的构建失败，最后发现原因竟是自己配置文件里一段被注释掉的路由。这让他转向&quot;进攻式&quot;风格——到处插 =cl-assert= ，出错立刻中断并告诉你哪里错了，而不是静默恢复继续跑。因为静默恢复容易导致状态污染，让你更难找到真正的 bug。
+
+*静态资产统一到路由系统*
+
+图片、CSS 等静态文件最初走的是一个独立的&quot;复制文件&quot;循环，跟 Org 文件完全分离。后来作者意识到：一个静态文件就是一个没有元数据的 Org 文件。他用一个不解析 Org 的 dummy parser 把静态资产统一进了同一个路由系统，享受同样的缓存、监视和增量重建能力。
+
+*不实现垃圾回收*
+
+作者曾试图跟踪所有生成的文件，用于清理孤立文件。最后放弃了——直接删掉整个输出目录再全量重建，简单、无状态、正确。有时候最聪明的工程决策就是认出一个五十年前就被 shell 命令解决的问题。
+
+* 读完之后
+
+这篇文章最打动人的不是最终的产品——一个静态站点生成器——而是整个过程。作者没有一开始就设计出完美的架构，而是从最朴素的字符串替换开始，一步步被现实逼着改进。每个转折点都有明确的&quot;为什么旧方案不行&quot;和&quot;为什么新方案更好&quot;。
+
+对于 Emacs 用户来说，这篇文章还提供了一个实用的启示： =org-export= 的可扩展性远比大多数人想象的大。通过 =org-export-define-derived-backend= 和自定义 transcoder，你可以在不修改 Org 源码的情况下深度定制 HTML 输出。 =ossg= 整个项目就是建立在这个能力之上的。
+
+[fn:1] 原文：https://scheatkode.com/blog/019d463d-38b3-7e63-80fd-6ed97bd8815e/hot-wiring-the-lisp-machine/
+</description>
+<pubDate>2026-04-24</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/24/读：hot-wiring-the-lisp-machine-——-用纯-elisp-构建零依赖的-org-静态站点生成器/index.html</guid>
+</item>
 <item>
 <title>WSL9x —— 在 Windows 9x 里跑 Linux 内核 6.19</title>
 <link>https://lujun9972.github.io/blog/2026/04/24/wsl9x-——-在-windows-9x-里跑-linux-内核-6.19/index.html</link>
@@ -181,1048 +1909,6 @@ Emacs 31 新增的 =ert-play-keys= 填补了上面两个工具留下的空白。
 </description>
 <pubDate>2026-04-23</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/23/ert-测试交互命令的三种方式/index.html</guid>
-</item>
-<item>
-<title>Elisp 性能优化的六个实战教训</title>
-<link>https://lujun9972.github.io/blog/2026/04/22/elisp-性能优化的六个实战教训/index.html</link>
-<description>有人用 Elisp 写了一个 Org-mode 静态站点生成器，处理 10000 篇博文的时间从 5 分半压到 1 分 15 秒，热重载单篇只需 7 毫秒。实现过程中踩过的坑和发现的优化技巧，对任何在 Emacs 里处理大量文件的人都有参考价值。本文提取其中的工程实践，用你能在自己项目里直接用的方式讲清楚。
-
-* 只解析你需要的东西
-
-Elisp 里解析 Org 文件的标准方式是调用 =org-element-parse-buffer= 。它的默认行为是完整解析整个 buffer——包括行内标记、链接、脚注，全部递归展开。
-
-但如果你只需要提取文件开头的标题和日期，完整解析就是巨大的浪费。 =org-element-parse-buffer= 接受一个可选的 =GRANULARITY= 参数：
-
-- =&#39;headline= :: 只解析标题结构
-- =&#39;greater-element= :: 不递归进入大元素内部，只解析顶层
-- =&#39;element= :: 解析所有元素但不解析行内对象
-- =&#39;object= :: 完整解析（默认）
-
-原文作者只需要标题和日期等元数据，把粒度从默认的 =&#39;object= 改成 =&#39;greater-element= ，单文件解析时间直接砍了一截。这不是微优化——对 10000 个文件来说，每个文件少解析几百个行内元素，累积效果显著。
-
-#+begin_src emacs-lisp
-;; 完整解析（慢）
-(org-element-parse-buffer)
-
-;; 只解析顶层元素（快得多）
-(org-element-parse-buffer &#39;greater-element t)
-#+end_src
-
-选择哪个粒度取决于你需要什么。提取元数据用 =&#39;greater-element= ，需要处理链接和行内标记才用 =&#39;object= 。
-
-* 别让 find-file-noselect 拖慢批量操作
-
-Emacs 有两种方式读取文件内容：
-
-1. =find-file-noselect= —— 正经打开文件，创建一个完整的 buffer
-2. =with-temp-buffer= + =insert-file-contents= —— 把文件内容塞进临时 buffer
-
-原文作者一开始选了 =find-file-noselect= ，觉得它更&quot;正确&quot;。然后用 Emacs 内置的性能分析器（ =M-x profiler-start= ）一看，发现这个函数吃掉了 13% 的 CPU。原因： =find-file-noselect= 会触发文件锁、版本控制查询、major-mode hook、org-persist 缓存写入等一系列交互式操作。对每个文件都来一遍，10000 个文件就是在重复 10000 次不必要的开销。
-
-#+begin_src emacs-lisp
-;; 慢：触发完整的 buffer 初始化流程
-(org-with-file-buffer filename
-  (org-element-parse-buffer &#39;greater-element t))
-
-;; 快：用临时 buffer 直接读内容
-(with-temp-buffer
-  (insert-file-contents filename)
-  (org-element-parse-buffer &#39;greater-element t))
-#+end_src
-
-切换到 =with-temp-buffer= 后，10000 篇博文的处理时间从 3 分 44 秒降到 1 分 15 秒。教训：批量处理文件时，用临时 buffer 而不是 =find-file-noselect= 。后者是为交互式编辑设计的，带着整套&quot;官僚系统&quot;。
-
-* 用 cl-progv 隔离全局状态
-
-Emacs 的状态管理建立在全局变量上—— =org-export-with-toc= 、 =org-html-link-home= 等都是全局变量。在同一个进程里处理多个 route 时，一个 route 设置的变量会&quot;泄漏&quot;到下一个 route。
-
-直觉上的做法是用 =let= 绑定：
-
-#+begin_src emacs-lisp
-(let ((org-export-with-toc t))
-  (opd-route ...))   ;; 这一步只是把 route 配置记下来
-
-;; 另一个 route
-(opd-route ...)
-
-(opd-export)         ;; 真正的导出在这里执行
-#+end_src
-
-问题是： =opd-route= 不会立即执行导出，它只是把 route 的配置（输入模式、输出路径、过滤器等）存到一个列表里。真正的 HTML 生成发生在 =opd-export= 被调用的时候——但那时 =let= 的作用域已经结束了， =org-export-with-toc= 的局部绑定已经不存在了。换句话说，你在一个 =let= 块里填了一张表单，但处理表单的人要等到 =let= 块结束之后才看它，那时候表单上写的&quot;特殊要求&quot;已经没人记得了。
-
-那能不能把 =opd-export= 放进 =let= 里？也不行，因为不同 route 需要*不同的*变量值——blog route 要目录（ =org-export-with-toc= 为 =t= ），RSS route 不要目录（ =nil= ）。 =opd-export= 一次执行所有 route，你没法在一个 =let= 里同时给不同 route 设不同的值。
-
-解决方案是用 =cl-progv= ，这个来自 Common Lisp 的宏可以在运行时动态绑定一组变量。每个 route 把自己的变量设置写在 =:env= 属性里，引擎处理到那个 route 时才临时绑定，处理完自动恢复：
-
-#+begin_src emacs-lisp
-(cl-progv
-    &#39;(org-export-with-toc org-html-link-home)  ;; 变量名列表
-    &#39;(nil &quot;http://localhost:8080&quot;)               ;; 对应的值列表
-  ;; 在这个作用域里，org-export-with-toc 为 nil
-  ;; org-html-link-home 为 &quot;http://localhost:8080&quot;
-  (org-export-as &#39;rss))
-#+end_src
-
-=cl-progv= 接受变量名列表和值列表，在执行 body 期间动态绑定这些变量，执行完后自动恢复。这比手动在每个 lambda 里 =let= 绑定更干净——你可以把变量配置做成数据，从 route 定义里传入，而不需要在每个导出函数里硬编码。
-
-* 让数据形状决定行为，而不是手动标记
-
-原文遇到一个问题：blog route 和 rss route 都匹配 =*.org= 文件，两者都在全局注册表里写入 URL，互相覆盖。最初的解法是加一个 =:canonical= 标记，手动指定哪个 route 有写入权限。
-
-后来发现根本不需要这个标记。关键是观察聚合（aggregate）后数据的形状：
-
-- 1:1 route（每个文件对应一个输出）：数据的顶层有 =abspath= 属性
-- 1:N route（多个文件聚合为一个输出，如 RSS）： =abspath= 藏在嵌套列表里
-
-#+begin_src emacs-lisp
-(defun opd--tree-has-abspath-p (tree path)
-  &quot;递归搜索 Lisp 树中是否包含 (abspath . PATH) 。&quot;
-  (cond
-   ((and (consp tree)
-         (eq (car tree) &#39;abspath)
-         (equal (cdr tree) path)) t)
-   ((consp tree)
-    (or (opd--tree-has-abspath-p (car tree) path)
-        (opd--tree-has-abspath-p (cdr tree) path)))
-   (t nil)))
-#+end_src
-
-用数据结构本身的特征来区分行为，而不是引入额外的标记。这是 duck typing 的思想：不问&quot;你是什么&quot;，而是看&quot;你长什么样&quot;。消除了一个配置项，也消除了用户忘记设置它导致的 bug。
-
-* 先 profile，再优化
-
-原文最有价值的教训之一：不要猜瓶颈在哪，用 Emacs 自带的性能分析器。
-
-#+begin_src emacs-lisp
-;; 启动 CPU profiler
-;; M-x profiler-start cpu
-
-;; 执行你的操作
-
-;; 查看报告
-;; M-x profiler-report
-#+end_src
-
-原文作者的直觉告诉他瓶颈在字符串模板处理上。profiler 显示真正的罪魁祸首是 =find-file-noselect= （13% CPU）和 =org-persist-write-all-buffer= （12% CPU）。直觉和数据的差距巨大。
-
-性能优化的正确顺序：
-
-1. 先写正确的代码
-2. 用 profiler 找到真正的瓶颈
-3. 只优化 profiler 指出的热点
-
-这个顺序对任何语言都适用，但在 Elisp 里尤其重要——因为 Elisp 的性能特征和直觉经常不一致。你以为慢的地方可能根本不是瓶颈，真正的热点藏在你不注意的地方。
-
-* 哈希表替代线性扫描
-
-当文件数量从几十个增长到几千个时，线性扫描列表的成本从可以忽略变成不可接受。原文的处理方式很直接：任何需要按文件名查找的场景，用哈希表代替列表。
-
-#+begin_src emacs-lisp
-;; 慢：线性扫描，O(n)
-(member target-file file-list)
-
-;; 快：哈希表查找，O(1)
-(gethash target-file file-hash-table)
-#+end_src
-
-原文在路由注册表（registry）、文件缓存（filecache）、依赖图（depcache）三个地方都用哈希表，消除了所有线性扫描。对于 10000 个文件的场景，这个差异是&quot;每个文件多查 10000 次&quot;和&quot;每个文件查 1 次&quot;的差距。
-
-这不是过早优化——当你的数据量明确会达到千级别时，选择哈希表是基本的数据结构选择，就像去超市买东西用购物袋而不是一趟趟用手捧。
-
-* 总结
-
-从这些优化中可以提炼出几条通用的 Elisp 工程原则：
-
-1. *用正确的工具做正确的事* —— 临时 buffer 读文件， =find-file-noselect= 留给交互式场景
-2. *只处理你需要的数据* —— =org-element-parse-buffer= 的粒度参数是个宝藏
-3. *用 profiler 驱动优化* —— 不要猜，让数据说话
-4. 用 =cl-progv= 隔离状态 —— 全局变量是 Emacs 的设计遗产， =cl-progv= 是在批量场景下控制它的有效手段
-5. *让数据形状驱动逻辑* —— duck typing 比手动标记更不容易出错
-6. *数据量大了就用哈希表* —— 这不是过早优化，是基本的数据结构选择
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/22/elisp-性能优化的六个实战教训/index.html</guid>
-</item>
-<item>
-<title>SEM Assistant: 当 Elisp 守护进程遇上 LLM</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/sem-assistant-当-elisp-守护进程遇上-llm/index.html</link>
-<description>SEM Assistant[fn:1] 是一个用 Elisp 写的自托管守护进程。它解决的问题是：手机上快速捕获信息（想法、链接、任务），服务端自动处理，结果写回你自己的 Org 文件。这跟笔记同步的不同之处在于它在管道里接了 LLM，只不过 LLM 只做有限的文本变换，流程控制完全由 Elisp 代码决定。这个&quot;LLM 是工具不是老板&quot;的设计思路，对任何想把 LLM 接入自己工作流的人都有参考价值。
-
-* SEM Assistant 做什么
-
-整体数据流是这样的：
-
-#+begin_example
-手机捕获 → WebDAV → inbox-mobile.org → Elisp 管道路由 → LLM 文本处理 → Org 文件
-#+end_example
-
-具体来说，它在服务端跑一个 Emacs 守护进程，通过 WebDAV 接收手机端（organice）传来的捕获内容，写入 =inbox-mobile.org= 。然后根据条目的标签走不同的处理流程：
-
-- =:task:= 标签 :: 走任务归一化 + 规划流程。LLM 帮你把随手写的任务拆解成结构化的 TODO 列表
-- =:link:= 标签（或标题以 =http://= 开头） :: 走 URL 捕获流程。LLM 帮你从网页内容生成 org-roam 笔记
-- 其他 :: 跳过，记录日志
-
-处理完的结果写回到对应的 Org 文件（ =tasks.org= 或 org-roam 笔记库），并定期 git 同步备份。
-
-**目录约定**
-
-所有数据都在 =/data= 下，每个文件有明确的角色：
-
-| 路径 | 作用 |
-|------+------|
-| =/data/inbox-mobile.org= | 手机端传来的原始捕获，管道路由的入口 |
-| =/data/tasks.org= | 任务处理后的输出文件 |
-| =/data/rules.org= | 调度规则文件，控制 cron 触发哪些流程 |
-| =/data/org-roam/org-files= | org-roam 笔记库，URL 捕获的结果写到这里 |
-| =/data/org-roam= | git 同步的仓库根目录 |
-
-**具体使用场景**
-
-场景一：在手机上随手记了一个任务。打开 organice，在 =inbox-mobile.org= 里写一条带 =:task:= 标签的标题，比如&quot;准备下周的技术分享&quot;。保存后，服务端的 cron 定时触inbox处理流程：Elisp 识别到 =:task:= 标签，把这条文本发给 LLM，LLM 归一化任务描述并生成规划（拆解成&quot;确定主题&quot;、&quot;准备 slides&quot;、&quot;排练&quot;等子任务），Elisp 把结果写入 =tasks.org= ，然后从收件箱中移除这条。
-
-场景二：在手机浏览器里看到一个有趣的文章，复制链接，在 organice 里粘贴为 =inbox-mobile.org= 的一条标题（以 =https://= 开头，甚至不需要加 =:link:= 标签，系统会自动识别）。cron 触发后，LLM 从网页内容中提取关键信息，生成一篇 org-roam 笔记节点，写入 =/data/org-roam/org-files= 下。
-
-**三个后台循环**
-
-SEM Assistant 在后台跑着三个定时循环：
-
-1. =inbox processing= :: 扫描收件箱，按标签路由，调用 LLM 处理，写回结果
-2. =URL-to-org-roam= :: 把链接转成 org-roam 笔记节点
-3. =git sync= :: 定期把 org-roam 笔记库 commit + push
-
-这三个循环由 cron 驱动（项目自带 crontab 配置）。你也可以手动触发：
-
-#+begin_src shell
-# 手动触发收件箱处理
-docker compose exec emacs emacsclient -s sem-server -e &quot;(sem-core-process-inbox)&quot;
-
-# 手动触发 git 同步
-docker compose exec emacs emacsclient -s sem-server -e &quot;(sem-git-sync-org-roam)&quot;
-#+end_src
-
-git 同步需要在容器内配置好 SSH 密钥（ =/root/.ssh/id_rsa= ）和 git 身份（name/email），这样每次同步都会自动 commit 和 push 到远程仓库。
-
-* 关键设计：LLM 是工具不是编排者
-
-这是整个项目最有价值的设计思想。
-
-现在很多 AI 工具让 LLM 直接驱动整个工作流——LLM 决定下一步做什么、调什么 API、写什么文件。SEM Assistant 反其道而行：Elisp 代码是编排者，LLM 只是管道中的一个处理步骤。
-
-LLM *只负责三件事*：
-
-- 归一化 :: 把随手写的任务文本整理成统一格式
-- 规划 :: 把一个模糊的任务拆解成可执行的 TODO 列表
-- 摘要 :: 从网页内容中提取关键信息生成笔记
-
-它 *不负责的事*：
-
-- 决定走哪条处理流程（由标签决定，代码控制）
-- 决定结果写到哪个文件（由路径约定决定）
-- 决定是否重试（由 Elisp 的重试逻辑决定）
-- 决定是否调用下一个步骤（由确定性管道控制）
-
-这种设计的核心好处是：管道行为是可预测的。你可以看 Elisp 代码就知道数据怎么流转，不需要猜测&quot;AI 会不会走错路&quot;。
-
-* 安全模型：LLM 输出是不可信的
-
-既然 LLM 是不可信组件，SEM Assistant 专门做了几层防护：
-
-1. *敏感内容屏蔽*：Org 文件中用 =#+begin_sensitive= / =#+end_sensitive= 包裹的内容在发送给 LLM 之前会被替换掉（masked），LLM 看不到原文。处理完后自动恢复
-2. *上下文裁剪*：任务规划时，传给 LLM 的不是完整的任务库，而是经过精简和匿名化的上下文——减少不必要的数据暴露
-3. *输出验证*：LLM 的输出被当作不可信文本处理，经过验证后才写入文件
-4. *确定性兜底*：重试、错误日志、死信队列（DLQ）、cron 重复执行防护——这些全都由 Elisp 代码确定性处理，不依赖 LLM
-
-这套安全模型可以总结为一句话：LLM 只能接触它需要处理的数据，只能产生文本，不能做任何决策。
-
-* 可复用的设计原则
-
-从 SEM Assistant 的架构中，可以提炼出几个通用的设计原则：
-
-原则一：*确定性管道 + LLM 有限调用*
-
-把&quot;流程控制&quot;和&quot;文本处理&quot;分成两层。流程用确定性代码（Elisp、Python、Shell 都行），LLM 只在需要理解或生成文本的环节介入。这样管道行为可预测、可调试、可测试。
-
-原则二：*文件契约*
-
-所有组件通过文件系统通信，约定好目录结构和文件名。比如 =/data/inbox-mobile.org= 是收件箱，=/data/tasks.org= 是任务输出。文件是接口——任何工具只要遵守文件格式就能接入。
-
-原则三：*标签即路由*
-
-用 Org-mode 的标签（=:task:=、=:link:=）作为路由条件，决定数据走哪条管道。简单、直观、用户可以在手机端直接控制。
-
-原则四：*操作数据对人类可读*
-
-所有数据都是纯文本 Org 文件，你可以直接打开看、直接编辑、直接用 git 管理。不依赖任何数据库或专有格式。
-
-* 安装与配置
-
-SEM Assistant 用 Docker Compose 部署，整体架构是三个容器：Emacs 守护进程、WebDAV 服务器、organice（手机端 Org 编辑器）。
-
-**前提条件：**
-
-- 一台有公网 IP 的服务器
-- 两个域名：一个给 WebDAV（比如 =org.example.com= ），一个给 organice（比如 =organice.example.com= ），都指向同一个 IP
-- Docker 和 Docker Compose 已安装
-
-**第一步：克隆仓库并配置环境变量**
-
-#+begin_src shell
-git clone https://github.com/SemyonSinchenko/sem-assistant-el.git
-cd sem-assistant-el
-cp .env.example .env
-#+end_src
-
-编辑 =.env= 文件，填入以下配置：
-
-#+begin_example
-WEBDAV_DOMAIN=org.example.com
-ORGANICE_DOMAIN=organice.example.com
-ORGANICE_ORIGIN=https://organice.example.com
-WEBDAV_USERNAME=your-username
-WEBDAV_PASSWORD=your-password
-#+end_example
-
-=ORGANICE_ORIGIN= 必须严格匹配 =https://ORGANICE_DOMAIN= 。=ORGANICE_IMAGE= 是可选的，默认使用 =twohundredok/organice:5826= 。
-
-**第二步：申请 TLS 证书**
-
-两个域名都需要 HTTPS。用 certbot 申请：
-
-#+begin_src shell
-docker compose --profile certbot up -d certbot
-#+end_src
-
-确认证书文件存在于 =/etc/letsencrypt/live/$DOMAIN/= 下（=fullchain.pem= 和 =privkey.pem= ）。
-
-**第三步：启动服务**
-
-#+begin_src shell
-docker compose up -d webdav emacs
-#+end_src
-
-这会启动 WebDAV 服务器和 Emacs 守护进程。organice 通过 WebDAV 容器的反向代理提供（根据 Host 头路由到 =ORGANICE_DOMAIN= ），不需要单独启动。
-
-CORS 策略是严格单源的——只允许 =ORGANICE_ORIGIN= 的跨域请求，且带凭证。OPTIONS 预检请求不需要认证（兼容浏览器），其他 WebDAV 方法仍需认证。
-
-**第四步：配置 git 同步**
-
-进入 Emacs 容器，配置 SSH 密钥和 git 身份：
-
-#+begin_src shell
-# 进入容器
-docker compose exec emacs bash
-
-# 配置 git 身份
-git config --global user.name &quot;Your Name&quot;
-git config --global user.email &quot;you@example.com&quot;
-
-# 确认 SSH 密钥已就位
-ls /root/.ssh/id_rsa
-#+end_src
-
-=sem-git-sync-org-roam= 函数会用这个密钥 push 到远程仓库。
-
-**第五步：配置 LLM**
-
-项目需要配置 LLM 的 API 密钥和 endpoint。参考项目中的 =general-prompt.example.txt= 和 =arxiv-prompt.example.txt= 了解 prompt 模板的格式。
-
-**第六步：启动 cron 定时任务**
-
-项目自带 =crontab= 文件，定义了三个循环的触发频率。安装到容器中后，收件箱处理和 git 同步就会自动运行。
-
-你也可以跳过 cron，完全用手动触发（见上文的手动触发命令）。
-
-**日常使用流程**
-
-1. 在手机浏览器打开 =https://organice.example.com= ，连接到你的 WebDAV
-2. 编辑 =inbox-mobile.org= ，添加带 =:task:= 或 =:link:= 标签的条目，或者直接粘贴 URL 作为标题
-3. 保存后，cron 会自动触发处理（或你手动执行 =sem-core-process-inbox= ）
-4. 处理完的结果出现在 =tasks.org= 或 org-roam 笔记库中
-5. git 同步自动 push 到远程仓库
-
-**回滚**
-
-如果部署出问题，回滚步骤：
-
-1. 保持 WebDAV 容器运行（数据还在）
-2. 还原 =ORGANICE_*= 环境变量和 Apache 模板配置
-3. 先重启 webdav 服务，再重启依赖服务
-4. certbot 继续管理现有证书，不需要额外操作
-
-[fn:1] https://github.com/SemyonSinchenko/sem-assistant-el
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/sem-assistant-当-elisp-守护进程遇上-llm/index.html</guid>
-</item>
-<item>
-<title>TIL: 用 diff-hl 在 fringe 中显示 git 变更</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/til-用-diff-hl-在-fringe-中显示-git-变更/index.html</link>
-<description>读到 James Dyer 的一篇文章[fn:1]，介绍了 =diff-hl= 这个包——在 fringe（Emacs 窗口两侧的边栏）中高亮显示当前 buffer 相对于 git 最新提交的变更：新增的行标绿色，修改的行标黄色，删除的行标红色。不用跳出 buffer 就能看到自己改了什么。
-
-* 配置
-
-#+BEGIN_SRC emacs-lisp
-(use-package diff-hl
-  :ensure t
-  :hook (dired-mode . diff-hl-dired-mode)
-  :config
-  (global-diff-hl-mode 1)
-  (diff-hl-flydiff-mode 1)
-  (unless (display-graphic-p)
-    (diff-hl-margin-mode 1)))
-#+END_SRC
-
-几个要点：
-
-- =global-diff-hl-mode= 开启全局 fringe 高亮，但默认只在 *保存文件后* 更新
-- =diff-hl-flydiff-mode= 改为 *边打字边更新* ，不用先保存再看变更——这个几乎是必开的
-- =diff-hl-dired-mode= 在 dired 中用颜色标记哪些文件有 git 变更，一眼看出项目状态
-- =diff-hl-margin-mode= 是给终端用户（非图形界面）的回退方案——终端没有 fringe，改在行号旁边的 margin 区域显示
-
-* 配合内置 VC 工具
-
-=diff-hl= 的高亮位置跟 Emacs 内置的 VC（Version Control）工具是对齐的。把光标移到某行高亮处，按 =C-x v == （ =vc-diff= ），会直接跳到 diff 中对应的 hunk——不需要先记住改了哪里再去找。
-
-如果开了 =repeat-mode= （之前写过[fn:2]），第一次按 =C-x v ]= 跳到下一个变更后，后续只需按 =]= 就能继续跳，不用重复 =C-x v= 前缀。=]= 和 =[= 之间也能随意切换方向。
-
-[fn:1] https://www.emacs.dyerdwelling.family/emacs/20260421070329-emacs--getting-diff-hl-just-right/
-[fn:2] [[file:TIL-repeat-mode省去重复按键前缀.org][TIL: repeat-mode 省去重复按键前缀]]
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/til-用-diff-hl-在-fringe-中显示-git-变更/index.html</guid>
-</item>
-<item>
-<title>用 dmsg 给 Elisp 加上结构化调试日志</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/用-dmsg-给-elisp-加上结构化调试日志/index.html</link>
-<description>写 Elisp 调试的时候，大多数人靠的就是 =message= 往 =*Messages*= buffer 里塞字符串。但用多了就会发现几个很烦的问题：
-
-- =*Messages*= 里什么都有: package 初始化的日志、mode 激活的信息、你自己的 debug 输出全混在一起，翻半天找不到想看的那条
-- 没有调用栈: 你看到一条消息，但完全不知道它是从哪个函数、哪条代码路径打出来的
-- 没有日志级别: debug 信息和 error 混在一起，没法按严重程度过滤
-- =*Messages*= 是个只读 buffer: 想过滤或者导出都得自己想办法
-
-dmsg.el[fn:1] 就是来解决这些问题的。它提供了带时间戳、日志级别和自动调用栈捕获的调试日志系统，还有一个专用的 dmsg-mode 让你交互式地浏览和过滤日志。
-
-* 基本用法
-
-安装很简单，clone 仓库后 =require= 就行：
-
-#+begin_src emacs-lisp
-(add-to-list &#39;load-path &quot;~/github/dmsg.el/&quot;)
-(require &#39;dmsg)
-#+end_src
-
-#+RESULTS:
-: dmsg
-
-用 =dmsg= 宏打日志，默认级别是 debug：
-
-#+begin_src emacs-lisp
-  (defun my-function (x)
-    (dmsg &quot;x is %S&quot; x))
-  (my-function 42)
-#+end_src
-
-#+begin_example
-,* DBG [2026-04-23 09:50:41.015] x is 42
-#+end_example
-
-可以指定日志级别（debug / info / warn / error 四个级别，严重程度递增）：
-
-#+begin_src emacs-lisp
-(dmsg &#39;warn &quot;unexpected: %s&quot; &quot;something odd&quot;)
-(dmsg &#39;error &quot;failed: %s&quot; &quot;connection lost&quot;)
-#+end_src
-
-#+begin_example
-WARN [2026-04-23] 09:51:21.883 [eval] unexpected: something odd
-ERR  [2026-04-23] 09:51:25.053 [eval] failed: connection lost
-#+end_example
-
-每条日志都会写入专用的 =*DEBUG*Messages*= buffer，不会和 =*Messages*= 混在一起。日志格式长这样：
-
-#+begin_example
-  ,* DBG [2026-04-23 10:30:45.123] [my-function] x is 42
-#+end_example
-
-分别是日志级别（DBG）、时间戳、展开后的调用栈帧和消息内容。调用栈默认是隐藏的，后面会说怎么查看。
-
-* %= 格式符：自动给变量加标签
-
-dmsg 加了一个实用的格式符 ~%=X~ （X 是普通的 format 转换字符，比如 s、d、S），它会自动把参数变成 =label=value= 的形式，label 直接从源码的变量名提取：
-
-#+begin_src emacs-lisp
-(let ((buf &quot;foo.el&quot;) (line 10))
-  (dmsg &quot;at %=s %=d&quot; buf line))
-#+end_src
-
-输出类似：
-
-#+begin_example
-,* DBG [2026-04-23 10:31:00.456] [eval] at buf=foo.el line=10
-#+end_example
-
-调试的时候如果一次打好几个变量，这个功能能省不少事——不用手动写 ~buf=~ 和 ~line=~ ，也避免搞混哪个值对应哪个变量。
-
-* 专用 buffer 和交互式浏览
-
-dmsg 的日志写入 =*DEBUG*Messages*= buffer，这个 buffer 使用 dmsg-mode，提供了一组快捷键来浏览和过滤：
-
-| 快捷键    | 功能                                   |
-|-----------+----------------------------------------|
-| =&lt;tab&gt;=   | 切换紧凑调用链显示                     |
-| =b=       | 在侧边窗口打开详细调用栈               |
-| =c=       | 隐藏/恢复所有当前条目                   |
-| =e=       | 清空 buffer                            |
-| =f=       | 按正则表达式过滤                       |
-| =s=       | 将可见条目导出到带时间戳的 .log 文件   |
-| =l1=-=l4= | 设置最低显示级别（1=debug, 4=error）   |
-
-header line 始终显示 =visible/total= 计数、活跃的过滤条件和当前级别阈值，一眼就能看出当前状态。
-
-** 调用栈自动捕获
-
-每条日志都自动捕获了调用栈。默认状态下调用栈是隐藏的，按 =&lt;tab&gt;= 可以展开为紧凑的函数调用链：
-
-#+begin_example
-my-function ← some-handler ← process-event
-#+end_example
-
-函数名是可点击的，点击后直接跳转到函数的定义位置（通过 =find-function= 实现）。
-
-按 =b= 可以在侧边窗口看到完整的调用栈详情，包含每个函数的参数值。
-
-** 过滤和导出
-
-dmsg 支持多种过滤方式，全部通过 overlay 实现——只改变显示，不修改 buffer 内容，随时可以恢复：
-
-- =f= 按正则过滤消息文本
-- =c= 隐藏/恢复所有当前条目
-- =l1= 到 =l4= 设置最低显示级别
-- =dmsg-max-entries= 限制最大显示条数（超出时自动隐藏最旧的条目）
-
-想把日志分享给别人或存档？按 =s= 可以把当前可见的条目导出到一个带时间戳的 =.log= 文件。
-
-* 拦截 message 和捕获错误
-
-除了主动调用 =dmsg= 打日志，dmsg 还提供了两个功能来对付已有的代码。
-
-=dmsg-on-message= 可以拦截 =message= 函数的调用，把匹配正则的输出也转到 dmsg buffer 里：
-
-#+begin_src emacs-lisp
-  (dmsg-on-message &quot;error\\|warning&quot;)  ; 拦截包含 error 或 warning 的 message
-  (message &quot;something error happened&quot;)
-  (dmsg-on-message nil)                ; 关闭拦截
-#+end_src
-
-这对于排查第三方包的日志特别有用——不用改别人的代码，直接把感兴趣的 =message= 输出捞到 dmsg 里来，还能看到调用栈。
-
-=dmsg-on-error= 可以给指定函数加上错误日志。当这个函数抛错时，错误会被记录为 error 级别，然后正常重新抛出，不影响原有的错误处理逻辑：
-
-#+begin_src emacs-lisp
-(dmsg-on-error &#39;my-problematic-function)
-#+end_src
-
-这在调试 =post-command-hook= 里的间歇性错误时特别方便，因为这类错误往往被 Emacs 的错误处理吞掉了，你只知道&quot;出了个错&quot;但不知道具体是什么。
-
-[fn:1] https://github.com/haji-ali/dmsg.el
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/用-dmsg-给-elisp-加上结构化调试日志/index.html</guid>
-</item>
-<item>
-<title>用 org-habit 追踪非每日习惯</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/用-org-habit-追踪非每日习惯/index.html</link>
-<description>很多人用 Org-mode 管理任务，但追踪习惯——尤其是非每日习惯——的时候往往会卡住。比如&quot;每周跑三次步，跑完至少休息一天，最多休息三天&quot;这种需求，用普通的 TODO 或 checkbox 列表很难搞定。Org-mode 内置了一个 =org-habit= 模块，专门解决这类问题：它能按你设定的频率自动安排下次执行日期，还能在 agenda 里用彩色图形展示你的连续完成情况。
-
-* 开启 org-habit
-
-=org-habit= 是 Org-mode 的内置扩展，默认没开。在你的配置文件（通常是 =~/.emacs.d/init.el= ）里加上：
-
-#+begin_src emacs-lisp
-(add-to-list &#39;org-modules &#39;org-habit t)
-#+end_src
-
-然后需要让 Org-mode 记录状态变更的时间戳，这样 =org-habit= 才有数据画图。关键是在 =org-todo-keywords= 里给需要记录的状态加上 =!= 标记—— =!= 的意思是&quot;切换到这个状态时自动记录时间戳&quot;。下面例子里的 =TODO(t!)= 表示：快捷键 =t= 触发，并且切换时自动记录时间。 =DONE(d!)= 同理：
-
-#+begin_src emacs-lisp
-;; TODO 和 DONE 都自动记录时间戳
-(setq org-todo-keywords
-      &#39;((sequence &quot;TODO(t!)&quot; &quot;NEXT(n)&quot; &quot;|&quot; &quot;DONE(d!)&quot; &quot;CANC(c!)&quot;))
-
-;; 创建 TODO 时也记录时间
-(setq org-treat-insert-todo-heading-as-state-change t)
-
-;; 状态变更记录到 LOGBOOK drawer（就是条目下方用 :LOGBOOK: ... :END: 包裹的区域）
-(setq org-log-into-drawer t)
-#+end_src
-
-最后，习惯图形是在 org-agenda 里显示的，所以习惯所在的文件要加入 =org-agenda-files=：
-
-#+begin_src emacs-lisp
-(setq org-agenda-files &#39;(&quot;~/org/habits.org&quot;))
-#+end_src
-
-* 创建习惯条目
-
-习惯条目本质上是一个特殊的 TODO 节点，需要两样东西：=STYLE: habit= 属性和带 repeater 的 SCHEDULED 日期。
-
-创建步骤：
-1. 先写一个普通的 TODO 条目（=C-c C-t= 切换到 TODO 状态）
-2. 在条目上按 =C-c C-s= 设置 SCHEDULED 日期，输入 =.+2d/4d= 作为 repeater（日期部分会自动填入当天）
-3. 按 =C-c C-x p= 或 =M-x org-set-property= 设置 =STYLE= 为 =habit=
-
-最终效果长这样（注意：行首没有逗号，下面示例中的逗号是 Org-mode 在 example 块里转义 =*= 用的）：
-
-#+begin_example
-** TODO 跑步
-SCHEDULED: &lt;2026-04-23 Wed .+2d/4d&gt;
-:PROPERTIES:
-:STYLE:    habit
-:END:
-#+end_example
-
-** Repeater 语法是核心
-
-=SCHEDULED= 后面的 =.+2d/4d= 是整个习惯追踪的关键：
-
-- =.+2d= :: 最小间隔 2 天。完成后的下次安排至少在 2 天之后（跑完步至少休息一天）
-- =/4d= :: 最大间隔 4 天。如果超过 4 天没做，agenda 上就会标红提醒你
-
-也就是说，这是一个&quot;每 2 到 4 天做一次&quot;的习惯。当你把它标记为 =DONE= 时，Org-mode 会自动把 =SCHEDULED= 更新为下一个合法日期。
-
-Repeater 的第一个字符决定了计算起点：
-
-| 语法     | 含义                                       |
-|----------+--------------------------------------------|
-| =.+Nd/Md= | 从上次完成日期算起（适合&quot;休息 X 天再做&quot;） |
-| =++Nd/Md= | 从上次安排日期算起（固定周期）             |
-| =+Nd=     | 简单重复，不设最大间隔                     |
-
-大多数习惯追踪场景用 =.+Nd/Md= 最合适——它以你的实际完成时间为基准，不会因为你某天忘了做就把后面的日期全打乱。
-
-* 实际使用
-
-完成一次习惯后，在条目上按 =C-c C-t= 把状态从 =TODO= 切到 =DONE=：
-
-- 状态会短暂显示 =DONE=，然后自动切回 =TODO=
-- =SCHEDULED= 日期自动更新为下次执行日期
-- =LOGBOOK= 里多一条完成记录，带上时间戳
-
-#+begin_example
-** TODO 跑步
-SCHEDULED: &lt;2026-04-25 Fri .+2d/4d&gt;
-:PROPERTIES:
-:STYLE:    habit
-:LAST_REPEAT: [2026-04-23 Wed 08:00]
-:END:
-:LOGBOOK:
-- State &quot;DONE&quot;       from &quot;TODO&quot;       [2026-04-23 Wed 08:00]
-- State &quot;DONE&quot;       from &quot;TODO&quot;       [2026-04-21 Mon 07:30]
-:END:
-#+end_example
-
-配置好之后，用 =M-x org-agenda= 选择 agenda 视图（通常是按 =a= 进入周/日视图），就能看到习惯的彩色图形了。绿色表示按时完成，黄色表示该做了但还没做，红色表示已经超期。每列是一天， =!= 表示今天，让你一眼看出自己的连续完成情况（streak）和最近的节奏。
-
-* 几个实用细节
-
-- =org-habit-show-all-today= :: 设为 =t= 可以让所有习惯都在今天的 agenda 上显示，不管今天是不是安排日
-- 不用为习惯断裂感到沮丧——org-habit 的设计本身就允许间隔波动，重要的是重新开始
-- 如果某个习惯不再需要了，把 =STYLE= 属性删掉就变回普通 =TODO=
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/用-org-habit-追踪非每日习惯/index.html</guid>
-</item>
-<item>
-<title>读：llm-test —— 用 LLM agent 驱动 Emacs 测试</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/读：llm-test-——-用-llm-agent-驱动-emacs-测试/index.html</link>
-<description>Andrew Hyatt（Emacs 核心贡献者）最近开源了一个实验性项目[fn:1]： =llm-test= 。它的核心想法是——用 LLM 代替人来测试 Emacs 包。你用自然语言描述&quot;用户应该看到什么&quot;，LLM agent 会启动一个干净的 Emacs 进程，像人一样操作它（按键、输入文字、执行命令），然后判断测试是否通过。
-
-* 怎么工作
-
-整个流程分四步：
-
-1. 用 YAML 文件写测试描述，就是一段英文说明要测什么、期望什么结果
-2. =llm-test= 解析 YAML，为每个测试描述注册一个 ERT 测试
-3. 运行测试时，启动一个 =emacs -Q= 的干净 daemon 进程
-4. LLM agent 通过 tool calling 驱动这个 Emacs，直到判定通过或失败
-
-#+BEGIN_SRC yaml
-group: auto-fill mode
-setup: |
-  Enable auto-fill-mode in a text-mode buffer.
-  Set fill-column to 40.
-tests:
-  - description: |
-      Type a long paragraph that exceeds fill-column.
-      Verify that the text is automatically wrapped.
-  - description: |
-      Type a numbered list item that exceeds fill-column.
-      Verify that continuation lines are indented properly.
-#+END_SRC
-
-这个例子测试的是 =auto-fill-mode= ：开一个文本 buffer，设置 =fill-column= 为 40，然后让 LLM 输入一段超过 40 列的文字，检查 Emacs 是否自动换行了。测试描述就是自然语言，不需要写一行 Elisp。
-
-* Agent 怎么&quot;看&quot; Emacs
-
-LLM agent 看不到图形界面——测试 Emacs 是以 daemon 模式运行的。那它怎么知道 Emacs 当前什么状态？
-
-答案是：每次 agent 执行完一个操作（按键、执行命令、eval 代码等）， =llm-test= 会自动附加一份 JSON 格式的 frame 快照。这个快照包含当前所有窗口的可见内容（就像截图，但是文字版）、光标位置、minibuffer 状态和 echo area 消息。
-
-#+BEGIN_SRC json
-{
-  &quot;selected-window&quot;: {&quot;number&quot;: 0, &quot;buffer&quot;: &quot;&lt;buffer name&gt;&quot;},
-  &quot;windows&quot;: [
-    {
-      &quot;number&quot;: 0,
-      &quot;buffer&quot;: &quot;&lt;buffer name&gt;&quot;,
-      &quot;mode&quot;: &quot;&lt;major mode&gt;&quot;,
-      &quot;point&quot;: 1,
-      &quot;lines&quot;: [&quot;&lt;visual line 1&gt;&quot;, &quot;&lt;visual line 2&gt;&quot;]
-    }
-  ],
-  &quot;minibuffer&quot;: {&quot;active&quot;: false, &quot;prompt&quot;: &quot;&quot;, &quot;input&quot;: &quot;&quot;},
-  &quot;message&quot;: &quot;&lt;echo area message&gt;&quot;
-}
-#+END_SRC
-
-Agent 不需要主动请求&quot;给我看看现在屏幕上有什么&quot;——每次操作后自动收到。这让 agent 的行为更像真人：按了一个键，&quot;看&quot;到结果，决定下一步做什么。
-
-Agent 可以调用的工具包括：
-
-- =eval-elisp= ：在测试进程中执行任意 Elisp 并返回结果
-- =send-keys= ：模拟按键（如 =C-x C-f= 、 =M-x= ）
-- =type-text= ：逐字输入文本（保留空格和特殊字符）
-- =run-command= ：按名称执行命令（比 =M-x= 更可靠）
-- =sleep= ：等待异步操作完成
-- =suggest-improvement= ：记录 UI/UX 改进建议（不影响测试结果）
-- =pass-test= / =fail-test= ：判定测试结果，结束循环
-
-整个 agent loop 最多跑 80 轮（ =llm-test-max-iterations= 默认值），每轮是一次 LLM 请求/响应往返。
-
-* 跟传统测试的区别
-
-传统的 Emacs 测试用 ERT（Emacs Lisp 测试框架），测试代码直接调用函数、检查返回值。比如测试 =auto-fill= ，你要写 Elisp 设置 buffer、插入文字、检查换行位置。这测的是 *函数的行为* 。
-
-=llm-test= 测的是 *用户的体验* 。Agent 不知道你的内部函数怎么调用——它只知道按键、看屏幕、判断结果是否符合描述。这跟真实用户使用 Emacs 的方式一模一样。
-
-这种思路的优势：
-
-- *能测传统测试很难覆盖的场景* ：比如&quot; =M-x= 输入命令时的补全是否正确&quot;、&quot; =dired= 中按 =g= 刷新后文件列表是否更新&quot;——这些涉及多个命令组合和 UI 状态变化的交互流程，用 Elisp 写测试非常痛苦，用自然语言描述却很自然
-- *测试描述就是文档* ：YAML 里的自然语言描述既是测试用例，也是用户行为的文档
-- *对被测代码零侵入* ：不需要为测试暴露内部接口或写 test helper
-
-但也有明显的代价：
-
-- *非确定性* ：同一个测试跑两次，LLM 可能走不同的操作路径，甚至得出不同的结论。这不是传统测试的&quot;确定性&quot;范式
-- *成本* ：每个测试都要多次调用 LLM API，一个测试组跑下来可能消耗不少 token
-- *速度* ：每轮 agent loop 都是一次 API 调用，比直接 eval Elisp 慢几个数量级
-- *依赖模型质量* ：Andrew Hyatt 在 README 中建议使用 Claude Sonnet 级别的模型，不过他指出只要指令足够清晰，便宜的模型也能胜任
-
-* &quot;LLM 当测试员&quot;的适用场景
-
-=llm-test= 不会取代传统 ERT 测试。对于&quot;函数 =f(x)= 输入 5 应该返回 10&quot;这类确定性逻辑测试，Elisp 单元测试更快更准。
-
-它适合的是另一类测试——那些&quot;人一眼就能看出来对不对，但用代码描述很麻烦&quot;的场景：
-
-- 包的 UI 工作流是否顺畅（按键 → 期望看到某个界面）
-- 多步骤交互的端到端验证（打开文件 → 编辑 → 保存 → 确认状态）
-- 发现 UI/UX 问题（ =suggest-improvement= 工具让 agent 可以主动提出改进建议）
-
-这个思路也可以延伸到其他 GUI 应用——只要你能给 LLM 提供&quot;屏幕状态&quot;和&quot;操作接口&quot;，就能用同样的 agent loop 模式做测试。 =llm-test= 的 frame state JSON 快照设计就是一个很好的参考：不需要真的截图，把视觉信息结构化为文本就够了。
-
-[fn:1] https://github.com/ahyatt/llm-test
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/读：llm-test-——-用-llm-agent-驱动-emacs-测试/index.html</guid>
-</item>
-<item>
-<title>fcitx5 下 Emacs 无法切换输入法的排查</title>
-<link>https://lujun9972.github.io/blog/2026/04/22/fcitx5-下-emacs-无法切换输入法的排查/index.html</link>
-<description>* 背景
-
-我之前从 fcitx4 升级到了 fcitx5，解决了键盘输入卡顿的问题（详见[[file:fcitx启动后键盘输入卡顿的排查.org][fcitx 启动后键盘输入卡顿的排查]]）。升级后，普通应用（浏览器、终端等）都能正常切换输入法，唯独 =Emacs= 不行——按切换快捷键毫无反应，只能输入英文。
-
-* 故障现象
-
-- fcitx5 在其他应用（Firefox、终端等）中正常工作
-- 在 Emacs 中无法切换到中文输入法
-- Emacs 是通过 =systemd user service= 以 daemon 模式启动的
-- 系统为 Arch Linux，Emacs 版本 31.0.50，使用 Lucid（Xaw）工具包
-
-* 排查过程
-
-** 第一步：检查环境变量
-
-输入法框架依赖三个关键环境变量来告诉应用程序&quot;该用哪个输入法&quot;。我先检查了当前 shell 中的值：
-
-#+begin_src shell
-  echo &quot;GTK_IM_MODULE=$GTK_IM_MODULE&quot;
-  echo &quot;QT_IM_MODULE=$QT_IM_MODULE&quot;
-  echo &quot;XMODIFIERS=$XMODIFIERS&quot;
-#+end_src
-
-#+begin_example
-  GTK_IM_MODULE=fcitx5
-  QT_IM_MODULE=fcitx5
-  XMODIFIERS=@im=fcitx5
-#+end_example
-
-三个变量都有值，看起来没问题。
-
-#+BEGIN_QUOTE
-*小知识：这三个环境变量是干什么的？*
-
-Linux 下的应用程序通过三种不同的协议连接输入法：
-
-1. =XMODIFIERS=@im=xxx= ：告诉 *所有 X11 应用* ，通过 XIM 协议连接名为 =xxx= 的输入法服务器。这是最古老的方案，几乎所有 X 应用都支持，但功能最基础。
-2. =GTK_IM_MODULE=xxx= ：让 *GTK 应用* 加载专门的输入法模块，比 XIM 体验更好（支持光标跟随、预编辑文字等）。
-3. =QT_IM_MODULE=xxx= ：同理，让 *Qt 应用* 加载专门的输入法模块。
-
-简单来说：=XMODIFIERS= 是万能兜底方案，=GTK_IM_MODULE= 和 =QT_IM_MODULE= 是各自框架的增强方案。
-#+END_QUOTE
-
-** 第二步：运行 fcitx5-diagnose
-
-fcitx5 自带了一个诊断工具，可以自动检查各种常见配置问题：
-
-#+begin_src shell
-  fcitx5-diagnose
-#+end_src
-
-诊断结果里出现了多处警告：
-
-#+begin_example
-  环境变量 XMODIFIERS 的值被设为了&quot;@im=fcitx5&quot;而不是&quot;@im=fcitx&quot;。
-  请检查您是否在某个初始化文件中错误的设置了它的值。
-
-  环境变量 GTK_IM_MODULE 的值被设为了&quot;fcitx5&quot;而不是&quot;fcitx&quot;。
-  环境变量 QT_IM_MODULE 的值被设为了&quot;fcitx5&quot;而不是&quot;fcitx&quot;。
-#+end_example
-
-诊断工具建议把所有值从 =fcitx5= 改成 =fcitx= 。看起来很合理——虽然软件叫 =fcitx5= ，但输入法模块注册的名字可能不带版本号。
-
-于是我按建议修改了 =~/.xinitrc= ：
-
-#+begin_src shell
-  # 修改前
-  export GTK_IM_MODULE=fcitx5
-  export QT_IM_MODULE=fcitx5
-  export XMODIFIERS=&quot;@im=fcitx5&quot;
-
-  # 修改后
-  export GTK_IM_MODULE=fcitx
-  export QT_IM_MODULE=fcitx
-  export XMODIFIERS=&quot;@im=fcitx&quot;
-#+end_src
-
-但问题没有解决——Emacs 还是无法切换输入法。
-
-#+BEGIN_QUOTE
-*小知识：=.xinitrc= 是什么？*
-
-当你用 =startx= 命令启动图形界面时，=X 服务器= 会读取 =~/.xinitrc= 这个文件，执行里面的命令来初始化桌面环境。通常在里面设置环境变量、启动输入法、启动窗口管理器等。
-#+END_QUOTE
-
-** 第三步：发现 Emacs 是 systemd 服务启动的
-
-我意识到一个关键问题：我的 Emacs 不是从 =.xinitrc= 启动的，而是通过 =systemd user service= 以 daemon 模式在后台运行的。
-
-#+BEGIN_QUOTE
-*小知识：Emacs daemon 模式*
-
-Emacs 可以以&quot;守护进程&quot;方式运行（=emacs --fg-daemon= 或 =emacs --daemon=），在后台常驻。之后用 =emacsclient= 连接到这个后台进程来打开窗口。好处是：
-- 启动速度极快（不用每次都重新加载配置）
-- 多个客户端共享同一个 Emacs 进程（状态、缓冲区等）
-#+END_QUOTE
-
-这意味着 Emacs 的环境变量 *不来自 =.xinitrc=* ，而是来自 systemd service 文件中的 =Environment= 配置。查看服务文件：
-
-#+begin_src shell
-  cat ~/.config/systemd/user/emacs.service
-#+end_src
-
-#+begin_example
-  [Service]
-  Type=simple
-  ExecStart=/usr/bin/emacs --fg-daemon
-  Environment=... GTK_IM_MODULE=fcitx QT_IM_MODULE=fcitx XMODIFIERS=&quot;@im=fcitx&quot; ...
-#+end_example
-
-果然！Emacs 的环境变量是独立的：
-- =GTK_IM_MODULE=fcitx=
-- =QT_IM_MODULE=fcitx=
-- =XMODIFIERS=&quot;@im=fcitx&quot;
-
-看起来都是正确的
-
-** 第四步：发现根因——XIM 服务器名称不匹配
-
-既然 =.xinitrc= 和 =emacs.service= 都设了 =XMODIFIERS= ，那问题出在哪里？我检查了 fcitx5 实际注册到 X 服务器的 XIM 服务名称：
-
-#+begin_src shell
-  xprop -root XIM_SERVERS
-#+end_src
-
-#+begin_example
-  XIM_SERVERS(ATOM) = @server=fcitx5
-#+end_example
-
-然后检查 Emacs 进程实际的 =XMODIFIERS= 值：
-
-#+begin_src shell
-  cat /proc/$(pgrep -x emacs)/environ | tr &#39;\0&#39; &#39;\n&#39; | grep XMODIFIERS
-#+end_src
-
-#+begin_example
-  XMODIFIERS=@im=fcitx
-#+end_example
-
-*找到根因了！*
-
-- fcitx5 注册的 XIM 服务器名： =@server=fcitx5=
-- Emacs 的 =XMODIFIERS= 值： =@im=fcitx=
-
-两者不匹配！XIM 协议要求 =XMODIFIERS= 的值必须和 XIM 服务器的注册名一致。Emacs 拿着 =@im=fcitx= 去找名为 =fcitx= 的 XIM 服务器，但实际注册的名字是 =fcitx5= ，当然找不到。
-
-#+BEGIN_QUOTE
-*小知识：XIM 协议的连接机制*
-
-XIM（X Input Method）是 X11 的输入法协议，工作流程是：
-
-1. 输入法框架（如 fcitx5）启动后，在 X 服务器上注册一个 XIM 服务器，名字形如 =@server=fcitx5=
-2. 应用程序读取 =XMODIFIERS= 环境变量（如 =@im=fcitx5=）
-3. 应用程序拿着这个名字去 X 服务器上查找对应的 XIM 服务器
-4. 找到后建立连接，输入法就可以工作了
-
-如果 =XMODIFIERS= 的名字和 XIM 服务器注册的名字对不上，应用程序就找不到输入法服务器，输入法自然无法使用。
-#+END_QUOTE
-
-这也说明 =fcitx5-diagnose= 的建议是 *误导* 的：它建议把 =XMODIFIERS= 改成 =@im=fcitx= ，但 fcitx5 的 XIM 服务器偏偏注册为 =fcitx5= 。对于通过 XIM 协议连接输入法的应用（比如使用 Lucid 工具包的 Emacs），这个建议反而是错的。
-
-** 第五步：确认 Emacs 走的是 XIM 而非 GTK 模块
-
-为了确认我的 Emacs 确实走 XIM 协议，我检查了 Emacs 的构建特性：
-
-#+begin_src shell
-  emacs --batch --eval &#39;(princ (format &quot;%s\n&quot; system-configuration-features))&#39;
-#+end_src
-
-#+begin_example
-  ... X11 XDBE XIM XINPUT2 ... LUCID ...
-#+end_example
-
-关键信息：
-- =XIM= ——Emacs 支持 XIM 协议
-- =LUCID= ——Emacs 使用 Lucid（Xaw）工具包，不是 GTK
-
-Lucid 工具包不使用 =GTK_IM_MODULE= ，只走 XIM 协议。所以对 Emacs 来说，唯一重要的环境变量就是 =XMODIFIERS= ，而且它的值必须和 XIM 服务器注册名一致。
-
-* 解决方案
-
-明确了根因后，修复很简单：
-
-** 修改 emacs.service 中的 XMODIFIERS
-
-将 =XMODIFIERS=&quot;@im=fcitx&quot;= 改为 =XMODIFIERS=&quot;@im=fcitx5&quot;= ：
-
-#+begin_example
-  # 修改前
-  Environment=... XMODIFIERS=&quot;@im=fcitx&quot; ...
-
-  # 修改后
-  Environment=... XMODIFIERS=&quot;@im=fcitx5&quot; ...
-#+end_example
-
-** 重启 Emacs 服务
-
-#+begin_src shell
-  systemctl --user daemon-reload
-  systemctl --user restart emacs
-#+end_src
-
-修改后确认 Emacs 进程的环境变量已更新：
-
-#+begin_src shell
-  cat /proc/$(pgrep -x emacs)/environ | tr &#39;\0&#39; &#39;\n&#39; | grep XMODIFIERS
-  # XMODIFIERS=@im=fcitx5
-#+end_src
-
-重启后 Emacs 中顺利切换到中文输入法，问题解决。
-
-** 恢复 .xinitrc
-
-由于我的桌面环境也使用 fcitx5 ，且 fcitx5 的 XIM 服务器注册名为 =fcitx5= ，所以 =~/.xinitrc= 中的值保持为 =fcitx5= 是正确的：
-
-#+begin_src shell
-  export GTK_IM_MODULE=fcitx5
-  export QT_IM_MODULE=fcitx5
-  export XMODIFIERS=&quot;@im=fcitx5&quot;
-#+end_src
-
-* 复盘
-
-** 根因链条
-
-#+begin_example
-  fcitx5 注册 XIM 服务器名为 &quot;@server=fcitx5&quot;
-    → emacs.service 中 XMODIFIERS=&quot;@im=fcitx&quot;
-      → 名称不匹配
-        → Emacs 通过 XIM 找不到输入法服务器
-          → 无法切换输入法
-#+end_example
-
-** 走过的弯路
-
-这次排查最大的弯路是 *轻信了 =fcitx5-diagnose= 的建议* 。它建议把所有环境变量从 =fcitx5= 改成 =fcitx= ，我照做了，但这反而让 XMODIFIERS 和 XIM 服务器名不匹配的问题更加恶化了。
-
-** 关键经验
-
-1. *=xprop -root XIM_SERVERS= 可以查看 XIM 服务器注册名* ：排查 XIM 问题时，先确认服务器叫什么名字，再和 =XMODIFIERS= 对比
-2. *systemd 服务的环境变量是独立的* ：不继承 =.xinitrc= 或 shell 的环境，需要在 service 文件中单独设置。遇到服务启动的程序出问题时，用 =cat /proc/$PID/environ | tr &#39;\0&#39; &#39;\n&#39; | grep XXX= 检查实际的环境变量
-3. *诊断工具的建议不一定全对* ：=fcitx5-diagnose= 的建议在大部分场景下是对的，但对于 XIM 这种特殊场景会给出错误建议。理解原理比盲目执行建议更重要
-4. *Emacs 的工具包决定了它用什么输入法协议* ：Lucid 走 XIM（看 =XMODIFIERS= ），GTK 走 GTK IM Module（看 =GTK_IM_MODULE= ）。排查前先搞清楚 Emacs 用的什么工具包
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/22/fcitx5-下-emacs-无法切换输入法的排查/index.html</guid>
-</item>
-<item>
-<title>TIL: AI 时代的橡皮鸭调试</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/til-ai-时代的橡皮鸭调试/index.html</link>
-<description>读到 opensourceforu 的一篇文章[fn:1]，提醒我一个容易忘记的事：调试效率的关键不是工具多强，而是你能不能把问题解释清楚。
-
-* 橡皮鸭调试法
-
-&quot;橡皮鸭调试&quot;（Rubber Duck Debugging）这个名字来自 *The Pragmatic Programmer* （1999 年）这本书：程序员桌上放一只橡皮鸭，卡住的时候就对着鸭子逐行解释代码。很多时候解释到一半，自己就发现问题了。
-
-这个现象其实大家都不陌生。你肯定经历过：写了半天邮件描述一个 bug，写到一半突然想通了；或者在会议上给同事讲一个问题的来龙去脉，讲着讲着自己就意识到了错在哪。鸭子只是个象征，真正的机制是： *把模糊的想法变成清晰的表述，这个过程本身就是思考* 。
-
-为什么解释能帮你找到 bug？因为脑子里想的逻辑和嘴里说出来的逻辑不一样。脑子里你可以跳步、模糊处理、含糊带过；但要说给别人听，你就必须一步步走：输入是什么？然后呢？这个条件为什么需要？失败了怎么办？这些被跳过的&quot;然后呢&quot;往往是 bug 藏身的地方。另外，说出来的假设会变得可疑——&quot;这个值不可能为 null&quot;一旦说出口，你马上会意识到&quot;等等，万一呢？&quot;
-
-* AI 是一只会提问的鸭子
-
-传统橡皮鸭是被动倾听者——你对着它说，它不回应。AI 不同，它可以主动提问：&quot;你确定这个 API 调用不会超时吗？&quot;&quot;如果输入是空列表会怎样？&quot;
-
-但用 AI 调试有一个陷阱：如果你直接把代码丢给 AI 说&quot;帮我找 bug&quot;，你只是在用 AI 替你思考。短期内问题解决了，长期来看你的调试能力没成长。正确的用法是把 AI 当鸭子而不是当助手——你来解释，让它质疑你的逻辑。
-
-一个实用的 prompt：
-
-#+begin_example
-扮演一只橡皮鸭。不要直接给我解决方案。
-听我解释代码逻辑，然后指出不清晰的地方、
-遗漏的步骤或错误的假设。
-#+end_example
-
-这样 AI 会帮你发现思维盲点，而不是直接帮你填上。
-
-* 为什么这个方法仍然重要
-
-AI 工具越来越强，一键就能生成代码、定位错误。但软件质量的上限取决于你对问题的理解程度，而不是工具的能力。不管工具怎么进化，&quot;解释清楚&quot;这项能力永远是稀缺的——因为它的本质不是技术能力，而是把混乱的直觉变成有序的逻辑。
-
-[fn:1] https://www.opensourceforu.com/2026/04/the-relevance-of-rubber-duck-debugging-in-the-age-of-ai/
-</description>
-<pubDate>2026-04-23</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/til-ai-时代的橡皮鸭调试/index.html</guid>
 </item>
 </channel>
 </rss>
