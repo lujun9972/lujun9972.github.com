@@ -1,0 +1,251 @@
+#+TITLE: hyperfine：命令行基准测试工具
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux, hyperfine, 性能测试, 命令行
+#+DATE: [2026-04-25 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+测一个命令要跑多久，大多数人第一反应是 =time= ：
+
+#+begin_src shell
+time find /usr/share/doc -maxdepth 2 -name "*.txt"
+#+end_src
+
+#+begin_example
+real	0m0.012s
+user	0m0.004s
+sys	0m0.007s
+#+end_example
+
+但跑第二次，结果可能变成 0.009s ；第三次 0.015s 。哪一个才是"真实"的执行时间？
+
+磁盘缓存、CPU 调度、后台进程、甚至 CPU 频率调节（ turbo boost ）都会让每次执行时间不同。你需要的是多次采样的统计摘要——均值、标准差、最小/最大值——而不是一个孤立的数字。
+
+=hyperfine= 可以帮我们自动处理采样、预热和统计分析。
+
+* 基本用法
+
+最简单的形式：把命令放在引号里。
+
+#+begin_src shell
+hyperfine 'find /usr/share/doc -maxdepth 2 -name "*.txt"'
+#+end_src
+
+#+begin_example
+Benchmark 1: find /usr/share/doc -maxdepth 2 -name "*.txt"
+  Time (mean ± σ):      20.2 ms ±  23.0 ms    [User: 5.4 ms, System: 10.7 ms]
+  Range (min … max):    12.0 ms … 125.3 ms    23 runs
+
+  Warning: The first benchmarking run for this command was significantly slower than
+  the rest (125.3 ms). This could be caused by (filesystem) caches that were not
+  filled until after the first run. You should consider using the '--warmup' option.
+#+end_example
+
+hyperfine 甚至会主动告诉你问题在哪里——第一次运行明显慢于后续（ 125.3ms vs 12.0ms ），因为文件系统缓存还没热。这正是后面要讲的 =--warmup= 要解决的问题。
+
+输出解读：
+
+- =Time (mean ± σ)= ：均值 ± 标准差。标准差越小，说明结果越稳定。
+- =[User: ... System: ...]= ：用户态和内核态的 CPU 时间。
+- =Range (min … max)= ：最快和最慢的一次，展示了波动范围。
+- =23 runs= ： =hyperfine= 自动决定了跑 23 次（默认至少 10 次，且至少测量 3 秒）。
+
+* 对比两个命令
+
+=hyperfine= 真正有用的地方是对比。传多个命令就行：
+
+#+begin_src shell
+hyperfine --warmup 2 'grep -r "error" /var/log/' 'rg "error" /var/log/'
+#+end_src
+
+#+begin_example
+Benchmark 1: grep -r "error" /var/log/
+  Time (mean ± σ):     370.7 ms ±  12.1 ms    [User: 308.5 ms, System: 58.9 ms]
+  Range (min … max):   355.8 ms … 396.4 ms    10 runs
+
+Benchmark 2: rg "error" /var/log/
+  Time (mean ± σ):      12.5 ms ±   3.1 ms    [User: 9.1 ms, System: 10.1 ms]
+  Range (min … max):     8.6 ms …  31.0 ms    244 runs
+
+Summary
+  rg "error" /var/log/ ran
+   29.62 ± 7.46 times faster than grep -r "error" /var/log/
+#+end_example
+
+最后一行 =Summary= 直接给出了倍数比较。这个数字可以直接用在技术讨论或 PR 里——不是"感觉快了不少"，而是"快了 29.6 倍，误差 ±7.5 倍"。
+
+* 控制采样参数
+
+** =--runs N= ：指定执行次数
+
+慢命令（数据库导出、大文件压缩）跑 10 次太浪费时间，可以减少：
+
+#+begin_src shell
+hyperfine --runs 3 'tar -czf /tmp/test-backup.tar.gz /usr/share/doc'
+#+end_src
+
+#+begin_example
+Benchmark 1: tar -czf /tmp/test-backup.tar.gz /usr/share/doc
+  Time (mean ± σ):     11.022 s ±  0.423 s    [User: 9.798 s, System: 1.275 s]
+  Range (min … max):   10.547 s … 11.357 s    3 runs
+#+end_example
+
+快命令（毫秒级）则应该增加次数来稳定统计：
+
+#+begin_src shell
+hyperfine --runs 50 'md5sum /tmp/testfile'
+#+end_src
+
+#+begin_example
+Benchmark 1: md5sum /tmp/testfile
+  Time (mean ± σ):      11.8 ms ±   1.6 ms    [User: 9.4 ms, System: 2.1 ms]
+  Range (min … max):    10.5 ms …  16.0 ms    50 runs
+#+end_example
+
+50 次跑下来，均值 11.8ms ，标准差只有 1.6ms ，统计上比 3 次可靠得多。
+
+** =--warmup N= ：预热次数
+
+如果你的命令涉及磁盘读取，第一次运行会冷启动（磁盘 I/O ），后续运行会命中缓存。 =--warmup= 让 =hyperfine= 在开始计时前先跑几轮：
+
+#+begin_src shell
+hyperfine --warmup 3 'wc -l /var/log/pacman.log'
+#+end_src
+
+#+begin_example
+Benchmark 1: wc -l /var/log/pacman.log
+  Time (mean ± σ):       4.7 ms ±   0.8 ms    [User: 2.4 ms, System: 2.1 ms]
+  Range (min … max):     3.7 ms …   9.3 ms    524 runs
+#+end_example
+
+预热 3 次之后，标准差从可能的几十毫秒降到了 0.8ms 。对比基本用法中没有加 =--warmup= 的输出（ σ=23.0ms ），效果很明显。
+
+反过来，如果你想测冷启动性能，用 =--prepare= 在每次计时前执行准备命令：
+
+#+begin_src shell
+hyperfine --prepare 'sync' 'find /usr/share/doc -maxdepth 2 -name "*.txt"'
+#+end_src
+
+#+begin_example
+Benchmark 1: find /usr/share/doc -maxdepth 2 -name "*.txt"
+  Time (mean ± σ):      14.7 ms ±   2.2 ms    [User: 6.2 ms, System: 8.6 ms]
+  Range (min … max):    11.9 ms …  19.7 ms    10 runs
+#+end_example
+
+=sync= 把文件系统缓冲区写回磁盘，做轻量级的缓存干扰。完整清除磁盘缓存需要 =sync && echo 3 | sudo tee /proc/sys/vm/drop_caches= ，但需要 root 权限。
+
+* 参数化基准测试
+
+这是 =hyperfine= 最强大也最容易被忽略的功能。 =--parameter-scan= 让你自动遍历一个参数的范围：
+
+#+begin_src shell
+hyperfine --parameter-scan block_size 1024 8192 -D 2048 \
+  'dd if=/dev/zero of=/tmp/ddtest bs={block_size} count=4096 2>/dev/null'
+#+end_src
+
+#+begin_example
+Benchmark 1: dd if=/dev/zero of=/tmp/ddtest bs=1024 count=4096 2>/dev/null
+  Time (mean ± σ):      16.1 ms ±   5.5 ms    [User: 3.5 ms, System: 10.7 ms]
+  Range (min … max):    11.7 ms …  41.0 ms    134 runs
+
+Benchmark 2: dd if=/dev/zero of=/tmp/ddtest bs=3072 count=4096 2>/dev/null
+  Time (mean ± σ):      21.7 ms ±   3.9 ms    [User: 3.6 ms, System: 17.0 ms]
+  Range (min … max):    16.3 ms …  42.3 ms    110 runs
+
+Benchmark 3: dd if=/dev/zero of=/tmp/ddtest bs=5120 count=4096 2>/dev/null
+  Time (mean ± σ):      26.7 ms ±   3.8 ms    [User: 3.8 ms, System: 22.0 ms]
+  Range (min … max):    20.5 ms …  38.2 ms    119 runs
+
+Benchmark 4: dd if=/dev/zero of=/tmp/ddtest bs=7168 count=4096 2>/dev/null
+  Time (mean ± σ):      31.3 ms ±   4.2 ms    [User: 3.8 ms, System: 26.6 ms]
+  Range (min … max):    24.1 ms …  46.6 ms    106 runs
+
+Summary
+  dd bs=1024 ran
+    1.34 ± 0.52 times faster than dd bs=3072
+    1.65 ± 0.61 times faster than dd bs=5120
+    1.94 ± 0.71 times faster than dd bs=7168
+#+end_example
+
+=-D= （ =--parameter-step-size= ）控制步长。这里从 1024 到 8192 ，步长 2048 ，自动生成了 4 组测试。有趣的是，较小的块大小反而更快——因为 =dd if=/dev/zero= 是内存操作，小块大小意味着更少的系统调用开销。
+
+用 =-L= （ =--parameter-list= ）可以传非数值的参数列表，比如对比压缩工具：
+
+#+begin_src shell
+hyperfine --prepare 'rm -f /tmp/testfile.{gz,bz2,zst}' \
+  -L prog gzip,bzip2,zstd '{prog} -k /tmp/testfile'
+#+end_src
+
+#+begin_example
+Benchmark 1: gzip -k /tmp/testfile
+  Time (mean ± σ):     199.1 ms ±   9.7 ms    [User: 191.6 ms, System: 5.2 ms]
+  Range (min … max):   182.8 ms … 216.5 ms    15 runs
+
+Benchmark 2: bzip2 -k /tmp/testfile
+  Time (mean ± σ):      1.056 s ±  0.023 s    [User: 1.037 s, System: 0.010 s]
+  Range (min … max):    1.023 s … 1.093 s    10 runs
+
+Benchmark 3: zstd -k /tmp/testfile
+  Time (mean ± σ):      22.5 ms ±   1.8 ms    [User: 13.6 ms, System: 14.6 ms]
+  Range (min … max):    19.1 ms …  29.3 ms    99 runs
+
+Summary
+  zstd -k /tmp/testfile ran
+    8.85 ± 0.82 times faster than gzip -k /tmp/testfile
+   46.92 ± 3.83 times faster than bzip2 -k /tmp/testfile
+#+end_example
+
+这种参数化测试在脚本里手写非常繁琐——你需要自己写循环、解析 =time= 输出、计算统计量。 =hyperfine= 一行命令搞定。
+
+注意 =--prepare= 的用法： =gzip -k= 和 =zstd -k= 不会覆盖已存在的压缩文件，所以每次执行前必须清理。 =--prepare= 会在每轮计时前自动执行。
+
+* 导出结果
+
+命令行输出适合看，不适合分析。 =hyperfine= 支持导出为 JSON 和 Markdown ：
+
+#+begin_src shell
+hyperfine --prepare 'rm -f /tmp/testfile.{gz,zst}' \
+  --export-markdown /tmp/result.md \
+  'gzip -k /tmp/testfile' 'zstd -k /tmp/testfile'
+#+end_src
+
+#+begin_example
+Benchmark 1: gzip -k /tmp/testfile
+  Time (mean ± σ):     199.5 ms ±   9.2 ms    [User: 192.6 ms, System: 4.5 ms]
+  Range (min … max):   182.0 ms … 214.6 ms    14 runs
+
+Benchmark 2: zstd -k /tmp/testfile
+  Time (mean ± σ):      22.4 ms ±   2.1 ms    [User: 13.4 ms, System: 14.8 ms]
+  Range (min … max):    15.6 ms …  28.3 ms    98 runs
+
+Summary
+  zstd -k /tmp/testfile ran
+    8.89 ± 0.92 times faster than gzip -k /tmp/testfile
+#+end_example
+
+导出的 Markdown 文件可以直接贴进 GitHub issue 或文档：
+
+#+begin_src shell
+cat /tmp/result.md
+#+end_src
+
+#+begin_example
+| Command | Mean [ms] | Min [ms] | Max [ms] | Relative |
+|:---|---:|---:|---:|---:|
+| `gzip -k /tmp/testfile` | 199.5 ± 9.2 | 182.0 | 214.6 | 8.89 ± 0.92 |
+| `zstd -k /tmp/testfile` | 22.4 ± 2.1 | 15.6 | 28.3 | 1.00 |
+#+end_example
+
+=--export-json= 导出完整数据（每次运行的时间戳都保留），适合喂给脚本做进一步分析或绘制趋势图。
+
+* 什么时候该用什么工具
+
+| 需求 | 工具 |
+|------+------|
+| 快速看一眼执行时间 | =time command= |
+| 对比两个命令谁更快 | =hyperfine 'cmd1' 'cmd2'= |
+| 找最优参数（块大小、线程数） | =hyperfine --parameter-scan ...= |
+| CI 里追踪性能回归 | =hyperfine --export-json ...= + 脚本对比 |
+| 系统级性能分析（CPU、内存、I/O） | =perf= / =valgrind= |
+
+=hyperfine= 测的是 /墙钟时间/ （ wall-clock time ），回答"这个命令跑多久"。如果你需要知道 /为什么/ 慢（ CPU 热点、内存分配、系统调用），那是 =perf= 和 =valgrind= 的领域。
