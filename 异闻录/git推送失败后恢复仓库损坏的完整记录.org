@@ -1,0 +1,321 @@
+#+TITLE: git推送失败后恢复仓库损坏的完整记录
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录
+#+DATE: [2026-04-26 日 21:30]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:f t:* <:nil
+
+* 症状
+
+电脑断电后，在仓库提交代码发现推送时失败：
+
+#+BEGIN_EXAMPLE
+$ git push -u origin main
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+remote: fatal: early EOF
+错误：远程解包失败：index-pack failed
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ ! [remote rejected] main -> main (failed)
+错误：无法推送一些引用到 'git.zhlh6.cn:lujun9972/CodeQuest.git'
+#+END_EXAMPLE
+
+满屏的 "bad tree object"、"early EOF"、"remote rejected" 让人头皮发麻。之前就发生过仓库索引损坏的问题，这次又来了。
+
+* 分析原因
+
+先用 =git fsck--full= 检查仓库完整性：
+
+#+BEGIN_EXAMPLE
+$ git fsck --full
+损坏的链接来自于    tree d0c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+              到    tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+损坏的链接来自于    tree 8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+              到    blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+缺失 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+缺失 blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+#+END_EXAMPLE
+
+可以看到有两个对象找不到了（缺失 missing）：
+
+- tree 对象 =4de66b3=：代表一个目录
+- blob 对象 =d7f34b8=：代表一个文件的内容
+
+而另外两个 tree 则引用了这些丢失的对象（损坏的链接 broken link）。
+
+虽然被引用的对象丢了，但引用它们的 tree 还在。用 =git cat-file -p= 读一下，就能知道缺失的对象本来对应哪个文件：
+
+#+BEGIN_EXAMPLE
+$ git cat-file -p 8043d4e
+100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md
+#+END_EXAMPLE
+
+→ tree =8043d4e= 说："我引用了一个文件，叫 =2026-04-26-achievement-wall-design.md=，它的内容哈希是 =d7f34b8="。
+
+#+BEGIN_EXAMPLE
+$ git cat-file -p d0c6a58
+040000 tree 49ae87423ab81f7889dab9e24af935a5f0bfc5af	plans
+040000 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6	specs
+#+END_EXAMPLE
+
+→ tree =d0c6a58= 说："我有一个 =plans= 子目录（哈希 =49ae874=，还能读）和一个 =specs= 子目录（哈希 =4de66b3=，丢了）"。
+
+结合两条信息：缺失的 blob =d7f34b8= 对应文件 =2026-04-26-achievement-wall-design.md=；缺失的 tree =4de66b3= 是 specs 目录，里面应该只有这一个文件。
+
+这就是 git 内容寻址的妙处：对象之间通过哈希互相引用，只要引用关系的某一段还在，就能顺着找出缺失的是什么。
+
+怎么理解 git 的这些对象呢？
+
+: git 把仓库当作一个"内容寻址文件系统"。每次提交都对应一个 tree（目录树），
+: tree 里可以包含 subtree（子目录）或 blob（文件）。
+: 如果某个 tree 引用的子树或文件找不到了，就出现上面的"损坏的链接"。
+
+这个损坏发生在很久之前的一次 "fix: restore repository after index corruption" 提交中。当时为了恢复仓库用了某些激进操作，把一些对象搞丢了，但当时没发现。直到现在推送时，远程服务器验证完整性才发现问题。
+
+* 尝试修复的过程（走弯路）
+
+** 尝试一：直接 git gc
+
+最简单直接的想法——让 git 自己清理垃圾：
+
+#+BEGIN_EXAMPLE
+$ git gc --prune=now
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+致命错误：failed to run repack
+#+END_EXAMPLE
+
+失败了。因为包文件（pack）里含有损坏对象的引用，gc 无法重新打包。
+
+这里需要简单说明一下 git 的存储机制。git 把对象存在 =.git/objects/= 目录里，有两种形态：
+
+- **松散对象（loose object）**：刚产生的对象存成单个文件，比如 =.git/objects/d0/c6a58...=
+- **包文件（pack file）**：积累到一定程度，git 会把一堆松散对象打包成一个 =.pack= 文件 + 一个 =.idx= 索引，既省空间又加快访问速度
+
+=git gc= 干的事就是"把所有松散对象重新打包"。但如果包文件里有一个条目引用了不存在的对象，git 就没法完成解包→重打包的过程，导致 =gc= 失败。这里就是这种情况。
+
+** 尝试二：本地克隆一份
+
+绕过损坏对象的一个经典方法是重新克隆仓库。但这里没有远程仓库可用（远程就是坏的），所以试试本地克隆：
+
+#+BEGIN_EXAMPLE
+$ git clone --local . /tmp/codequest-clean
+致命错误：无法创建链接 '...pack': 无效的跨设备链接
+#+END_EXAMPLE
+
+加上 =--no-hardlinks= 参数后克隆成功了：
+
+#+BEGIN_EXAMPLE
+$ git clone --no-hardlinks --local . /tmp/codequest-clean
+完成。
+#+END_EXAMPLE
+
+但遗憾的是检查发现损坏的对象也被克隆过来了。因为那些提交历史里仍然引用着损坏的对象。治标不治本。
+
+** 尝试三：git filter-branch 重写历史
+
+既然损坏的对象在历史提交中，那就用 =git filter-branch= 重写历史，把引用损坏对象的目录从历史中移除：
+
+#+BEGIN_EXAMPLE
+$ FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --index-filter '
+  git rm --cached -r -q docs/superpowers 2>/dev/null || true
+  if [ -d docs/superpowers ]; then
+    git add docs/superpowers 2>/dev/null || true
+  fi
+' 0c12047..HEAD
+#+END_EXAMPLE
+
+先拆解一下这条命令在干什么：
+
+: FILTER_BRANCH_SQUELCH_WARNING=1 ← 静默模式，让 git 别打印吓人的警告
+: git filter-branch -f ← 强制重写历史。-f 是 --force，覆盖上一次运行的备份
+: --index-filter '...' ← 核心。对每个提交，直接在暂存区(index)执行脚本，
+:                         而不是把文件检出到磁盘再操作。速度快但只能用 git 命令
+: 0c12047..HEAD ← 重写范围，从 0c12047 之后到 HEAD 的所有提交
+
+脚本部分：
+
+: git rm --cached -r -q docs/superpowers 2>/dev/null || true
+:   --cached: 只删除暂存区，不碰磁盘文件
+:   -r: 递归删除整个目录
+:   -q: 安静模式
+:   2>/dev/null: 把错误信息丢掉（如果这个提交里本来就没有那个目录）
+:   || true: 保证即使删除失败脚本也不退出
+:
+: if [ -d docs/superpowers ]; then
+:   git add docs/superpowers 2>/dev/null || true
+: fi
+:   先检查 docs/superpowers 目录是否存在，如果存在就重新加到暂存区
+
+然而这个脚本实际有 bug：=--index-filter= 模式下，git 不会把文件内容检出到磁盘，所以工作目录是空的。=if [ -d docs/superpowers ]= 永远为假，后面的 =git add= 永远不会执行。结果只删不增，每个提交里的 docs/superpowers 目录都被删掉了。
+
+所以结果是 "Ref 'refs/heads/main' was rewritten"。看起来成功了，但 =git fsck= 仍然报错。
+
+原因有两个：
+1. =filter-branch= 的备份引用（=refs/original/=）仍然指向旧提交，这些旧对象还在仓库中
+2. reflog 里也保留着旧提交的记录
+
+reflog 是 git 的"操作日志"，记录了 HEAD 和各个分支曾经指向过的每一次提交。你可以把它理解成浏览器的历史记录——即使你书签（分支）指向了新页面，历史记录里还存着旧地址。垃圾回收时，git 会检查 reflog，只要 reflog 里还有记录，旧对象就不会被清理。
+
+删除 =refs/original/= 和清空 reflog 后：
+
+#+BEGIN_EXAMPLE
+$ rm -rf .git/refs/original/
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+致命错误：bad tree object 8043d4e...
+#+END_EXAMPLE
+
+各种尝试都卡在 =git gc= 这一步，死循环了。
+
+** 弯路总结
+
+走弯路的教训是：在一棵已经坏掉的树上修修补补非常困难。filter-branch 能创造新的好提交，但无法清理包文件中已经存在的损坏对象引用。而 =git gc= 又因为包文件有问题而无法执行。
+
+* 最终的解决方案
+
+** 核心思路
+
+绕了一大圈，最直接的方案反而是：==把缺失的对象补上==。
+
+git 的对象存储很简单——每个对象就是一个文件，路径是哈希值的前两位作为目录名，后38位作为文件名，内容经过 zlib 压缩。
+
+既然知道缺的是啥，那就把它造出来。
+
+** 步骤 1：找到缺失对象的实际内容
+
+先看看需要什么：
+
+: 缺失的 blob d7f34b8 → 文件 docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+: 缺失的 tree 4de66b3 → 目录 docs/superpowers/specs/（只包含上面那个文件）
+
+检查这个文件的内容，发现它仍然存在于工作目录中。那就简单了：
+
+#+BEGIN_EXAMPLE
+$ git hash-object -w docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+d7f34b8f17b66827d315980d4cfcc0b17530a327
+#+END_EXAMPLE
+
+=hash-object= 计算文件的 SHA-1 哈希，= -w= 参数把它写入对象存储。输出的哈希正好是 =d7f34b8=——这就是我们要找的缺失 blob！
+
+** 步骤 2：重建 tree 对象
+
+有了 blob，就可以重建引用它的 tree 了：
+
+#+BEGIN_EXAMPLE
+$ echo "100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md" | git mktree
+8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+#+END_EXAMPLE
+
+=mktree= 从标准输入创建 tree 对象。但输出的哈希是 =8043d4e= 而非期望的 =4de66b3=。
+
+这表明 =4de66b3= 这个哈希本身就是错的（估计是当年仓库损坏时留下的垃圾数据），而 =8043d4e= 才是实际内容对应的正确哈希。
+
+** 步骤 3：删除孤立的损坏对象
+
+虽然 filter-branch 已经重写了历史，但旧的损坏对象仍然以"松散对象"（loose object）的形式留在硬盘上。这些对象不被任何分支引用，但 git 仍能看到它们并报错。
+
+具体来说，补齐缺失对象后 =git gc= 仍然报错。运行 =git fsck= 检查，报错的内容变了——不再是缺少 =4de66b3=，而是：
+
+: 损坏的链接来自于 tree ab43ad01 → tree d0c6a58
+: 缺失 tree d0c6a58
+
+这说明 =d0c6a58= 这个 tree 仍在硬盘上，且它引用的子 tree 本来应该是 =4de66b3=（就是之前缺失的那个），但现在这个引用关系断裂了。由于 =d0c6a58= 本身还是一个可读的对象，它就成了新的"损坏源头"。
+
+检查它是不是松散对象：
+
+#+BEGIN_EXAMPLE
+$ ls .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+.git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+#+END_EXAMPLE
+
+文件存在，说明它是松散对象。注意路径的规律：git 取对象哈希的前两个字符 =d0= 作为目录名，后 38 个字符作为文件名。这样每个目录下最多只有 256 个文件（00~ff），避免单个目录的文件数量爆炸。再检查它是否还被当前分支引用：
+
+#+BEGIN_EXAMPLE
+$ git rev-list --objects main | grep d0c6a58
+# （无输出）
+#+END_EXAMPLE
+
+无输出，说明 main 分支已经不需要它了。=rev-list --objects main= 的作用是遍历 main 分支能到达的所有对象（包括提交、目录树、文件），逐一列出它们的哈希。如果目标哈希出现在这个列表里，说明某个提交还用着它，删了会破坏历史。没输出就说明安全，可以删。
+
+确认安全后删除：
+
+#+BEGIN_EXAMPLE
+$ rm -f .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+#+END_EXAMPLE
+
+然后重复这套流程——再跑 =git fsck=，看下一层是谁：
+
+: 损坏的链接来自于 tree b46bf016 → tree ab43ad01
+: 缺失 tree ab43ad01
+
+这次 =ab43ad01= 浮出来了。它被另一个 tree 引用，自身也是个松散对象。
+
+: ls .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd  ✓ 存在
+: git rev-list --objects main | grep ab43ad01  ✓ 不被 main 引用
+
+删掉它：
+
+#+BEGIN_EXAMPLE
+$ rm -f .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd
+#+END_EXAMPLE
+
+如此反复，每删一层就跑 =git fsck= 看上一层，直到 =git fsck= 不再报错。
+
+总结这个"顺藤摸瓜"的过程：
+
+1. =git fsck= 告诉你哪个对象是"损坏的链接"的源头
+2. =git rev-list --objects main | grep <哈希>= 确认不被任何分支需要
+3. =ls .git/objects/xx/xxx...= 确认它是松散对象
+4. 删除，回到第 1 步
+
+注意这里的删除用的是直接 =rm -f= 删文件，而不是用 git 命令。因为松散对象就是硬盘上实实在在的文件，直接删掉文件系统层面的文件就可以了。但对于 reflog、分支引用这类 git 的"元数据"，就要用 git 提供的命令（如 =git reflog expire=）来操作，不能直接去删 =./git/= 里的文件。
+#+END_EXAMPLE
+
+** 步骤 4：清理回收
+
+删除孤立对象后，再清理 reflog 和历史备份：
+
+#+BEGIN_EXAMPLE
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+#+END_EXAMPLE
+
+这次 =git gc= 没有报错了。
+
+** 步骤 5：验证
+
+#+BEGIN_EXAMPLE
+$ git fsck --full
+# （无输出）
+#+END_EXAMPLE
+
+没有输出，说明仓库完全健康！
+
+** 步骤 6：推送
+
+#+BEGIN_EXAMPLE
+$ git push -u origin main
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ * [new branch]      main -> main
+分支 'main' 设置为跟踪 'origin/main'。
+#+END_EXAMPLE
+
+推送成功。
+
+* 总结
+
+这次事故中走了不少弯路。根本原因在于损坏发生在很久以前的提交中，这些对象在包文件里留下了无法清除的引用，且 =git gc= 也无法执行。
+
+最后的解决方案出奇地简单：不去追求重写历史、不去删除损坏的包文件，而是直接把缺失的对象补上。git 的对象存储就是哈希文件系统，造出来就好了。
+
+小白的教训：
+
+1. 不要轻易用 =git filter-branch= 这类高级命令，没有彻底理解之前用它只会制造更多混乱
+2. =git fsck --full= 是最好的诊断工具，先看看具体缺了什么再动手
+3. 尝试 =git gc= 失败时，检查是否有孤立的松散对象（loose object），手动删除或补齐它们
+4. .git/objects/ 目录下就是 git 的所有对象，读懂它的结构很多问题就迎刃而解了
+5. 推送前先 =git fsck= 检查一下，避免推到服务器才发现问题
+
+扩展阅读：
+
+- [Pro Git 10.2 Git 内部原理 - Git 对象](https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1)
+- [git objects 结构示意图](https://git-scm.com/book/en/v2/images/data-model-1.png)
