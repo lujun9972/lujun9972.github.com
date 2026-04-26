@@ -4,10 +4,331 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 26 Apr 2026 14:14:54 UTC</pubDate>
-    <lastBuildDate>Sun, 26 Apr 2026 14:14:54 UTC</lastBuildDate>
+    <pubDate>Sun, 26 Apr 2026 14:19:33 UTC</pubDate>
+    <lastBuildDate>Sun, 26 Apr 2026 14:19:33 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>git推送失败后恢复仓库损坏的完整记录</title>
+<link>https://lujun9972.github.io/blog/2026/04/26/git推送失败后恢复仓库损坏的完整记录/index.html</link>
+<description>* 症状
+
+电脑断电后，在仓库提交代码发现推送时失败：
+
+#+BEGIN_EXAMPLE
+$ git push -u origin main
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+remote: fatal: early EOF
+错误：远程解包失败：index-pack failed
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ ! [remote rejected] main -&gt; main (failed)
+错误：无法推送一些引用到 &#39;git.zhlh6.cn:lujun9972/CodeQuest.git&#39;
+#+END_EXAMPLE
+
+满屏的 &quot;bad tree object&quot;、&quot;early EOF&quot;、&quot;remote rejected&quot; 让人头皮发麻。之前就发生过仓库索引损坏的问题，这次又来了。
+
+* 分析原因
+
+先用 =git fsck--full= 检查仓库完整性：
+
+#+BEGIN_EXAMPLE
+$ git fsck --full
+损坏的链接来自于    tree d0c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+              到    tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+损坏的链接来自于    tree 8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+              到    blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+缺失 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+缺失 blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+#+END_EXAMPLE
+
+可以看到有两个对象找不到了（缺失 missing）：
+
+- tree 对象 =4de66b3=：代表一个目录
+- blob 对象 =d7f34b8=：代表一个文件的内容
+
+而另外两个 tree 则引用了这些丢失的对象（损坏的链接 broken link）。
+
+虽然被引用的对象丢了，但引用它们的 tree 还在。用 =git cat-file -p= 读一下，就能知道缺失的对象本来对应哪个文件：
+
+#+BEGIN_EXAMPLE
+$ git cat-file -p 8043d4e
+100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md
+#+END_EXAMPLE
+
+→ tree =8043d4e= 说：&quot;我引用了一个文件，叫 =2026-04-26-achievement-wall-design.md=，它的内容哈希是 =d7f34b8=&quot;。
+
+#+BEGIN_EXAMPLE
+$ git cat-file -p d0c6a58
+040000 tree 49ae87423ab81f7889dab9e24af935a5f0bfc5af	plans
+040000 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6	specs
+#+END_EXAMPLE
+
+→ tree =d0c6a58= 说：&quot;我有一个 =plans= 子目录（哈希 =49ae874=，还能读）和一个 =specs= 子目录（哈希 =4de66b3=，丢了）&quot;。
+
+结合两条信息：缺失的 blob =d7f34b8= 对应文件 =2026-04-26-achievement-wall-design.md=；缺失的 tree =4de66b3= 是 specs 目录，里面应该只有这一个文件。
+
+这就是 git 内容寻址的妙处：对象之间通过哈希互相引用，只要引用关系的某一段还在，就能顺着找出缺失的是什么。
+
+怎么理解 git 的这些对象呢？
+
+: git 把仓库当作一个&quot;内容寻址文件系统&quot;。每次提交都对应一个 tree（目录树），
+: tree 里可以包含 subtree（子目录）或 blob（文件）。
+: 如果某个 tree 引用的子树或文件找不到了，就出现上面的&quot;损坏的链接&quot;。
+
+这个损坏发生在很久之前的一次 &quot;fix: restore repository after index corruption&quot; 提交中。当时为了恢复仓库用了某些激进操作，把一些对象搞丢了，但当时没发现。直到现在推送时，远程服务器验证完整性才发现问题。
+
+* 尝试修复的过程（走弯路）
+
+** 尝试一：直接 git gc
+
+最简单直接的想法——让 git 自己清理垃圾：
+
+#+BEGIN_EXAMPLE
+$ git gc --prune=now
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+致命错误：failed to run repack
+#+END_EXAMPLE
+
+失败了。因为包文件（pack）里含有损坏对象的引用，gc 无法重新打包。
+
+这里需要简单说明一下 git 的存储机制。git 把对象存在 =.git/objects/= 目录里，有两种形态：
+
+- **松散对象（loose object）**：刚产生的对象存成单个文件，比如 =.git/objects/d0/c6a58...=
+- **包文件（pack file）**：积累到一定程度，git 会把一堆松散对象打包成一个 =.pack= 文件 + 一个 =.idx= 索引，既省空间又加快访问速度
+
+=git gc= 干的事就是&quot;把所有松散对象重新打包&quot;。但如果包文件里有一个条目引用了不存在的对象，git 就没法完成解包→重打包的过程，导致 =gc= 失败。这里就是这种情况。
+
+** 尝试二：本地克隆一份
+
+绕过损坏对象的一个经典方法是重新克隆仓库。但这里没有远程仓库可用（远程就是坏的），所以试试本地克隆：
+
+#+BEGIN_EXAMPLE
+$ git clone --local . /tmp/codequest-clean
+致命错误：无法创建链接 &#39;...pack&#39;: 无效的跨设备链接
+#+END_EXAMPLE
+
+加上 =--no-hardlinks= 参数后克隆成功了：
+
+#+BEGIN_EXAMPLE
+$ git clone --no-hardlinks --local . /tmp/codequest-clean
+完成。
+#+END_EXAMPLE
+
+但遗憾的是检查发现损坏的对象也被克隆过来了。因为那些提交历史里仍然引用着损坏的对象。治标不治本。
+
+** 尝试三：git filter-branch 重写历史
+
+既然损坏的对象在历史提交中，那就用 =git filter-branch= 重写历史，把引用损坏对象的目录从历史中移除：
+
+#+BEGIN_EXAMPLE
+$ FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --index-filter &#39;
+  git rm --cached -r -q docs/superpowers 2&gt;/dev/null || true
+  if [ -d docs/superpowers ]; then
+    git add docs/superpowers 2&gt;/dev/null || true
+  fi
+&#39; 0c12047..HEAD
+#+END_EXAMPLE
+
+先拆解一下这条命令在干什么：
+
+: FILTER_BRANCH_SQUELCH_WARNING=1 ← 静默模式，让 git 别打印吓人的警告
+: git filter-branch -f ← 强制重写历史。-f 是 --force，覆盖上一次运行的备份
+: --index-filter &#39;...&#39; ← 核心。对每个提交，直接在暂存区(index)执行脚本，
+:                         而不是把文件检出到磁盘再操作。速度快但只能用 git 命令
+: 0c12047..HEAD ← 重写范围，从 0c12047 之后到 HEAD 的所有提交
+
+脚本部分：
+
+: git rm --cached -r -q docs/superpowers 2&gt;/dev/null || true
+:   --cached: 只删除暂存区，不碰磁盘文件
+:   -r: 递归删除整个目录
+:   -q: 安静模式
+:   2&gt;/dev/null: 把错误信息丢掉（如果这个提交里本来就没有那个目录）
+:   || true: 保证即使删除失败脚本也不退出
+:
+: if [ -d docs/superpowers ]; then
+:   git add docs/superpowers 2&gt;/dev/null || true
+: fi
+:   先检查 docs/superpowers 目录是否存在，如果存在就重新加到暂存区
+
+然而这个脚本实际有 bug：=--index-filter= 模式下，git 不会把文件内容检出到磁盘，所以工作目录是空的。=if [ -d docs/superpowers ]= 永远为假，后面的 =git add= 永远不会执行。结果只删不增，每个提交里的 docs/superpowers 目录都被删掉了。
+
+所以结果是 &quot;Ref &#39;refs/heads/main&#39; was rewritten&quot;。看起来成功了，但 =git fsck= 仍然报错。
+
+原因有两个：
+1. =filter-branch= 的备份引用（=refs/original/=）仍然指向旧提交，这些旧对象还在仓库中
+2. reflog 里也保留着旧提交的记录
+
+reflog 是 git 的&quot;操作日志&quot;，记录了 HEAD 和各个分支曾经指向过的每一次提交。你可以把它理解成浏览器的历史记录——即使你书签（分支）指向了新页面，历史记录里还存着旧地址。垃圾回收时，git 会检查 reflog，只要 reflog 里还有记录，旧对象就不会被清理。
+
+删除 =refs/original/= 和清空 reflog 后：
+
+#+BEGIN_EXAMPLE
+$ rm -rf .git/refs/original/
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+致命错误：bad tree object 8043d4e...
+#+END_EXAMPLE
+
+各种尝试都卡在 =git gc= 这一步，死循环了。
+
+** 弯路总结
+
+走弯路的教训是：在一棵已经坏掉的树上修修补补非常困难。filter-branch 能创造新的好提交，但无法清理包文件中已经存在的损坏对象引用。而 =git gc= 又因为包文件有问题而无法执行。
+
+* 最终的解决方案
+
+** 核心思路
+
+绕了一大圈，最直接的方案反而是：==把缺失的对象补上==。
+
+git 的对象存储很简单——每个对象就是一个文件，路径是哈希值的前两位作为目录名，后38位作为文件名，内容经过 zlib 压缩。
+
+既然知道缺的是啥，那就把它造出来。
+
+** 步骤 1：找到缺失对象的实际内容
+
+先看看需要什么：
+
+: 缺失的 blob d7f34b8 → 文件 docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+: 缺失的 tree 4de66b3 → 目录 docs/superpowers/specs/（只包含上面那个文件）
+
+检查这个文件的内容，发现它仍然存在于工作目录中。那就简单了：
+
+#+BEGIN_EXAMPLE
+$ git hash-object -w docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+d7f34b8f17b66827d315980d4cfcc0b17530a327
+#+END_EXAMPLE
+
+=hash-object= 计算文件的 SHA-1 哈希，= -w= 参数把它写入对象存储。输出的哈希正好是 =d7f34b8=——这就是我们要找的缺失 blob！
+
+** 步骤 2：重建 tree 对象
+
+有了 blob，就可以重建引用它的 tree 了：
+
+#+BEGIN_EXAMPLE
+$ echo &quot;100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md&quot; | git mktree
+8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+#+END_EXAMPLE
+
+=mktree= 从标准输入创建 tree 对象。但输出的哈希是 =8043d4e= 而非期望的 =4de66b3=。
+
+这表明 =4de66b3= 这个哈希本身就是错的（估计是当年仓库损坏时留下的垃圾数据），而 =8043d4e= 才是实际内容对应的正确哈希。
+
+** 步骤 3：删除孤立的损坏对象
+
+虽然 filter-branch 已经重写了历史，但旧的损坏对象仍然以&quot;松散对象&quot;（loose object）的形式留在硬盘上。这些对象不被任何分支引用，但 git 仍能看到它们并报错。
+
+具体来说，补齐缺失对象后 =git gc= 仍然报错。运行 =git fsck= 检查，报错的内容变了——不再是缺少 =4de66b3=，而是：
+
+: 损坏的链接来自于 tree ab43ad01 → tree d0c6a58
+: 缺失 tree d0c6a58
+
+这说明 =d0c6a58= 这个 tree 仍在硬盘上，且它引用的子 tree 本来应该是 =4de66b3=（就是之前缺失的那个），但现在这个引用关系断裂了。由于 =d0c6a58= 本身还是一个可读的对象，它就成了新的&quot;损坏源头&quot;。
+
+检查它是不是松散对象：
+
+#+BEGIN_EXAMPLE
+$ ls .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+.git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+#+END_EXAMPLE
+
+文件存在，说明它是松散对象。注意路径的规律：git 取对象哈希的前两个字符 =d0= 作为目录名，后 38 个字符作为文件名。这样每个目录下最多只有 256 个文件（00~ff），避免单个目录的文件数量爆炸。再检查它是否还被当前分支引用：
+
+#+BEGIN_EXAMPLE
+$ git rev-list --objects main | grep d0c6a58
+# （无输出）
+#+END_EXAMPLE
+
+无输出，说明 main 分支已经不需要它了。=rev-list --objects main= 的作用是遍历 main 分支能到达的所有对象（包括提交、目录树、文件），逐一列出它们的哈希。如果目标哈希出现在这个列表里，说明某个提交还用着它，删了会破坏历史。没输出就说明安全，可以删。
+
+确认安全后删除：
+
+#+BEGIN_EXAMPLE
+$ rm -f .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+#+END_EXAMPLE
+
+然后重复这套流程——再跑 =git fsck=，看下一层是谁：
+
+: 损坏的链接来自于 tree b46bf016 → tree ab43ad01
+: 缺失 tree ab43ad01
+
+这次 =ab43ad01= 浮出来了。它被另一个 tree 引用，自身也是个松散对象。
+
+: ls .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd  ✓ 存在
+: git rev-list --objects main | grep ab43ad01  ✓ 不被 main 引用
+
+删掉它：
+
+#+BEGIN_EXAMPLE
+$ rm -f .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd
+#+END_EXAMPLE
+
+如此反复，每删一层就跑 =git fsck= 看上一层，直到 =git fsck= 不再报错。
+
+总结这个&quot;顺藤摸瓜&quot;的过程：
+
+1. =git fsck= 告诉你哪个对象是&quot;损坏的链接&quot;的源头
+2. =git rev-list --objects main | grep &lt;哈希&gt;= 确认不被任何分支需要
+3. =ls .git/objects/xx/xxx...= 确认它是松散对象
+4. 删除，回到第 1 步
+
+注意这里的删除用的是直接 =rm -f= 删文件，而不是用 git 命令。因为松散对象就是硬盘上实实在在的文件，直接删掉文件系统层面的文件就可以了。但对于 reflog、分支引用这类 git 的&quot;元数据&quot;，就要用 git 提供的命令（如 =git reflog expire=）来操作，不能直接去删 =./git/= 里的文件。
+#+END_EXAMPLE
+
+** 步骤 4：清理回收
+
+删除孤立对象后，再清理 reflog 和历史备份：
+
+#+BEGIN_EXAMPLE
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+#+END_EXAMPLE
+
+这次 =git gc= 没有报错了。
+
+** 步骤 5：验证
+
+#+BEGIN_EXAMPLE
+$ git fsck --full
+# （无输出）
+#+END_EXAMPLE
+
+没有输出，说明仓库完全健康！
+
+** 步骤 6：推送
+
+#+BEGIN_EXAMPLE
+$ git push -u origin main
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ * [new branch]      main -&gt; main
+分支 &#39;main&#39; 设置为跟踪 &#39;origin/main&#39;。
+#+END_EXAMPLE
+
+推送成功。
+
+* 总结
+
+这次事故中走了不少弯路。根本原因在于损坏发生在很久以前的提交中，这些对象在包文件里留下了无法清除的引用，且 =git gc= 也无法执行。
+
+最后的解决方案出奇地简单：不去追求重写历史、不去删除损坏的包文件，而是直接把缺失的对象补上。git 的对象存储就是哈希文件系统，造出来就好了。
+
+小白的教训：
+
+1. 不要轻易用 =git filter-branch= 这类高级命令，没有彻底理解之前用它只会制造更多混乱
+2. =git fsck --full= 是最好的诊断工具，先看看具体缺了什么再动手
+3. 尝试 =git gc= 失败时，检查是否有孤立的松散对象（loose object），手动删除或补齐它们
+4. .git/objects/ 目录下就是 git 的所有对象，读懂它的结构很多问题就迎刃而解了
+5. 推送前先 =git fsck= 检查一下，避免推到服务器才发现问题
+
+扩展阅读：
+
+- [Pro Git 10.2 Git 内部原理 - Git 对象](https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1)
+- [git objects 结构示意图](https://git-scm.com/book/en/v2/images/data-model-1.png)
+</description>
+<pubDate>2026-04-26</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/26/git推送失败后恢复仓库损坏的完整记录/index.html</guid>
+</item>
 <item>
 <title>多智能体系统的两个有效模式——以及对 Claude Code 用户的启示</title>
 <link>https://lujun9972.github.io/blog/2026/04/25/多智能体系统的两个有效模式——以及对-claude-code-用户的启示/index.html</link>
@@ -1366,192 +1687,6 @@ Mark 在文章最后给出了两条实用建议：
 </description>
 <pubDate>2026-04-25</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/15/程序员愿意为-ai-写文档，却不愿为同事写/index.html</guid>
-</item>
-<item>
-<title>异步编程的函数着色税</title>
-<link>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</link>
-<description>异步编程经历了三波演进：回调 → Promise → async/await，每波都让写异步代码更顺手。但 async/await 引入了一个前两波都没有的结构性问题——函数着色（function coloring）：一个函数是否 async 不再只取决于业务逻辑，还取决于它内部做了什么类型的 I/O。这个&quot;颜色&quot;会沿着调用链传染，从函数蔓延到库，从库蔓延到生态。这篇文章要回答两个问题：函数着色具体是怎么蔓延的，以及哪些语言选择了不同的路。
-
-* 红蓝函数的比喻
-
-2015 年，Bob Nystrom 发了一篇文章 &quot;What Color is Your Function?&quot;，用一个思想实验描述了 async/await 的核心约束：
-
-想象一门语言里每个函数都有颜色——红色或蓝色。规则是：红色函数可以调用蓝色函数，但蓝色函数不能直接调用红色函数。如果想调用，蓝色函数必须把自己也变成红色。而一旦变红，所有调用它的函数也必须跟着变红，沿着调用链一路传染到程序入口。
-
-对应到实际编程中： =async= 函数是红色，普通（同步）函数是蓝色。从普通函数里调用 =async= 函数，要么用 =await= （这要求调用者本身也是 =async= ），要么阻塞线程（违背了用 async 的初衷）。没有第三种选择。
-
-下面用一个具体的 JavaScript 例子展示这个传染过程：
-
-#+begin_src javascript
-// 原本是一个同步函数，只做纯计算
-function formatUserName(user) {
-  return `${user.firstName} ${user.lastName}`;
-}
-
-// 需求变了：格式化之前需要从数据库查用户信息
-// 加了一行 I/O 调用，函数就必须变成 async
-async function formatUserName(userId) {
-  const user = await db.getUser(userId);      // 新增这一行
-  return `${user.firstName} ${user.lastName}`; // 其余逻辑没变
-}
-
-// 调用 formatUserName 的函数也必须跟着变
-async function displayHeader(userId) {         // 被迫加 async
-  const name = await formatUserName(userId);   // 被迫加 await
-  console.log(`Hello, ${name}`);
-}
-
-// displayHeader 的调用者也跑不掉
-async function renderPage(userId) {            // 被迫加 async
-  await displayHeader(userId);                 // 被迫加 await
-  // ... 其他渲染逻辑
-}
-#+end_src
-
-一个函数加了一行数据库查询，三条调用链全部改了签名。这就是函数着色的传染性：你的函数签名不再只取决于&quot;做什么&quot;，还取决于&quot;内部怎么执行&quot;。
-
-* 三级蔓延
-
-函数着色不只是函数签名的问题。它在三个层面逐级放大。
-
-** 函数级：一行改动，全链重写
-
-上例已经展示了函数级的影响：给一个同步函数加上 =async= ，返回类型从值变成了 Promise，调用约定从直接调用变成了 =await= 。改动沿着调用图向上传播，直到遇到 =main= 函数或框架入口。在实践中，一个同步函数加一行数据库查询，可能需要改几十个文件。
-
-** 库级：作者被迫选边站
-
-函数着色到了库的层面，变成一个两难选择：写同步库，异步用户用不了；写异步库，同步用户要调用就必须引入一整套异步运行时——比如 Rust 的 Tokio 或 Python 的 asyncio 事件循环，原本简单的调用变成了先初始化运行时、再注册回调、再处理异常；两个都写，API 面积翻倍，测试矩阵翻倍，维护负担翻倍。
-
-Python 是最典型的例子： =requests= 库（同步）和 =aiohttp= 库（异步）是两个独立项目，由不同作者分别实现同一个功能——发 HTTP 请求。后来 =httpx= 出现，同时提供同步和异步接口。但这恰恰说明函数着色把事情搞复杂了： =httpx= 的&quot;统一&quot;是对分裂问题的补救，而不是分裂不存在。
-
-** 生态级：运行时分裂
-
-到了生态层面，函数着色直接导致运行时分裂。Rust 的异步生态围绕 Tokio、async-std、smol 三个互不兼容的运行时被割裂了。它们各自实现了 TCP 流、定时器等基础类型，一个为 Tokio 写的库没法直接在 async-std 上跑。流行的 HTTP 客户端 reqwest 直接绑定了 Tokio。
-
-这意味着库作者面临两难：选 Tokio，锁定用户选择；写运行时无关的抽象层，增加复杂度和性能开销。结果是生态围绕&quot;颜色&quot;割裂，而不是围绕功能分工。
-
-* 顺序陷阱：async/await 隐藏的并行机会
-
-函数着色之外，async/await 还有一个容易被忽视的副作用：它让异步代码看起来像同步代码，反而隐藏了并行机会。
-
-要理解这个陷阱，先要弄清 =await= 到底做了什么： =await= 不是&quot;发起异步操作然后立刻继续下一行&quot;，而是 *暂停当前函数的执行* ，等 Promise 完成后才继续往下跑。跟同步代码的区别在于：同步代码在等待 I/O 时线程被阻塞、什么也干不了； =await= 在暂停当前函数的同时 *释放线程* ，让线程去处理其他请求，等 I/O 完成后再回来继续执行。所以 async/await 的设计目的是：让异步代码 *读起来* 像同步代码（语法上顺序执行），但底层仍然是非阻塞的。
-
-#+begin_src javascript
-async function loadDashboard(userId) {
-  const user = await getUser(userId);
-  const orders = await getOrders(user.id);            // 等 100ms
-  const recommendations = await getRecommendations(user.id); // 再等 100ms
-  return { user, orders, recommendations };
-}
-#+end_src
-
-这段代码看起来清晰正确，但 =getOrders= 和 =getRecommendations= 之间没有依赖关系——推荐数据不需要等订单查完才能开始获取。然而 =await= 会暂停函数执行， =getRecommendations= 要等 =getOrders= 完成后才会开始——注意，不是&quot;线程在忙别的所以推荐查询没排上&quot;，而是这个函数被暂停了， =getRecommendations= 那一行代码根本还没执行到，连请求都还没发出去。两个本可以同时发起的 I/O 操作被强制串行了：串行耗时约 200ms（两个 100ms 的操作依次执行），而并行只需约 100ms（同时发起）。
-
-下面的脚本用模拟的异步函数实际演示了这个差距：
-
-#+begin_src javascript
-// 模拟异步 I/O 操作（每个耗时 100ms）
-function getUser(id) {
-  return new Promise(r =&gt; setTimeout(() =&gt; r({id, name: &#39;Alice&#39;}), 100));
-}
-
-function getOrders(userId) {
-  return new Promise(r =&gt; setTimeout(() =&gt; r([&#39;order1&#39;, &#39;order2&#39;]), 100));
-}
-
-function getRecommendations(userId) {
-  return new Promise(r =&gt; setTimeout(() =&gt; r([&#39;rec1&#39;, &#39;rec2&#39;]), 100));
-}
-
-// 顺序执行：getOrders 完成后才开始 getRecommendations
-async function loadSequential(userId) {
-  const start = Date.now();
-  const user = await getUser(userId);
-  const orders = await getOrders(user.id);
-  const recommendations = await getRecommendations(user.id);
-  console.log(`顺序执行耗时: ${Date.now() - start}ms`);
-  return { user, orders, recommendations };
-}
-
-// 并行执行：getOrders 和 getRecommendations 同时发起
-async function loadParallel(userId) {
-  const start = Date.now();
-  const user = await getUser(userId);
-  const [orders, recommendations] = await Promise.all([
-    getOrders(user.id),
-    getRecommendations(user.id)
-  ]);
-  console.log(`并行执行耗时: ${Date.now() - start}ms`);
-  return { user, orders, recommendations };
-}
-
-(async () =&gt; {
-  await loadSequential(1);
-  await loadParallel(1);
-})();
-#+end_src
-
-#+begin_example
-顺序执行耗时: 302ms
-并行执行耗时: 201ms
-#+end_example
-
-* 哪些语言选择了不同的路
-
-函数着色不是不可避免的。一些语言的设计者研究了 async/await 在其他生态中的代价后，选择了不同的方案。
-
-** Go：goroutine 回避着色
-
-Go 用 goroutine 回避了着色问题。goroutine 是 Go 运行时调度的轻量级线程，所有函数都是&quot;蓝色&quot;的——没有 =async= 关键字，没有颜色传染。调用 I/O 操作时，运行时自动把当前 goroutine 挂起，不需要函数签名做任何标记。代价是运行时更重（内置调度器和垃圾回收器），但换来的是零着色。
-
-** Java：虚拟线程消除着色
-
-Java 21 的 Project Loom 走了类似的路。虚拟线程（virtual threads）是 JVM 管理的轻量级线程，行为和普通线程完全一致——现有代码无需修改就能享受高并发。Loom 团队明确引用了函数着色问题作为他们想要避免的东西。
-
-** Zig：从语言关键字退格为库函数
-
-Zig 的做法更激进：它曾经有 =async= / =await= 关键字，后来在编译器层面直接移除，改为让 I/O 操作接受一个 =Io= 接口参数。运行时（线程池、事件循环、用户自定义）来实现这个接口。函数签名不因调度方式而改变， =async= 和 =await= 从语言关键字变成了库函数。不过也有人认为 =Io= 参数本身就是另一种形式的着色。
-
-** Clojure：channel 作为统一接口
-
-Clojure 的 core.async 库用了另一种方式回避着色。它的核心抽象是 channel（通道），函数返回 channel 而不是 Promise 或值。调用者自行决定怎么消费这个 channel：同步调用者用 =&lt;!!= 阻塞线程取值，异步调用者在 =go= 块里用 =&lt;=!= 暂停状态机取值。
-
-#+begin_src clojure
-;; 函数返回 channel，不区分 sync/async
-(defn fetch-user [id]
-  (let [ch (chan)]
-    (thread                              ;; 在独立线程中执行 I/O
-      (&gt;!! ch {:id id :name &quot;Alice&quot;}))   ;; 结果放入 channel
-    ch))                                 ;; 返回 channel
-
-;; 同步调用者：阻塞等待结果
-(let [user (&lt;!! (fetch-user 1))]
-  (println user))
-
-;; 异步调用者：在 go 块中非阻塞等待
-(go
-  (let [user (&lt;! (fetch-user 1))]
-    (println user)))
-#+end_src
-
-=fetch-user= 的签名不包含任何颜色标记——它只返回一个 channel。同步和异步调用者用各自的取值方式消费同一个 channel，函数本身不需要改变。Clojure 把&quot;怎么执行&quot;的决定权交给了调用者，而不是强制编码在函数签名里。
-
-** Elisp：单线程回避着色
-
-Elisp 从未引入 async/await。Emacs 是单线程运行的，异步操作通过回调（ =make-process= 、 =make-network-process= ）或子进程实现。所有函数都是&quot;蓝色&quot;的，不存在着色问题。代价是 Emacs 主线程内部无法真正并行处理 I/O（子进程可以并行，但 Elisp 代码本身只能串行执行）。
-
-这些方案的共同思路是：不让&quot;怎么执行&quot;的细节泄漏到&quot;做什么&quot;的接口里。函数签名应该表达业务意图，而不是执行策略。
-
-* 着色税的本质
-
-函数着色的核心矛盾是：函数签名不应该取决于内部用了什么类型的 I/O，但 async/await 恰恰把这个实现细节变成了接口的一部分。
-
-从函数级（一行改动导致全链重写）到库级（被迫维护同步和异步两套 API），再到生态级（运行时碎片化），每一层都在支付着色税。这不是工程失误——回调、Promise、async/await 每一步都在解决真实问题。但从 2012 年 C# 5.0 引入 async/await 算起，十四年过去了，累积的代价已经很大：维护两套 API、处理运行时兼容性、在顺序语法中寻找并行机会、应对全新的死锁类型（Rust 生态中出现了一种特有的死锁模式：一个 future 持有锁后停止被轮询，另一个 future 试图获取同一把锁，诊断这种问题需要 core dump 和反汇编）。
-
-Go、Java、Zig、Clojure 的探索表明，函数着色不是异步的固有代价，而是一种特定实现的代价。问题是：你愿不愿意为更轻的运行时承受更重的着色税？
-</description>
-<pubDate>2026-04-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/25/异步编程的函数着色税/index.html</guid>
 </item>
 </channel>
 </rss>

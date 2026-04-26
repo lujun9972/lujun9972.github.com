@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>git推送失败后恢复仓库损坏的完整记录 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">git推送失败后恢复仓库损坏的完整记录</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org336784e">症状</a></li>
+<li><a href="#orga9f92e9">分析原因</a></li>
+<li><a href="#org367d670">尝试修复的过程（走弯路）</a>
+<ul>
+<li><a href="#org73f3e48">尝试一：直接 git gc</a></li>
+<li><a href="#org6c648cf">尝试二：本地克隆一份</a></li>
+<li><a href="#org278e9d9">尝试三：git filter-branch 重写历史</a></li>
+<li><a href="#orgeed3e76">弯路总结</a></li>
+</ul>
+</li>
+<li><a href="#org11b9274">最终的解决方案</a>
+<ul>
+<li><a href="#org8965421">核心思路</a></li>
+<li><a href="#org2a8d41b">步骤 1：找到缺失对象的实际内容</a></li>
+<li><a href="#orgc4e5eab">步骤 2：重建 tree 对象</a></li>
+<li><a href="#orgb7e4c0c">步骤 3：删除孤立的损坏对象</a></li>
+<li><a href="#orgfcf3247">步骤 4：清理回收</a></li>
+<li><a href="#orgb4a4740">步骤 5：验证</a></li>
+<li><a href="#orgcc457e4">步骤 6：推送</a></li>
+</ul>
+</li>
+<li><a href="#org11b35a2">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org336784e" class="outline-2">
+<h2 id="org336784e">症状</h2>
+<div class="outline-text-2" id="text-org336784e">
+<p>
+电脑断电后，在仓库提交代码发现推送时失败：
+</p>
+
+<pre class="example" id="org13ce2dd">
+$ git push -u origin main
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+remote: fatal: early EOF
+错误：远程解包失败：index-pack failed
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ ! [remote rejected] main -&gt; main (failed)
+错误：无法推送一些引用到 'git.zhlh6.cn:lujun9972/CodeQuest.git'
+</pre>
+
+<p>
+满屏的 "bad tree object"、"early EOF"、"remote rejected" 让人头皮发麻。之前就发生过仓库索引损坏的问题，这次又来了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga9f92e9" class="outline-2">
+<h2 id="orga9f92e9">分析原因</h2>
+<div class="outline-text-2" id="text-orga9f92e9">
+<p>
+先用 <code>git fsck--full</code> 检查仓库完整性：
+</p>
+
+<pre class="example" id="org145c862">
+$ git fsck --full
+损坏的链接来自于    tree d0c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+              到    tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+损坏的链接来自于    tree 8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+              到    blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+缺失 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+缺失 blob d7f34b8f17b66827d315980d4cfcc0b17530a327
+</pre>
+
+<p>
+可以看到有两个对象找不到了（缺失 missing）：
+</p>
+
+<ul class="org-ul">
+<li>tree 对象 =4de66b3=：代表一个目录</li>
+<li>blob 对象 =d7f34b8=：代表一个文件的内容</li>
+</ul>
+
+<p>
+而另外两个 tree 则引用了这些丢失的对象（损坏的链接 broken link）。
+</p>
+
+<p>
+虽然被引用的对象丢了，但引用它们的 tree 还在。用 <code>git cat-file -p</code> 读一下，就能知道缺失的对象本来对应哪个文件：
+</p>
+
+<pre class="example" id="org0460265">
+$ git cat-file -p 8043d4e
+100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md
+</pre>
+
+<p>
+→ tree <code>8043d4e</code> 说："我引用了一个文件，叫 <code>2026-04-26-achievement-wall-design.md=，它的内容哈希是 =d7f34b8</code>"。
+</p>
+
+<pre class="example" id="orge4d2cd5">
+$ git cat-file -p d0c6a58
+040000 tree 49ae87423ab81f7889dab9e24af935a5f0bfc5af	plans
+040000 tree 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6	specs
+</pre>
+
+<p>
+→ tree <code>d0c6a58</code> 说："我有一个 <code>plans</code> 子目录（哈希 <code>49ae874=，还能读）和一个 =specs</code> 子目录（哈希 =4de66b3=，丢了）"。
+</p>
+
+<p>
+结合两条信息：缺失的 blob <code>d7f34b8</code> 对应文件 <code>2026-04-26-achievement-wall-design.md=；缺失的 tree =4de66b3</code> 是 specs 目录，里面应该只有这一个文件。
+</p>
+
+<p>
+这就是 git 内容寻址的妙处：对象之间通过哈希互相引用，只要引用关系的某一段还在，就能顺着找出缺失的是什么。
+</p>
+
+<p>
+怎么理解 git 的这些对象呢？
+</p>
+
+<pre class="example">
+git 把仓库当作一个"内容寻址文件系统"。每次提交都对应一个 tree（目录树），
+tree 里可以包含 subtree（子目录）或 blob（文件）。
+如果某个 tree 引用的子树或文件找不到了，就出现上面的"损坏的链接"。
+</pre>
+
+
+<p>
+这个损坏发生在很久之前的一次 "fix: restore repository after index corruption" 提交中。当时为了恢复仓库用了某些激进操作，把一些对象搞丢了，但当时没发现。直到现在推送时，远程服务器验证完整性才发现问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org367d670" class="outline-2">
+<h2 id="org367d670">尝试修复的过程（走弯路）</h2>
+<div class="outline-text-2" id="text-org367d670">
+</div>
+<div id="outline-container-org73f3e48" class="outline-3">
+<h3 id="org73f3e48">尝试一：直接 git gc</h3>
+<div class="outline-text-3" id="text-org73f3e48">
+<p>
+最简单直接的想法——让 git 自己清理垃圾：
+</p>
+
+<pre class="example" id="org4636183">
+$ git gc --prune=now
+致命错误：bad tree object 4de66b3d0bdfa48a8f6fd29e140a9fafd3c9d3b6
+致命错误：failed to run repack
+</pre>
+
+<p>
+失败了。因为包文件（pack）里含有损坏对象的引用，gc 无法重新打包。
+</p>
+
+<p>
+这里需要简单说明一下 git 的存储机制。git 把对象存在 <code>.git/objects/</code> 目录里，有两种形态：
+</p>
+
+<ul class="org-ul">
+<li>**松散对象（loose object）**：刚产生的对象存成单个文件，比如 <code>.git/objects/d0/c6a58...</code></li>
+<li>**包文件（pack file）**：积累到一定程度，git 会把一堆松散对象打包成一个 <code>.pack</code> 文件 + 一个 <code>.idx</code> 索引，既省空间又加快访问速度</li>
+</ul>
+
+<p>
+<code>git gc</code> 干的事就是"把所有松散对象重新打包"。但如果包文件里有一个条目引用了不存在的对象，git 就没法完成解包→重打包的过程，导致 <code>gc</code> 失败。这里就是这种情况。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6c648cf" class="outline-3">
+<h3 id="org6c648cf">尝试二：本地克隆一份</h3>
+<div class="outline-text-3" id="text-org6c648cf">
+<p>
+绕过损坏对象的一个经典方法是重新克隆仓库。但这里没有远程仓库可用（远程就是坏的），所以试试本地克隆：
+</p>
+
+<pre class="example" id="orgc626f9f">
+$ git clone --local . /tmp/codequest-clean
+致命错误：无法创建链接 '...pack': 无效的跨设备链接
+</pre>
+
+<p>
+加上 <code>--no-hardlinks</code> 参数后克隆成功了：
+</p>
+
+<pre class="example" id="orgf73ac98">
+$ git clone --no-hardlinks --local . /tmp/codequest-clean
+完成。
+</pre>
+
+<p>
+但遗憾的是检查发现损坏的对象也被克隆过来了。因为那些提交历史里仍然引用着损坏的对象。治标不治本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org278e9d9" class="outline-3">
+<h3 id="org278e9d9">尝试三：git filter-branch 重写历史</h3>
+<div class="outline-text-3" id="text-org278e9d9">
+<p>
+既然损坏的对象在历史提交中，那就用 <code>git filter-branch</code> 重写历史，把引用损坏对象的目录从历史中移除：
+</p>
+
+<pre class="example" id="org84fe432">
+$ FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --index-filter '
+  git rm --cached -r -q docs/superpowers 2&gt;/dev/null || true
+  if [ -d docs/superpowers ]; then
+    git add docs/superpowers 2&gt;/dev/null || true
+  fi
+' 0c12047..HEAD
+</pre>
+
+<p>
+先拆解一下这条命令在干什么：
+</p>
+
+<pre class="example">
+FILTER_BRANCH_SQUELCH_WARNING=1 ← 静默模式，让 git 别打印吓人的警告
+git filter-branch -f ← 强制重写历史。-f 是 --force，覆盖上一次运行的备份
+--index-filter '...' ← 核心。对每个提交，直接在暂存区(index)执行脚本，
+                        而不是把文件检出到磁盘再操作。速度快但只能用 git 命令
+0c12047..HEAD ← 重写范围，从 0c12047 之后到 HEAD 的所有提交
+</pre>
+
+
+<p>
+脚本部分：
+</p>
+
+<pre class="example">
+git rm --cached -r -q docs/superpowers 2&gt;/dev/null || true
+  --cached: 只删除暂存区，不碰磁盘文件
+  -r: 递归删除整个目录
+  -q: 安静模式
+  2&gt;/dev/null: 把错误信息丢掉（如果这个提交里本来就没有那个目录）
+  || true: 保证即使删除失败脚本也不退出
+
+if [ -d docs/superpowers ]; then
+  git add docs/superpowers 2&gt;/dev/null || true
+fi
+  先检查 docs/superpowers 目录是否存在，如果存在就重新加到暂存区
+</pre>
+
+
+<p>
+然而这个脚本实际有 bug：=&#x2013;index-filter= 模式下，git 不会把文件内容检出到磁盘，所以工作目录是空的。=if [ -d docs/superpowers ]= 永远为假，后面的 <code>git add</code> 永远不会执行。结果只删不增，每个提交里的 docs/superpowers 目录都被删掉了。
+</p>
+
+<p>
+所以结果是 "Ref 'refs/heads/main' was rewritten"。看起来成功了，但 <code>git fsck</code> 仍然报错。
+</p>
+
+<p>
+原因有两个：
+</p>
+<ol class="org-ol">
+<li><code>filter-branch</code> 的备份引用（=refs/original/=）仍然指向旧提交，这些旧对象还在仓库中</li>
+<li>reflog 里也保留着旧提交的记录</li>
+</ol>
+
+<p>
+reflog 是 git 的"操作日志"，记录了 HEAD 和各个分支曾经指向过的每一次提交。你可以把它理解成浏览器的历史记录——即使你书签（分支）指向了新页面，历史记录里还存着旧地址。垃圾回收时，git 会检查 reflog，只要 reflog 里还有记录，旧对象就不会被清理。
+</p>
+
+<p>
+删除 <code>refs/original/</code> 和清空 reflog 后：
+</p>
+
+<pre class="example" id="orgda394df">
+$ rm -rf .git/refs/original/
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+致命错误：bad tree object 8043d4e...
+</pre>
+
+<p>
+各种尝试都卡在 <code>git gc</code> 这一步，死循环了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgeed3e76" class="outline-3">
+<h3 id="orgeed3e76">弯路总结</h3>
+<div class="outline-text-3" id="text-orgeed3e76">
+<p>
+走弯路的教训是：在一棵已经坏掉的树上修修补补非常困难。filter-branch 能创造新的好提交，但无法清理包文件中已经存在的损坏对象引用。而 <code>git gc</code> 又因为包文件有问题而无法执行。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org11b9274" class="outline-2">
+<h2 id="org11b9274">最终的解决方案</h2>
+<div class="outline-text-2" id="text-org11b9274">
+</div>
+<div id="outline-container-org8965421" class="outline-3">
+<h3 id="org8965421">核心思路</h3>
+<div class="outline-text-3" id="text-org8965421">
+<p>
+绕了一大圈，最直接的方案反而是：==把缺失的对象补上==。
+</p>
+
+<p>
+git 的对象存储很简单——每个对象就是一个文件，路径是哈希值的前两位作为目录名，后38位作为文件名，内容经过 zlib 压缩。
+</p>
+
+<p>
+既然知道缺的是啥，那就把它造出来。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2a8d41b" class="outline-3">
+<h3 id="org2a8d41b">步骤 1：找到缺失对象的实际内容</h3>
+<div class="outline-text-3" id="text-org2a8d41b">
+<p>
+先看看需要什么：
+</p>
+
+<pre class="example">
+缺失的 blob d7f34b8 → 文件 docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+缺失的 tree 4de66b3 → 目录 docs/superpowers/specs/（只包含上面那个文件）
+</pre>
+
+
+<p>
+检查这个文件的内容，发现它仍然存在于工作目录中。那就简单了：
+</p>
+
+<pre class="example" id="org8afbc10">
+$ git hash-object -w docs/superpowers/specs/2026-04-26-achievement-wall-design.md
+d7f34b8f17b66827d315980d4cfcc0b17530a327
+</pre>
+
+<p>
+<code>hash-object</code> 计算文件的 SHA-1 哈希，= -w= 参数把它写入对象存储。输出的哈希正好是 =d7f34b8=——这就是我们要找的缺失 blob！
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc4e5eab" class="outline-3">
+<h3 id="orgc4e5eab">步骤 2：重建 tree 对象</h3>
+<div class="outline-text-3" id="text-orgc4e5eab">
+<p>
+有了 blob，就可以重建引用它的 tree 了：
+</p>
+
+<pre class="example" id="org0b9aaa5">
+$ echo "100644 blob d7f34b8f17b66827d315980d4cfcc0b17530a327	2026-04-26-achievement-wall-design.md" | git mktree
+8043d4e27bf8f8f91f30f9519651dd0dfcc2b1af
+</pre>
+
+<p>
+<code>mktree</code> 从标准输入创建 tree 对象。但输出的哈希是 <code>8043d4e</code> 而非期望的 =4de66b3=。
+</p>
+
+<p>
+这表明 <code>4de66b3</code> 这个哈希本身就是错的（估计是当年仓库损坏时留下的垃圾数据），而 <code>8043d4e</code> 才是实际内容对应的正确哈希。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb7e4c0c" class="outline-3">
+<h3 id="orgb7e4c0c">步骤 3：删除孤立的损坏对象</h3>
+<div class="outline-text-3" id="text-orgb7e4c0c">
+<p>
+虽然 filter-branch 已经重写了历史，但旧的损坏对象仍然以"松散对象"（loose object）的形式留在硬盘上。这些对象不被任何分支引用，但 git 仍能看到它们并报错。
+</p>
+
+<p>
+具体来说，补齐缺失对象后 <code>git gc</code> 仍然报错。运行 <code>git fsck</code> 检查，报错的内容变了——不再是缺少 =4de66b3=，而是：
+</p>
+
+<pre class="example">
+损坏的链接来自于 tree ab43ad01 → tree d0c6a58
+缺失 tree d0c6a58
+</pre>
+
+
+<p>
+这说明 <code>d0c6a58</code> 这个 tree 仍在硬盘上，且它引用的子 tree 本来应该是 <code>4de66b3=（就是之前缺失的那个），但现在这个引用关系断裂了。由于 =d0c6a58</code> 本身还是一个可读的对象，它就成了新的"损坏源头"。
+</p>
+
+<p>
+检查它是不是松散对象：
+</p>
+
+<pre class="example" id="orgdfba26a">
+$ ls .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+.git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+</pre>
+
+<p>
+文件存在，说明它是松散对象。注意路径的规律：git 取对象哈希的前两个字符 <code>d0</code> 作为目录名，后 38 个字符作为文件名。这样每个目录下最多只有 256 个文件（00~ff），避免单个目录的文件数量爆炸。再检查它是否还被当前分支引用：
+</p>
+
+<pre class="example" id="org23535b5">
+$ git rev-list --objects main | grep d0c6a58
+# （无输出）
+</pre>
+
+<p>
+无输出，说明 main 分支已经不需要它了。=rev-list &#x2013;objects main= 的作用是遍历 main 分支能到达的所有对象（包括提交、目录树、文件），逐一列出它们的哈希。如果目标哈希出现在这个列表里，说明某个提交还用着它，删了会破坏历史。没输出就说明安全，可以删。
+</p>
+
+<p>
+确认安全后删除：
+</p>
+
+<pre class="example" id="org890acc2">
+$ rm -f .git/objects/d0/c6a58cd6ccac7e967a1ec1923b86b6098c37cf
+</pre>
+
+<p>
+然后重复这套流程——再跑 =git fsck=，看下一层是谁：
+</p>
+
+<pre class="example">
+损坏的链接来自于 tree b46bf016 → tree ab43ad01
+缺失 tree ab43ad01
+</pre>
+
+
+<p>
+这次 <code>ab43ad01</code> 浮出来了。它被另一个 tree 引用，自身也是个松散对象。
+</p>
+
+<pre class="example">
+ls .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd  ✓ 存在
+git rev-list --objects main | grep ab43ad01  ✓ 不被 main 引用
+</pre>
+
+
+<p>
+删掉它：
+</p>
+
+<pre class="example" id="org69014ca">
+$ rm -f .git/objects/ab/43ad01abfddc06d9ae24d81d9fe96a8007e3dd
+</pre>
+
+<p>
+如此反复，每删一层就跑 <code>git fsck</code> 看上一层，直到 <code>git fsck</code> 不再报错。
+</p>
+
+<p>
+总结这个"顺藤摸瓜"的过程：
+</p>
+
+<ol class="org-ol">
+<li><code>git fsck</code> 告诉你哪个对象是"损坏的链接"的源头</li>
+<li><code>git rev-list --objects main | grep &lt;哈希&gt;</code> 确认不被任何分支需要</li>
+<li><code>ls .git/objects/xx/xxx...</code> 确认它是松散对象</li>
+<li>删除，回到第 1 步</li>
+</ol>
+
+<p>
+注意这里的删除用的是直接 <code>rm -f</code> 删文件，而不是用 git 命令。因为松散对象就是硬盘上实实在在的文件，直接删掉文件系统层面的文件就可以了。但对于 reflog、分支引用这类 git 的"元数据"，就要用 git 提供的命令（如 <code>git reflog expire=）来操作，不能直接去删 =./git/</code> 里的文件。
+#+END_EXAMPLE
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfcf3247" class="outline-3">
+<h3 id="orgfcf3247">步骤 4：清理回收</h3>
+<div class="outline-text-3" id="text-orgfcf3247">
+<p>
+删除孤立对象后，再清理 reflog 和历史备份：
+</p>
+
+<pre class="example" id="orgbbddda9">
+$ git reflog expire --expire=now --all
+$ git gc --prune=now
+</pre>
+
+<p>
+这次 <code>git gc</code> 没有报错了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb4a4740" class="outline-3">
+<h3 id="orgb4a4740">步骤 5：验证</h3>
+<div class="outline-text-3" id="text-orgb4a4740">
+<pre class="example" id="orgb5b89ca">
+$ git fsck --full
+# （无输出）
+</pre>
+
+<p>
+没有输出，说明仓库完全健康！
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcc457e4" class="outline-3">
+<h3 id="orgcc457e4">步骤 6：推送</h3>
+<div class="outline-text-3" id="text-orgcc457e4">
+<pre class="example" id="org335d54d">
+$ git push -u origin main
+To git.zhlh6.cn:lujun9972/CodeQuest.git
+ * [new branch]      main -&gt; main
+分支 'main' 设置为跟踪 'origin/main'。
+</pre>
+
+<p>
+推送成功。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org11b35a2" class="outline-2">
+<h2 id="org11b35a2">总结</h2>
+<div class="outline-text-2" id="text-org11b35a2">
+<p>
+这次事故中走了不少弯路。根本原因在于损坏发生在很久以前的提交中，这些对象在包文件里留下了无法清除的引用，且 <code>git gc</code> 也无法执行。
+</p>
+
+<p>
+最后的解决方案出奇地简单：不去追求重写历史、不去删除损坏的包文件，而是直接把缺失的对象补上。git 的对象存储就是哈希文件系统，造出来就好了。
+</p>
+
+<p>
+小白的教训：
+</p>
+
+<ol class="org-ol">
+<li>不要轻易用 <code>git filter-branch</code> 这类高级命令，没有彻底理解之前用它只会制造更多混乱</li>
+<li><code>git fsck --full</code> 是最好的诊断工具，先看看具体缺了什么再动手</li>
+<li>尝试 <code>git gc</code> 失败时，检查是否有孤立的松散对象（loose object），手动删除或补齐它们</li>
+<li>.git/objects/ 目录下就是 git 的所有对象，读懂它的结构很多问题就迎刃而解了</li>
+<li>推送前先 <code>git fsck</code> 检查一下，避免推到服务器才发现问题</li>
+</ol>
+
+<p>
+扩展阅读：
+</p>
+
+<ul class="org-ul">
+<li>[Pro Git 10.2 Git 内部原理 - Git 对象](<a href="https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1">https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1</a>)</li>
+<li>[git objects 结构示意图](<img src="https://git-scm.com/book/en/v2/images/data-model-1.png" alt="data-model-1.png" />)</li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-26</span>
+    <span class="post-info">2026-04-26</span>
+    <a href="../../../../../tags/异闻录">异闻录</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; wv5nwub53loexhubnmqut35vmb &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
