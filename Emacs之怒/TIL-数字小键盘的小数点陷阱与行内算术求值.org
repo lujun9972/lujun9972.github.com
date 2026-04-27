@@ -1,0 +1,75 @@
+#+TITLE: TIL: 数字小键盘的小数点陷阱与行内算术求值
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: TIL Emacs 键盘配置
+#+DATE: [2026-04-27 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Marcin Borkowski 的一篇文章[fn:1]揭示了一个容易忽略的 Emacs 键盘行为：数字小键盘右下角那个用来分隔整数和小数部分的键——在 Emacs 里被硬编码为逗号。
+
+*注意：这个问题只影响欧洲键盘布局（波兰、德国、法国等）。这些布局下，该键发送的是 =kp-separator= 按键符号；而美式和中文键盘布局下，该键直接发送 =.= 字符，不受此问题影响。*
+
+* 问题：数字小键盘打不出小数点
+
+受影响的用户在数字小键盘上按那个键想输入小数点，结果得到的是逗号。用 =C-h c= 查看这个键的 Emacs 名称：
+
+#+begin_example
+, 'COMMA' (translated from <kp-separator>) runs the command self-insert-command
+#+end_example
+
+关键在 =<kp-separator>= 这个名字。Emacs 在 =simple.el= 里把 =kp-separator= 硬编码映射为逗号：
+
+#+begin_src emacs-lisp
+(mapc
+ (lambda (keypad-normal)
+   (let ((keypad (nth 0 keypad-normal))
+         (normal (nth 1 keypad-normal)))
+     (put keypad 'ascii-character normal)
+     (define-key function-key-map (vector keypad) (vector normal))))
+ '((kp-space ?\s)
+   (kp-tab ?\t)
+   (kp-enter ?\r)
+   (kp-separator ?,)   ;; ← 这里
+   (kp-equal ?=)
+   ...))
+#+end_src
+
+这个映射和你的系统语言设置无关——不管你用的是中文、英文还是波兰文环境， =kp-separator= 一律变成逗号。修复方法是在配置中覆盖这个映射：
+
+#+begin_src emacs-lisp
+(keymap-set function-key-map "<kp-separator>" ".")
+#+end_src
+
+=function-key-map= 的机制是：按键先经过这个映射表转换，再交给后续的 keymap 处理。所以这一行配置的效果是，在所有模式中都把数字小键盘的分隔键变成小数点，而不是逗号。
+
+* 延伸：行内算术求值
+
+原文还提到了一个实用技巧：在任意 buffer 中将光标左侧的算术表达式直接替换为计算结果。核心逻辑很简洁：
+
+#+begin_src emacs-lisp
+(defun fast-calc (currency)
+  "将光标左侧的算术表达式替换为计算结果。
+带前缀参数时，保留两位小数并追加货币后缀。"
+  (interactive "P")
+  (when (looking-back "[-+/*().0-9]\\{2,\\} *"
+                      (line-beginning-position)
+                      t)
+    (replace-match
+     (save-match-data
+       (calc-eval (if currency
+                      (list
+                       (concat (match-string-no-properties 0) "+0.0")
+                       'calc-float-format
+                       '(fix 2))
+                    (match-string-no-properties 0))))
+     t t)
+    (if currency (insert " PLN"))))
+#+end_src
+
+使用方式：在 =12.5*3= 后面按 =M-x fast-calc= ，表达式被替换为 =37.5= 。带前缀参数（ =C-u M-x fast-calc= ）则保留两位小数并追加货币后缀，比如 =12.5*3= → =37.50 PLN= 。
+
+原理是 =calc-eval= 接受一个字符串（算术表达式）并返回结果字符串。传入列表形式时可以控制格式—— =(fix 2)= 表示固定两位小数。 =looking-back= 用正则匹配光标左侧的数字和运算符序列， =replace-match= 把匹配到的内容替换为计算结果。
+
+* Footnotes
+
+[fn:1] [[https://mbork.pl/2026-04-25_How_I_use_my_numeric_keypad_with_Emacs_Ledger_mode][How I use my numeric keypad with Emacs Ledger mode]]
