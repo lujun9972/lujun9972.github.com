@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Emacs 代码折叠终极指南 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, 代码折叠, kirigami, outline, hideshow, treesit-fold" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Emacs 代码折叠终极指南</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4e5f879">为什么需要代码折叠</a></li>
+<li><a href="#org5b132c0">前端：kirigami 统一接口</a>
+<ul>
+<li><a href="#org86781fe">安装与配置</a></li>
+<li><a href="#orgd96e9e7">使用</a></li>
+</ul>
+</li>
+<li><a href="#orgb6e8ae0">后端：五种折叠引擎</a></li>
+<li><a href="#org1f18edb">快速选择表</a></li>
+</ul>
+</div>
+</div>
+<p>
+James Cherti（kirigami.el 和 outline-indent 的作者）写了一篇 Emacs 代码折叠的综合指南。这篇文章的价值在于它不是只推荐一个方案，而是把所有折叠后端理清楚——每种后端适合什么语言，怎么配置，怎么用一个统一的前端把它们串起来。
+</p>
+
+<p>
+这篇博文是对原文的解读。
+</p>
+
+<div id="outline-container-org4e5f879" class="outline-2">
+<h2 id="org4e5f879">为什么需要代码折叠</h2>
+<div class="outline-text-2" id="text-org4e5f879">
+<p>
+原文列了几个场景，说得比较到位：
+</p>
+
+<ul class="org-ul">
+<li>在几千行的文件里跳来跳去（比如用 LSP 跳到某个函数定义），跳完之后你不知道自己在文件的哪个位置了。把整个文件折叠到顶层结构，你一眼就能看到骨架</li>
+<li>调试一个 2 万行的遗留文件时，不可能马上重构。折叠让你把文件按模块临时分组，让难以维护的代码变得可读</li>
+<li>屏幕上每一行可见代码都会消耗你一丝注意力。把当前不相关的函数折叠起来，相当于视觉上的垃圾回收</li>
+<li>折叠后的代码块可以作为单个逻辑单元来剪切、复制、移动，不容易选错</li>
+<li>做 code review 时，把已经看过的地方折叠掉，过滤视觉噪音</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5b132c0" class="outline-2">
+<h2 id="org5b132c0">前端：kirigami 统一接口</h2>
+<div class="outline-text-2" id="text-org5b132c0">
+<p>
+Emacs 代码折叠最大的痛点不是"没有折叠功能"，而是"折叠功能太多，各用各的快捷键"。
+</p>
+
+<p>
+<code>hs-minor-mode</code> 有一套快捷键， <code>outline-minor-mode</code> 有另一套， <code>org-mode</code> 又是一套。逻辑上一样的操作（折叠、展开、全部展开），不同模式的命令名和按键完全不同。
+</p>
+
+<p>
+kirigami 解决的就是这个问题。它是一个统一前端——你定义一次快捷键，它会自动检测当前 buffer 用的是哪种折叠后端，然后把你的操作路由到正确的引擎。支持的引擎包括 <code>outline-minor-mode~、~outline-indent-minor-mode~、~org-mode~、~markdown-mode~、~gfm-mode~、~treesit-fold-mode~、~hs-minor-mode~、~vimish-fold-mode~、~origami-mode~、~yafolding-mode</code> 等。
+</p>
+</div>
+
+<div id="outline-container-org86781fe" class="outline-3">
+<h3 id="org86781fe">安装与配置</h3>
+<div class="outline-text-3" id="text-org86781fe">
+<p>
+kirigami 在 MELPA 上，支持 Emacs 26.3+。确保你的配置里已经添加了 MELPA 源，然后：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> kirigami
+  <span class="org-builtin">:ensure</span> t
+  <span class="org-builtin">:commands</span> (kirigami-open-fold
+             kirigami-open-fold-rec
+             kirigami-close-fold
+             kirigami-toggle-fold
+             kirigami-open-folds
+             kirigami-close-folds-except-current
+             kirigami-close-folds)
+  <span class="org-builtin">:bind</span>
+  ((<span class="org-string">"C-c z o"</span> . kirigami-open-fold)       <span class="org-comment-delimiter">; </span><span class="org-comment">&#23637;&#24320;&#24403;&#21069;&#25240;&#21472;
+</span>   (<span class="org-string">"C-c z O"</span> . kirigami-open-fold-rec)    <span class="org-comment-delimiter">; </span><span class="org-comment">&#36882;&#24402;&#23637;&#24320;
+</span>   (<span class="org-string">"C-c z r"</span> . kirigami-open-folds)       <span class="org-comment-delimiter">; </span><span class="org-comment">&#23637;&#24320;&#25152;&#26377;
+</span>   (<span class="org-string">"C-c z c"</span> . kirigami-close-fold)       <span class="org-comment-delimiter">; </span><span class="org-comment">&#25240;&#21472;&#24403;&#21069;
+</span>   (<span class="org-string">"C-c z m"</span> . kirigami-close-folds)      <span class="org-comment-delimiter">; </span><span class="org-comment">&#25240;&#21472;&#25152;&#26377;
+</span>   (<span class="org-string">"C-c z a"</span> . kirigami-toggle-fold)))    <span class="org-comment-delimiter">; </span><span class="org-comment">&#20999;&#25442;&#25240;&#21472;</span>
+</pre>
+</div>
+
+<p>
+如果你用 evil-mode（Spacemacs、Doom Emacs 等），vim 风格的 zo/zc/za/zr/zm 按键也有对应的绑定：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-eval-after-load</span> 'evil
+  (define-key evil-normal-state-map <span class="org-string">"zo"</span> #'kirigami-open-fold)
+  (define-key evil-normal-state-map <span class="org-string">"zO"</span> #'kirigami-open-fold-rec)
+  (define-key evil-normal-state-map <span class="org-string">"zc"</span> #'kirigami-close-fold)
+  (define-key evil-normal-state-map <span class="org-string">"za"</span> #'kirigami-toggle-fold)
+  (define-key evil-normal-state-map <span class="org-string">"zr"</span> #'kirigami-open-folds)
+  (define-key evil-normal-state-map <span class="org-string">"zm"</span> #'kirigami-close-folds))
+</pre>
+</div>
+
+<p>
+kirigami 除了统一接口之外，还增强了 <code>outline~、~markdown-mode</code> 和 <code>org-mode</code> 的折叠行为——深层次折叠和兄弟节点的开合在这些模式下原来不太可靠，kirigami 修补了这些问题。它还保证了折叠/展开时光标在窗口中的垂直位置不变（不会跳屏），关闭 outline 折叠时保留已折叠标题的可见性。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd96e9e7" class="outline-3">
+<h3 id="orgd96e9e7">使用</h3>
+<div class="outline-text-3" id="text-orgd96e9e7">
+<p>
+配好快捷键和后端之后，在任意 buffer 中直接用快捷键操作就行。kirigami 提供的命令：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">命令</th>
+<th scope="col" class="org-left">功能</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>kirigami-close-fold</code></td>
+<td class="org-left">折叠光标处的代码块</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>kirigami-open-fold</code></td>
+<td class="org-left">展开光标处的折叠</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>kirigami-open-fold-rec</code></td>
+<td class="org-left">递归展开光标处的所有子折叠</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>kirigami-toggle-fold</code></td>
+<td class="org-left">切换光标处的折叠/展开状态</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>kirigami-close-folds</code></td>
+<td class="org-left">折叠 buffer 中所有代码块</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>kirigami-open-folds</code></td>
+<td class="org-left">展开buffer 中所有折叠</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+如果你想自定义某个 mode 的折叠行为（比如添加 kirigami 原生不支持的后端），可以通过 <code>kirigami-fold-list</code> 这个 alist 来注册新的折叠方法。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb6e8ae0" class="outline-2">
+<h2 id="orgb6e8ae0">后端：五种折叠引擎</h2>
+<div class="outline-text-2" id="text-orgb6e8ae0">
+<p>
+kirigami 只管前端，实际折叠操作需要后端来执行。原文给每种后端指明了适用的语言。
+</p>
+
+<p>
+**重要提醒**：每个 buffer 同时只能激活一个折叠后端。如果把钩子挂到 <code>prog-mode-hook</code> 或 <code>text-mode-hook</code> 这种大类上，多个后端可能冲突。所以要挂到具体的语言 mode 钩子上（如 ~emacs-lisp-mode-hook~）。
+</p>
+
+<p>
+<b><b>outline-minor-mode（内置）：</b></b> 基于层级标题来折叠。适合有明确标题结构的文件，比如 Elisp（以 <code>;;;</code> 标题分级）和conf文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-hook 'emacs-lisp-mode-hook #'outline-minor-mode)
+(add-hook 'conf-mode-hook #'outline-minor-mode)
+</pre>
+</div>
+
+<p>
+<b><b>hs-minor-mode（内置，即 Hideshow）：</b></b> 通过解析语法来识别代码块（函数、if/else 等）。最适合用花括号 <code>{}</code> 分块的 C 系语言，也支持 shell 脚本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-hook 'c-mode-hook #'hs-minor-mode)
+(add-hook 'c++-mode-hook #'hs-minor-mode)
+(add-hook 'java-mode-hook #'hs-minor-mode)
+(add-hook 'rust-mode-hook #'hs-minor-mode)
+(add-hook 'go-mode-hook #'hs-minor-mode)
+(add-hook 'js-mode-hook #'hs-minor-mode)
+(add-hook 'typescript-mode-hook #'hs-minor-mode)
+(add-hook 'sh-mode-hook #'hs-minor-mode)
+</pre>
+</div>
+
+<p>
+Hideshow 的局限是每次只折叠一层（比如只能折叠整个函数，不能单独折叠函数内部的 if 块）。这对 C/Java 这种花括号语言影响不大，但对 Python、YAML 这种需要多层折叠的语言就不够用了。
+</p>
+
+<p>
+<b><b>outline-indent（第三方包）：</b></b> 基于缩进层级来折叠，支持无限层级。这正是 Python、Haskell、YAML 这种靠缩进表示结构的语言需要的——你可以折叠整个函数，也可以只折叠函数里某个 if 块：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> outline-indent
+  <span class="org-builtin">:commands</span> outline-indent-minor-mode
+  <span class="org-builtin">:custom</span>
+  (outline-indent-ellipsis <span class="org-string">" &#9660;"</span>))
+
+(add-hook 'python-mode-hook #'outline-indent-minor-mode)
+(add-hook 'python-ts-mode-hook #'outline-indent-minor-mode)
+(add-hook 'yaml-mode-hook #'outline-indent-minor-mode)
+(add-hook 'yaml-ts-mode-hook #'outline-indent-minor-mode)
+(add-hook 'haskell-mode-hook #'outline-indent-minor-mode)
+</pre>
+</div>
+
+<p>
+除了折叠，outline-indent 还能移动缩进块、调整缩进层级、插入同级缩进的新行——这些都是缩进敏感语言经常需要的操作。
+</p>
+
+<p>
+<b><b>treesit-fold（第三方包）：</b></b> 利用 tree-sitter 的语法树来识别可折叠区域（函数、类、注释、文档字符串等）。传统折叠方式靠正则或缩进来猜，treesit-fold 靠真正的语法分析来判断，准确度更高。需要 Emacs 29.1+ 和对应语言的 tree-sitter 语法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> treesit-fold
+  <span class="org-builtin">:commands</span> (treesit-fold-close treesit-fold-close-all
+            treesit-fold-open treesit-fold-toggle
+            treesit-fold-open-all treesit-fold-mode
+            global-treesit-fold-mode
+            treesit-fold-open-recursively
+            treesit-fold-line-comment-mode)
+  <span class="org-builtin">:custom</span>
+  (treesit-fold-line-count-show t)
+  (treesit-fold-line-count-format <span class="org-string">" &#9660;"</span>)
+  <span class="org-builtin">:config</span>
+  (set-face-attribute 'treesit-fold-replacement-face nil
+                      <span class="org-builtin">:foreground</span> <span class="org-string">"#808080"</span> <span class="org-builtin">:box</span> nil <span class="org-builtin">:weight</span> 'bold))
+
+(add-hook 'c-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'c++-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'java-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'rust-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'go-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'js-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'typescript-ts-mode-hook #'treesit-fold-mode)
+(add-hook 'bash-ts-mode-hook #'treesit-fold-mode)
+</pre>
+</div>
+
+<p>
+treesit-fold 适合有 <code>-ts-mode</code> 的语言（Emacs 29+ 内置的 tree-sitter major mode）。
+</p>
+
+<p>
+<b><b>markdown-mode：</b></b> Markdown 文件用 <code>outline-minor-mode</code> 做折叠，因为 Markdown 的标题层级（~#~、~##~）天然就是 outline 结构：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> markdown-mode
+  <span class="org-builtin">:mode</span> ((<span class="org-string">"\\.markdown\\'"</span> . markdown-mode)
+         (<span class="org-string">"\\.md\\'"</span> . markdown-mode)
+         (<span class="org-string">"README\\.md\\'"</span> . gfm-mode)))
+
+(add-hook 'markdown-mode-hook #'outline-minor-mode)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1f18edb" class="outline-2">
+<h2 id="org1f18edb">快速选择表</h2>
+<div class="outline-text-2" id="text-org1f18edb">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">语言类型</th>
+<th scope="col" class="org-left">推荐后端</th>
+<th scope="col" class="org-left">原因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Elisp、配置文件</td>
+<td class="org-left">outline-minor-mode</td>
+<td class="org-left">内置，基于 <code>;;;</code> 标题分级</td>
+</tr>
+
+<tr>
+<td class="org-left">C/C++/Java/Rust/Go</td>
+<td class="org-left">hs-minor-mode</td>
+<td class="org-left">内置，基于花括号语法</td>
+</tr>
+
+<tr>
+<td class="org-left">Shell 脚本</td>
+<td class="org-left">hs-minor-mode</td>
+<td class="org-left">内置，支持 <code>if/fi~、~case/esac</code> 等块</td>
+</tr>
+
+<tr>
+<td class="org-left">Python、YAML、Haskell</td>
+<td class="org-left">outline-indent</td>
+<td class="org-left">基于缩进，支持多层折叠</td>
+</tr>
+
+<tr>
+<td class="org-left">有 <code>-ts-mode</code> 的语言</td>
+<td class="org-left">treesit-fold</td>
+<td class="org-left">基于语法树，最准确，但需要 Emacs 29+</td>
+</tr>
+
+<tr>
+<td class="org-left">Markdown</td>
+<td class="org-left">outline-minor-mode</td>
+<td class="org-left">标题层级天然是 outline 结构</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+原文的核心思路就是：前端用 kirigami 统一按键，后端按语言选最合适的引擎。配置完之后，不管你在编辑什么语言，折叠操作都用同一套快捷键。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-24</span>
+    <span class="post-info">2026-04-27</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/代码折叠">代码折叠</a> : <a href="../../../../../tags/kirigami">kirigami</a> : <a href="../../../../../tags/outline">outline</a> : <a href="../../../../../tags/hideshow">hideshow</a> : <a href="../../../../../tags/treesit-fold">treesit-fold</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; sbzdpbrwhzzuzo2oi0oaswtc3h &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

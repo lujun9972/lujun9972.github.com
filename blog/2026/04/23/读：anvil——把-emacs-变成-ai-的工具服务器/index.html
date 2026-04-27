@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Anvil——把 Emacs 变成 AI 的工具服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, AI, MCP, token优化, org-mode" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Anvil——把 Emacs 变成 AI 的工具服务器</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org5255059">一个反直觉的想法</a></li>
+<li><a href="#org5908a15">为什么做这个工具：一个人的三阶段进化</a></li>
+<li><a href="#orgbe5875e">核心设计：操作区域，而不是整个文件</a></li>
+<li><a href="#orga95f277">更多的设计考量</a></li>
+<li><a href="#org116604b">怎么用</a></li>
+<li><a href="#org1596d85">对非 Emacs 用户的启示</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org5255059" class="outline-2">
+<h2 id="org5255059">一个反直觉的想法</h2>
+<div class="outline-text-2" id="text-org5255059">
+<p>
+我们习惯的模式是"人在编辑器里写代码，AI 在旁边辅助"。但 anvil.el 这个项目提出了一个反过来的思路：让 AI 直接操作编辑器，让编辑器成为 AI 的工具。
+</p>
+
+<p>
+这不是换个说法而已。传统的 AI 编码流程里，agent 要改一个文件，必须先把整个文件读进来，定位要改的地方，修改，再把整个文件写回去。如果文件很大，每一次读和写都在浪费 token——agent 的上下文窗口被大量无关内容占满，钱也花在了搬运无用数据上。
+</p>
+
+<p>
+anvil.el 的做法是：Emacs 作为 MCP（Model Context Protocol，模型上下文协议）服务器运行，AI agent 通过 MCP 协议直接调用 Emacs 的能力。想改哪一行就只传那一行的变更。想读某个 org 标题下的内容就只返回那个子树。Emacs 几十年积累的编辑能力——org-mode、dired、magit、calc——全部变成了 AI 可以调用的工具，v0.4.0 已经有 198 个以上这样的工具了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5908a15" class="outline-2">
+<h2 id="org5908a15">为什么做这个工具：一个人的三阶段进化</h2>
+<div class="outline-text-2" id="text-org5908a15">
+<p>
+anvil.el 的作者 zawatton 在日本经营一家一人电气工程公司，大约维护 40 个客户的设备。他的日常工作依赖 Windows 上的 Excel 做巡检报告，用 Emacs 的 org-mode 做笔记和日程管理。
+</p>
+
+<p>
+他使用 Claude 辅助工作的过程经历了三个阶段：
+</p>
+
+<p>
+<b>阶段一：Claude Desktop。</b> Anthropic 的桌面应用能直接操作本地文件和浏览器，帮他把文档整理、报告起草、记账这些工作自动化了。但很快他就撞上了月费 200 美元（MAX 套餐）的使用上限。
+</p>
+
+<p>
+<b>阶段二：Claude Code。</b> 他转到命令行版的 Claude Code，shell 和 git 集成更流畅了。但问题出在文件编辑上——他开始把巡检数据从 Excel 迁移到 org 文件，因为 AI 处理纯文本比处理 Excel 高效得多。然而 Claude Code 编辑大 org 文件（约 1.2 MB）时，内容频繁丢失，token 消耗也跟着暴涨。原因很简单：Claude Code 每次编辑都要读整个文件再写回去，对于 Emacs 用户来说习以为常的大文件，在 AI 的读写模式下效率极低。
+</p>
+
+<p>
+<b>阶段三：造 Anvil。</b> 他的想法是：既然 Emacs 处理大 org 文件这么熟练（按行编辑、按标题导航），为什么不让 Claude 直接用 Emacs 的能力来编辑？于是他把 Emacs 做成了 MCP 服务器，AI 通过协议调用 Emacs 的编辑命令，而不是自己笨拙地读写整个文件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbe5875e" class="outline-2">
+<h2 id="orgbe5875e">核心设计：操作区域，而不是整个文件</h2>
+<div class="outline-text-2" id="text-orgbe5875e">
+<p>
+理解 Anvil 的关键在于"按区域操作"这个设计原则。
+</p>
+
+<p>
+传统模式下，agent 想在一个 1.2 MB 的 org 文件里替换一个字符串，流程是：读取 1.2 MB 内容 → 找到目标 → 修改 → 把修改后的 1.2 MB 写回去。往返一次，光搬运数据就消耗几万个 token。
+</p>
+
+<p>
+Anvil 提供的是精准操作工具：
+</p>
+
+<ul class="org-ul">
+<li><code>anvil-file-replace-string</code>:只传要查找的字符串和替换内容，Emacs 在本地完成替换，不传文件内容</li>
+<li><code>anvil-org-read-headline</code>:只读某个标题下的子树，哪怕整个文件有 13000 行</li>
+<li><code>anvil-file-insert-at-line</code>:在指定行号插入内容，只传新增的那几行</li>
+<li><code>anvil-file-batch</code>:把对同一个文件的多次编辑合并成一次调用，一次性完成</li>
+</ul>
+
+<p>
+实际效果如何？作者在真实项目（一个 16000+ 行 TypeScript 的游戏移植项目 newDTW）中测量了几个典型场景：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">操作场景</th>
+<th scope="col" class="org-left">传统方式</th>
+<th scope="col" class="org-left">Anvil 方式</th>
+<th scope="col" class="org-left">token 节省</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">同一文件 6 处编辑</td>
+<td class="org-left">~4800 token（6 次读写）</td>
+<td class="org-left">~1500 token（1 次批量调用）</td>
+<td class="org-left">~70%</td>
+</tr>
+
+<tr>
+<td class="org-left">4000 行类型定义文件里加一个字段</td>
+<td class="org-left">数千 token（读写整个文件）</td>
+<td class="org-left">几十个 token（只传插入位置和内容）</td>
+<td class="org-left">~90%+</td>
+</tr>
+
+<tr>
+<td class="org-left">批量添加 200 个 i18n 翻译键值</td>
+<td class="org-left">~30000 token</td>
+<td class="org-left">~8000 token</td>
+<td class="org-left">~73%</td>
+</tr>
+
+<tr>
+<td class="org-left">从 3407 行代码中提取 347 个结构化记录</td>
+<td class="org-left">~8000+ token</td>
+<td class="org-left">~3000-5000 token</td>
+<td class="org-left">~50%</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+每次重构会话累计节省 15000-25000 个 token。这些 token 省下来之后，agent 可以把上下文窗口用在真正的推理上，而不是反复搬运文件内容。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga95f277" class="outline-2">
+<h2 id="orga95f277">更多的设计考量</h2>
+<div class="outline-text-2" id="text-orga95f277">
+<p>
+<b>Worker 异步调度：</b> 慢操作（大型 tangle、全项目扫描、字节编译）不会阻塞 agent 的主连接。Anvil 把这些任务分发给后台的 worker Emacs 进程。实测中， <code>org-babel-tangle</code> 在主线程跑要 30 秒，用 worker 派发只要 2 秒——快了 15 倍，而且 agent 的主会话不会被卡住。
+</p>
+
+<p>
+<b>Manifest 配置文件控制工具暴露数量：</b> Anvil 提供了不同的配置文件来控制向 agent 暴露多少工具。全量模式暴露 198+ 个工具（约 20400 token 的描述），精简模式（ultra）只暴露 17 个核心工具（约 2740 token）。在多 agent 并行的场景下，200 个子会话用全量配置光工具列表就消耗 400 万 token，用 ultra 只需 55 万——工具列表本身就省了 87%。
+</p>
+
+<p>
+<b>不只是 org-mode：</b> 虽然 Anvil 的起源是 org 文件编辑问题，但它的工具覆盖了文件批量操作、JSON 编辑、git 操作、Elisp 求值、进程管理、剪贴板读写、Excel/PDF 处理等等。v0.4.0 还加入了基于 tree-sitter 的 Python、TypeScript、JavaScript 结构化编辑——agent 可以在 AST 层面做重构，而不是靠正则匹配。
+</p>
+
+<p>
+<b>多 agent 编排：</b> <code>anvil-orchestrator</code> 能把一个 prompt 同时发给多个 AI CLI（Claude、Codex、Gemini、Ollama），收集结果后做共识判定，甚至可以让一个 meta-LLM 来评审。作者实测：三个不同 provider 的 consensus 调用（claude + codex + ollama）比单独跑三个 Claude 又快又便宜——因为 codex 和 ollama 没有按 token 计费。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org116604b" class="outline-2">
+<h2 id="org116604b">怎么用</h2>
+<div class="outline-text-2" id="text-org116604b">
+<p>
+了解了设计思路之后，实际用起来并不复杂。以下是从零开始的三个步骤。
+</p>
+
+<p>
+<b><b>安装：</b></b> 非 Emacs 用户可以用一行脚本自动安装（会自动安装 Emacs、clone 仓库、启动守护进程、注册 MCP 服务）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">Linux / macOS
+</span>curl -fsSL https://raw.githubusercontent.com/zawatton/anvil.el/master/install.sh | bash
+</pre>
+</div>
+
+<p>
+Emacs 用户可以用包管理器安装，比如 straight.el：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(straight-use-package
+ '(anvil <span class="org-builtin">:type</span> git <span class="org-builtin">:host</span> github <span class="org-builtin">:repo</span> <span class="org-string">"zawatton/anvil.el"</span>
+         <span class="org-builtin">:branch</span> <span class="org-string">"v0.4.1"</span>))
+</pre>
+</div>
+
+<p>
+<b><b>配置并启动：</b></b> Anvil 的模块分默认和可选两类。默认模块在 <code>anvil-enable</code> 时自动加载，可选模块需要手动指定：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">anvil</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#40664;&#35748;&#21152;&#36733;&#30340;&#27169;&#22359;&#65288;&#19981;&#25913;&#23601;&#19981;&#29992;&#35774;&#65292;&#36825;&#20123;&#26159;&#40664;&#35748;&#20540;&#65289;
+</span>(<span class="org-keyword">setq</span> anvil-modules
+      '(worker eval org file host git proc fs emacs text clipboard data net))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#25353;&#38656;&#24320;&#21551;&#21487;&#36873;&#27169;&#22359;
+</span>(<span class="org-keyword">setq</span> anvil-optional-modules
+      '(xlsx     <span class="org-comment-delimiter">;; </span><span class="org-comment">Excel &#35835;&#20889;&#65288;&#38656;&#35201; Python + openpyxl&#65289;
+</span>        pdf      <span class="org-comment-delimiter">;; </span><span class="org-comment">PDF &#25991;&#26412;&#25552;&#21462;&#65288;&#38656;&#35201; Python + pymupdf&#65289;
+</span>        ide      <span class="org-comment-delimiter">;; </span><span class="org-comment">xref&#12289;diagnostics&#12289;imenu&#12289;tree-sitter&#65288;&#38656;&#35201; project.el&#65289;
+</span>        browser  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#32593;&#39029;&#25235;&#21462;&#65288;&#38656;&#35201; agent-browser CLI&#65289;
+</span>        http     <span class="org-comment-delimiter">;; </span><span class="org-comment">HTTP GET/HEAD + ETag &#32531;&#23384;&#65288;&#38656;&#35201; Emacs 29+&#65289;
+</span>        orchestrator  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22810; agent &#24182;&#34892;&#32534;&#25490;&#65288;&#38656;&#35201; AI CLIs + Emacs 29+&#65289;
+</span>        cron     <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23450;&#26102;&#20219;&#21153;&#65288;&#37197;&#21512; orchestrator &#21487;&#20570;&#22812;&#38388;&#33258;&#21160;&#37325;&#26500;&#65289;
+</span>        elisp    <span class="org-comment-delimiter">;; </span><span class="org-comment">Agentic Elisp &#24320;&#21457;&#24037;&#20855;
+</span>        ))
+
+(anvil-enable)         <span class="org-comment-delimiter">;; </span><span class="org-comment">&#27880;&#20876;&#25152;&#26377;&#27169;&#22359;&#30340; MCP &#24037;&#20855;
+</span>(anvil-server-start)   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21551;&#21160; MCP &#26381;&#21153;&#22120;</span>
+</pre>
+</div>
+
+<p>
+默认模块覆盖了日常场景：worker（后台任务派发）、eval（Elisp 求值）、org（org 操作）、file（文件操作）、git（git 查询）、host（系统信息）等。不需要的功能直接从列表里去掉就行，比如你不用 git 就可以把 <code>git</code> 删掉，Anvil 就不会注册相关的 MCP 工具。
+</p>
+
+<p>
+<b><b>Spacemacs 配置：</b></b> 如果你用 Spacemacs，可以把 Anvil 放到某个 layer 里管理。比如在 <code>my-misc</code> layer 的 <code>packages.el</code> 中：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">packages.el
+</span>(<span class="org-keyword">setq</span> my-misc-packages
+  '(
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">... &#20854;&#20182;&#21253; ...
+</span>    (anvil <span class="org-builtin">:location</span> (recipe <span class="org-builtin">:fetcher</span> github <span class="org-builtin">:repo</span> <span class="org-string">"zawatton/anvil.el"</span>
+                             <span class="org-builtin">:branch</span> <span class="org-string">"v0.4.1"</span>))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">...
+</span>    ))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-misc/init-anvil</span> ()
+  (<span class="org-keyword">use-package</span> anvil
+    <span class="org-builtin">:config</span>
+    (<span class="org-keyword">setq</span> anvil-optional-modules '(ide http))
+    (server-start)              <span class="org-comment-delimiter">;; </span><span class="org-comment">Anvil &#38656;&#35201; emacsclient &#36830;&#25509;
+</span>    (anvil-enable)
+    (anvil-server-start)))
+</pre>
+</div>
+
+<p>
+有一个坑需要注意：Spacemacs 用 recipe 方式安装包时，编译后的 <code>.el</code> 文件和 <code>.sh</code> 脚本可能不在同一个目录，导致 <code>M-x anvil-server-install</code> 报"Cannot find anvil-stdio.sh"。解决办法是手动复制桥接脚本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20174; clone &#19979;&#26469;&#30340;&#20179;&#24211;&#20013;&#22797;&#21046;&#65288;&#25110;&#20174; GitHub &#19979;&#36733;&#65289;
+</span>cp /path/to/anvil.el/anvil-stdio.sh ~/.emacs.d/anvil-stdio.sh
+chmod +x ~/.emacs.d/anvil-stdio.sh
+</pre>
+</div>
+
+<p>
+<b><b>连接 Claude Code：</b></b> Anvil 通过一个 shell 脚本（~anvil-stdio.sh~）作为 MCP 桥接。先在 Emacs 里运行 <code>M-x anvil-server-install</code> 安装桥接脚本，然后在终端注册两个 MCP 服务：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">claude mcp add -s user -t stdio anvil -- <span class="org-sh-escaped-newline">\</span>
+  ~/.emacs.d/anvil-stdio.sh <span class="org-sh-escaped-newline">\</span>
+  --server-id=anvil <span class="org-sh-escaped-newline">\</span>
+  --init-function=anvil-enable <span class="org-sh-escaped-newline">\</span>
+  --stop-function=anvil-disable
+
+claude mcp add -s user -t stdio anvil-emacs-eval -- <span class="org-sh-escaped-newline">\</span>
+  ~/.emacs.d/anvil-stdio.sh <span class="org-sh-escaped-newline">\</span>
+  --server-id=emacs-eval
+</pre>
+</div>
+
+<p>
+为什么是两个？因为 Anvil 内部用两个 server-id 分别管理不同类别的工具（ <code>anvil</code> 管 eval/IDE， <code>emacs-eval</code> 管文件/org/buffer/worker）。注册两个入口就能让 Claude Code 看到全部 198+ 个工具。
+</p>
+
+<p>
+之后正常使用 Claude Code 就行——Claude 会自动在需要时调用 Anvil 的工具，不需要手动触发。
+</p>
+
+<p>
+<b><b>使用示例：</b></b> 假设你有一个 3000 行的 =todo.org=，想用 Claude Code 把某个标题下的所有 TODO 项标记为 DONE，并移到归档位置。
+</p>
+
+<p>
+没有 Anvil 时，Claude Code 的流程是：先用 Read 工具读取整个 3000 行文件（消耗几千 token），找到目标标题，修改状态，再用 Edit 工具写回去（又几千 token）。如果想同时移动子树到另一个位置，还要再来一轮读写。
+</p>
+
+<p>
+有了 Anvil，Claude Code 的对话会变成这样：
+</p>
+
+<pre class="example" id="org8a8bbbd">
+你：把 todo.org 里"Q1 任务"下面的 TODO 项全部标记为 DONE，然后 refiling 到"归档"标题下。
+
+Claude：我来处理。
+[调用 anvil-org-read-headline]  ;; 只读"Q1 任务"子树，约 80 行，而不是整个 3000 行
+[调用 anvil-file-batch]         ;; 一次性把所有 TODO → DONE + 执行 refiling
+完成。"Q1 任务"下 12 个 TODO 项已全部标记为 DONE 并 refiling 到"归档"标题下。
+</pre>
+
+<p>
+整个过程只传了目标子树的内容和变更指令，没有读写整个文件。传统方式可能消耗 6000-8000 token（读 + 写各一轮），Anvil 方式大约 500-800 token——省了将近 90%。
+</p>
+
+<p>
+再比如批量重命名。没有 Anvil 时，Claude Code 要先 <code>grep</code> 找到所有包含旧名字的文件，然后逐个 Read、Edit、写回，几十个文件就是几十轮往返。有了 Anvil，一条 <code>anvil-file-replace-string</code> 或 <code>emacs-eval</code> 调用就能在 Emacs 侧一次性完成——作者实测在 7 个仓库 39 个文件里把 <code>zawatton21</code> 改为 =zawatton=，只花了一次往返。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1596d85" class="outline-2">
+<h2 id="org1596d85">对非 Emacs 用户的启示</h2>
+<div class="outline-text-2" id="text-org1596d85">
+<p>
+但更重要的启示不在于这个工具本身，而在于它揭示的优化方向：AI agent 的效率瓶颈往往不是模型能力，而是它和编辑器之间的交互方式。每次读写整个文件是在浪费 token，按区域操作才能把上下文窗口留给真正重要的事。
+</p>
+
+<p>
+这个思路不依赖 Emacs——任何编辑器只要能提供类似的精准操作接口，都能实现同样的效果。只是 Emacs 作为 Lisp 机器，天然具备无限可扩展性，所以率先把这个想法做出来了。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-23</span>
+    <span class="post-info">2026-04-27</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/mcp">MCP</a> : <a href="../../../../../tags/token优化">token优化</a> : <a href="../../../../../tags/org-mode">org-mode</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; sbzdpbrwhzzuzo2oi0oaswtc3h &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
