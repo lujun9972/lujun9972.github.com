@@ -4,8 +4,8 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Mon, 27 Apr 2026 04:08:30 UTC</pubDate>
-    <lastBuildDate>Mon, 27 Apr 2026 04:08:30 UTC</lastBuildDate>
+    <pubDate>Tue, 28 Apr 2026 11:54:01 UTC</pubDate>
+    <lastBuildDate>Tue, 28 Apr 2026 11:54:01 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
 <item>
@@ -406,285 +406,6 @@ treesit-fold 适合有 ~-ts-mode~ 的语言（Emacs 29+ 内置的 tree-sitter ma
 <guid>https://lujun9972.github.io/blog/2026/04/24/读：emacs-代码折叠终极指南/index.html</guid>
 </item>
 <item>
-<title>读：Clojure 搭车客指南</title>
-<link>https://lujun9972.github.io/blog/2026/04/23/读：clojure-搭车客指南/index.html</link>
-<description>Carin Meier 在 2014 年写了一组三篇文章，标题叫&quot;Hitchhiker&#39;s Guide to Clojure&quot;（Clojure 搭车客指南）。标题致敬了《银河系漫游指南》（The Hitchhiker&#39;s Guide to the Galaxy），内容也用了同样的写法——用科幻小说讲编程概念。主角是两个角色：Amy，一个快要被开除的 Pascal 程序员；Frank，一个时间旅行者，腰间别着蓝色腰包，手持一个叫&quot;求值器&quot;的设备。他们的世界即将被毁灭，而拯救世界的方式是理解 Clojure。
-
-这篇文章是对原文三部曲的解读。我会保留故事的叙事框架，同时把每个比喻对应的 Clojure 概念讲清楚。
-
-* 第一章：开开心果与 s-expression
-
-故事从 Amy 的办公室开始。她的老板命令她下午 3:05 部署代码，但现在是 3:00，她刚意识到一旦部署，所有辛苦收集的&quot;喉音唱法对番茄生长速度影响&quot;的数据都会被清空。她焦虑得疯狂剥开开心果吃。
-
-《Clojure 搭车客指南》上说，开心果是&quot;大自然中最完美的 s-expression&quot;。
-
-s-expression（符号表达式）是 Lisp 系列语言的基本数据结构。它要么是一个原子（不可再分的最小单位），要么由多个 s-expression 递归组成。开心果的壳就是外层的括号，里面的果仁就是原子。在 Clojure 里，原子求值后等于它自己：
-
-#+begin_src clojure
-&quot;hi&quot;   ;; =&gt; &quot;hi&quot;
-1      ;; =&gt; 1
-true   ;; =&gt; true
-nil    ;; =&gt; nil
-#+end_src
-
-所以如果你的开心果里发现了 ~nil~ ——指南的建议是，感谢你得到了一个&quot;代表无的值&quot;，然后再去拿一颗新的。
-
-在 Clojure 中，s-expression 用括号来写。括号里的第一个元素是函数，其余是参数，参数本身也可以是 s-expression：
-
-#+begin_src clojure
-(+ 1 2)       ;; =&gt; 3
-(+ 1 (+ 2 2)) ;; =&gt; 5
-#+end_src
-
-继续用开心果打比方。假设果仁有一个名字，我们定义一个函数把果仁变成&quot;红色&quot;：
-
-#+begin_src clojure
-(defn red [nut]
-  (str &quot;red &quot; nut))
-
-(red &quot;nut1&quot;)  ;; =&gt; &quot;red nut1&quot;
-#+end_src
-
-如果在表达式前面加一个引号（单引号 ~&#39;~），它就不再被求值，而是变成一个列表——这就是 Lisp 的&quot;代码即数据&quot;特性：
-
-#+begin_src clojure
-&#39;(red &quot;nut1&quot;)            ;; =&gt; (red &quot;nut1&quot;)
-
-(first &#39;(red &quot;nut1&quot;))    ;; =&gt; red
-(last &#39;(red &quot;nut1&quot;))     ;; =&gt; &quot;nut1&quot;
-#+end_src
-
-引号让代码变成了可以被操作的数据。你可以用 ~first~ 取出函数名，用 ~last~ 取出参数。但如果你把一个字符串放在括号第一位（没有函数），求值器就会报错——因为字符串不是函数：
-
-#+begin_src clojure
-(&quot;nut1&quot;)
-;; =&gt; ClassCastException java.lang.String cannot be cast to clojure.lang.IFn
-#+end_src
-
-这时候 Frank 登场了。他是 Datomic（Clojure 生态的数据库）时间旅行者，带来一个消息：世界其实是由 Datomic 的 datom（数据原子）构成的。Datomic 里，每一条数据都是一个&quot;事实&quot;（fact），比如&quot;这朵花是红色的&quot;。撤销（retract）一个事实，它就从数据库里消失了。而现在，有人要提交一个事务（transaction），把世界上所有事实一次性全部撤销。结果就是一切失去所有属性，什么都不复存在。
-
-Amy 的反应是：&quot;Clojure？不是那个括号特别多的语言吗？&quot;
-
-Frank 递给她那本《Clojure 搭车客指南》，封面印着一行大字：*Don&#39;t Worry About the Parens*（别担心括号）。翻开第一页：
-
-#+begin_quote
-&quot;人类第一个真正重要的发现不是火，而是 Paredit。Paredit 模式会自动插入和平衡括号，以至于你根本看不见它们。你周围的世界就是由 Clojure 构成的——几十亿个括号就在你周围，在你的茶杯旁边——但你没看见。这就是 Paredit。&quot;
-#+end_quote
-
-* 第二章：递归、惰性序列与时间旅行
-
-Frank 按下求值器上的大红按钮，两人被一个 Datomic 事务带着穿越了时空，最终落回了 Amy 的办公室。一切看起来都一样——除了 Part 1 里 Amy 吃开心果留的一地果壳不见了，电脑上的日期显示的是昨天早上 8 点。他们回到了 Amy 上班之前。
-
-Amy 说：&quot;我马上就要来上班了。&quot;他们得赶紧离开。
-
-指南解释说，Frank 腰间的蓝色腰包是&quot;时间特工&quot;的执照标志，颜色代表等级（按彩虹 ROYGBIV 排序）。这个等级制度源于历史上一桩尴尬的事故——&quot;大洪水&quot;。
-
-一个初级时间特工想用递归函数给干旱的番茄田浇水。正确的做法是这样的：
-
-#+begin_src clojure
-(defn rain [days]
-  (when (pos? days)
-    (println (str &quot;Rain: &quot; days))
-    (rain (dec days))))
-
-(rain 5)
-;; 输出：
-;; Rain: 5
-;; Rain: 4
-;; Rain: 3
-;; Rain: 2
-;; Rain: 1
-#+end_src
-
-关键在于 ~(dec days)~ — —每次递归调用时把参数减 1。但他犯了新手最经典的错误：忘了递减参数。
-
-#+begin_src clojure
-(defn rain [days]
-  (when (pos? days)
-    (println (str &quot;Rain: &quot; days))
-    (rain days)))   ;; 没有 (dec days)，参数永远是 5
-
-(rain 5)
-;; Rain: 5
-;; Rain: 5
-;; Rain: 5
-;; ...
-#+end_src
-
-结果番茄被严重过灌了。洪水就是这么来的。
-
-这里有一个容易混淆的点：Clojure 提供了 ~recur~（尾递归优化），可以让递归不消耗栈空间。但 ~recur~ 解决的只是&quot;不会撑爆栈&quot;这一个问题。如果你忘了递减参数，它照样会无限循环——只不过不会因为栈溢出而崩溃，而是永远跑下去、占满 CPU：
-
-#+begin_src clojure
-(defn rain [days]
-  (when (pos? days)
-    (println (str &quot;Rain: &quot; days))
-    (recur days)))   ;; 不消耗栈，但还是无限循环
-#+end_src
-
-~recur~ 的好处是构造斐波那契海螺这种结构时不会撑爆栈，但如果终止条件（这里就是参数递减）写错了，~recur~ 也救不了你。
-
-事故之后，高级时间特工被派去善后。他跟初级特工的区别在于——他精通 Clojure 的惰性序列（lazy sequence）。比如，一个只有两只鸡的向量：
-
-#+begin_src clojure
-[:hen :rooster]
-#+end_src
-
-用 ~cycle~ 可以把它变成一个无限长的惰性序列：
-
-#+begin_src clojure
-(cycle [:hen :rooster])
-;; =&gt; (:hen :rooster :hen :rooster :hen :rooster ...)
-#+end_src
-
-不过高级特工没有把这个无限序列塞进取值器——否则就会创造另一起家禽泛滥的事故。他用 ~take~ 只取前面需要的数量：
-
-#+begin_src clojure
-(take 5 (cycle [:hen :rooster]))
-;; =&gt; (:hen :rooster :hen :rooster :hen)
-
-(take 10 (cycle [:hen :rooster]))
-;; =&gt; (:hen :rooster :hen :rooster :hen :rooster :hen :rooster :hen :rooster)
-#+end_src
-
-惰性序列的精髓就在这里：你可以描述一个无穷大的东西，但只在需要的时候才去计算它。无限序列不会撑爆内存，因为 ~cycle~ 返回的是一个 promise（承诺）——你 ~take~ 多少，它就算多少。
-
-事故之后，时间特工委员会决定：低级别递归需要靛蓝色等级（倒数第二高）才能使用，最高紫色等级只属于宏大师（Macro Masters）。其他所有人都被要求使用更安全的高级抽象： ~for~ 、 ~map~ 、 ~reduce~ 。
-
-Frank 在腰包里翻找了一阵，最终掏出一把迷你棉花糖。
-
-&quot;找到了。走吧，有人要毁灭世界了，我们得去看看水獭。&quot;
-
-* 第三章：core.async 通道与水獭
-
-Amy 和 Frank 冲下楼，发现门锁了。窗外，昨天的 Amy 正拿着笔记本电脑朝大门走来。
-
-Frank 翻开《Clojure 搭车客指南》的&quot;锁门及其他小麻烦&quot;一章。指南推荐用 ~fnil~ 来解决锁门问题。 ~fnil~ 接受一个已有函数，返回一个新函数——当参数为 ~nil~ 时，用你指定的默认值代替：
-
-#+begin_src clojure
-(defn locked-door [key]
-  (if key &quot;open&quot; &quot;nope - staying shut&quot;))
-
-(locked-door :key)  ;; =&gt; &quot;open&quot;
-(locked-door nil)   ;; =&gt; &quot;nope - staying shut&quot;
-
-(def this-door (fnil locked-door :another-key-that-works))
-(this-door :key)    ;; =&gt; &quot;open&quot;
-(this-door nil)     ;; =&gt; &quot;open&quot;
-#+end_src
-
-门开了。两人开车来到动物园的水族馆。
-
-水獭，Frank 解释说，是&quot;前线时间守卫&quot;。看过那些水獭用石头砸贝壳的自然视频吗？其实它们在求值 Clojure 表达式--以维持人类文明的正常运行。它们大多数时候喜欢远程工作（仰面漂浮在水面上，效率最高），有时会建造动物园或水族馆来近距离监控特定区域。
-
-Frank 拿出四颗迷你棉花糖。给了 Amy 两颗，自己一颗塞进耳朵，一颗塞进嘴里，开始和水獭对话。
-
-指南说，迷你棉花糖是创建便携式 Clojure core.async 通道的最佳材料——它不会在手里融化。
-
-#+begin_example
-  core.async 是 Clojure 的并发编程模型，灵感来自 Go 语言的 goroutine 和 channel。通道（channel）是 core.async 的核心概念——你可以把它想象成一根管子，一端放东西，另一端取东西。
-
-  core.async 有两套操作符：
-  - 两个叹号的 ~&gt;!!~ / ~&lt;!!~ 是阻塞操作： ~&gt;!!~ 往通道放消息（put）， ~&lt;!!~ 从通道取消息（take）。两个叹号表示&quot;我会一直等到操作完成&quot;，在此期间当前线程被卡住
-  - 一个叹号的 ~&gt;!~ / ~&lt;!~ 是非阻塞操作：功能一样，但只能在 ~go~ 块内使用。一个叹号表示&quot;我不会阻塞线程&quot;， ~go~ 块会在等待时自动挂起当前逻辑、释放线程给别的任务用
-#+end_example
-
-用 ~chan~ 创建一个通道：
-
-#+begin_src clojure
-(def talk-to-otters-chan (chan))
-#+end_src
-
-默认情况下通道是无缓冲的（unbuffered），也就是棉花糖的原始大小。无缓冲通道要求发送方和接收方同时在场才能通信——就像面对面说话，你说一句，对方得听着，不然你就卡在那。
-
-用阻塞操作 ~&gt;!!~ 往通道放消息，会阻塞当前线程：
-
-#+begin_src clojure
-(&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;)  ;; 线程会卡住，直到有接收方
-#+end_src
-
-所以一个办法是用 ~future~ 在另一个线程里发送：
-
-#+begin_src clojure
-(future (&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;))
-(&lt;!! talk-to-otters-chan)  ;; =&gt; &quot;Hello otters.&quot;
-#+end_src
-
-也可以用带缓冲的通道（相当于把棉花糖撑大一点）：
-
-#+begin_src clojure
-(def talk-to-otters-chan (chan 10))  ;; 缓冲区大小为 10
-
-(&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;)
-;; =&gt; nil（不阻塞，消息放进缓冲区了）
-
-(&gt;!! talk-to-otters-chan &quot;Do you know anything about the world ending?&quot;)
-;; =&gt; nil
-
-(&lt;!! talk-to-otters-chan)
-;; =&gt; &quot;Hello otters.&quot;
-
-(&lt;!! talk-to-otters-chan)
-;; =&gt; &quot;Do you know anything about the world ending?&quot;
-#+end_src
-
-但最好的方式是用 ~go~ 块实现异步通信——不阻塞任何线程。在 ~go~ 块里用非阻塞操作  ~&gt;!~ （一个叹号）和 ~&lt;!~ （一个叹号）：
-
-#+begin_src clojure
-(def talk-to-otters-chan (chan))
-
-(go (while true
-      (println (&lt;! talk-to-otters-chan))))
-
-(&gt;!! talk-to-otters-chan &quot;Hello otters&quot;)
-(&gt;!! talk-to-otters-chan &quot;Do you know anything about the world ending?&quot;)
-(&gt;!! talk-to-otters-chan &quot;Also, you are really fuzzy and cute.&quot;)
-
-;; REPL 中的输出：
-;; Hello otters
-;; Do you know anything about the world ending?
-;; Also, you are really fuzzy and cute.
-#+end_src
-
-更进一步的例子——双向对话。创建两个通道，一个负责说，一个负责听。~go~ 块之间通过通道自动转发消息：
-
-#+begin_src clojure
-(def talk-chan (chan))
-(def listen-chan (chan))
-
-(go (while true
-      (println (&lt;! listen-chan))))
-
-(go (while true
-      (&gt;! listen-chan
-          (str &quot;You said: &quot; (&lt;! talk-chan) &quot; Do you have any Abalone?&quot;))))
-
-(&gt;!! talk-chan &quot;Hello otters&quot;)
-(&gt;!! talk-chan &quot;Do you know anything about the world ending?&quot;)
-(&gt;!! talk-chan &quot;Also, you are really fuzzy and cute.&quot;)
-
-;; REPL 中的输出：
-;; You said: Hello otters Do you have any Abalone?
-;; You said: Do you know anything about the world ending? Do you have any Abalone?
-;; You said: Also, you are really fuzzy and cute. Do you have any Abalone?
-#+end_src
-
-水獭每次都问&quot;你有鲍鱼吗？&quot;——鲍鱼壳是水獭用来砸东西的工具，也是它们的薪水。
-
-Amy 把一颗棉花糖塞进耳朵，立刻听到了 Frank 和水獭的对话。她伸手要把另一颗塞进嘴里问一个重要问题——但不小心碰到了求值器上那个大红 Source 按钮。她和 Frank 被一个漩涡卷起来，吸入地下。
-
-故事戛然而止。Carin Meier 没有写第四篇。
-
-* 用科幻故事教编程
-
-原文的巧妙之处在于，每个科幻设定都精确对应一个 Clojure 技术概念：开心果是 s-expression，时间旅行是 Datomic 的事务模型，求值器是 REPL，大洪水是无终止条件的递归，棉花糖是 core.async 通道。概念之间不需要刻意安排过渡——故事本身就提供了自然的衔接。
-
-这种写法适合 Clojure 有一个特殊原因：Lisp 的&quot;代码即数据&quot;哲学本身就很像科幻小说里的设定——&quot;世界是由代码构成的，括号无处不在但你看不见&quot;。当比喻和被比喻的对象在哲学层面一致时，读起来就不是生硬的类比，而是发现了两者之间的真实相似性。
-</description>
-<pubDate>2026-04-27</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/23/读：clojure-搭车客指南/index.html</guid>
-</item>
-<item>
 <title>git推送失败后恢复仓库损坏的完整记录</title>
 <link>https://lujun9972.github.io/blog/2026/04/26/git推送失败后恢复仓库损坏的完整记录/index.html</link>
 <description>* 症状
@@ -1002,8 +723,287 @@ To git.zhlh6.cn:lujun9972/CodeQuest.git
 - [Pro Git 10.2 Git 内部原理 - Git 对象](https://git-scm.com/book/zh/v2/Git-%E5%86%85%E9%83%A8%E5%8E%9F%E7%90%86-Git-%E5%AF%B9%E8%B1%A1)
 - [git objects 结构示意图](https://git-scm.com/book/en/v2/images/data-model-1.png)
 </description>
-<pubDate>2026-04-26</pubDate>
+<pubDate>2026-04-27</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/26/git推送失败后恢复仓库损坏的完整记录/index.html</guid>
+</item>
+<item>
+<title>读：Clojure 搭车客指南</title>
+<link>https://lujun9972.github.io/blog/2026/04/23/读：clojure-搭车客指南/index.html</link>
+<description>Carin Meier 在 2014 年写了一组三篇文章，标题叫&quot;Hitchhiker&#39;s Guide to Clojure&quot;（Clojure 搭车客指南）。标题致敬了《银河系漫游指南》（The Hitchhiker&#39;s Guide to the Galaxy），内容也用了同样的写法——用科幻小说讲编程概念。主角是两个角色：Amy，一个快要被开除的 Pascal 程序员；Frank，一个时间旅行者，腰间别着蓝色腰包，手持一个叫&quot;求值器&quot;的设备。他们的世界即将被毁灭，而拯救世界的方式是理解 Clojure。
+
+这篇文章是对原文三部曲的解读。我会保留故事的叙事框架，同时把每个比喻对应的 Clojure 概念讲清楚。
+
+* 第一章：开开心果与 s-expression
+
+故事从 Amy 的办公室开始。她的老板命令她下午 3:05 部署代码，但现在是 3:00，她刚意识到一旦部署，所有辛苦收集的&quot;喉音唱法对番茄生长速度影响&quot;的数据都会被清空。她焦虑得疯狂剥开开心果吃。
+
+《Clojure 搭车客指南》上说，开心果是&quot;大自然中最完美的 s-expression&quot;。
+
+s-expression（符号表达式）是 Lisp 系列语言的基本数据结构。它要么是一个原子（不可再分的最小单位），要么由多个 s-expression 递归组成。开心果的壳就是外层的括号，里面的果仁就是原子。在 Clojure 里，原子求值后等于它自己：
+
+#+begin_src clojure
+&quot;hi&quot;   ;; =&gt; &quot;hi&quot;
+1      ;; =&gt; 1
+true   ;; =&gt; true
+nil    ;; =&gt; nil
+#+end_src
+
+所以如果你的开心果里发现了 ~nil~ ——指南的建议是，感谢你得到了一个&quot;代表无的值&quot;，然后再去拿一颗新的。
+
+在 Clojure 中，s-expression 用括号来写。括号里的第一个元素是函数，其余是参数，参数本身也可以是 s-expression：
+
+#+begin_src clojure
+(+ 1 2)       ;; =&gt; 3
+(+ 1 (+ 2 2)) ;; =&gt; 5
+#+end_src
+
+继续用开心果打比方。假设果仁有一个名字，我们定义一个函数把果仁变成&quot;红色&quot;：
+
+#+begin_src clojure
+(defn red [nut]
+  (str &quot;red &quot; nut))
+
+(red &quot;nut1&quot;)  ;; =&gt; &quot;red nut1&quot;
+#+end_src
+
+如果在表达式前面加一个引号（单引号 ~&#39;~），它就不再被求值，而是变成一个列表——这就是 Lisp 的&quot;代码即数据&quot;特性：
+
+#+begin_src clojure
+&#39;(red &quot;nut1&quot;)            ;; =&gt; (red &quot;nut1&quot;)
+
+(first &#39;(red &quot;nut1&quot;))    ;; =&gt; red
+(last &#39;(red &quot;nut1&quot;))     ;; =&gt; &quot;nut1&quot;
+#+end_src
+
+引号让代码变成了可以被操作的数据。你可以用 ~first~ 取出函数名，用 ~last~ 取出参数。但如果你把一个字符串放在括号第一位（没有函数），求值器就会报错——因为字符串不是函数：
+
+#+begin_src clojure
+(&quot;nut1&quot;)
+;; =&gt; ClassCastException java.lang.String cannot be cast to clojure.lang.IFn
+#+end_src
+
+这时候 Frank 登场了。他是 Datomic（Clojure 生态的数据库）时间旅行者，带来一个消息：世界其实是由 Datomic 的 datom（数据原子）构成的。Datomic 里，每一条数据都是一个&quot;事实&quot;（fact），比如&quot;这朵花是红色的&quot;。撤销（retract）一个事实，它就从数据库里消失了。而现在，有人要提交一个事务（transaction），把世界上所有事实一次性全部撤销。结果就是一切失去所有属性，什么都不复存在。
+
+Amy 的反应是：&quot;Clojure？不是那个括号特别多的语言吗？&quot;
+
+Frank 递给她那本《Clojure 搭车客指南》，封面印着一行大字：*Don&#39;t Worry About the Parens*（别担心括号）。翻开第一页：
+
+#+begin_quote
+&quot;人类第一个真正重要的发现不是火，而是 Paredit。Paredit 模式会自动插入和平衡括号，以至于你根本看不见它们。你周围的世界就是由 Clojure 构成的——几十亿个括号就在你周围，在你的茶杯旁边——但你没看见。这就是 Paredit。&quot;
+#+end_quote
+
+* 第二章：递归、惰性序列与时间旅行
+
+Frank 按下求值器上的大红按钮，两人被一个 Datomic 事务带着穿越了时空，最终落回了 Amy 的办公室。一切看起来都一样——除了 Part 1 里 Amy 吃开心果留的一地果壳不见了，电脑上的日期显示的是昨天早上 8 点。他们回到了 Amy 上班之前。
+
+Amy 说：&quot;我马上就要来上班了。&quot;他们得赶紧离开。
+
+指南解释说，Frank 腰间的蓝色腰包是&quot;时间特工&quot;的执照标志，颜色代表等级（按彩虹 ROYGBIV 排序）。这个等级制度源于历史上一桩尴尬的事故——&quot;大洪水&quot;。
+
+一个初级时间特工想用递归函数给干旱的番茄田浇水。正确的做法是这样的：
+
+#+begin_src clojure
+(defn rain [days]
+  (when (pos? days)
+    (println (str &quot;Rain: &quot; days))
+    (rain (dec days))))
+
+(rain 5)
+;; 输出：
+;; Rain: 5
+;; Rain: 4
+;; Rain: 3
+;; Rain: 2
+;; Rain: 1
+#+end_src
+
+关键在于 ~(dec days)~ — —每次递归调用时把参数减 1。但他犯了新手最经典的错误：忘了递减参数。
+
+#+begin_src clojure
+(defn rain [days]
+  (when (pos? days)
+    (println (str &quot;Rain: &quot; days))
+    (rain days)))   ;; 没有 (dec days)，参数永远是 5
+
+(rain 5)
+;; Rain: 5
+;; Rain: 5
+;; Rain: 5
+;; ...
+#+end_src
+
+结果番茄被严重过灌了。洪水就是这么来的。
+
+这里有一个容易混淆的点：Clojure 提供了 ~recur~（尾递归优化），可以让递归不消耗栈空间。但 ~recur~ 解决的只是&quot;不会撑爆栈&quot;这一个问题。如果你忘了递减参数，它照样会无限循环——只不过不会因为栈溢出而崩溃，而是永远跑下去、占满 CPU：
+
+#+begin_src clojure
+(defn rain [days]
+  (when (pos? days)
+    (println (str &quot;Rain: &quot; days))
+    (recur days)))   ;; 不消耗栈，但还是无限循环
+#+end_src
+
+~recur~ 的好处是构造斐波那契海螺这种结构时不会撑爆栈，但如果终止条件（这里就是参数递减）写错了，~recur~ 也救不了你。
+
+事故之后，高级时间特工被派去善后。他跟初级特工的区别在于——他精通 Clojure 的惰性序列（lazy sequence）。比如，一个只有两只鸡的向量：
+
+#+begin_src clojure
+[:hen :rooster]
+#+end_src
+
+用 ~cycle~ 可以把它变成一个无限长的惰性序列：
+
+#+begin_src clojure
+(cycle [:hen :rooster])
+;; =&gt; (:hen :rooster :hen :rooster :hen :rooster ...)
+#+end_src
+
+不过高级特工没有把这个无限序列塞进取值器——否则就会创造另一起家禽泛滥的事故。他用 ~take~ 只取前面需要的数量：
+
+#+begin_src clojure
+(take 5 (cycle [:hen :rooster]))
+;; =&gt; (:hen :rooster :hen :rooster :hen)
+
+(take 10 (cycle [:hen :rooster]))
+;; =&gt; (:hen :rooster :hen :rooster :hen :rooster :hen :rooster :hen :rooster)
+#+end_src
+
+惰性序列的精髓就在这里：你可以描述一个无穷大的东西，但只在需要的时候才去计算它。无限序列不会撑爆内存，因为 ~cycle~ 返回的是一个 promise（承诺）——你 ~take~ 多少，它就算多少。
+
+事故之后，时间特工委员会决定：低级别递归需要靛蓝色等级（倒数第二高）才能使用，最高紫色等级只属于宏大师（Macro Masters）。其他所有人都被要求使用更安全的高级抽象： ~for~ 、 ~map~ 、 ~reduce~ 。
+
+Frank 在腰包里翻找了一阵，最终掏出一把迷你棉花糖。
+
+&quot;找到了。走吧，有人要毁灭世界了，我们得去看看水獭。&quot;
+
+* 第三章：core.async 通道与水獭
+
+Amy 和 Frank 冲下楼，发现门锁了。窗外，昨天的 Amy 正拿着笔记本电脑朝大门走来。
+
+Frank 翻开《Clojure 搭车客指南》的&quot;锁门及其他小麻烦&quot;一章。指南推荐用 ~fnil~ 来解决锁门问题。 ~fnil~ 接受一个已有函数，返回一个新函数——当参数为 ~nil~ 时，用你指定的默认值代替：
+
+#+begin_src clojure
+(defn locked-door [key]
+  (if key &quot;open&quot; &quot;nope - staying shut&quot;))
+
+(locked-door :key)  ;; =&gt; &quot;open&quot;
+(locked-door nil)   ;; =&gt; &quot;nope - staying shut&quot;
+
+(def this-door (fnil locked-door :another-key-that-works))
+(this-door :key)    ;; =&gt; &quot;open&quot;
+(this-door nil)     ;; =&gt; &quot;open&quot;
+#+end_src
+
+门开了。两人开车来到动物园的水族馆。
+
+水獭，Frank 解释说，是&quot;前线时间守卫&quot;。看过那些水獭用石头砸贝壳的自然视频吗？其实它们在求值 Clojure 表达式--以维持人类文明的正常运行。它们大多数时候喜欢远程工作（仰面漂浮在水面上，效率最高），有时会建造动物园或水族馆来近距离监控特定区域。
+
+Frank 拿出四颗迷你棉花糖。给了 Amy 两颗，自己一颗塞进耳朵，一颗塞进嘴里，开始和水獭对话。
+
+指南说，迷你棉花糖是创建便携式 Clojure core.async 通道的最佳材料——它不会在手里融化。
+
+#+begin_example
+  core.async 是 Clojure 的并发编程模型，灵感来自 Go 语言的 goroutine 和 channel。通道（channel）是 core.async 的核心概念——你可以把它想象成一根管子，一端放东西，另一端取东西。
+
+  core.async 有两套操作符：
+  - 两个叹号的 ~&gt;!!~ / ~&lt;!!~ 是阻塞操作： ~&gt;!!~ 往通道放消息（put）， ~&lt;!!~ 从通道取消息（take）。两个叹号表示&quot;我会一直等到操作完成&quot;，在此期间当前线程被卡住
+  - 一个叹号的 ~&gt;!~ / ~&lt;!~ 是非阻塞操作：功能一样，但只能在 ~go~ 块内使用。一个叹号表示&quot;我不会阻塞线程&quot;， ~go~ 块会在等待时自动挂起当前逻辑、释放线程给别的任务用
+#+end_example
+
+用 ~chan~ 创建一个通道：
+
+#+begin_src clojure
+(def talk-to-otters-chan (chan))
+#+end_src
+
+默认情况下通道是无缓冲的（unbuffered），也就是棉花糖的原始大小。无缓冲通道要求发送方和接收方同时在场才能通信——就像面对面说话，你说一句，对方得听着，不然你就卡在那。
+
+用阻塞操作 ~&gt;!!~ 往通道放消息，会阻塞当前线程：
+
+#+begin_src clojure
+(&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;)  ;; 线程会卡住，直到有接收方
+#+end_src
+
+所以一个办法是用 ~future~ 在另一个线程里发送：
+
+#+begin_src clojure
+(future (&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;))
+(&lt;!! talk-to-otters-chan)  ;; =&gt; &quot;Hello otters.&quot;
+#+end_src
+
+也可以用带缓冲的通道（相当于把棉花糖撑大一点）：
+
+#+begin_src clojure
+(def talk-to-otters-chan (chan 10))  ;; 缓冲区大小为 10
+
+(&gt;!! talk-to-otters-chan &quot;Hello otters.&quot;)
+;; =&gt; nil（不阻塞，消息放进缓冲区了）
+
+(&gt;!! talk-to-otters-chan &quot;Do you know anything about the world ending?&quot;)
+;; =&gt; nil
+
+(&lt;!! talk-to-otters-chan)
+;; =&gt; &quot;Hello otters.&quot;
+
+(&lt;!! talk-to-otters-chan)
+;; =&gt; &quot;Do you know anything about the world ending?&quot;
+#+end_src
+
+但最好的方式是用 ~go~ 块实现异步通信——不阻塞任何线程。在 ~go~ 块里用非阻塞操作  ~&gt;!~ （一个叹号）和 ~&lt;!~ （一个叹号）：
+
+#+begin_src clojure
+(def talk-to-otters-chan (chan))
+
+(go (while true
+      (println (&lt;! talk-to-otters-chan))))
+
+(&gt;!! talk-to-otters-chan &quot;Hello otters&quot;)
+(&gt;!! talk-to-otters-chan &quot;Do you know anything about the world ending?&quot;)
+(&gt;!! talk-to-otters-chan &quot;Also, you are really fuzzy and cute.&quot;)
+
+;; REPL 中的输出：
+;; Hello otters
+;; Do you know anything about the world ending?
+;; Also, you are really fuzzy and cute.
+#+end_src
+
+更进一步的例子——双向对话。创建两个通道，一个负责说，一个负责听。~go~ 块之间通过通道自动转发消息：
+
+#+begin_src clojure
+(def talk-chan (chan))
+(def listen-chan (chan))
+
+(go (while true
+      (println (&lt;! listen-chan))))
+
+(go (while true
+      (&gt;! listen-chan
+          (str &quot;You said: &quot; (&lt;! talk-chan) &quot; Do you have any Abalone?&quot;))))
+
+(&gt;!! talk-chan &quot;Hello otters&quot;)
+(&gt;!! talk-chan &quot;Do you know anything about the world ending?&quot;)
+(&gt;!! talk-chan &quot;Also, you are really fuzzy and cute.&quot;)
+
+;; REPL 中的输出：
+;; You said: Hello otters Do you have any Abalone?
+;; You said: Do you know anything about the world ending? Do you have any Abalone?
+;; You said: Also, you are really fuzzy and cute. Do you have any Abalone?
+#+end_src
+
+水獭每次都问&quot;你有鲍鱼吗？&quot;——鲍鱼壳是水獭用来砸东西的工具，也是它们的薪水。
+
+Amy 把一颗棉花糖塞进耳朵，立刻听到了 Frank 和水獭的对话。她伸手要把另一颗塞进嘴里问一个重要问题——但不小心碰到了求值器上那个大红 Source 按钮。她和 Frank 被一个漩涡卷起来，吸入地下。
+
+故事戛然而止。Carin Meier 没有写第四篇。
+
+* 用科幻故事教编程
+
+原文的巧妙之处在于，每个科幻设定都精确对应一个 Clojure 技术概念：开心果是 s-expression，时间旅行是 Datomic 的事务模型，求值器是 REPL，大洪水是无终止条件的递归，棉花糖是 core.async 通道。概念之间不需要刻意安排过渡——故事本身就提供了自然的衔接。
+
+这种写法适合 Clojure 有一个特殊原因：Lisp 的&quot;代码即数据&quot;哲学本身就很像科幻小说里的设定——&quot;世界是由代码构成的，括号无处不在但你看不见&quot;。当比喻和被比喻的对象在哲学层面一致时，读起来就不是生硬的类比，而是发现了两者之间的真实相似性。
+</description>
+<pubDate>2026-04-27</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/23/读：clojure-搭车客指南/index.html</guid>
 </item>
 <item>
 <title>多智能体系统的两个有效模式——以及对 Claude Code 用户的启示</title>
