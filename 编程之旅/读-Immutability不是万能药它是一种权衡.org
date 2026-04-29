@@ -1,0 +1,272 @@
+#+TITLE: 读：Immutability 不是万能药，它是一种权衡
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Clojure, Java, 不可变性, 并发, 函数式编程
+#+DATE: [2026-04-29 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+原文：[[https://dev.to/ivangavlik/immutability-not-a-universal-law-but-a-trade-off-4lng][Immutability: Not a Universal Law, But a Trade-off]]
+
+不可变性（immutability）是指数据一旦创建就不再修改，每次"修改"都产生新版本，这通常被认为是函数式编程的金科玉律。但原文作者 Ivan Gavlik 认为：不可变性不是一个普适法则，而是一种需要根据场景做取舍的权衡。他从代码层、数据层、API 层三个层面分析了不可变性的适用边界。
+
+作为一个 Clojure 程序员，我想从 Clojure 的视角重新审视这篇文章的论点。Clojure 的核心数据结构（list、vector、map、set）全部默认不可变——你没法修改一个 Clojure map 里的某个键值对，只能通过 =assoc= 或 =dissoc= 生成一个新 map。这不像 Java 那样需要程序员主动选择用 =final= 或不可变集合，在 Clojure 里不可变性就是唯一的选择。但即便如此，Clojure 也在很多地方做了务实的妥协（比如 =atom=、=transient=）。这些妥协本身就能帮我们理解"什么时候该用不可变性，什么时候不该用"。
+
+* 代码层：不可变性基本是稳赚的
+
+在单个函数的粒度上，选择不可变性几乎总是对的。原文的论点很简单： ~不可变 = 没有隐藏的副作用 = 更容易理解和测试~ 。
+
+Clojure 天然就是这样的：
+
+#+begin_src clojure
+(defn add-balance [user amount]
+  (update user :balance + amount))
+
+(def user {:id 1 :balance 100})
+(def updated-user (add-balance user 20))
+
+;; user 不变，updated-user 是新的 map
+updated-user
+;; => {:id 1 :balance 120}
+#+end_src
+
+#+begin_example
+user 保持不变，updated-user 是一个全新的 map。这就是 Clojure 的默认行为,所有数据结构都是不可变的。
+#+end_example
+
+** 并发问题不是线程造成的，是共享可变状态造成的
+
+原文用 Java 展示了一个经典的竞态条件：多个线程同时给 =balance+=1= ，期望结果是 1000000，实际得到的数字远小于此且不可预测。问题出在 ~this.balance += amount~ 这一行——它不是原子操作，两个线程可以交错执行。
+
+#+begin_src java
+public class User {
+    private int balance;
+
+    public void addBalance(int amount) {
+        this.balance += amount; // 非原子操作
+    }
+
+    public int getBalance() {
+        return balance;
+    }
+}
+
+// 10 个线程各执行 100000 次 +1，期望结果 1000000
+User user = new User(); // balance = 0
+Thread[] threads = new Thread[10];
+for (int t = 0; t < 10; t++) {
+    threads[t] = new Thread(() -> {
+        for (int i = 0; i < 100000; i++) {
+            user.addBalance(1);
+        }
+    });
+    threads[t].start();
+}
+for (Thread t : threads) t.join();
+System.out.println("Final balance: " + user.getBalance());
+// 期望 1000000，实际可能是 312338、239592 等不确定的数字
+#+end_src
+
+Java 的解决这一问题的方法有好几种： =synchronized= （加锁，有效但代价高）、 =AtomicInteger= （Java 提供的一种整数类型，内部用 CPU 的 CAS 指令保证 =+=1= 这类操作不会被线程交错打断，但值本身仍然是可变的）、完全不可变对象（每次返回新实例）。原文最终推荐的是"不可变 + 协调"的组合方案。
+
+Clojure 在这个问题上走得更远——它用 =atom= 提供了一种既不可变又高效的方案：
+
+#+begin_src clojure
+(def balance (atom 0))
+
+;; 2 个线程各执行 1000 次 +1，用 swap! 保证原子更新
+;; swap! 内部用 CAS（Compare-And-Swap），不阻塞线程
+(dotimes [_ 2]
+  (future
+    (dotimes [_ 1000]
+      (swap! balance inc))))
+
+;; 等所有 future 完成
+(Thread/sleep 100)
+@balance
+;; => 2000
+#+end_src
+
+#+begin_example
+2000
+#+end_example
+
+关键点： =swap!= 接受一个纯函数 =inc= ，atom 内部保证将这个函数应用到当前值的过程是原子的。你写的是纯函数式变风格的代码，Clojure 的运行时会帮你处理协调问题。这正是原文说的"不可变状态迫使你显式地表达变化如何发生"的意思：在 Clojure 里，你必须用 =swap!= 、 =reset!= 这样的操作来表达"我要改变状态"，而不是随手写一个 =+= 然后祈祷不会出事。
+
+Clojure 还有 =ref= （配合 =dosync= 实现事务性更新）和 =agent= （异步更新），分别对应不同的协调需求。但核心思路都一样：值是不可变的，状态的变化必须明确表达出来。
+
+** 代码层结论
+
+在代码层面，不可变性基本没有争议——代价小，收益大。原文也认同这一点。真正的权衡从数据建模开始。
+
+* 数据层：从"改一个字段"到"记一笔历史"
+
+到了数据建模层面，问题从"要不要修改这个对象"变成了更根本的设计选择：你的数据模型是记录"当前状态"还是记录"发生过什么"？
+
+** 状态模型 vs 事件模型
+
+#+begin_src clojure
+;; 状态模型：只存当前值
+(def user-state (atom {:name "Alice" :balance 100}))
+(swap! user-state update :balance + 20)
+(swap! user-state update :balance - 10)
+;; 余额是 110，但你不知道中间发生了什么
+@user-state
+;; => {:name "Alice" :balance 110}
+#+end_src
+
+#+begin_example
+{:name "Alice" :balance 110}
+#+end_example
+
+#+begin_src clojure
+;; 事件模型：存每一笔变更
+(def events
+  [{:type :balance-increased :amount 20 :at "2026-04-29T10:00:00Z"}
+   {:type :balance-decreased :amount 10 :at "2026-04-29T10:05:00Z"}])
+
+;; 当前状态是推导出来的
+(reduce (fn [balance event]
+          (case (:type event)
+            :balance-increased (+ balance (:amount event))
+            :balance-decreased (- balance (:amount event))
+            balance))
+        100 events)
+;; => 110
+#+end_src
+
+#+begin_example
+110
+#+end_example
+
+两种模型都能得到余额 110，但事件模型额外保留了"怎么到的 110"这个信息。这就是原文说的核心区别：状态模型回答"现在是什么"，事件模型回答"怎么到的这里"。
+
+** 事件模型的代价
+
+但事件模型不是免费的：
+
+1. *存储成本* ：每次变更都存一条记录，数据量远大于只存当前状态。一个用户改了 100 次名字，状态模型只有 1 条记录，事件模型有 100 条。
+2. *设计复杂度* ：你得设计事件的结构、状态转换的规则、不变量（invariant，即"在任何时候都必须成立的条件"）。比简单的 CRUD 难得多。
+3. *不一定需要* ：用户的昵称改了 100 次，你有必要知道中间 99 次发生了什么吗？
+
+** 什么时候该用事件模型
+
+原文的判断标准很实用：
+
+- *跨系统共享状态* 时——多个服务需要知道同一份数据的变化历史
+- *历史有业务价值* 的领域——金融交易、审计日志、工作流状态
+- *需要回溯查询* 时——我想知道"上周三下午 3 点这个订单是什么状态？"
+
+什么时候不该用：
+
+- 大对象频繁小更新（比如一个巨大的 JSON 每次改一个字段）
+- 历史没有业务价值（比如用户头像 URL 改了，你不在乎它之前是什么）
+- 简单的 CRUD 系统（表单→数据库→保存，没有复杂的业务流程）
+
+** Clojure 中的 reduce 和事件模型
+
+Clojure 的 =reduce= 天然适合事件模型——"从初始状态出发，依次应用每个事件，得到最终状态"。上文的例子已经展示了这一点。更实际的做法是定义一个 =apply-event= 函数，把状态转换逻辑集中管理：
+
+#+begin_src clojure
+(defn apply-event [state event]
+  (case (:type event)
+    :user-registered (assoc state :status :active)
+    :user-suspended  (assoc state :status :suspended)
+    :user-activated  (assoc state :status :active)
+    state))
+
+(reduce apply-event
+        {:status :pending}
+        [{:type :user-registered}
+         {:type :user-suspended}
+         {:type :user-activated}])
+;; => {:status :active}
+#+end_src
+
+#+begin_example
+{:status :active}
+#+end_example
+
+** 不可变模型的几种变体
+
+原文还列举了几种不同的不可变数据建模方式：
+
+| 模式 | 存什么 | 适用场景 |
+|------|--------|----------|
+| 事件溯源（Event Sourcing） | 领域事件（发生了什么） | 金融、审计、工作流 |
+| 版本化状态（Versioned State） | 完整状态的每次版本 | 需要回溯但不想重放事件 |
+| 追加日志（Append-Only Log） | 字段变更（什么字段从什么值变成了什么值） | 轻量级变更追踪 |
+| 不可变值对象（Immutable Value Objects） | 不可变的领域对象，但持久化当前状态 | 大多数 CRUD 系统 |
+
+* API 层：Command 和 Event 不是一回事
+
+原文最后讨论了 API 层面。传统的 REST API 是面向状态的，即客户端发送最终期望的状态：
+
+#+begin_src text
+PUT /orders/123
+{"status": "SHIPPED"}
+#+end_src
+
+这告诉服务端"把这个订单的状态设为 SHIPPED"，但不表达"为什么"要这么做。
+
+Command 风格的 API 改为发送意图：
+
+#+begin_src text
+POST /orders/123/ship
+#+end_src
+
+这个 API 表达的是"发货"这个业务动作，而不是"把某个字段设为某个值"。服务端负责决定发货之后状态应该怎么变。
+
+Event 风格的 API 则记录发生了什么：
+
+#+begin_src text
+POST /orders/123/events
+{"type": "OrderShipped", "timestamp": "2026-04-29T10:00:00Z"}
+#+end_src
+
+原文特别强调了一点：Command 是请求（"请发货"），Event 是事实（"已经发货了"）。通常客户端发 Command，服务端处理完之后生成 Event。不应该让客户端直接发 Event——因为只有服务端才有资格确认"这件事确实发生了"。
+
+** 什么时候用 Command/Event 风格
+
+- 工作流重要、业务逻辑复杂
+- 多个系统需要对同一个动作做出反应
+- 审计追溯有要求
+
+什么时候该避开：
+
+- 简单的 CRUD 应用，由于没有复杂的业务流程，状态就能直接表示动作，这时加 =/ship= 、 =/cancel= 、 =/refund= 这些端点反而是过度设计
+
+** Clojure 的 multimethod 视角
+
+Clojure 的 =defmulti= / =defmethod= 天然适合 Command 风格的路由——根据 Command 的类型分发到不同的处理函数：
+
+#+begin_src clojure
+(defmulti handle-command :action)
+
+(defmethod handle-command :ship [_ order]
+  ;; 发货逻辑：更新状态、触发通知等
+  (assoc order :status :shipped))
+
+(defmethod handle-command :cancel [_ order]
+  (assoc order :status :cancelled))
+
+(handle-command {:action :ship} {:id 123 :status :pending})
+;; => {:id 123, :status :shipped}
+#+end_src
+
+#+begin_example
+{:id 123, :status :shipped}
+#+end_example
+
+这种写法的好处是新增一个 Command 只需要加一个 =defmethod= ，不需要修改已有的处理逻辑。每个 Command 的处理逻辑是独立的，互不干扰。
+
+* 三个层面的权衡总结
+
+| 层面 | 不可变性推荐度 | 关键权衡 |
+|------|---------------|----------|
+| 代码层 | 强烈推荐 | 代价小（多用一点内存），收益大（并发安全、容易推理、容易测试） |
+| 数据层 | 看场景 | 事件模型提供完整历史但增加存储和设计复杂度；状态模型简单但丢失历史 |
+| API 层 | 看场景 | Command/Event 风格适合复杂业务；CRUD 风格适合简单应用 |
+
+Clojure 的设计哲学很好地体现了这个递进的权衡：在代码层面全面拥抱不可变性（所有数据结构默认不可变），在数据层面提供灵活的选择（你可以用 atom 存状态，也可以用 reduce 重放事件），在 API 层面不强制（你可以用 defmulti 做 Command 风格，也可以直接用 map 存状态）。
+
+不可变性不是一个开关，而是一个旋钮。根据场景调到合适的位置，才是务实的做法。
