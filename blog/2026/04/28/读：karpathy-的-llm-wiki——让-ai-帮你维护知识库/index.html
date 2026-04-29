@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Karpathy 的 LLM Wiki——让 AI 帮你维护知识库 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="无主之地, Karpathy, LLM, 知识管理, Org-mode, wiki, RAG" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Karpathy 的 LLM Wiki——让 AI 帮你维护知识库</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4d16b21">Idea File：agent 时代的新分享格式</a></li>
+<li><a href="#org0d44cbb">Wiki vs RAG：知识复利 vs 一次性检索</a>
+<ul>
+<li><a href="#org9550d3f">RAG 的问题</a></li>
+<li><a href="#orgce0b6ff">Wiki 的方案</a></li>
+<li><a href="#org712f59c">复利效应</a></li>
+</ul>
+</li>
+<li><a href="#org5d7b161">三层架构</a>
+<ul>
+<li><a href="#org0a8c4ee">第一层：Raw Sources（原始资料）</a></li>
+<li><a href="#orgc9fce09">第二层：Wiki（知识库）</a></li>
+<li><a href="#org70f1b21">第三层：Schema（配置文件）</a></li>
+</ul>
+</li>
+<li><a href="#org3d55a88">三个操作</a>
+<ul>
+<li><a href="#orgc6994aa">Ingest（摄入）</a></li>
+<li><a href="#org3d865e2">Query（查询）</a></li>
+<li><a href="#org1dce0bb">Lint（健康检查）</a></li>
+</ul>
+</li>
+<li><a href="#org9769afa">Org-mode 适配方案</a>
+<ul>
+<li><a href="#org3df718e">目录结构</a></li>
+<li><a href="#org62ecb68">双向链接：Org-roam 替代 Obsidian Wiki Links</a></li>
+<li><a href="#org44d26f9">搜索：grep/ripgrep 替代 qmd</a></li>
+<li><a href="#org1f04cb3">Schema：CLAUDE.md 配置 Org-mode 规则</a></li>
+<li><a href="#org7db7ec1">Graph View：org-roam-ui 替代 Obsidian Graph</a></li>
+<li><a href="#org76ac9e4">总结：对应关系</a></li>
+</ul>
+</li>
+<li><a href="#org0c0f3d2">Memex：80 年前的预言</a></li>
+<li><a href="#org62dbdc0">从哪里开始</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://antigravity.codes/blog/karpathy-llm-wiki-idea-file">Karpathy's LLM Wiki: The Idea File That Changes Everything</a>
+</p>
+
+<p>
+2026 年 4 月，Andrej Karpathy（OpenAI 联合创始人、前 Tesla AI 负责人、"vibe coding"一词的创造者）发了一条推文，说他最近把大量的 LLM token 从"操纵代码"转向了"操纵知识"，用 LLM 来构建个人知识库 wiki，而不是写代码。这条推文爆了。第二天他又发了一条后续，这次没分享代码也没分享应用，而是分享了一份"idea file"，一份描述了整个系统架构和设计理念的 GitHub gist。本文解读这份 idea file 的核心设计，并探讨如何用 Emacs/Org-mode 生态来实现。
+</p>
+
+<div id="outline-container-org4d16b21" class="outline-2">
+<h2 id="org4d16b21">Idea File：agent 时代的新分享格式</h2>
+<div class="outline-text-2" id="text-org4d16b21">
+<p>
+Karpathy 对 idea file 的定义很明确：
+</p>
+
+<blockquote>
+<p>
+在这个 LLM agent 的时代，分享具体的代码或应用没那么必要了。你只需要分享想法，然后对方的 agent 会根据具体需求定制和构建。
+</p>
+</blockquote>
+
+<p>
+这是一个微妙的转变。过去开发者做了一件有用的东西，分享的是实现（GitHub 仓库、npm 包、Docker 镜像）。接收方 clone、配置、运行。但在每个人都有 LLM agent（Claude Code、OpenAI Codex、Cursor 等）的世界里，分享想法可能比分享代码更有用。
+</p>
+
+<p>
+为什么？因为想法是可移植的，代码是特定的。Karpathy 用 Obsidian + macOS + Claude Code，你也许用 VS Code + Linux + Codex。一个共享的 GitHub 仓库需要 fork、适配、调试。一份共享的 idea file 只需要复制粘贴给你的 agent，agent 就会构建一个适配你环境的版本。
+</p>
+
+<p>
+Karpathy 说这份 gist"故意保持了一点抽象和模糊，因为可以延伸的方向太多了"。文档最后一句话点明了设计意图："这份文档唯一的职责是传达模式。你的 LLM 能搞定剩下的。"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0d44cbb" class="outline-2">
+<h2 id="org0d44cbb">Wiki vs RAG：知识复利 vs 一次性检索</h2>
+<div class="outline-text-2" id="text-org0d44cbb">
+<p>
+这份 idea file 的核心是对比两种使用 LLM 处理文档的方式。
+</p>
+</div>
+
+<div id="outline-container-org9550d3f" class="outline-3">
+<h3 id="org9550d3f">RAG 的问题</h3>
+<div class="outline-text-3" id="text-org9550d3f">
+<p>
+大多数人与 LLM + 文档的交互方式是 RAG（检索增强生成）：上传一批文件，提问时 LLM 检索相关片段，生成答案。NotebookLM、ChatGPT 文件上传、大多数企业 AI 工具都是这个模式。
+</p>
+
+<p>
+Karpathy 指出问题所在："LLM 每次回答问题时都从头重新发现知识。没有积累。"
+</p>
+
+<p>
+问一个需要综合五篇文档的问题，RAG 系统每次都要找出相关片段并拼凑起来。明天再问同一个问题，它重做一遍。什么都不积累，什么都不复利。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgce0b6ff" class="outline-3">
+<h3 id="orgce0b6ff">Wiki 的方案</h3>
+<div class="outline-text-3" id="text-orgce0b6ff">
+<p>
+Karpathy 的替代方案："不要在查询时从原始文档检索，而是让 LLM 增量构建和维护一个持久的 wiki，即在你和原始资料之间构建一组结构化的、相互链接的 markdown 文件。"
+</p>
+
+<p>
+当你添加新资料时，LLM 不是简单索引它以备后续检索，而是阅读它、提取关键信息、整合到已有的 wiki 中：更新实体页面、修订主题摘要、标注新数据与旧结论的矛盾、根据新证据修正或强化已有的综述。
+</p>
+
+<p>
+核心一句话："知识只编译一次，然后保持更新，而不是每次查询都重新推导。"
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">维度</th>
+<th scope="col" class="org-left">传统 RAG</th>
+<th scope="col" class="org-left">LLM Wiki</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">知识处理时机</td>
+<td class="org-left">查询时（每次提问都重来）</td>
+<td class="org-left">摄入时（每份资料只处理一次）</td>
+</tr>
+
+<tr>
+<td class="org-left">交叉引用</td>
+<td class="org-left">每次查询临时发现</td>
+<td class="org-left">预构建并持续维护</td>
+</tr>
+
+<tr>
+<td class="org-left">矛盾检测</td>
+<td class="org-left">可能发现不了</td>
+<td class="org-left">摄入时即标注</td>
+</tr>
+
+<tr>
+<td class="org-left">知识积累</td>
+<td class="org-left">无，每次查询从零开始</td>
+<td class="org-left">每份资料和每次查询都在复利增长</td>
+</tr>
+
+<tr>
+<td class="org-left">输出格式</td>
+<td class="org-left">聊天回复（转瞬即逝）</td>
+<td class="org-left">持久的 markdown 文件</td>
+</tr>
+
+<tr>
+<td class="org-left">维护者</td>
+<td class="org-left">系统（黑盒）</td>
+<td class="org-left">LLM（透明、可编辑）</td>
+</tr>
+
+<tr>
+<td class="org-left">人的角色</td>
+<td class="org-left">上传资料和提问</td>
+<td class="org-left">策展、探索、提出好问题</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org712f59c" class="outline-3">
+<h3 id="org712f59c">复利效应</h3>
+<div class="outline-text-3" id="text-org712f59c">
+<p>
+Karpathy 反复强调这一点："wiki 是一个持久的、复利增长的产物。"交叉引用已经建好了，矛盾已经标注了，综述已经反映了你读过的所有内容。每添加一份资料、每问一个问题，wiki 都变得更丰富。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5d7b161" class="outline-2">
+<h2 id="org5d7b161">三层架构</h2>
+<div class="outline-text-2" id="text-org5d7b161">
+<p>
+Karpathy 定义了三个层次，每层有明确的归属和职责。
+</p>
+</div>
+
+<div id="outline-container-org0a8c4ee" class="outline-3">
+<h3 id="org0a8c4ee">第一层：Raw Sources（原始资料）</h3>
+<div class="outline-text-3" id="text-org0a8c4ee">
+<p>
+你积累的原始文档集合,包括文章、论文、图片、数据文件等。这些是 <code>不可变的</code> ：LLM 可以读，但永远不能改。这是你的知识源头。LLM 在 wiki 中犯了错，你可以追溯到原始资料来纠正。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc9fce09" class="outline-3">
+<h3 id="orgc9fce09">第二层：Wiki（知识库）</h3>
+<div class="outline-text-3" id="text-orgc9fce09">
+<p>
+LLM 生成的 markdown 文件目录，包含摘要、实体页面、概念页面、对比分析、概述、综述。LLM 完全拥有这一层：创建页面、新资料到来时更新、维护交叉引用、保持一致性。你读它，LLM 写它。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org70f1b21" class="outline-3">
+<h3 id="org70f1b21">第三层：Schema（配置文件）</h3>
+<div class="outline-text-3" id="text-org70f1b21">
+<p>
+一份文档（Claude Code 用 <code>CLAUDE.md</code> ，Codex 用 <code>AGENTS.md</code> ），告诉 LLM wiki 的结构、约定、以及摄入资料、回答问题、维护 wiki 时的工作流程。这是关键配置文件，让 LLM 成为有纪律的 wiki 维护者，而不是普通的聊天机器人。
+</p>
+
+<p>
+没有 schema，每次与 LLM 的会话都从零开始。LLM 不知道你的约定、页面格式或工作流程。你每次都要重新解释一切。Schema 就是跨会话的持久记忆，确保一致性，把通用 LLM 变成你的专属 wiki 维护者。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3d55a88" class="outline-2">
+<h2 id="org3d55a88">三个操作</h2>
+<div class="outline-text-2" id="text-org3d55a88">
+</div>
+<div id="outline-container-orgc6994aa" class="outline-3">
+<h3 id="orgc6994aa">Ingest（摄入）</h3>
+<div class="outline-text-3" id="text-orgc6994aa">
+<p>
+你把新资料放入 raw 目录，告诉 LLM 处理它。一个典型的处理流程为：LLM 阅读资料，与你讨论关键要点，在 wiki 中写摘要页，更新索引，更新相关的实体和概念页面，在活动日志中追加记录。一次摄入可能触及 10-15 个 wiki 页面。
+</p>
+
+<p>
+一次摄入不只是创建一个新页面，它会波及整个 wiki。如果你摄入了一篇关于新 transformer 变体的论文，LLM 可能会做如下动作：为论文创建新的摘要页、更新"注意力机制"概念页、更新"缩放定律"页面（如果有新基准数据）、更新作者或机构的实体页、更新对比页面（如果论文与已知模型做了基准对比）、从现有页面添加指向新内容的链接、更新索引、在日志中记录。
+</p>
+
+<p>
+Karpathy 有个偏好："我喜欢一次摄入一份资料，过程中持续跟进，阅读摘要、检查更新、引导 LLM 侧重什么。但你也可以批量摄入多份资料，减少监督次数。"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3d865e2" class="outline-3">
+<h3 id="org3d865e2">Query（查询）</h3>
+<div class="outline-text-3" id="text-org3d865e2">
+<p>
+你向 wiki 提问。LLM 搜索相关页面，阅读后综合出带引用的答案。答案可以采取多种形式：markdown 页面、对比表、幻灯片（Marp）、图表。
+</p>
+
+<p>
+但最重要的洞察是："好的答案可以回写到 wiki 中作为新页面。"一次对比分析、一个发现都是是有价值的，不应该消失在聊天历史中。这样你的探索和摄入的资料一样在知识库中复利增长。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1dce0bb" class="outline-3">
+<h3 id="org1dce0bb">Lint（健康检查）</h3>
+<div class="outline-text-3" id="text-org1dce0bb">
+<p>
+定期让 LLM 检查 wiki 的健康状况。检查内容包括：页面间的矛盾、已经被新资料取代的过时结论、孤儿页面、被多次提及但缺少独立页面的概念、缺失的交叉引用、可以通过网络搜索填补的数据空白。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9769afa" class="outline-2">
+<h2 id="org9769afa">Org-mode 适配方案</h2>
+<div class="outline-text-2" id="text-org9769afa">
+<p>
+Karpathy 的方案以 Obsidian 为前端，但核心设计（markdown 文件 + 目录结构 + git + LLM agent）与 Emacs/Org-mode 生态天然契合。下面是具体的对应关系和适配建议。
+</p>
+</div>
+
+<div id="outline-container-org3df718e" class="outline-3">
+<h3 id="org3df718e">目录结构</h3>
+<div class="outline-text-3" id="text-org3df718e">
+<p>
+Org-mode 的方案和原文完全一致，只是文件后缀不同：
+</p>
+
+<pre class="example" id="orge42ce9d">
+my-research/
+├── raw/                    # 原始资料（不可变）
+│   ├── articles/
+│   ├── papers/
+│   └── assets/
+├── wiki/                   # LLM 维护的知识库
+│   ├── index.org           # 总目录
+│   ├── log.org             # 活动日志
+│   ├── overview.org        # 综述
+│   ├── concepts/           # 概念页面
+│   ├── entities/           # 实体页面
+│   ├── sources/            # 资料摘要
+│   └── comparisons/        # 对比分析
+└── CLAUDE.md               # Schema 配置
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org62ecb68" class="outline-3">
+<h3 id="org62ecb68">双向链接：Org-roam 替代 Obsidian Wiki Links</h3>
+<div class="outline-text-3" id="text-org62ecb68">
+<p>
+Org-roam 提供与 Obsidian 一模一样的双向链接功能。在 wiki 页面中用 <code>[[roam:概念名]]</code> 创建链接，Org-roam 会自动维护反向链接。这意味着你在"注意力机制"页面链接了"Transformer"，在"Transformer"页面就能看到反向链接。在 Emacs 中用 <code>M-x org-roam-node-find</code> 搜索和跳转页面，效果等同于 Obsidian 的快速跳转。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org44d26f9" class="outline-3">
+<h3 id="org44d26f9">搜索：grep/ripgrep 替代 qmd</h3>
+<div class="outline-text-3" id="text-org44d26f9">
+<p>
+Karpathy 提到 qmd（Tobi Lutke 开发的本地 markdown 搜索引擎，支持 BM25 + 向量搜索 + LLM 重排序）。在 wiki 规模不大（100 个资料、几百个页面）时，Karpathy 自己也说 <code>index.org</code> 文件本身就能当索引用。LLM 读一下索引（几千 token），找到相关页面，直接去读。
+</p>
+
+<p>
+在这个规模下，ripgrep（ <code>rg</code> ）完全可以替代 qmd：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#22312; wiki &#20013;&#25628;&#32034;&#20851;&#38190;&#35789;
+</span>rg <span class="org-string">"&#27880;&#24847;&#21147;&#26426;&#21046;"</span> wiki/
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25628;&#32034;&#29305;&#23450; frontmatter &#23646;&#24615;
+</span>rg <span class="org-string">"#+type: concept"</span> wiki/
+</pre>
+</div>
+
+<p>
+当 wiki 增长到几百个页面、索引文件本身大到一次读不完时，再考虑引入专门的搜索工具。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1f04cb3" class="outline-3">
+<h3 id="org1f04cb3">Schema：CLAUDE.md 配置 Org-mode 规则</h3>
+<div class="outline-text-3" id="text-org1f04cb3">
+<p>
+在 <code>CLAUDE.md</code> 中定义 Org-mode 的 wiki 规则，比如：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-markdown">## Page Conventions
+
+Every wiki page MUST have org-mode property drawer:
+:PROPERTIES:
+:TITLE:    Page Title
+:TYPE:     concept | entity | source-summary | comparison
+:SOURCES:  [list of raw/ files referenced]
+:RELATED:  [list of wiki pages linked]
+:CREATED:  [YYYY-MM-DD Day]
+:UPDATED:  [YYYY-MM-DD Day]
+:CONFIDENCE: high | medium | low
+:END:
+
+## Ingest Workflow
+When I say "ingest [filename]":
+1. Read the source file in raw/
+2. Discuss key takeaways with me
+3. Create/update a summary page in wiki/sources/
+4. Update wiki/index.org
+5. Update all relevant concept and entity pages
+6. Append an entry to wiki/log.org
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7db7ec1" class="outline-3">
+<h3 id="org7db7ec1">Graph View：org-roam-ui 替代 Obsidian Graph</h3>
+<div class="outline-text-3" id="text-org7db7ec1">
+<p>
+Obsidian 的图谱视图是它的一大卖点。Org-roam 生态有 <code>org-roam-ui</code> 插件，提供类似的交互式图谱：所有 wiki 页面作为节点，所有 <code>[[roam:...]]</code> 链接作为边。在 Emacs 中用 <code>M-x org-roam-ui-open</code> 启动，浏览器中查看。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org76ac9e4" class="outline-3">
+<h3 id="org76ac9e4">总结：对应关系</h3>
+<div class="outline-text-3" id="text-org76ac9e4">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Karpathy 方案</th>
+<th scope="col" class="org-left">Org-mode 替代</th>
+<th scope="col" class="org-left">说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Obsidian</td>
+<td class="org-left">Emacs + Org-mode</td>
+<td class="org-left">文件格式从 Markdown 改为 Org</td>
+</tr>
+
+<tr>
+<td class="org-left">&#xa0;</td>
+<td class="org-left">Org-roam 双向链接</td>
+<td class="org-left">功能一致</td>
+</tr>
+
+<tr>
+<td class="org-left">Graph View</td>
+<td class="org-left">org-roam-ui</td>
+<td class="org-left">浏览器中查看交互式图谱</td>
+</tr>
+
+<tr>
+<td class="org-left">qmd 搜索</td>
+<td class="org-left">ripgrep + index.org</td>
+<td class="org-left">小规模够用，大规模再升级</td>
+</tr>
+
+<tr>
+<td class="org-left">YAML frontmatter</td>
+<td class="org-left">Org property drawer</td>
+<td class="org-left">Org-mode 原生的元数据格式</td>
+</tr>
+
+<tr>
+<td class="org-left">CLAUDE.md / AGENTS.md</td>
+<td class="org-left">CLAUDE.md</td>
+<td class="org-left">内容不变，只是规则适配 Org 格式</td>
+</tr>
+
+<tr>
+<td class="org-left">Marp 幻灯片</td>
+<td class="org-left">Org-reveal / ox-beamer</td>
+<td class="org-left">从 wiki 内容生成演示文稿</td>
+</tr>
+
+<tr>
+<td class="org-left">Dataview 查询</td>
+<td class="org-left">org-ql / org-dblock</td>
+<td class="org-left">对 frontmatter 做 SQL 式查询</td>
+</tr>
+
+<tr>
+<td class="org-left">Web Clipper</td>
+<td class="org-left">org-web-tools / curl + pandoc</td>
+<td class="org-left">把网页转为 Org 文件</td>
+</tr>
+
+<tr>
+<td class="org-left">Git</td>
+<td class="org-left">Git</td>
+<td class="org-left">完全一致</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0c0f3d2" class="outline-2">
+<h2 id="org0c0f3d2">Memex：80 年前的预言</h2>
+<div class="outline-text-2" id="text-org0c0f3d2">
+<p>
+Karpathy 在 idea file 的结尾做了一个历史联系：
+</p>
+
+<blockquote>
+<p>
+这个想法在精神上与 Vannevar Bush 1945 年的 Memex 相近——一个个人的、经过策展的知识存储，文档之间有关联路径。Bush 的愿景更接近这个东西，而不是万维网最终变成的样子：私有的、主动策展的，文档之间的连接与文档本身一样有价值。他没能解决的部分是：谁来维护。LLM 处理了这件事。
+</p>
+</blockquote>
+
+<p>
+1945 年，Vannevar Bush（MIT 工程师、美国科学研究与发展办公室主任）在《大西洋月刊》发表了一篇题为"As We May Think"的文章。他描述了一个叫 Memex（memory + index）的假想设备：一台书桌大小的机器，个人可以将所有书籍、记录和通信存储在缩微胶片上，快速搜索，并创建带有个人批注的文档链接序列（他称之为"关联路径"）。
+</p>
+
+<p>
+Bush 的核心洞察是：人脑按联想工作，不按字母顺序工作。层级化的归档系统（如图书馆目录）强迫你进入僵化的分类。Memex 让你创建自己的知识路径，把化学论文链接到经济学报告再到历史散文，遵循你自己的逻辑。
+</p>
+
+<p>
+他的一句名言："全新的百科全书形式将会出现，内建一套贯穿全文的关联路径网络。"
+</p>
+
+<p>
+Memex 直接启发了 Douglas Engelbart（读到了 Bush 的文章后"被这个想法感染"，后来发明了鼠标和个人计算概念）、Ted Nelson（1965 年创造了"超文本"一词）和 Tim Berners-Lee（1989 年的万维网）。
+</p>
+
+<p>
+但正如 Karpathy 所观察的，万维网变成了公共的、混乱的，而不是私有的、策展过的。Bush 设想的是个人的：你的知识、你的连接、你的路径。LLM Wiki 更接近那个原始愿景。
+</p>
+
+<p>
+Bush 在 1945 年无法解决的核心问题：谁来维护？创建关联路径、更新连接、保持一致性，这些都是繁琐的手工劳动。人类放弃知识系统，是因为维护负担的增长速度超过了它带来的价值。Karpathy 写道："LLM 不会厌倦，不会忘记更新一个交叉引用，可以在一次操作中触及 15 个文件。wiki 能保持维护，因为维护成本接近于零。"
+</p>
+</div>
+</div>
+
+<div id="outline-container-org62dbdc0" class="outline-2">
+<h2 id="org62dbdc0">从哪里开始</h2>
+<div class="outline-text-2" id="text-org62dbdc0">
+<p>
+Karpathy 的 idea file 不是一个蓝图，而是一颗种子。你把它交给 LLM agent，一起把它培育成适合你领域的东西。
+</p>
+
+<p>
+实操建议：从一个主题、10 份资料开始。不需要等完美工具。复制 gist 内容，粘贴给你的 agent（Claude Code、Codex 或其他），让它帮你创建目录结构和 schema 文件。然后开始摄入第一份资料。
+</p>
+
+<p>
+有一个简单的检验方法：摄入 10 份资料后，问 wiki 一个需要综合多份资料才能回答的问题。如果结构化的 wiki 给了你单独阅读每份资料时得不到的洞察，说明系统在起作用。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-28</span>
+    <span class="post-info">2026-04-29</span>
+    <a href="../../../../../tags/无主之地">无主之地</a> : <a href="../../../../../tags/karpathy">Karpathy</a> : <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/知识管理">知识管理</a> : <a href="../../../../../tags/org-mode">Org-mode</a> : <a href="../../../../../tags/wiki">wiki</a> : <a href="../../../../../tags/rag">RAG</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; p1ufsl4xqpaudj01gz3oesysqg &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
