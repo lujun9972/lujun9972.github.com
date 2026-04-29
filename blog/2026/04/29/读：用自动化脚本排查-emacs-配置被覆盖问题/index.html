@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：用自动化脚本排查 Emacs 配置被覆盖问题 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Emacs, debug, custom, elisp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：用自动化脚本排查 Emacs 配置被覆盖问题</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org530b9ff">为什么手动排查行不通</a></li>
+<li><a href="#org65331e0">调试方法：隔离环境 + 自动化脚本 + 无人值守</a>
+<ul>
+<li><a href="#orge937222">隔离环境</a></li>
+<li><a href="#orgdfd7134">自动化脚本</a></li>
+<li><a href="#orga1a6784">无人值守</a></li>
+</ul>
+</li>
+<li><a href="#orge954e4d">init.el：最小可复现配置</a></li>
+<li><a href="#org049adf4">test.el：自动化测试脚本</a>
+<ul>
+<li><a href="#org07925ce">加载包列表</a></li>
+<li><a href="#orgc24f7f6">安装嫌疑包并检查</a></li>
+<li><a href="#orge6e1cf1">卸载并安装随机包</a></li>
+<li><a href="#org7788aa8">重启进入下一轮</a></li>
+</ul>
+</li>
+<li><a href="#orgb8d0044">这套方法适用于什么问题</a></li>
+</ul>
+</div>
+</div>
+<p>
+你有没有遇到过这种情况：精心在 <code>init.el</code> 里配好的字体，重启 Emacs 后突然失效了， <code>custom-set-faces</code> 里的内容被替换成了一堆空值。Dave Q 就碰到了这个问题。他发现安装某些包时， <code>custom-set-faces</code> 中的默认字体信息会被覆盖成 <code>((t (:background nil)))</code> ，字体、字号、粗细全部丢失。
+</p>
+
+<p>
+更棘手的是，这个 bug 不是每次都复现，需要反复启动 Emacs、安装包才能触发。手动排查几乎不可能。Dave Q 的做法是写一套自动化测试脚本，让 Emacs 自己不停地装包、检查、重启，直到定位到问题。
+</p>
+
+<p>
+这篇博文解读他的调试思路，从中提取出一套通用的 Emacs 配置问题排查方法。
+</p>
+
+<blockquote>
+<p>
+原文：<a href="https://davemq.github.io/emacs/test/2026/04/27/test.html">Writing an automated test to try to find an Emacs bug</a> by Dave Q
+</p>
+</blockquote>
+
+<div id="outline-container-org530b9ff" class="outline-2">
+<h2 id="org530b9ff">为什么手动排查行不通</h2>
+<div class="outline-text-2" id="text-org530b9ff">
+<p>
+面对"装了某个包之后配置被覆盖"这类问题，直觉做法是手动装一个包、重启、检查。但这个方法有几个致命缺陷：
+</p>
+
+<ol class="org-ol">
+<li><b>复现不稳定</b> ：bug 可能只在特定的安装顺序或时机下触发，手动试几次可能碰不上</li>
+<li><b>包数量庞大</b> ：ELPA/MELPA 上有几千个包，手动逐个试不现实</li>
+<li><b>每次都要重启</b> ：Custom 写入发生在 init.el 加载阶段，改完必须完全重启才能验证</li>
+</ol>
+
+<p>
+所以需要一套自动化的循环测试：让 Emacs 自己不停地装包、检查、重启，直到发现问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org65331e0" class="outline-2">
+<h2 id="org65331e0">调试方法：隔离环境 + 自动化脚本 + 无人值守</h2>
+<div class="outline-text-2" id="text-org65331e0">
+<p>
+Dave Q 的方案分三层。
+</p>
+</div>
+
+<div id="outline-container-orge937222" class="outline-3">
+<h3 id="orge937222">隔离环境</h3>
+<div class="outline-text-3" id="text-orge937222">
+<p>
+用 <code>--init-directory</code> 参数指定一个独立的 Emacs 配置目录，不影响你日常使用的配置。这个参数是 Emacs 29 引入的，让你可以在一个干净的沙箱环境里测试，不用担心搞乱自己的 init.el。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdfd7134" class="outline-3">
+<h3 id="orgdfd7134">自动化脚本</h3>
+<div class="outline-text-3" id="text-orgdfd7134">
+<p>
+写一个 <code>test.el</code> ，让它自动完成"装包、检查配置、卸载、装下一个包"的循环。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga1a6784" class="outline-3">
+<h3 id="orga1a6784">无人值守</h3>
+<div class="outline-text-3" id="text-orga1a6784">
+<p>
+用 <code>restart-emacs</code> 命令（来自 <a href="https://github.com/iqbalansari/restart-emacs">restart-emacs 包</a>）让脚本在每轮测试结束后自动重启 Emacs，继续下一轮，不需要人守在电脑前。
+</p>
+
+<p>
+完整的测试环境结构：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org">~/bug-emacs.d/
+&#9500;&#9472;&#9472; init.el          ; &#26368;&#23567;&#21270;&#30340;&#37197;&#32622;&#25991;&#20214;&#65292;&#21482;&#21253;&#21547;&#35201;&#20445;&#25252;&#30340;&#23383;&#20307;&#35774;&#32622;
+&#9500;&#9472;&#9472; test.el          ; &#33258;&#21160;&#21270;&#27979;&#35797;&#33050;&#26412;
+&#9492;&#9472;&#9472; start-test.sh    ; &#21551;&#21160;&#33050;&#26412;
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge954e4d" class="outline-2">
+<h2 id="orge954e4d">init.el：最小可复现配置</h2>
+<div class="outline-text-2" id="text-orge954e4d">
+<p>
+init.el 只包含两样东西：要保护的字体配置，以及一个防止重启时被询问的小设置。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;;; </span><span class="org-comment">-*- lexical-binding: t -*-
+</span>(custom-set-variables
+ '(confirm-kill-processes nil))   <span class="org-comment-delimiter">; </span><span class="org-comment">&#20851;&#38381;"&#26159;&#21542;&#26432;&#27515;&#36827;&#31243;"&#30340;&#30830;&#35748;&#25552;&#31034;
+</span>
+(custom-set-faces
+ '(default ((t (<span class="org-builtin">:family</span> <span class="org-string">"Fira Code"</span> <span class="org-builtin">:foundry</span> <span class="org-string">"CTDB"</span> <span class="org-builtin">:slant</span> normal
+                <span class="org-builtin">:weight</span> medium <span class="org-builtin">:height</span> 120 <span class="org-builtin">:width</span> normal)))))
+</pre>
+</div>
+
+<p>
+<code>confirm-kill-processes</code> 设为 <code>nil</code> 是因为测试过程中 Emacs 可能在后台跟 ELPA 通信（比如刷新包列表），重启时如果不关掉这个确认提示，脚本会被弹窗卡住。这是写自动化脚本时的常见坑： <b>任何需要用户交互的提示都会让自动化流程中断</b> 。
+</p>
+
+<p>
+测试的核心思路：如果字体配置被覆盖了，init.el 中的 Fira Code 字符串就会消失。所以检查方法就是在 init.el 里搜索这段完整的 <code>custom-set-faces</code> 内容，搜不到就说明被覆盖了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org049adf4" class="outline-2">
+<h2 id="org049adf4">test.el：自动化测试脚本</h2>
+<div class="outline-text-2" id="text-org049adf4">
+<p>
+脚本的核心逻辑是一个循环：
+</p>
+
+<ol class="org-ol">
+<li>安装嫌疑包（a68-mode）</li>
+<li>检查配置是否完好</li>
+<li>如果完好：卸载嫌疑包，装一个随机包（改变环境状态），记录日志，重启进入下一轮</li>
+<li>如果被破坏：读取日志文件找到上一轮装的随机包，报告它是罪魁祸首，退出</li>
+</ol>
+
+<p>
+为什么要在每轮装一个随机包？因为这个 bug 的触发条件可能是"a68-mode + 之前装过的某个特定包"的组合。随机包就是那个变量，日志文件记录每轮装了什么，这样 bug 触发时就能回溯到是哪个包造成的。
+</p>
+</div>
+
+<div id="outline-container-org07925ce" class="outline-3">
+<h3 id="org07925ce">加载包列表</h3>
+<div class="outline-text-3" id="text-org07925ce">
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">progn</span>
+  (list-packages)           <span class="org-comment-delimiter">; </span><span class="org-comment">&#35302;&#21457;&#21253;&#21015;&#34920;&#21047;&#26032;&#65292;&#25343;&#21040;&#25152;&#26377;&#21487;&#29992;&#30340;&#21253;
+</span>  (set-buffer <span class="org-string">"*Packages*"</span>))
+</pre>
+</div>
+
+<p>
+<code>list-packages</code> 会连接 ELPA/MELPA 获取包列表。后续的 <code>package-install</code> 和 <code>package-archive-contents</code> 都依赖这个列表已经加载好了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc24f7f6" class="outline-3">
+<h3 id="orgc24f7f6">安装嫌疑包并检查</h3>
+<div class="outline-text-3" id="text-orgc24f7f6">
+<div class="org-src-container">
+<pre class="src src-elisp">(message <span class="org-string">"%s"</span> <span class="org-string">"Installing a68-mode"</span>)
+(sit-for 0.5)
+(package-install 'a68-mode)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#26816;&#26597;&#23383;&#20307;&#37197;&#32622;&#26159;&#21542;&#36824;&#22312;
+</span>(find-file (locate-user-emacs-file <span class="org-string">"init.el"</span>))
+(<span class="org-keyword">if</span> (not (search-forward <span class="org-string">"(custom-set-faces ... &#23436;&#25972;&#30340;&#23383;&#20307;&#37197;&#32622; ..."</span> nil t))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#37197;&#32622;&#34987;&#30772;&#22351;&#20102;&#65281;&#35835;&#21462;&#26085;&#24535;&#65292;&#25253;&#21578;&#32618;&#39745;&#31096;&#39318;
+</span>    (<span class="org-keyword">progn</span>
+      (find-file <span class="org-string">"last-installed.txt"</span>)
+      (display-message-or-buffer
+       (format <span class="org-string">"Install of %s caused subsequent install of a68-mode to lose font information"</span>
+               (buffer-string)))
+      (sit-for 0.5)
+      (kill-emacs))
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#37197;&#32622;&#23436;&#22909;&#65292;&#32487;&#32493;&#27979;&#35797;
+</span>  ...)
+</pre>
+</div>
+
+<p>
+注意 <code>search-forward</code> 用的是完整的 <code>custom-set-faces</code> S-表达式作为搜索目标，而不是只搜 "Fira Code"。原因：只搜字体名只能检测到字体被换掉的情况，检测不到整个 <code>custom-set-faces</code> 被替换成 <code>((t (:background nil)))</code> 的情况。搜完整表达式能捕获所有变化。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge6e1cf1" class="outline-3">
+<h3 id="orge6e1cf1">卸载并安装随机包</h3>
+<div class="outline-text-3" id="text-orge6e1cf1">
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#21368;&#36733;&#23244;&#30097;&#21253;
+</span>(package-delete (package-get-descriptor 'a68-mode))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#20174;&#25152;&#26377;&#21487;&#29992;&#21253;&#20013;&#38543;&#26426;&#36873;&#19968;&#20010;&#23433;&#35013;
+</span>(<span class="org-keyword">let</span> ((pkg (car (seq-random-elt package-archive-contents))))
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#35760;&#24405;&#21040;&#26085;&#24535;&#25991;&#20214;
+</span>  (<span class="org-keyword">save-current-buffer</span>
+    (<span class="org-keyword">let</span> ((buffer (find-file <span class="org-string">"last-installed.txt"</span>)))
+      (set-buffer buffer)
+      (kill-region (point-min) (point-max))
+      (print pkg buffer)
+      (save-buffer)))
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23433;&#35013;&#36873;&#20013;&#30340;&#21253;
+</span>  (message <span class="org-string">"Installing %s"</span> pkg)
+  (sit-for 1)
+  (<span class="org-keyword">ignore-errors</span> (package-install pkg)))   <span class="org-comment-delimiter">; </span><span class="org-comment">&#38450;&#27490;&#23433;&#35013;&#22833;&#36133;&#20013;&#26029;&#25972;&#20010;&#27979;&#35797;</span>
+</pre>
+</div>
+
+<p>
+<code>ignore-errors</code> 包裹 <code>package-install</code> 是必要的：有些包可能安装失败（依赖缺失、网络问题等），不能让一个安装失败把整个测试链打断。
+</p>
+
+<p>
+日志文件的作用：记录每轮安装了哪个随机包。当 bug 触发时，日志文件里保存的就是"上一轮装的包"，即嫌疑犯。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7788aa8" class="outline-3">
+<h3 id="org7788aa8">重启进入下一轮</h3>
+<div class="outline-text-3" id="text-org7788aa8">
+<div class="org-src-container">
+<pre class="src src-elisp">(message <span class="org-string">"%s"</span> <span class="org-string">"Restarting emacs"</span>)
+(sit-for 0.5)
+(restart-emacs)
+</pre>
+</div>
+
+<p>
+<code>restart-emacs</code> 会完全关闭当前 Emacs 进程并启动一个新的，新进程继承相同的命令行参数（包括 <code>--init-directory</code> ），测试会在同一个隔离环境中重新开始。这就形成了一个无人值守的循环。
+</p>
+
+<p>
+需要注意的是， Dave Q 的原始方案依赖 <code>restart-emacs</code> 来实现循环重启，而他的 <code>start-test.sh</code> 只执行一次 Emacs。如果不想依赖 <code>restart-emacs</code> 这个第三方包，可以把 <code>restart-emacs</code> 调用替换为 <code>(kill-emacs 0)</code> ，用 shell 循环来不断重启 Emacs ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">sh</span><span class="org-comment">
+</span><span class="org-variable-name">TESTDIR</span>=$<span class="org-variable-name">HOME</span>/bug-emacs.d
+<span class="org-builtin">cd</span> <span class="org-string">"$TESTDIR"</span>
+<span class="org-keyword">while</span> true; <span class="org-keyword">do</span>
+    emacs --init-directory=<span class="org-string">"$TESTDIR"</span> --load <span class="org-string">"$TESTDIR/test.el"</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">test.el &#22312;&#21457;&#29616; bug &#26102;&#29992; (kill-emacs 1) &#36820;&#22238;&#38750;&#38646;&#36864;&#20986;&#30721;
+</span>    <span class="org-keyword">if</span> [ $<span class="org-variable-name">?</span> -ne 0 ]; <span class="org-keyword">then</span>
+        <span class="org-builtin">echo</span> <span class="org-string">"Bug found! Check last-installed.txt"</span>
+        <span class="org-keyword">break</span>
+    <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<p>
+这个 shell 循环版本更可靠：不依赖 <code>restart-emacs</code> 包，通过退出码判断是否发现了 bug。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb8d0044" class="outline-2">
+<h2 id="orgb8d0044">这套方法适用于什么问题</h2>
+<div class="outline-text-2" id="text-orgb8d0044">
+<p>
+Dave Q 的方法本质上是把"人肉排查"变成了"脚本排查"。它适用于以下场景：
+</p>
+
+<ol class="org-ol">
+<li><b>配置被意外覆盖</b> ：不仅限于字体，任何写在 <code>custom-set-*</code> 中的设置被篡改都可以用这个方法定位</li>
+<li><b>安装某个包后行为异常</b> ：快捷键绑定变了、mode 设置被覆盖、face 被修改等</li>
+<li><b>问题不稳定复现</b> ：需要反复触发才能出现的 bug</li>
+</ol>
+
+<p>
+它的局限：
+</p>
+
+<ul class="org-ul">
+<li>只能定位到"哪个包导致了问题"，不能告诉你"为什么"</li>
+<li>如果 bug 是多个包组合触发的，这个单变量测试法会漏掉</li>
+<li>测试过程会实际安装大量包，虽然是在隔离目录中，但仍然会占用磁盘空间和网络带宽</li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-29</span>
+    <span class="post-info">2026-04-29</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/debug">debug</a> : <a href="../../../../../tags/custom">custom</a> : <a href="../../../../../tags/elisp">elisp</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 55b1k242ucjetgnjxksdzdt5xa &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

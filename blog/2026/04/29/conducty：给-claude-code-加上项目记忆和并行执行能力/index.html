@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Conducty：给 Claude Code 加上项目记忆和并行执行能力 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="无主之地, AI, Claude Code, Conducty, Obsidian, 知识管理" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Conducty：给 Claude Code 加上项目记忆和并行执行能力</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd27b13c">安装</a></li>
+<li><a href="#orgf73c1e7">第一个计划：Bootstrap</a></li>
+<li><a href="#org213a15b">每个计划的工作流</a>
+<ul>
+<li><a href="#org66f4528">Shape（塑形）</a></li>
+<li><a href="#orgdeb05b6">Plan（规划）</a></li>
+<li><a href="#org8313ba1">Trace（追踪）</a></li>
+<li><a href="#org705fa88">Execute（执行）</a></li>
+<li><a href="#orge8e1a6a">Verify（验证）</a></li>
+<li><a href="#org7591643">Improve（改进）</a></li>
+</ul>
+</li>
+<li><a href="#orgb0c0821">知识库：项目的长期记忆</a></li>
+<li><a href="#org32f1fe3">进阶：推荐学习路径</a>
+<ul>
+<li><a href="#orgd8edf47">前 1 个计划</a></li>
+<li><a href="#org768d40e">第 2-3 个计划</a></li>
+<li><a href="#orgeb847ba">第 4-5 个计划</a></li>
+<li><a href="#org10e084d">几个计划之后</a></li>
+<li><a href="#orge636f9a">高级技能</a></li>
+</ul>
+</li>
+<li><a href="#orgc105222">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Conducty 是一个开源的 Claude Code 技能包（skill pack），它解决两个问题：第一，每次开新的 Claude Code session，AI 对你项目的了解从零开始，之前 session 里踩过的坑、积累的经验全部丢失；第二，如果你想让多个 AI 子智能体并行处理不同的任务，缺少一个结构化的执行和审查框架。Conducty 的方案是用一个 Obsidian 知识库（vault）作为"项目记忆"，把计划、设计、上下文、失败模式、指标数据都写成互相链接的笔记，下次 AI 做计划时直接读取这些笔记，越用越精准。
+</p>
+
+<p>
+本文是一篇实操指南：怎么装、怎么用、第一个计划怎么跑、进阶怎么玩。
+</p>
+
+<div id="outline-container-orgd27b13c" class="outline-2">
+<h2 id="orgd27b13c">安装</h2>
+<div class="outline-text-2" id="text-orgd27b13c">
+<p>
+前提条件：已安装 Claude Code 和 Git。
+</p>
+
+<p>
+Conducty 的安装做了三件事：把技能文件（skill）链接到 Claude Code 的技能目录，把工作流规则追加到 Claude Code 的全局配置，创建一个 Obsidian 知识库并填充索引笔记。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">git clone https://github.com/conducty/conducty.git ~/conducty
+<span class="org-builtin">cd</span> ~/conducty
+<span class="org-builtin">export</span> <span class="org-variable-name">CONDUCTY_VAULT</span>=<span class="org-string">"$HOME/Obsidian/Conducty"</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">&#21487;&#36873;&#65292;&#40664;&#35748;&#23601;&#26159;&#36825;&#20010;&#36335;&#24452;
+</span>chmod +x install-claude-code.sh
+./install-claude-code.sh
+</pre>
+</div>
+
+<p>
+如果你想手动安装（比如只想要部分功能），核心步骤是：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">1. &#38142;&#25509;&#25216;&#33021;&#25991;&#20214;
+</span>mkdir -p ~/.claude/skills
+<span class="org-keyword">for</span> skill<span class="org-keyword"> in</span> ~/conducty/skills/conducty-*; <span class="org-keyword">do</span>
+    ln -sf <span class="org-string">"$skill"</span> ~/.claude/skills/<span class="org-string">"$(</span><span class="org-sh-quoted-exec">basename "$skill"</span><span class="org-string">)"</span>
+<span class="org-keyword">done</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">2. &#36861;&#21152;&#35268;&#21017;&#21040; CLAUDE.md&#65288;install &#33050;&#26412;&#20250;&#33258;&#21160;&#22788;&#29702;&#65292;&#25163;&#21160;&#26041;&#24335;&#30452;&#25509; cat&#65289;
+</span>cat ~/conducty/CLAUDE.md &gt;&gt; ~/.claude/CLAUDE.md
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">3. &#21019;&#24314;&#30693;&#35782;&#24211;&#30446;&#24405;
+</span>mkdir -p ~/Obsidian/Conducty
+</pre>
+</div>
+
+<p>
+安装完后重启 Claude Code 让它发现新技能。
+</p>
+
+<p>
+卸载也很干净：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">rm -f ~/.claude/skills/conducty-*
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#28982;&#21518;&#20174; ~/.claude/CLAUDE.md &#20013;&#21024;&#38500; "# --- Conducty Rules ---" &#21040; "# --- End Conducty Rules ---" &#20043;&#38388;&#30340;&#20869;&#23481;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf73c1e7" class="outline-2">
+<h2 id="orgf73c1e7">第一个计划：Bootstrap</h2>
+<div class="outline-text-2" id="text-orgf73c1e7">
+<p>
+安装完成后，在任意项目目录下打开 Claude Code，输入：
+</p>
+
+<pre class="example" id="orgb51f37d">
+set up Conducty
+</pre>
+
+<p>
+这会触发 <code>conducty-bootstrap</code> 技能，带你走一遍完整的计划周期。下面是一个实际的对话例子：
+</p>
+
+<pre class="example" id="orgc413dcf">
+你：set up Conducty
+Claude：Conducty vault 在 ~/Obsidian/Conducty。继续吗？
+你：可以
+Claude：从哪个项目开始？
+你：~/code/my-app
+Claude：[运行 conducty-context，生成 7 条知识库笔记：
+        Context My App + Architecture/Conventions/Invariants/
+        Hotspots/Tests/Glossary]
+        发现 4 个限界上下文：auth、billing、api、db。
+        测试命令：npm test。选一个小目标吧。
+你：用 TDD 方式添加一个日期格式化辅助函数
+Claude：[运行 conducty-plan，30 分钟需求预算，单个提示词，
+        仅验证，不并行]
+        计划笔记已写入：Plan 2026-04-27 1430 Date Helper.md
+        在 Obsidian 中打开它，把提示词复制到一个新的 Claude Code 会话中。
+你：[粘贴提示词，执行者先写测试再写代码，验证通过]
+你：搞定了
+Claude：[运行 conducty-checkpoint → conducty-review → conducty-improve。
+        更新计划索引、指标、提示词日志；
+        写入 Improvement 2026-04-27 1500.md]
+        第一个计划完成。通过率：100%。
+</pre>
+
+<p>
+走完这一遍，你就有了：一个能工作的知识库，每个项目 7 条笔记，以及第一条改进记录。之后每次会话都从 <code>conducty-plan</code> 开始。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org213a15b" class="outline-2">
+<h2 id="org213a15b">每个计划的工作流</h2>
+<div class="outline-text-2" id="text-org213a15b">
+<p>
+Conducty 把一个计划拆成六个阶段，形成一个闭环：
+</p>
+
+<pre class="example" id="org8af454d">
+Shape → Plan → Trace → Execute → Verify → Improve
+  ↑                                     |
+  └────────── feedback ─────────────────┘
+</pre>
+</div>
+
+<div id="outline-container-org66f4528" class="outline-3">
+<h3 id="org66f4528">Shape（塑形）</h3>
+<div class="outline-text-3" id="text-org66f4528">
+<p>
+设定时间预算（appetite），定义做什么和不做什么，产出一份设计笔记。中高复杂度的目标才会走这一步，简单任务直接跳到 Plan。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdeb05b6" class="outline-3">
+<h3 id="orgdeb05b6">Plan（规划）</h3>
+<div class="outline-text-3" id="text-orgdeb05b6">
+<p>
+把设计拆成带时间预算的提示词（prompt），每组标记一个追踪弹（tracer），并根据风险分配审查等级：低风险只验证，中风险做规格审查，高风险做完整审查。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8313ba1" class="outline-3">
+<h3 id="org8313ba1">Trace（追踪）</h3>
+<div class="outline-text-3" id="text-org8313ba1">
+<p>
+每组先跑一个追踪弹提示词，验证计划的假设是否成立。追踪弹失败说明计划本身有问题，需要改计划而不是改代码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org705fa88" class="outline-3">
+<h3 id="org705fa88">Execute（执行）</h3>
+<div class="outline-text-3" id="text-org705fa88">
+<p>
+剩余的提示词通过 Claude Code 的 Task 工具作为子智能体并行执行。如果多个提示词要改同一个代码仓库，Conducty 会用 Git worktree 创建隔离的工作副本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge8e1a6a" class="outline-3">
+<h3 id="orge8e1a6a">Verify（验证）</h3>
+<div class="outline-text-3" id="text-orge8e1a6a">
+<p>
+每组完成后设检查点，计算健康指标（首次通过率、重试次数、阻塞数），检测系统性故障（2 个以上关联失败说明是计划层面的问题）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7591643" class="outline-3">
+<h3 id="org7591643">Improve（改进）</h3>
+<div class="outline-text-3" id="text-org7591643">
+<p>
+对比目标和实际结果，提取失败模式，设计下一个实验。写入一条改进笔记，这就是 Conducty 成为"学习系统"的关键：不改变行为的记录只是日志。
+</p>
+
+<p>
+计划之外还有两个收尾步骤：
+</p>
+
+<ul class="org-ul">
+<li><code>conducty-code-review</code> ：对整个分支做五维审查（规格对齐、正确性、安全性、架构耦合、测试可维护性）</li>
+<li><code>conducty-ship</code> ：合并前的关卡，跑六个检查项（代码审查结论、lint、类型检查、测试、密钥扫描、依赖漏洞检查），输出绿灯 <i>黄灯</i> 红灯</li>
+</ul>
+
+<p>
+日常使用时，你的操作只有三步：
+</p>
+
+<pre class="example" id="org881eb41">
+plan this work: 重构计费模块，用新的税率引擎
+review my changes
+ship it
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb0c0821" class="outline-2">
+<h2 id="orgb0c0821">知识库：项目的长期记忆</h2>
+<div class="outline-text-2" id="text-orgb0c0821">
+<p>
+这个思路和 Karpathy 的 LLM Wiki 一脉相承。Karpathy 的核心洞察是：与其每次提问时让 AI 去 RAG 检索文档（一次性的、没有积累），不如让 AI 维护一个 wiki（每次编辑都会留下痕迹，知识复利增长）。Conducty 把同样的道理用在了编程工作流上：与其每次 session 让 AI 从零理解你的项目，不如让它维护一个知识库，每次计划的成败都写进去，下次直接读取。关于 Karpathy 的 LLM Wiki 设计，见<a href="读-Karpathy的LLM-Wiki--让AI帮你维护知识库.html">这篇博文</a>的解读。
+</p>
+
+<p>
+Conducty 不把状态存在一个平淡无奇的日志文件里，而是一个 Obsidian 知识库。每个计划、每个设计、每次改进都是一条独立笔记，笔记之间用维基链接（ <code>[[Plan 2026-04-27]]</code> 这种格式）串联。下一个计划读取这个知识网络，继承之前所有信息。
+</p>
+
+<p>
+知识库的目录结构：
+</p>
+
+<pre class="example" id="orgf72438e">
+~/Obsidian/Conducty/
+├── Conducty Index.md           # 根入口
+├── Indexes/
+│   ├── Plans Index.md          # 所有计划的索引
+│   ├── Designs Index.md        # 所有设计的索引
+│   ├── Context Index.md        # 所有项目上下文的索引
+│   └── Improvements Index.md   # 所有改进记录的索引
+├── Accumulators/
+│   ├── Failure Patterns.md     # 失败模式（持续累积）
+│   ├── Metrics.md              # 指标数据（每个计划一行）
+│   └── Prompt Log.md           # 提示词日志
+├── Plans/                      # 计划笔记（带时间戳命名）
+├── Designs/                    # 设计笔记
+├── Improvements/               # 改进笔记
+├── Code Reviews/               # 代码审查笔记
+├── Ship Reports/               # 发布报告
+└── Context/
+    └── my-app/                 # 每个项目一个子目录
+        ├── Context my-app.md   # 项目中心笔记
+        ├── Context my-app Architecture.md
+        ├── Context my-app Conventions.md
+        ├── Context my-app Invariants.md
+        ├── Context my-app Hotspots.md
+        ├── Context my-app Tests.md
+        └── Context my-app Glossary.md
+</pre>
+
+<p>
+有两个值得注意的设计。第一，累积型笔记（Accumulators）： <code>Failure Patterns</code> 、 <code>Metrics</code> 、 <code>Prompt Log</code> 不是每次创建新文件，而是在同一个文件里持续追加。这意味着 AI 读取时只需要打开一个文件就能看到所有历史。第二，每个项目的上下文拆成 7 个维度（架构、编码规范、不变量、热点区域、测试、术语表、模块），而不是一个笼统的 README。这让 AI 在做计划时可以精确加载它需要的信息，而不是把整个项目文档塞进 context window。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org32f1fe3" class="outline-2">
+<h2 id="org32f1fe3">进阶：推荐学习路径</h2>
+<div class="outline-text-2" id="text-org32f1fe3">
+<p>
+Conducty 的 README 建议了一个渐进式的学习路径：
+</p>
+</div>
+
+<div id="outline-container-orgd8edf47" class="outline-3">
+<h3 id="orgd8edf47">前 1 个计划</h3>
+<div class="outline-text-3" id="text-orgd8edf47">
+<p>
+只用手动模式，不用 <code>conducty-execute</code> （自动子智能体）。复制计划笔记里的提示词到新 session 中手动运行，目的是理解每个步骤在做什么。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org768d40e" class="outline-3">
+<h3 id="org768d40e">第 2-3 个计划</h3>
+<div class="outline-text-3" id="text-org768d40e">
+<p>
+开始用 Medium 复杂度目标，这会触发 <code>conducty-shape</code> （塑形流程），学习怎么设需求预算和排除区。低复杂度的提示词可以开始用自动执行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgeb847ba" class="outline-3">
+<h3 id="orgeb847ba">第 4-5 个计划</h3>
+<div class="outline-text-3" id="text-orgeb847ba">
+<p>
+全部用自动执行。观察追踪弹策略怎么提前捕获错误的假设。打开 <code>Improvements Index</code> ，看改进实验是否真的在影响后续计划。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org10e084d" class="outline-3">
+<h3 id="org10e084d">几个计划之后</h3>
+<div class="outline-text-3" id="text-org10e084d">
+<p>
+看 <code>Accumulators/Metrics.md</code> 里的数据。如果首次通过率低于 70%，说明提示词质量需要提升。如果某个失败模式反复出现，那就是最高杠杆的改进点。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge636f9a" class="outline-3">
+<h3 id="orge636f9a">高级技能</h3>
+<div class="outline-text-3" id="text-orge636f9a">
+<ul class="org-ul">
+<li><code>conducty-dialectic</code> ：六角色结构化辩论，用于有真正权衡取舍的架构决策（不要用在简单选择上）</li>
+<li><code>conducty-worktrees</code> ：当 3 个以上提示词要改同一个仓库时，用 Git worktree 做隔离</li>
+<li>自定义提示词模板：在 <code>skills/conducty-plan/prompt-templates/</code> 下新建 <code>.md</code> 文件，覆盖 Conducty 没有内置的工作类型</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc105222" class="outline-2">
+<h2 id="orgc105222">总结</h2>
+<div class="outline-text-2" id="text-orgc105222">
+<p>
+Conducty 的核心卖点不是某个具体功能，而是三个设计决策的组合：
+</p>
+
+<p>
+第一，把 AI 的工作状态存在一个可浏览、可链接的知识库里，而不是让它在 session 结束时消失。这让 AI 能从过去的经验中学习，而不是每次从零开始。
+</p>
+
+<p>
+第二，用工程方法论（Shape Up 的需求预算、追踪弹、丰田 Kata 的改进循环）约束 AI 的工作方式，而不是给 AI 一个开放式的任务然后祈祷它做对。
+</p>
+
+<p>
+第三，根据风险调整审查力度。低风险改动只验证能跑就行，高风险改动走完整审查流程，不浪费精力也不埋隐患。
+</p>
+
+<p>
+这三个决策都不依赖 Obsidian 或任何特定工具。Conducty 选择 Obsidian 做实现，是因为维基链接和图谱视图天然适合知识网络。工具不同，方法论相通。
+</p>
+
+<p>
+Conducty 背后的工程原则（Shape Up、丰田 Kata、程序员修炼之道、Release It!）在<a href="../编程之旅/读-Conducty的工程原则.html"> 上一篇博文 </a> 中有详细解读。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-29</span>
+    <span class="post-info">2026-04-29</span>
+    <a href="../../../../../tags/无主之地">无主之地</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/claude-code">Claude Code</a> : <a href="../../../../../tags/conducty">Conducty</a> : <a href="../../../../../tags/obsidian">Obsidian</a> : <a href="../../../../../tags/知识管理">知识管理</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 55b1k242ucjetgnjxksdzdt5xa &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
