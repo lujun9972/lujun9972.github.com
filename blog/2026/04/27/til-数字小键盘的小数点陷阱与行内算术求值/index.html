@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: 数字小键盘的小数点陷阱与行内算术求值 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="TIL Emacs 键盘配置" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: 数字小键盘的小数点陷阱与行内算术求值</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org043dea2">问题：数字小键盘打不出小数点</a></li>
+<li><a href="#orgc7d54c6">延伸：行内算术求值</a></li>
+</ul>
+</div>
+</div>
+<p>
+Marcin Borkowski 的一篇文章<sup><a id="fnr.1" class="footref" href="#fn.1" role="doc-backlink">1</a></sup>揭示了一个容易忽略的 Emacs 键盘行为：数字小键盘右下角那个用来分隔整数和小数部分的键——在 Emacs 里被硬编码为逗号。
+</p>
+
+<p>
+<b>注意：这个问题只影响欧洲键盘布局（波兰、德国、法国等）。这些布局下，该键发送的是 <code>kp-separator</code> 按键符号；而美式和中文键盘布局下，该键直接发送 <code>.</code> 字符，不受此问题影响。</b>
+</p>
+
+<div id="outline-container-org043dea2" class="outline-2">
+<h2 id="org043dea2">问题：数字小键盘打不出小数点</h2>
+<div class="outline-text-2" id="text-org043dea2">
+<p>
+受影响的用户在数字小键盘上按那个键想输入小数点，结果得到的是逗号。用 <code>C-h c</code> 查看这个键的 Emacs 名称：
+</p>
+
+<pre class="example" id="orgbc018a2">
+, 'COMMA' (translated from &lt;kp-separator&gt;) runs the command self-insert-command
+</pre>
+
+<p>
+关键在 <code>&lt;kp-separator&gt;</code> 这个名字。Emacs 在 <code>simple.el</code> 里把 <code>kp-separator</code> 硬编码映射为逗号：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(mapc
+ (<span class="org-keyword">lambda</span> (keypad-normal)
+   (<span class="org-keyword">let</span> ((keypad (nth 0 keypad-normal))
+         (normal (nth 1 keypad-normal)))
+     (put keypad 'ascii-character normal)
+     (define-key function-key-map (vector keypad) (vector normal))))
+ '((kp-space ?\s)
+   (kp-tab ?\t)
+   (kp-enter ?\r)
+   (kp-separator ?,)   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#8592; &#36825;&#37324;
+</span>   (kp-equal ?=)
+   ...))
+</pre>
+</div>
+
+<p>
+这个映射和你的系统语言设置无关——不管你用的是中文、英文还是波兰文环境， <code>kp-separator</code> 一律变成逗号。修复方法是在配置中覆盖这个映射：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(keymap-set function-key-map <span class="org-string">"&lt;kp-separator&gt;"</span> <span class="org-string">"."</span>)
+</pre>
+</div>
+
+<p>
+<code>function-key-map</code> 的机制是：按键先经过这个映射表转换，再交给后续的 keymap 处理。所以这一行配置的效果是，在所有模式中都把数字小键盘的分隔键变成小数点，而不是逗号。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc7d54c6" class="outline-2">
+<h2 id="orgc7d54c6">延伸：行内算术求值</h2>
+<div class="outline-text-2" id="text-orgc7d54c6">
+<p>
+原文还提到了一个实用技巧：在任意 buffer 中将光标左侧的算术表达式直接替换为计算结果。核心逻辑很简洁：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">fast-calc</span> (currency)
+  <span class="org-doc">"&#23558;&#20809;&#26631;&#24038;&#20391;&#30340;&#31639;&#26415;&#34920;&#36798;&#24335;&#26367;&#25442;&#20026;&#35745;&#31639;&#32467;&#26524;&#12290;
+&#24102;&#21069;&#32512;&#21442;&#25968;&#26102;&#65292;&#20445;&#30041;&#20004;&#20301;&#23567;&#25968;&#24182;&#36861;&#21152;&#36135;&#24065;&#21518;&#32512;&#12290;"</span>
+  (<span class="org-keyword">interactive</span> <span class="org-string">"P"</span>)
+  (<span class="org-keyword">when</span> (looking-back <span class="org-string">"[-+/*().0-9]\\{2,\\} *"</span>
+                      (line-beginning-position)
+                      t)
+    (replace-match
+     (<span class="org-keyword">save-match-data</span>
+       (calc-eval (<span class="org-keyword">if</span> currency
+                      (list
+                       (concat (match-string-no-properties 0) <span class="org-string">"+0.0"</span>)
+                       'calc-float-format
+                       '(fix 2))
+                    (match-string-no-properties 0))))
+     t t)
+    (<span class="org-keyword">if</span> currency (insert <span class="org-string">" PLN"</span>))))
+</pre>
+</div>
+
+<p>
+使用方式：在 <code>12.5*3</code> 后面按 <code>M-x fast-calc</code> ，表达式被替换为 <code>37.5</code> 。带前缀参数（ <code>C-u M-x fast-calc</code> ）则保留两位小数并追加货币后缀，比如 <code>12.5*3</code> → <code>37.50 PLN</code> 。
+</p>
+
+<p>
+原理是 <code>calc-eval</code> 接受一个字符串（算术表达式）并返回结果字符串。传入列表形式时可以控制格式—— <code>(fix 2)</code> 表示固定两位小数。 <code>looking-back</code> 用正则匹配光标左侧的数字和运算符序列， <code>replace-match</code> 把匹配到的内容替换为计算结果。
+</p>
+</div>
+</div>
+<div id="footnotes">
+<h2 class="footnotes">&#33050;&#27880;: </h2>
+<div id="text-footnotes">
+
+<div class="footdef"><sup><a id="fn.1" class="footnum" href="#fnr.1" role="doc-backlink">1</a></sup> <div class="footpara" role="doc-footnote"><p class="footpara">
+<a href="https://mbork.pl/2026-04-25_How_I_use_my_numeric_keypad_with_Emacs_Ledger_mode">How I use my numeric keypad with Emacs Ledger mode</a>
+</p></div></div>
+
+
+</div>
+</div>
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-27</span>
+    <span class="post-info">2026-04-29</span>
+    <a href="../../../../../tags/til-emacs-键盘配置">TIL Emacs 键盘配置</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 2osajyitlete3e1bz4zdzzvpig &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

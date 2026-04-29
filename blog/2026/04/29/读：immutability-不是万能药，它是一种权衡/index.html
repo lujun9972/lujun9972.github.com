@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Immutability 不是万能药，它是一种权衡 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Clojure, Java, 不可变性, 并发, 函数式编程" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Immutability 不是万能药，它是一种权衡</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2ca1257">代码层：不可变性基本是稳赚的</a>
+<ul>
+<li><a href="#orgc55e061">并发问题不是线程造成的，是共享可变状态造成的</a></li>
+<li><a href="#org76e1b9f">代码层结论</a></li>
+</ul>
+</li>
+<li><a href="#orgb2cefec">数据层：从"改一个字段"到"记一笔历史"</a>
+<ul>
+<li><a href="#org1a7c7eb">状态模型 vs 事件模型</a></li>
+<li><a href="#org8f2200f">事件模型的代价</a></li>
+<li><a href="#orgc267351">什么时候该用事件模型</a></li>
+<li><a href="#org9e47bfc">Clojure 中的 reduce 和事件模型</a></li>
+<li><a href="#org28ed6b6">不可变模型的几种变体</a></li>
+</ul>
+</li>
+<li><a href="#orga5cc8db">API 层：Command 和 Event 不是一回事</a>
+<ul>
+<li><a href="#orgb5dd689">什么时候用 Command/Event 风格</a></li>
+<li><a href="#orgb4f221e">Clojure 的 multimethod 视角</a></li>
+</ul>
+</li>
+<li><a href="#org528fa1f">三个层面的权衡总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://dev.to/ivangavlik/immutability-not-a-universal-law-but-a-trade-off-4lng">Immutability: Not a Universal Law, But a Trade-off</a>
+</p>
+
+<p>
+不可变性（immutability）是指数据一旦创建就不再修改，每次"修改"都产生新版本，这通常被认为是函数式编程的金科玉律。但原文作者 Ivan Gavlik 认为：不可变性不是一个普适法则，而是一种需要根据场景做取舍的权衡。他从代码层、数据层、API 层三个层面分析了不可变性的适用边界。
+</p>
+
+<p>
+作为一个 Clojure 程序员，我想从 Clojure 的视角重新审视这篇文章的论点。Clojure 的核心数据结构（list、vector、map、set）全部默认不可变——你没法修改一个 Clojure map 里的某个键值对，只能通过 <code>assoc</code> 或 <code>dissoc</code> 生成一个新 map。这不像 Java 那样需要程序员主动选择用 <code>final</code> 或不可变集合，在 Clojure 里不可变性就是唯一的选择。但即便如此，Clojure 也在很多地方做了务实的妥协（比如 =atom=、=transient=）。这些妥协本身就能帮我们理解"什么时候该用不可变性，什么时候不该用"。
+</p>
+
+<div id="outline-container-org2ca1257" class="outline-2">
+<h2 id="org2ca1257">代码层：不可变性基本是稳赚的</h2>
+<div class="outline-text-2" id="text-org2ca1257">
+<p>
+在单个函数的粒度上，选择不可变性几乎总是对的。原文的论点很简单： <code>不可变 = 没有隐藏的副作用 = 更容易理解和测试</code> 。
+</p>
+
+<p>
+Clojure 天然就是这样的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn add-balance [user amount]
+  (update user :balance + amount))
+
+(def user {:id 1 :balance 100})
+(def updated-user (add-balance user 20))
+
+;; user 不变，updated-user 是新的 map
+updated-user
+;; =&gt; {:id 1 :balance 120}
+</pre>
+</div>
+
+<pre class="example" id="org3638b52">
+user 保持不变，updated-user 是一个全新的 map。这就是 Clojure 的默认行为,所有数据结构都是不可变的。
+</pre>
+</div>
+
+<div id="outline-container-orgc55e061" class="outline-3">
+<h3 id="orgc55e061">并发问题不是线程造成的，是共享可变状态造成的</h3>
+<div class="outline-text-3" id="text-orgc55e061">
+<p>
+原文用 Java 展示了一个经典的竞态条件：多个线程同时给 <code>balance+=1</code> ，期望结果是 1000000，实际得到的数字远小于此且不可预测。问题出在 <code>this.balance += amount</code> 这一行——它不是原子操作，两个线程可以交错执行。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-keyword">public</span> <span class="org-keyword">class</span> <span class="org-type">User</span> {
+    <span class="org-keyword">private</span> <span class="org-type">int</span> <span class="org-variable-name">balance</span>;
+
+    <span class="org-keyword">public</span> <span class="org-type">void</span> <span class="org-function-name">addBalance</span>(<span class="org-type">int</span> <span class="org-variable-name">amount</span>) {
+        <span class="org-keyword">this</span>.balance += amount; <span class="org-comment-delimiter">// </span><span class="org-comment">&#38750;&#21407;&#23376;&#25805;&#20316;
+</span>    }
+
+    <span class="org-keyword">public</span> <span class="org-type">int</span> <span class="org-function-name">getBalance</span>() {
+        <span class="org-keyword">return</span> balance;
+    }
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">10 &#20010;&#32447;&#31243;&#21508;&#25191;&#34892; 100000 &#27425; +1&#65292;&#26399;&#26395;&#32467;&#26524; 1000000
+</span><span class="org-type">User</span> <span class="org-variable-name">user</span> = <span class="org-keyword">new</span> <span class="org-type">User</span>(); <span class="org-comment-delimiter">// </span><span class="org-comment">balance = 0
+</span><span class="org-type">Thread</span>[] <span class="org-variable-name">threads</span> = <span class="org-keyword">new</span> <span class="org-type">Thread</span>[10];
+<span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">t</span> = 0; t &lt; 10; t++) {
+    threads[t] = <span class="org-keyword">new</span> <span class="org-type">Thread</span>(() -&gt; {
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 100000; i++) {
+            user.addBalance(1);
+        }
+    });
+    threads[t].start();
+}
+<span class="org-keyword">for</span> (<span class="org-type">Thread</span> <span class="org-variable-name">t</span> : threads) t.join();
+System.out.println(<span class="org-string">"Final balance: "</span> + user.getBalance());
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#26399;&#26395; 1000000&#65292;&#23454;&#38469;&#21487;&#33021;&#26159; 312338&#12289;239592 &#31561;&#19981;&#30830;&#23450;&#30340;&#25968;&#23383;</span>
+</pre>
+</div>
+
+<p>
+Java 的解决这一问题的方法有好几种： <code>synchronized</code> （加锁，有效但代价高）、 <code>AtomicInteger</code> （Java 提供的一种整数类型，内部用 CPU 的 CAS 指令保证 <code>+=1</code> 这类操作不会被线程交错打断，但值本身仍然是可变的）、完全不可变对象（每次返回新实例）。原文最终推荐的是"不可变 + 协调"的组合方案。
+</p>
+
+<p>
+Clojure 在这个问题上走得更远——它用 <code>atom</code> 提供了一种既不可变又高效的方案：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def balance (atom 0))
+
+;; 2 个线程各执行 1000 次 +1，用 swap! 保证原子更新
+;; swap! 内部用 CAS（Compare-And-Swap），不阻塞线程
+(dotimes [_ 2]
+  (future
+    (dotimes [_ 1000]
+      (swap! balance inc))))
+
+;; 等所有 future 完成
+(Thread/sleep 100)
+@balance
+;; =&gt; 2000
+</pre>
+</div>
+
+<pre class="example" id="org42e03eb">
+2000
+</pre>
+
+<p>
+关键点： <code>swap!</code> 接受一个纯函数 <code>inc</code> ，atom 内部保证将这个函数应用到当前值的过程是原子的。你写的是纯函数式变风格的代码，Clojure 的运行时会帮你处理协调问题。这正是原文说的"不可变状态迫使你显式地表达变化如何发生"的意思：在 Clojure 里，你必须用 <code>swap!</code> 、 <code>reset!</code> 这样的操作来表达"我要改变状态"，而不是随手写一个 <code>+</code> 然后祈祷不会出事。
+</p>
+
+<p>
+Clojure 还有 <code>ref</code> （配合 <code>dosync</code> 实现事务性更新）和 <code>agent</code> （异步更新），分别对应不同的协调需求。但核心思路都一样：值是不可变的，状态的变化必须明确表达出来。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org76e1b9f" class="outline-3">
+<h3 id="org76e1b9f">代码层结论</h3>
+<div class="outline-text-3" id="text-org76e1b9f">
+<p>
+在代码层面，不可变性基本没有争议——代价小，收益大。原文也认同这一点。真正的权衡从数据建模开始。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb2cefec" class="outline-2">
+<h2 id="orgb2cefec">数据层：从"改一个字段"到"记一笔历史"</h2>
+<div class="outline-text-2" id="text-orgb2cefec">
+<p>
+到了数据建模层面，问题从"要不要修改这个对象"变成了更根本的设计选择：你的数据模型是记录"当前状态"还是记录"发生过什么"？
+</p>
+</div>
+
+<div id="outline-container-org1a7c7eb" class="outline-3">
+<h3 id="org1a7c7eb">状态模型 vs 事件模型</h3>
+<div class="outline-text-3" id="text-org1a7c7eb">
+<div class="org-src-container">
+<pre class="src src-clojure">;; 状态模型：只存当前值
+(def user-state (atom {:name "Alice" :balance 100}))
+(swap! user-state update :balance + 20)
+(swap! user-state update :balance - 10)
+;; 余额是 110，但你不知道中间发生了什么
+@user-state
+;; =&gt; {:name "Alice" :balance 110}
+</pre>
+</div>
+
+<pre class="example" id="org254ff88">
+{:name "Alice" :balance 110}
+</pre>
+
+<div class="org-src-container">
+<pre class="src src-clojure">;; 事件模型：存每一笔变更
+(def events
+  [{:type :balance-increased :amount 20 :at "2026-04-29T10:00:00Z"}
+   {:type :balance-decreased :amount 10 :at "2026-04-29T10:05:00Z"}])
+
+;; 当前状态是推导出来的
+(reduce (fn [balance event]
+          (case (:type event)
+            :balance-increased (+ balance (:amount event))
+            :balance-decreased (- balance (:amount event))
+            balance))
+        100 events)
+;; =&gt; 110
+</pre>
+</div>
+
+<pre class="example" id="orgf780151">
+110
+</pre>
+
+<p>
+两种模型都能得到余额 110，但事件模型额外保留了"怎么到的 110"这个信息。这就是原文说的核心区别：状态模型回答"现在是什么"，事件模型回答"怎么到的这里"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8f2200f" class="outline-3">
+<h3 id="org8f2200f">事件模型的代价</h3>
+<div class="outline-text-3" id="text-org8f2200f">
+<p>
+但事件模型不是免费的：
+</p>
+
+<ol class="org-ol">
+<li><b>存储成本</b> ：每次变更都存一条记录，数据量远大于只存当前状态。一个用户改了 100 次名字，状态模型只有 1 条记录，事件模型有 100 条。</li>
+<li><b>设计复杂度</b> ：你得设计事件的结构、状态转换的规则、不变量（invariant，即"在任何时候都必须成立的条件"）。比简单的 CRUD 难得多。</li>
+<li><b>不一定需要</b> ：用户的昵称改了 100 次，你有必要知道中间 99 次发生了什么吗？</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgc267351" class="outline-3">
+<h3 id="orgc267351">什么时候该用事件模型</h3>
+<div class="outline-text-3" id="text-orgc267351">
+<p>
+原文的判断标准很实用：
+</p>
+
+<ul class="org-ul">
+<li><b>跨系统共享状态</b> 时——多个服务需要知道同一份数据的变化历史</li>
+<li><b>历史有业务价值</b> 的领域——金融交易、审计日志、工作流状态</li>
+<li><b>需要回溯查询</b> 时——我想知道"上周三下午 3 点这个订单是什么状态？"</li>
+</ul>
+
+<p>
+什么时候不该用：
+</p>
+
+<ul class="org-ul">
+<li>大对象频繁小更新（比如一个巨大的 JSON 每次改一个字段）</li>
+<li>历史没有业务价值（比如用户头像 URL 改了，你不在乎它之前是什么）</li>
+<li>简单的 CRUD 系统（表单→数据库→保存，没有复杂的业务流程）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org9e47bfc" class="outline-3">
+<h3 id="org9e47bfc">Clojure 中的 reduce 和事件模型</h3>
+<div class="outline-text-3" id="text-org9e47bfc">
+<p>
+Clojure 的 <code>reduce</code> 天然适合事件模型——"从初始状态出发，依次应用每个事件，得到最终状态"。上文的例子已经展示了这一点。更实际的做法是定义一个 <code>apply-event</code> 函数，把状态转换逻辑集中管理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn apply-event [state event]
+  (case (:type event)
+    :user-registered (assoc state :status :active)
+    :user-suspended  (assoc state :status :suspended)
+    :user-activated  (assoc state :status :active)
+    state))
+
+(reduce apply-event
+        {:status :pending}
+        [{:type :user-registered}
+         {:type :user-suspended}
+         {:type :user-activated}])
+;; =&gt; {:status :active}
+</pre>
+</div>
+
+<pre class="example" id="orgb5a9bfd">
+{:status :active}
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org28ed6b6" class="outline-3">
+<h3 id="org28ed6b6">不可变模型的几种变体</h3>
+<div class="outline-text-3" id="text-org28ed6b6">
+<p>
+原文还列举了几种不同的不可变数据建模方式：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">模式</th>
+<th scope="col" class="org-left">存什么</th>
+<th scope="col" class="org-left">适用场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">事件溯源（Event Sourcing）</td>
+<td class="org-left">领域事件（发生了什么）</td>
+<td class="org-left">金融、审计、工作流</td>
+</tr>
+
+<tr>
+<td class="org-left">版本化状态（Versioned State）</td>
+<td class="org-left">完整状态的每次版本</td>
+<td class="org-left">需要回溯但不想重放事件</td>
+</tr>
+
+<tr>
+<td class="org-left">追加日志（Append-Only Log）</td>
+<td class="org-left">字段变更（什么字段从什么值变成了什么值）</td>
+<td class="org-left">轻量级变更追踪</td>
+</tr>
+
+<tr>
+<td class="org-left">不可变值对象（Immutable Value Objects）</td>
+<td class="org-left">不可变的领域对象，但持久化当前状态</td>
+<td class="org-left">大多数 CRUD 系统</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga5cc8db" class="outline-2">
+<h2 id="orga5cc8db">API 层：Command 和 Event 不是一回事</h2>
+<div class="outline-text-2" id="text-orga5cc8db">
+<p>
+原文最后讨论了 API 层面。传统的 REST API 是面向状态的，即客户端发送最终期望的状态：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">PUT /orders/123
+{"status": "SHIPPED"}
+</pre>
+</div>
+
+<p>
+这告诉服务端"把这个订单的状态设为 SHIPPED"，但不表达"为什么"要这么做。
+</p>
+
+<p>
+Command 风格的 API 改为发送意图：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">POST /orders/123/ship
+</pre>
+</div>
+
+<p>
+这个 API 表达的是"发货"这个业务动作，而不是"把某个字段设为某个值"。服务端负责决定发货之后状态应该怎么变。
+</p>
+
+<p>
+Event 风格的 API 则记录发生了什么：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">POST /orders/123/events
+{"type": "OrderShipped", "timestamp": "2026-04-29T10:00:00Z"}
+</pre>
+</div>
+
+<p>
+原文特别强调了一点：Command 是请求（"请发货"），Event 是事实（"已经发货了"）。通常客户端发 Command，服务端处理完之后生成 Event。不应该让客户端直接发 Event——因为只有服务端才有资格确认"这件事确实发生了"。
+</p>
+</div>
+
+<div id="outline-container-orgb5dd689" class="outline-3">
+<h3 id="orgb5dd689">什么时候用 Command/Event 风格</h3>
+<div class="outline-text-3" id="text-orgb5dd689">
+<ul class="org-ul">
+<li>工作流重要、业务逻辑复杂</li>
+<li>多个系统需要对同一个动作做出反应</li>
+<li>审计追溯有要求</li>
+</ul>
+
+<p>
+什么时候该避开：
+</p>
+
+<ul class="org-ul">
+<li>简单的 CRUD 应用，由于没有复杂的业务流程，状态就能直接表示动作，这时加 <code>/ship</code> 、 <code>/cancel</code> 、 <code>/refund</code> 这些端点反而是过度设计</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgb4f221e" class="outline-3">
+<h3 id="orgb4f221e">Clojure 的 multimethod 视角</h3>
+<div class="outline-text-3" id="text-orgb4f221e">
+<p>
+Clojure 的 <code>defmulti</code> / <code>defmethod</code> 天然适合 Command 风格的路由——根据 Command 的类型分发到不同的处理函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defmulti handle-command :action)
+
+(defmethod handle-command :ship [_ order]
+  ;; 发货逻辑：更新状态、触发通知等
+  (assoc order :status :shipped))
+
+(defmethod handle-command :cancel [_ order]
+  (assoc order :status :cancelled))
+
+(handle-command {:action :ship} {:id 123 :status :pending})
+;; =&gt; {:id 123, :status :shipped}
+</pre>
+</div>
+
+<pre class="example" id="org7773049">
+{:id 123, :status :shipped}
+</pre>
+
+<p>
+这种写法的好处是新增一个 Command 只需要加一个 <code>defmethod</code> ，不需要修改已有的处理逻辑。每个 Command 的处理逻辑是独立的，互不干扰。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org528fa1f" class="outline-2">
+<h2 id="org528fa1f">三个层面的权衡总结</h2>
+<div class="outline-text-2" id="text-org528fa1f">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">层面</th>
+<th scope="col" class="org-left">不可变性推荐度</th>
+<th scope="col" class="org-left">关键权衡</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">代码层</td>
+<td class="org-left">强烈推荐</td>
+<td class="org-left">代价小（多用一点内存），收益大（并发安全、容易推理、容易测试）</td>
+</tr>
+
+<tr>
+<td class="org-left">数据层</td>
+<td class="org-left">看场景</td>
+<td class="org-left">事件模型提供完整历史但增加存储和设计复杂度；状态模型简单但丢失历史</td>
+</tr>
+
+<tr>
+<td class="org-left">API 层</td>
+<td class="org-left">看场景</td>
+<td class="org-left">Command/Event 风格适合复杂业务；CRUD 风格适合简单应用</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+Clojure 的设计哲学很好地体现了这个递进的权衡：在代码层面全面拥抱不可变性（所有数据结构默认不可变），在数据层面提供灵活的选择（你可以用 atom 存状态，也可以用 reduce 重放事件），在 API 层面不强制（你可以用 defmulti 做 Command 风格，也可以直接用 map 存状态）。
+</p>
+
+<p>
+不可变性不是一个开关，而是一个旋钮。根据场景调到合适的位置，才是务实的做法。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-29</span>
+    <span class="post-info">2026-04-29</span>
+    <a href="../../../../../tags/clojure">Clojure</a> : <a href="../../../../../tags/java">Java</a> : <a href="../../../../../tags/不可变性">不可变性</a> : <a href="../../../../../tags/并发">并发</a> : <a href="../../../../../tags/函数式编程">函数式编程</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 2osajyitlete3e1bz4zdzzvpig &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

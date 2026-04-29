@@ -4,10 +4,357 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Tue, 28 Apr 2026 11:54:01 UTC</pubDate>
-    <lastBuildDate>Tue, 28 Apr 2026 11:54:01 UTC</lastBuildDate>
+    <pubDate>Wed, 29 Apr 2026 10:50:51 UTC</pubDate>
+    <lastBuildDate>Wed, 29 Apr 2026 10:50:51 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>TIL: 数字小键盘的小数点陷阱与行内算术求值</title>
+<link>https://lujun9972.github.io/blog/2026/04/27/til-数字小键盘的小数点陷阱与行内算术求值/index.html</link>
+<description>Marcin Borkowski 的一篇文章[fn:1]揭示了一个容易忽略的 Emacs 键盘行为：数字小键盘右下角那个用来分隔整数和小数部分的键——在 Emacs 里被硬编码为逗号。
+
+*注意：这个问题只影响欧洲键盘布局（波兰、德国、法国等）。这些布局下，该键发送的是 =kp-separator= 按键符号；而美式和中文键盘布局下，该键直接发送 =.= 字符，不受此问题影响。*
+
+* 问题：数字小键盘打不出小数点
+
+受影响的用户在数字小键盘上按那个键想输入小数点，结果得到的是逗号。用 =C-h c= 查看这个键的 Emacs 名称：
+
+#+begin_example
+, &#39;COMMA&#39; (translated from &lt;kp-separator&gt;) runs the command self-insert-command
+#+end_example
+
+关键在 =&lt;kp-separator&gt;= 这个名字。Emacs 在 =simple.el= 里把 =kp-separator= 硬编码映射为逗号：
+
+#+begin_src emacs-lisp
+(mapc
+ (lambda (keypad-normal)
+   (let ((keypad (nth 0 keypad-normal))
+         (normal (nth 1 keypad-normal)))
+     (put keypad &#39;ascii-character normal)
+     (define-key function-key-map (vector keypad) (vector normal))))
+ &#39;((kp-space ?\s)
+   (kp-tab ?\t)
+   (kp-enter ?\r)
+   (kp-separator ?,)   ;; ← 这里
+   (kp-equal ?=)
+   ...))
+#+end_src
+
+这个映射和你的系统语言设置无关——不管你用的是中文、英文还是波兰文环境， =kp-separator= 一律变成逗号。修复方法是在配置中覆盖这个映射：
+
+#+begin_src emacs-lisp
+(keymap-set function-key-map &quot;&lt;kp-separator&gt;&quot; &quot;.&quot;)
+#+end_src
+
+=function-key-map= 的机制是：按键先经过这个映射表转换，再交给后续的 keymap 处理。所以这一行配置的效果是，在所有模式中都把数字小键盘的分隔键变成小数点，而不是逗号。
+
+* 延伸：行内算术求值
+
+原文还提到了一个实用技巧：在任意 buffer 中将光标左侧的算术表达式直接替换为计算结果。核心逻辑很简洁：
+
+#+begin_src emacs-lisp
+(defun fast-calc (currency)
+  &quot;将光标左侧的算术表达式替换为计算结果。
+带前缀参数时，保留两位小数并追加货币后缀。&quot;
+  (interactive &quot;P&quot;)
+  (when (looking-back &quot;[-+/*().0-9]\\{2,\\} *&quot;
+                      (line-beginning-position)
+                      t)
+    (replace-match
+     (save-match-data
+       (calc-eval (if currency
+                      (list
+                       (concat (match-string-no-properties 0) &quot;+0.0&quot;)
+                       &#39;calc-float-format
+                       &#39;(fix 2))
+                    (match-string-no-properties 0))))
+     t t)
+    (if currency (insert &quot; PLN&quot;))))
+#+end_src
+
+使用方式：在 =12.5*3= 后面按 =M-x fast-calc= ，表达式被替换为 =37.5= 。带前缀参数（ =C-u M-x fast-calc= ）则保留两位小数并追加货币后缀，比如 =12.5*3= → =37.50 PLN= 。
+
+原理是 =calc-eval= 接受一个字符串（算术表达式）并返回结果字符串。传入列表形式时可以控制格式—— =(fix 2)= 表示固定两位小数。 =looking-back= 用正则匹配光标左侧的数字和运算符序列， =replace-match= 把匹配到的内容替换为计算结果。
+
+* Footnotes
+
+[fn:1] [[https://mbork.pl/2026-04-25_How_I_use_my_numeric_keypad_with_Emacs_Ledger_mode][How I use my numeric keypad with Emacs Ledger mode]]
+</description>
+<pubDate>2026-04-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/27/til-数字小键盘的小数点陷阱与行内算术求值/index.html</guid>
+</item>
+<item>
+<title>读：Immutability 不是万能药，它是一种权衡</title>
+<link>https://lujun9972.github.io/blog/2026/04/29/读：immutability-不是万能药，它是一种权衡/index.html</link>
+<description>原文：[[https://dev.to/ivangavlik/immutability-not-a-universal-law-but-a-trade-off-4lng][Immutability: Not a Universal Law, But a Trade-off]]
+
+不可变性（immutability）是指数据一旦创建就不再修改，每次&quot;修改&quot;都产生新版本，这通常被认为是函数式编程的金科玉律。但原文作者 Ivan Gavlik 认为：不可变性不是一个普适法则，而是一种需要根据场景做取舍的权衡。他从代码层、数据层、API 层三个层面分析了不可变性的适用边界。
+
+作为一个 Clojure 程序员，我想从 Clojure 的视角重新审视这篇文章的论点。Clojure 的核心数据结构（list、vector、map、set）全部默认不可变——你没法修改一个 Clojure map 里的某个键值对，只能通过 =assoc= 或 =dissoc= 生成一个新 map。这不像 Java 那样需要程序员主动选择用 =final= 或不可变集合，在 Clojure 里不可变性就是唯一的选择。但即便如此，Clojure 也在很多地方做了务实的妥协（比如 =atom=、=transient=）。这些妥协本身就能帮我们理解&quot;什么时候该用不可变性，什么时候不该用&quot;。
+
+* 代码层：不可变性基本是稳赚的
+
+在单个函数的粒度上，选择不可变性几乎总是对的。原文的论点很简单： ~不可变 = 没有隐藏的副作用 = 更容易理解和测试~ 。
+
+Clojure 天然就是这样的：
+
+#+begin_src clojure
+(defn add-balance [user amount]
+  (update user :balance + amount))
+
+(def user {:id 1 :balance 100})
+(def updated-user (add-balance user 20))
+
+;; user 不变，updated-user 是新的 map
+updated-user
+;; =&gt; {:id 1 :balance 120}
+#+end_src
+
+#+begin_example
+user 保持不变，updated-user 是一个全新的 map。这就是 Clojure 的默认行为,所有数据结构都是不可变的。
+#+end_example
+
+** 并发问题不是线程造成的，是共享可变状态造成的
+
+原文用 Java 展示了一个经典的竞态条件：多个线程同时给 =balance+=1= ，期望结果是 1000000，实际得到的数字远小于此且不可预测。问题出在 ~this.balance += amount~ 这一行——它不是原子操作，两个线程可以交错执行。
+
+#+begin_src java
+public class User {
+    private int balance;
+
+    public void addBalance(int amount) {
+        this.balance += amount; // 非原子操作
+    }
+
+    public int getBalance() {
+        return balance;
+    }
+}
+
+// 10 个线程各执行 100000 次 +1，期望结果 1000000
+User user = new User(); // balance = 0
+Thread[] threads = new Thread[10];
+for (int t = 0; t &lt; 10; t++) {
+    threads[t] = new Thread(() -&gt; {
+        for (int i = 0; i &lt; 100000; i++) {
+            user.addBalance(1);
+        }
+    });
+    threads[t].start();
+}
+for (Thread t : threads) t.join();
+System.out.println(&quot;Final balance: &quot; + user.getBalance());
+// 期望 1000000，实际可能是 312338、239592 等不确定的数字
+#+end_src
+
+Java 的解决这一问题的方法有好几种： =synchronized= （加锁，有效但代价高）、 =AtomicInteger= （Java 提供的一种整数类型，内部用 CPU 的 CAS 指令保证 =+=1= 这类操作不会被线程交错打断，但值本身仍然是可变的）、完全不可变对象（每次返回新实例）。原文最终推荐的是&quot;不可变 + 协调&quot;的组合方案。
+
+Clojure 在这个问题上走得更远——它用 =atom= 提供了一种既不可变又高效的方案：
+
+#+begin_src clojure
+(def balance (atom 0))
+
+;; 2 个线程各执行 1000 次 +1，用 swap! 保证原子更新
+;; swap! 内部用 CAS（Compare-And-Swap），不阻塞线程
+(dotimes [_ 2]
+  (future
+    (dotimes [_ 1000]
+      (swap! balance inc))))
+
+;; 等所有 future 完成
+(Thread/sleep 100)
+@balance
+;; =&gt; 2000
+#+end_src
+
+#+begin_example
+2000
+#+end_example
+
+关键点： =swap!= 接受一个纯函数 =inc= ，atom 内部保证将这个函数应用到当前值的过程是原子的。你写的是纯函数式变风格的代码，Clojure 的运行时会帮你处理协调问题。这正是原文说的&quot;不可变状态迫使你显式地表达变化如何发生&quot;的意思：在 Clojure 里，你必须用 =swap!= 、 =reset!= 这样的操作来表达&quot;我要改变状态&quot;，而不是随手写一个 =+= 然后祈祷不会出事。
+
+Clojure 还有 =ref= （配合 =dosync= 实现事务性更新）和 =agent= （异步更新），分别对应不同的协调需求。但核心思路都一样：值是不可变的，状态的变化必须明确表达出来。
+
+** 代码层结论
+
+在代码层面，不可变性基本没有争议——代价小，收益大。原文也认同这一点。真正的权衡从数据建模开始。
+
+* 数据层：从&quot;改一个字段&quot;到&quot;记一笔历史&quot;
+
+到了数据建模层面，问题从&quot;要不要修改这个对象&quot;变成了更根本的设计选择：你的数据模型是记录&quot;当前状态&quot;还是记录&quot;发生过什么&quot;？
+
+** 状态模型 vs 事件模型
+
+#+begin_src clojure
+;; 状态模型：只存当前值
+(def user-state (atom {:name &quot;Alice&quot; :balance 100}))
+(swap! user-state update :balance + 20)
+(swap! user-state update :balance - 10)
+;; 余额是 110，但你不知道中间发生了什么
+@user-state
+;; =&gt; {:name &quot;Alice&quot; :balance 110}
+#+end_src
+
+#+begin_example
+{:name &quot;Alice&quot; :balance 110}
+#+end_example
+
+#+begin_src clojure
+;; 事件模型：存每一笔变更
+(def events
+  [{:type :balance-increased :amount 20 :at &quot;2026-04-29T10:00:00Z&quot;}
+   {:type :balance-decreased :amount 10 :at &quot;2026-04-29T10:05:00Z&quot;}])
+
+;; 当前状态是推导出来的
+(reduce (fn [balance event]
+          (case (:type event)
+            :balance-increased (+ balance (:amount event))
+            :balance-decreased (- balance (:amount event))
+            balance))
+        100 events)
+;; =&gt; 110
+#+end_src
+
+#+begin_example
+110
+#+end_example
+
+两种模型都能得到余额 110，但事件模型额外保留了&quot;怎么到的 110&quot;这个信息。这就是原文说的核心区别：状态模型回答&quot;现在是什么&quot;，事件模型回答&quot;怎么到的这里&quot;。
+
+** 事件模型的代价
+
+但事件模型不是免费的：
+
+1. *存储成本* ：每次变更都存一条记录，数据量远大于只存当前状态。一个用户改了 100 次名字，状态模型只有 1 条记录，事件模型有 100 条。
+2. *设计复杂度* ：你得设计事件的结构、状态转换的规则、不变量（invariant，即&quot;在任何时候都必须成立的条件&quot;）。比简单的 CRUD 难得多。
+3. *不一定需要* ：用户的昵称改了 100 次，你有必要知道中间 99 次发生了什么吗？
+
+** 什么时候该用事件模型
+
+原文的判断标准很实用：
+
+- *跨系统共享状态* 时——多个服务需要知道同一份数据的变化历史
+- *历史有业务价值* 的领域——金融交易、审计日志、工作流状态
+- *需要回溯查询* 时——我想知道&quot;上周三下午 3 点这个订单是什么状态？&quot;
+
+什么时候不该用：
+
+- 大对象频繁小更新（比如一个巨大的 JSON 每次改一个字段）
+- 历史没有业务价值（比如用户头像 URL 改了，你不在乎它之前是什么）
+- 简单的 CRUD 系统（表单→数据库→保存，没有复杂的业务流程）
+
+** Clojure 中的 reduce 和事件模型
+
+Clojure 的 =reduce= 天然适合事件模型——&quot;从初始状态出发，依次应用每个事件，得到最终状态&quot;。上文的例子已经展示了这一点。更实际的做法是定义一个 =apply-event= 函数，把状态转换逻辑集中管理：
+
+#+begin_src clojure
+(defn apply-event [state event]
+  (case (:type event)
+    :user-registered (assoc state :status :active)
+    :user-suspended  (assoc state :status :suspended)
+    :user-activated  (assoc state :status :active)
+    state))
+
+(reduce apply-event
+        {:status :pending}
+        [{:type :user-registered}
+         {:type :user-suspended}
+         {:type :user-activated}])
+;; =&gt; {:status :active}
+#+end_src
+
+#+begin_example
+{:status :active}
+#+end_example
+
+** 不可变模型的几种变体
+
+原文还列举了几种不同的不可变数据建模方式：
+
+| 模式 | 存什么 | 适用场景 |
+|------|--------|----------|
+| 事件溯源（Event Sourcing） | 领域事件（发生了什么） | 金融、审计、工作流 |
+| 版本化状态（Versioned State） | 完整状态的每次版本 | 需要回溯但不想重放事件 |
+| 追加日志（Append-Only Log） | 字段变更（什么字段从什么值变成了什么值） | 轻量级变更追踪 |
+| 不可变值对象（Immutable Value Objects） | 不可变的领域对象，但持久化当前状态 | 大多数 CRUD 系统 |
+
+* API 层：Command 和 Event 不是一回事
+
+原文最后讨论了 API 层面。传统的 REST API 是面向状态的，即客户端发送最终期望的状态：
+
+#+begin_src text
+PUT /orders/123
+{&quot;status&quot;: &quot;SHIPPED&quot;}
+#+end_src
+
+这告诉服务端&quot;把这个订单的状态设为 SHIPPED&quot;，但不表达&quot;为什么&quot;要这么做。
+
+Command 风格的 API 改为发送意图：
+
+#+begin_src text
+POST /orders/123/ship
+#+end_src
+
+这个 API 表达的是&quot;发货&quot;这个业务动作，而不是&quot;把某个字段设为某个值&quot;。服务端负责决定发货之后状态应该怎么变。
+
+Event 风格的 API 则记录发生了什么：
+
+#+begin_src text
+POST /orders/123/events
+{&quot;type&quot;: &quot;OrderShipped&quot;, &quot;timestamp&quot;: &quot;2026-04-29T10:00:00Z&quot;}
+#+end_src
+
+原文特别强调了一点：Command 是请求（&quot;请发货&quot;），Event 是事实（&quot;已经发货了&quot;）。通常客户端发 Command，服务端处理完之后生成 Event。不应该让客户端直接发 Event——因为只有服务端才有资格确认&quot;这件事确实发生了&quot;。
+
+** 什么时候用 Command/Event 风格
+
+- 工作流重要、业务逻辑复杂
+- 多个系统需要对同一个动作做出反应
+- 审计追溯有要求
+
+什么时候该避开：
+
+- 简单的 CRUD 应用，由于没有复杂的业务流程，状态就能直接表示动作，这时加 =/ship= 、 =/cancel= 、 =/refund= 这些端点反而是过度设计
+
+** Clojure 的 multimethod 视角
+
+Clojure 的 =defmulti= / =defmethod= 天然适合 Command 风格的路由——根据 Command 的类型分发到不同的处理函数：
+
+#+begin_src clojure
+(defmulti handle-command :action)
+
+(defmethod handle-command :ship [_ order]
+  ;; 发货逻辑：更新状态、触发通知等
+  (assoc order :status :shipped))
+
+(defmethod handle-command :cancel [_ order]
+  (assoc order :status :cancelled))
+
+(handle-command {:action :ship} {:id 123 :status :pending})
+;; =&gt; {:id 123, :status :shipped}
+#+end_src
+
+#+begin_example
+{:id 123, :status :shipped}
+#+end_example
+
+这种写法的好处是新增一个 Command 只需要加一个 =defmethod= ，不需要修改已有的处理逻辑。每个 Command 的处理逻辑是独立的，互不干扰。
+
+* 三个层面的权衡总结
+
+| 层面 | 不可变性推荐度 | 关键权衡 |
+|------|---------------|----------|
+| 代码层 | 强烈推荐 | 代价小（多用一点内存），收益大（并发安全、容易推理、容易测试） |
+| 数据层 | 看场景 | 事件模型提供完整历史但增加存储和设计复杂度；状态模型简单但丢失历史 |
+| API 层 | 看场景 | Command/Event 风格适合复杂业务；CRUD 风格适合简单应用 |
+
+Clojure 的设计哲学很好地体现了这个递进的权衡：在代码层面全面拥抱不可变性（所有数据结构默认不可变），在数据层面提供灵活的选择（你可以用 atom 存状态，也可以用 reduce 重放事件），在 API 层面不强制（你可以用 defmulti 做 Command 风格，也可以直接用 map 存状态）。
+
+不可变性不是一个开关，而是一个旋钮。根据场景调到合适的位置，才是务实的做法。
+</description>
+<pubDate>2026-04-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/04/29/读：immutability-不是万能药，它是一种权衡/index.html</guid>
+</item>
 <item>
 <title>TIL: Emacs 中那些跟鼠标配合的冷门快捷键</title>
 <link>https://lujun9972.github.io/blog/2026/04/27/til-emacs-中那些跟鼠标配合的冷门快捷键/index.html</link>
@@ -1368,325 +1715,6 @@ INFO is a plist holding export options.&quot;
 </description>
 <pubDate>2026-04-25</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/04/25/proced：emacs-内置的进程查看器/index.html</guid>
-</item>
-<item>
-<title>从 proced 定制中学到的 Elisp 模式</title>
-<link>https://lujun9972.github.io/blog/2026/04/25/从-proced-定制中学到的-elisp-模式/index.html</link>
-<description>Rahul Juliato 的 [[https://rahuljuliato.com/posts/proced-macos][Getting Emacs proced.el to Show CPU and Memory on macOS]] 表面上是解决 macOS 上 =proced= 缺少 CPU/Mem 列的问题，实际上是一份很好的 Elisp 编程教学。本文从中提取六个可复用的编程模式——它们跟 =proced= 和 macOS 无关，你在任何需要异步调用外部命令、缓存数据、扩展第三方包的场景都能用。
-
-* 模式一：异步进程 + sentinel
-
-Elisp 中执行外部命令有两种方式： =call-process= （同步，会阻塞 Emacs ）和 =make-process= （异步，不阻塞）。凡是执行时间不确定的命令，都应该用 =make-process= 。
-
-#+begin_src emacs-lisp
-(make-process
- :name &quot;my-process&quot;
- :buffer (generate-new-buffer &quot; *my-process-temp*&quot;)
- :command &#39;(&quot;env&quot; &quot;LC_ALL=C&quot; &quot;ps&quot; &quot;-eo&quot; &quot;pid=,%cpu=,%mem=&quot;)
- :noquery t
- :sentinel
- (lambda (proc _event)
-   (when (eq (process-status proc) &#39;exit)
-     (with-current-buffer (process-buffer proc)
-       (goto-char (point-min))
-       ;; 在这里处理输出
-       (buffer-string))
-     (kill-buffer (process-buffer proc)))))
-#+end_src
-
-关键设计：
-
-- =sentinel= 是一个回调函数，在进程状态变化时触发。通常只关心 =&#39;exit= 状态——此时 buffer 中已有完整输出。
-- =:noquery t= 防止 Emacs 退出时弹出&quot;还有进程在运行&quot;的确认框。
-- =generate-new-buffer= 创建临时 buffer 承接输出，名称以空格开头（ =&quot; &quot;= ）的 buffer 在 =list-buffers= 中默认隐藏。
-- 处理完后 =kill-buffer= 清理临时 buffer ，避免 buffer 堆积。
-
-* 模式二：hash table 做进程级缓存
-
-当你需要频繁按 key 查找数据时，hash table 比 alist 快得多（ O(1) vs O(n) ）。
-
-#+begin_src emacs-lisp
-;; 创建
-(defvar my-cache (make-hash-table))
-
-;; 写入（用 cons 存两个值，car 和 cdr 分别取）
-(puthash 1234 (cons 2.5 1.3) my-cache)
-(puthash 5678 (cons 0.1 0.5) my-cache)
-
-;; 读取
-(car (gethash 1234 my-cache))   ;; =&gt; 2.5
-(cdr (gethash 1234 my-cache))   ;; =&gt; 1.3
-(gethash 9999 my-cache)          ;; =&gt; nil
-#+end_src
-
-#+begin_example
-2.5
-1.3
-nil
-#+end_example
-
-为什么用 cons 存值？因为 =car= 和 =cdr= 是 Elisp 中最快的取值操作之一，比 =plist-get= 或 =alist-get= 快。当你只需要存两个值时，cons 是最佳选择。
-
-刷新时不要原地修改 hash table ，而是创建一个新的再替换——这样即使有并发的读操作也不会读到半更新的状态：
-
-#+begin_src emacs-lisp
-(defun my-refresh-cache ()
-  (let ((new-cache (make-hash-table)))
-    ;; 填充 new-cache ...
-    (setq my-cache new-cache)))  ;; 原子替换
-#+end_src
-
-* 模式三： =rx= 宏写可读正则
-
-Elisp 的 =rx= 宏用 S-expression 写正则，比字符串正则更容易读和维护。对比一下：
-
-#+begin_src emacs-lisp
-;; 字符串正则：不直观，需要脑内解析
-&quot;^[[:blank:]]*\\([[:digit:]]+\\)[[:blank:]]+\\([.[:digit:]]+\\)&quot;
-
-;; rx 宏：自解释
-(rx (* blank)
-    (group (+ digit))
-    (+ blank)
-    (group (+ (any digit ?.))))
-#+end_src
-
-=rx= 编译出来的结果跟手写字符串正则完全一样：
-
-#+begin_src emacs-lisp
-(rx (* blank)
-    (group (+ digit))
-    (+ blank)
-    (group (+ (any digit ?.)))
-    (+ blank)
-    (group (+ (any digit ?.))))
-#+end_src
-
-#+begin_example
-[[:blank:]]*\([[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)[[:blank:]]+\([.[:digit:]]+\)
-#+end_example
-
-常用 =rx= 组合：
-
-| =rx= 写法 | 匹配内容 |
-|-----------+----------|
-| =(+ digit)= | 一个或多个数字 |
-| =(* blank)= | 零或多个空白 |
-| =(any digit ?.)= | 数字或小数点 |
-| =(group ...)= | 捕获组，对应 =match-string= |
-
-* 模式四：timer 生命周期管理
-
-Emacs 的 =run-with-timer= 可以周期性执行任务，但如果不在合适的时机取消，timer 会一直运行下去（即使对应的 buffer 已经关了）。正确的做法是在 mode hook 里启动，在 =kill-buffer-hook= 里取消：
-
-#+begin_src emacs-lisp
-(defvar my-timer nil)
-
-;; 在 mode hook 中启动
-(add-hook &#39;my-mode-hook
-  (lambda ()
-    (setq my-timer
-          (run-with-timer 0 2 #&#39;my-refresh-function))))
-
-;; 在 kill-buffer-hook 中清理
-(add-hook &#39;kill-buffer-hook
-  (lambda ()
-    (when (and (derived-mode-p &#39;my-mode)
-               (timerp my-timer))
-      (cancel-timer my-timer)
-      (setq my-timer nil))))
-#+end_src
-
-三个要点：
-
-- =run-with-timer= 的参数是 =(延迟秒数 重复间隔 函数)= ，第一个参数 =0= 表示立即执行第一次。
-- =cancel-timer= 取消后要把变量设为 =nil= ，避免悬空引用。
-- guard 条件 =(derived-mode-p &#39;my-mode)= 确保 =kill-buffer-hook= 不会在其他类型的 buffer 中误触发。 =kill-buffer-hook= 是全局的，每次任何 buffer 关闭都会触发，所以必须有 mode 判断。
-
-* 模式五： =file-remote-p= 做 TRAMP 感知
-
-当你的代码依赖本地系统状态（比如执行本地 =ps= ），必须考虑 buffer 可能在 TRAMP 远程主机上运行的情况。 =file-remote-p= 检测 =default-directory= 是否指向远程：
-
-#+begin_src emacs-lisp
-(unless (file-remote-p default-directory)
-  ;; 只在本地执行
-  (my-run-local-command))
-#+end_src
-
-为什么这很重要？如果你不加检测，可能会用本地 =ps= 的输出作为参数在远程主机上执行命令。轻则数据显示错误，重则本地 PID 跟远程 PID 碰撞导致误操作。
-
-* 模式六：通过 custom attributes 扩展第三方包
-
-很多 Emacs 包提供 =*-custom-attributes= 或类似的扩展点，让你不用修改包的源码就能添加功能。 =proced= 的 =proced-custom-attributes= 就是一个例子：它接受一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 =(keyword . value)= 就能添加新列。
-
-#+begin_src emacs-lisp
-(setq proced-custom-attributes
-  (list
-   (lambda (attrs)
-     (when-let* ((pid (cdr (assq &#39;pid attrs)))
-                 (v (my-lookup pid)))
-       (cons &#39;my-attribute v)))))
-#+end_src
-
-这个模式不限于 =proced= 。当你需要给某个包添加自定义字段时，先看看它有没有类似的扩展点——很多设计良好的包都会提供。
-
-* 小结
-
-| 模式 | 一句话 |
-|------+--------|
-| 异步进程 + sentinel | 用 =make-process= 代替 =call-process= ，在 sentinel 中处理输出 |
-| hash table 缓存 | 高频查找用 hash table ，刷新时整体替换而非原地修改 |
-| =rx= 宏 | 用 S-expression 写正则，比字符串更可读更易维护 |
-| timer 生命周期 | hook 启动、hook 清理、 =derived-mode-p= guard 三件套 |
-| =file-remote-p= | 任何依赖本地系统状态的代码都要加 TRAMP 检测 |
-| custom attributes | 用 lambda 返回 =(keyword . value)= 扩展第三方包的显示 |
-</description>
-<pubDate>2026-04-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/25/从-proced-定制中学到的-elisp-模式/index.html</guid>
-</item>
-<item>
-<title>读：让 Emacs proced 在 macOS 上显示 CPU 和内存</title>
-<link>https://lujun9972.github.io/blog/2026/04/25/读：让-emacs-proced-在-macos-上显示-cpu-和内存/index.html</link>
-<description>本文是对 Rahul Juliato 的文章 [[https://rahuljuliato.com/posts/proced-macos][Getting Emacs proced.el to Show CPU and Memory on macOS]] 的解读。原文解决了 macOS 上 Emacs =proced= 缺少 CPU 和内存列的问题，同时是一份很好的 Elisp 编程教学——涉及异步进程、hash table 缓存、自定义属性扩展等多个实用技巧。
-
-* 问题是怎样的
-
-Emacs 内置的 =proced= 是一个进程查看器，相当于彩色版的 =ps= 。在 Linux 上，它默认就能显示每个进程的 CPU 和内存占用。但在 macOS 上， =%CPU= 和 =%Mem= 两列是空的。
-
-原因在 Emacs 的 C 层： =proced= 通过 =system_process_attributes= 函数（定义在 =src/sysdep.c= 中）获取每个进程的属性列表。在 Linux 上，这个函数从 =/proc/*/stat= 读取 CPU 和内存数据；在 BSD 和 Windows 上，它通过系统 API 计算。但在 Darwin（macOS 内核）上，这个函数虽然调用了 =proc_pidinfo= 来获取虚拟内存和常驻内存大小，却从未填充 =pcpu= 和 =pmem= 两个字段——数据明明可以通过 =proc_pid_rusage= 、 =task_info= 和 =sysctl hw.memsize= 拿到，只是没人把线接上。
-
-Rahul Juliato 向上游提了一个 patch（[[https://debbugs.gnu.org/cgi/bugreport.cgi?bug=80898][debbugs #80898]]），但在 patch 合并之前，他用纯 Elisp 给出了一个 workaround。
-
-* 解决思路
-
-整体方案很清晰：
-
-1. 用 =make-process= 异步运行 ~ps -axo pid=,%cpu=,%mem=~ 获取进程信息
-2. 把输出解析后存入 hash table（以 PID 为 key ）
-3. 通过 =proced-custom-attributes= 把 =pcpu= 和 =pmem= 两个属性注入 =proced=
-4. 用 timer 每 2 秒刷新一次 hash table
-
-* 异步运行 ps 并解析输出
-
-原文用 =(when (eq system-type &#39;darwin))= 把所有代码包在一起，确保只在 macOS 上执行。下面的代码片段省略了这个外层 guard ，实际使用时应当加上。
-
-核心是用 =make-process= 异步执行 =ps= ：
-
-#+begin_src emacs-lisp
-(defvar emacs-solo--proced-ps-cache (make-hash-table))
-(defvar emacs-solo--proced-ps-timer nil)
-
-(defun emacs-solo--proced-ps-do-refresh ()
-  (make-process
-   :name &quot;proced-ps-refresh&quot;
-   :buffer (generate-new-buffer &quot; *proced-ps-temp*&quot;)
-   :command &#39;(&quot;env&quot; &quot;LC_ALL=C&quot; &quot;ps&quot; &quot;-axo&quot; &quot;pid=,%cpu=,%mem=&quot;)
-   :noquery t
-   :sentinel
-   (lambda (proc _event)
-     (when (eq (process-status proc) &#39;exit)
-       (let ((new-cache (make-hash-table)))
-         (with-current-buffer (process-buffer proc)
-           (goto-char (point-min))
-           (while (not (eobp))
-             (when (looking-at (rx (* blank)
-                                   (group (+ digit))
-                                   (+ blank)
-                                   (group (+ (any digit ?.)))
-                                   (+ blank)
-                                   (group (+ (any digit ?.)))))
-               (puthash (string-to-number (match-string 1))
-                        (cons (string-to-number (match-string 2))
-                              (string-to-number (match-string 3)))
-                        new-cache))
-             (forward-line 1)))
-         (kill-buffer (process-buffer proc))
-         (setq emacs-solo--proced-ps-cache new-cache))))))
-#+end_src
-
-几个设计要点：
-
-- =LC_ALL=C= 强制 =ps= 使用固定的输出格式，不受用户 locale 影响。不同 locale 下数字的小数点可能变成逗号，解析就会出错。
-- sentinel 只在进程退出时触发（ =(eq (process-status proc) &#39;exit)= ），此时 buffer 中已有完整输出。
-- =rx= 宏让正则表达式更可读：三个分组分别匹配 PID（整数）、 =%CPU=（浮点数）、 =%Mem=（浮点数）。
-- =puthash= 以 PID 为 key ，以 =(%CPU . %Mem)= 这个 cons 为 value 。用 cons 而不是 list ，是因为 =car= 和 =cdr= 取值最快。
-
-为什么用 hash table 而不是 alist ？因为 =proced= 会为每个进程调用自定义属性函数，hash table 的查找时间是 O(1) ，即使有几百个进程也很快。
-
-* 查询函数
-
-简单的 wrapper ，从 hash table 中取值：
-
-#+begin_src emacs-lisp
-(defun emacs-solo--proced-pcpu (pid)
-  (car (gethash pid emacs-solo--proced-ps-cache)))
-
-(defun emacs-solo--proced-pmem (pid)
-  (cdr (gethash pid emacs-solo--proced-ps-cache)))
-#+end_src
-
-=car= 取 CPU ， =cdr= 取内存——这就是用 cons 存储的好处。
-
-* 注入到 proced
-
-这是把一切连起来的关键。 =proced-custom-attributes= 是一个 lambda 列表，每个 lambda 接收当前行的属性 alist ，返回 =(keyword . value)= 形式的 cons ， =proced= 会把它当作新列显示：
-
-#+begin_src emacs-lisp
-(add-hook &#39;proced-mode-hook
-  (lambda ()
-    (unless (file-remote-p default-directory)
-      (setq emacs-solo--proced-ps-timer
-            (run-with-timer 0 2 #&#39;emacs-solo--proced-ps-do-refresh)))))
-
-(setq proced-custom-attributes
-  (list
-   (lambda (attrs)
-     (unless (file-remote-p default-directory)
-       (when-let* ((pid (cdr (assq &#39;pid attrs)))
-                   (v (emacs-solo--proced-pcpu pid)))
-         (cons &#39;pcpu v))))
-   (lambda (attrs)
-     (unless (file-remote-p default-directory)
-       (when-let* ((pid (cdr (assq &#39;pid attrs)))
-                   (v (emacs-solo--proced-pmem pid)))
-         (cons &#39;pmem v))))))
-#+end_src
-
-两个 lambda ，一个管 CPU 一个管内存。每个 lambda 做三件事：
-
-1. 用 =file-remote-p= 检测当前 buffer 是否在 TRAMP 远程主机上。如果是，本地的 =ps= 数据没有意义，而且本地 PID 可能跟远程 PID 冲突。
-2. 从 =attrs= 中提取 PID ，在 hash table 中查找值。
-3. 返回 =(pcpu . value)= 或 =(pmem . value)= 。
-
-timer 放在 =proced-mode-hook= 里启动，因为只有 =proced= buffer 存在时才需要刷新数据。
-
-* 清理 timer
-
-=proced= buffer 关闭时取消 timer ，避免悬空的定时器：
-
-#+begin_src emacs-lisp
-(add-hook &#39;kill-buffer-hook
-  (lambda ()
-    (when (and (derived-mode-p &#39;proced-mode)
-               (timerp emacs-solo--proced-ps-timer))
-      (cancel-timer emacs-solo--proced-ps-timer)
-      (setq emacs-solo--proced-ps-timer nil))))
-#+end_src
-
-guard 条件 =(derived-mode-p &#39;proced-mode)= 确保 =kill-buffer-hook= 不会在其他 buffer 关闭时误触发。
-
-* 学到了什么
-
-| 技巧 | 说明 |
-|------+------|
-| =proced-custom-attributes= | 接受 lambda 列表，每个 lambda 接收行属性 alist ，返回 =(keyword . value)= 即可添加新列 |
-| =make-process= + sentinel | Elisp 中异步执行外部命令的标准方式。sentinel 在进程状态变化时触发，通常只关心 =&#39;exit= 状态 |
-| =run-with-timer= | 周期性执行任务。返回 timer 对象，可以用 =cancel-timer= 取消。比 =run-at-time= 更方便 |
-| =file-remote-p= | 检测当前 buffer 是否在 TRAMP 远程主机上。任何涉及本地系统状态的 hack 都应该加上这个 guard |
-| =rx= 宏 | 比 =regexp= 字符串更可读的正则写法，支持 S-expression 风格组合 |
-</description>
-<pubDate>2026-04-25</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/25/读：让-emacs-proced-在-macos-上显示-cpu-和内存/index.html</guid>
 </item>
 </channel>
 </rss>
