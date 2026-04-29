@@ -1,0 +1,181 @@
+#+TITLE: 读：用自动化脚本排查 Emacs 配置被覆盖问题
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, debug, custom, elisp
+#+DATE: [2026-04-29 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+你有没有遇到过这种情况：精心在 =init.el= 里配好的字体，重启 Emacs 后突然失效了， =custom-set-faces= 里的内容被替换成了一堆空值。Dave Q 就碰到了这个问题。他发现安装某些包时， =custom-set-faces= 中的默认字体信息会被覆盖成 =((t (:background nil)))= ，字体、字号、粗细全部丢失。
+
+更棘手的是，这个 bug 不是每次都复现，需要反复启动 Emacs、安装包才能触发。手动排查几乎不可能。Dave Q 的做法是写一套自动化测试脚本，让 Emacs 自己不停地装包、检查、重启，直到定位到问题。
+
+这篇博文解读他的调试思路，从中提取出一套通用的 Emacs 配置问题排查方法。
+
+#+BEGIN_QUOTE
+原文：[[https://davemq.github.io/emacs/test/2026/04/27/test.html][Writing an automated test to try to find an Emacs bug]] by Dave Q
+#+END_QUOTE
+
+* 为什么手动排查行不通
+
+面对"装了某个包之后配置被覆盖"这类问题，直觉做法是手动装一个包、重启、检查。但这个方法有几个致命缺陷：
+
+1. *复现不稳定* ：bug 可能只在特定的安装顺序或时机下触发，手动试几次可能碰不上
+2. *包数量庞大* ：ELPA/MELPA 上有几千个包，手动逐个试不现实
+3. *每次都要重启* ：Custom 写入发生在 init.el 加载阶段，改完必须完全重启才能验证
+
+所以需要一套自动化的循环测试：让 Emacs 自己不停地装包、检查、重启，直到发现问题。
+
+* 调试方法：隔离环境 + 自动化脚本 + 无人值守
+
+Dave Q 的方案分三层。
+
+** 隔离环境
+
+用 =--init-directory= 参数指定一个独立的 Emacs 配置目录，不影响你日常使用的配置。这个参数是 Emacs 29 引入的，让你可以在一个干净的沙箱环境里测试，不用担心搞乱自己的 init.el。
+
+** 自动化脚本
+
+写一个 =test.el= ，让它自动完成"装包、检查配置、卸载、装下一个包"的循环。
+
+** 无人值守
+
+用 =restart-emacs= 命令（来自 [[https://github.com/iqbalansari/restart-emacs][restart-emacs 包]]）让脚本在每轮测试结束后自动重启 Emacs，继续下一轮，不需要人守在电脑前。
+
+完整的测试环境结构：
+
+#+begin_src org
+~/bug-emacs.d/
+├── init.el          ; 最小化的配置文件，只包含要保护的字体设置
+├── test.el          ; 自动化测试脚本
+└── start-test.sh    ; 启动脚本
+#+end_src
+
+* init.el：最小可复现配置
+
+init.el 只包含两样东西：要保护的字体配置，以及一个防止重启时被询问的小设置。
+
+#+begin_src elisp
+;;; -*- lexical-binding: t -*-
+(custom-set-variables
+ '(confirm-kill-processes nil))   ; 关闭"是否杀死进程"的确认提示
+
+(custom-set-faces
+ '(default ((t (:family "Fira Code" :foundry "CTDB" :slant normal
+                :weight medium :height 120 :width normal)))))
+#+end_src
+
+=confirm-kill-processes= 设为 =nil= 是因为测试过程中 Emacs 可能在后台跟 ELPA 通信（比如刷新包列表），重启时如果不关掉这个确认提示，脚本会被弹窗卡住。这是写自动化脚本时的常见坑： *任何需要用户交互的提示都会让自动化流程中断* 。
+
+测试的核心思路：如果字体配置被覆盖了，init.el 中的 Fira Code 字符串就会消失。所以检查方法就是在 init.el 里搜索这段完整的 =custom-set-faces= 内容，搜不到就说明被覆盖了。
+
+* test.el：自动化测试脚本
+
+脚本的核心逻辑是一个循环：
+
+1. 安装嫌疑包（a68-mode）
+2. 检查配置是否完好
+3. 如果完好：卸载嫌疑包，装一个随机包（改变环境状态），记录日志，重启进入下一轮
+4. 如果被破坏：读取日志文件找到上一轮装的随机包，报告它是罪魁祸首，退出
+
+为什么要在每轮装一个随机包？因为这个 bug 的触发条件可能是"a68-mode + 之前装过的某个特定包"的组合。随机包就是那个变量，日志文件记录每轮装了什么，这样 bug 触发时就能回溯到是哪个包造成的。
+
+** 加载包列表
+
+#+begin_src elisp
+(progn
+  (list-packages)           ; 触发包列表刷新，拿到所有可用的包
+  (set-buffer "*Packages*"))
+#+end_src
+
+=list-packages= 会连接 ELPA/MELPA 获取包列表。后续的 =package-install= 和 =package-archive-contents= 都依赖这个列表已经加载好了。
+
+** 安装嫌疑包并检查
+
+#+begin_src elisp
+(message "%s" "Installing a68-mode")
+(sit-for 0.5)
+(package-install 'a68-mode)
+
+;; 检查字体配置是否还在
+(find-file (locate-user-emacs-file "init.el"))
+(if (not (search-forward "(custom-set-faces ... 完整的字体配置 ..." nil t))
+    ;; 配置被破坏了！读取日志，报告罪魁祸首
+    (progn
+      (find-file "last-installed.txt")
+      (display-message-or-buffer
+       (format "Install of %s caused subsequent install of a68-mode to lose font information"
+               (buffer-string)))
+      (sit-for 0.5)
+      (kill-emacs))
+  ;; 配置完好，继续测试
+  ...)
+#+end_src
+
+注意 =search-forward= 用的是完整的 =custom-set-faces= S-表达式作为搜索目标，而不是只搜 "Fira Code"。原因：只搜字体名只能检测到字体被换掉的情况，检测不到整个 =custom-set-faces= 被替换成 =((t (:background nil)))= 的情况。搜完整表达式能捕获所有变化。
+
+** 卸载并安装随机包
+
+#+begin_src elisp
+;; 卸载嫌疑包
+(package-delete (package-get-descriptor 'a68-mode))
+
+;; 从所有可用包中随机选一个安装
+(let ((pkg (car (seq-random-elt package-archive-contents))))
+  ;; 记录到日志文件
+  (save-current-buffer
+    (let ((buffer (find-file "last-installed.txt")))
+      (set-buffer buffer)
+      (kill-region (point-min) (point-max))
+      (print pkg buffer)
+      (save-buffer)))
+  ;; 安装选中的包
+  (message "Installing %s" pkg)
+  (sit-for 1)
+  (ignore-errors (package-install pkg)))   ; 防止安装失败中断整个测试
+#+end_src
+
+=ignore-errors= 包裹 =package-install= 是必要的：有些包可能安装失败（依赖缺失、网络问题等），不能让一个安装失败把整个测试链打断。
+
+日志文件的作用：记录每轮安装了哪个随机包。当 bug 触发时，日志文件里保存的就是"上一轮装的包"，即嫌疑犯。
+
+** 重启进入下一轮
+
+#+begin_src elisp
+(message "%s" "Restarting emacs")
+(sit-for 0.5)
+(restart-emacs)
+#+end_src
+
+=restart-emacs= 会完全关闭当前 Emacs 进程并启动一个新的，新进程继承相同的命令行参数（包括 =--init-directory= ），测试会在同一个隔离环境中重新开始。这就形成了一个无人值守的循环。
+
+需要注意的是， Dave Q 的原始方案依赖 =restart-emacs= 来实现循环重启，而他的 =start-test.sh= 只执行一次 Emacs。如果不想依赖 =restart-emacs= 这个第三方包，可以把 =restart-emacs= 调用替换为 =(kill-emacs 0)= ，用 shell 循环来不断重启 Emacs ：
+
+#+begin_src sh
+#!/bin/sh
+TESTDIR=$HOME/bug-emacs.d
+cd "$TESTDIR"
+while true; do
+    emacs --init-directory="$TESTDIR" --load "$TESTDIR/test.el"
+    # test.el 在发现 bug 时用 (kill-emacs 1) 返回非零退出码
+    if [ $? -ne 0 ]; then
+        echo "Bug found! Check last-installed.txt"
+        break
+    fi
+done
+#+end_src
+
+这个 shell 循环版本更可靠：不依赖 =restart-emacs= 包，通过退出码判断是否发现了 bug。
+
+* 这套方法适用于什么问题
+
+Dave Q 的方法本质上是把"人肉排查"变成了"脚本排查"。它适用于以下场景：
+
+1. *配置被意外覆盖* ：不仅限于字体，任何写在 =custom-set-*= 中的设置被篡改都可以用这个方法定位
+2. *安装某个包后行为异常* ：快捷键绑定变了、mode 设置被覆盖、face 被修改等
+3. *问题不稳定复现* ：需要反复触发才能出现的 bug
+
+它的局限：
+
+- 只能定位到"哪个包导致了问题"，不能告诉你"为什么"
+- 如果 bug 是多个包组合触发的，这个单变量测试法会漏掉
+- 测试过程会实际安装大量包，虽然是在隔离目录中，但仍然会占用磁盘空间和网络带宽
