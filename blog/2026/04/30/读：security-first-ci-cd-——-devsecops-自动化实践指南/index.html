@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Security-First CI/CD —— DevSecOps 自动化实践指南 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="DevSecOps, CI/CD, 安全, 自动化" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Security-First CI/CD —— DevSecOps 自动化实践指南</h1>
+<p>
+本文是 DZone 2026 Trend Report 中一篇 DevSecOps 实践指南的读后笔记。原文按流水线从前往后的顺序，介绍了安全 CI/CD 的五个关键阶段：先定基线和风险等级，再把安全检查左移到开发早期，用代码化的策略自动拦截违规配置，通过软件物料清单看清依赖链，最后用零信任和 AI 修复加固整条流水线。
+</p>
+
+<p>
+<b>基线：风险分级与 KPI</b>
+</p>
+
+<p>
+安全 CI/CD 流水线的底层逻辑很简单：尽早扫描、保护访问、管好密钥、检查基础设施、降低供应链风险、在发布前强制执行控制。一条典型的路径是 开发（快速反馈）→ 预发布（更广的验证和发布检查）→ 生产（最强的门控）。
+</p>
+
+<p>
+门控（gate）就是代码进入下一个阶段之前必须通过的自动检查，像安检门一样，不通过就拦下来，不让继续往前走。生产环境是真实用户在用，所以门控最严。
+</p>
+
+<p>
+关键在于按风险分级设置门控强度。高风险变更（生产部署、基础设施变更、依赖更新、权限变更）走更强的门控，常规工作保持轻量快速。这样才能兼顾速度和安全性。
+</p>
+
+<p>
+原文给出了一套 KPI 体系，覆盖效率、质量、安全、流水线健康四个维度：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">KPI 类别</th>
+<th scope="col" class="org-left">指标</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">效率</td>
+<td class="org-left">构建时间</td>
+<td class="org-left">流水线完成一次构建的平均时间</td>
+</tr>
+
+<tr>
+<td class="org-left">效率</td>
+<td class="org-left">部署频率</td>
+<td class="org-left">新代码发布到生产的频率</td>
+</tr>
+
+<tr>
+<td class="org-left">质量</td>
+<td class="org-left">变更失败率</td>
+<td class="org-left">部署失败需要回滚或热修复的比例</td>
+</tr>
+
+<tr>
+<td class="org-left">质量</td>
+<td class="org-left">代码覆盖率</td>
+<td class="org-left">自动化测试覆盖的代码比例</td>
+</tr>
+
+<tr>
+<td class="org-left">安全</td>
+<td class="org-left">密钥暴露事件</td>
+<td class="org-left">在提交或流水线检查中发现密钥的次数</td>
+</tr>
+
+<tr>
+<td class="org-left">安全</td>
+<td class="org-left">漏洞检测率</td>
+<td class="org-left">自动扫描发现的安全问题数量</td>
+</tr>
+
+<tr>
+<td class="org-left">健康</td>
+<td class="org-left">流水线成功率</td>
+<td class="org-left">流水线运行成功的比例</td>
+</tr>
+
+<tr>
+<td class="org-left">健康</td>
+<td class="org-left">平均修复时间</td>
+<td class="org-left">修复已检测安全问题的平均时间</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<b>Stage 1：左移扫描，但不制造噪音</b>
+</p>
+
+<p>
+左移（Shift Left）的意思是把安全检查尽可能往开发流程的前端移。扫描对象包括源码、第三方依赖、密钥和凭证、容器镜像、基础设施即代码（IaC）模板、运行中的应用、流水线配置文件。
+</p>
+
+<p>
+但 <code>全量扫描 ~ 和 ~ 快速反馈</code> 之间存在矛盾。原文给出的解法是 PR 和主分支采用差异化扫描策略：
+</p>
+
+<ul class="org-ul">
+<li>PR 扫描：只跑核心检查（密钥、代码、依赖、基础 IaC），目标是快速反馈，不阻塞合并</li>
+<li>主分支扫描：加全量依赖扫描、容器镜像扫描、流水线文件检查，有时加 DAST（动态应用安全测试）</li>
+</ul>
+
+<p>
+还有个容易被忽略的问题：噪音。如果流水线报告太多 findings，团队会开始忽视它们。解决方法是只阻塞最明确、最严重的问题，低风险 finding 留到后续审查。已批准的例外和简单的审查规则也能防止同一个已知问题反复失败。
+</p>
+
+<p>
+<b>Stage 2：策略即代码（Policy-as-Code）</b>
+</p>
+
+<p>
+Open Policy Agent（OPA）在这里扮演中央策略引擎的角色，在部署之前检查 Terraform 计划、Kubernetes 清单等配置，确保只有合规的变更能继续往前走。
+</p>
+
+<p>
+Terraform 是管理云基础设施的工具，Terraform 计划就是 <code>terraform plan</code> 命令生成的变更预览，列出了将要创建、修改或删除的云资源（比如 AWS 上的 S3 存储桶、虚拟机等）。OPA 在部署前审查这个计划，拦截不安全的配置。
+</p>
+
+<p>
+OPA 策略通常覆盖四类规则：
+</p>
+
+<ol class="org-ol">
+<li><b>依赖风险</b> ：阻止包含已知严重漏洞或来自不可信源的包</li>
+<li><b>许可证规则</b> ：识别项目或公司不允许的依赖许可证</li>
+<li><b>密钥保护</b> ：防止 token、密码、密钥、证书在流水线中流通</li>
+<li><b>部署和环境规则</b> ：控制应用可以部署到哪里、允许哪些基础镜像、需要哪些安全设置</li>
+</ol>
+
+<p>
+原文给了一个 Rego 策略示例，阻止创建公开访问的 AWS S3 bucket：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">package terraform.security
+
+# &#22914;&#26524;&#20219;&#20309; S3 bucket &#30340; 'public' &#34987;&#35774;&#20026; true&#65292;&#21017;&#25298;&#32477;
+deny[msg] {
+    # &#36941;&#21382; Terraform &#35745;&#21010;&#20013;&#30340;&#25152;&#26377;&#36164;&#28304;&#21464;&#26356;
+    resource := input.resource_changes[_]
+    resource.type == "aws_s3_bucket"
+
+    # &#26816;&#26597;&#20844;&#24320;&#35775;&#38382;&#35774;&#32622;&#26159;&#21542;&#34987;&#21551;&#29992;
+    resource.change.after.public == true
+
+    msg = sprintf("&#23433;&#20840;&#36829;&#35268;&#65306;S3 bucket %s &#19981;&#20801;&#35768;&#35774;&#20026;&#20844;&#24320;&#12290;", [resource.address])
+}
+</pre>
+</div>
+
+<p>
+这个策略的使用方式是把 Terraform 计划转成 JSON，然后交给 OPA 评估：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">1. &#29983;&#25104; Terraform &#35745;&#21010;
+</span>terraform plan -out=tfplan
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">2. &#23558;&#35745;&#21010;&#36716;&#20026; JSON &#26684;&#24335;&#20379; OPA &#20351;&#29992;
+</span>terraform show -json tfplan &gt; tfplan.json
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">3. &#29992; Rego &#31574;&#30053;&#35780;&#20272;&#35745;&#21010;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#22914;&#26524; 'deny' &#19981;&#20026;&#31354;&#65292;&#27492;&#21629;&#20196;&#20250;&#22833;&#36133;&#65288;&#36820;&#22238;&#38750;&#38646;&#36864;&#20986;&#30721;&#65289;
+</span>opa eval --input tfplan.json --data policy.rego <span class="org-string">"data.terraform.security.deny"</span> --fail-defined
+</pre>
+</div>
+
+<p>
+当策略违规被检测到时， <code>opa eval --fail-defined</code> 返回非零退出码，流水线自动失败。
+</p>
+
+<p>
+策略本身也需要治理：放在版本控制中、在 PR 中审查变更、记录审批人。例外必须包含明确理由和截止日期，不能永不过期。
+</p>
+
+<p>
+<b>Stage 3：SBOM，知道你的软件里有什么</b>
+</p>
+
+<p>
+SBOM（Software Bill of Materials，软件物料清单）是 DevSecOps 的核心实践。它的价值在于：
+</p>
+
+<ul class="org-ul">
+<li>看清直接依赖和传递依赖</li>
+<li>提高供应链可追溯性</li>
+<li>出现严重漏洞时能快速定位影响范围</li>
+<li>增强合规和审计准备</li>
+</ul>
+
+<p>
+SBOM 通常在构建阶段生成，随构建产物一起保存，并发送到安全平台做持续检查。同时还要保存 <code>构建证据</code> ，证明产物来自可信流程，事后未被篡改。
+</p>
+
+<p>
+原文给出了一个 CycloneDX 格式的 SBOM 示例，展示了策略检查时会评估的数据结构：组件名、版本、purl（包 URL）、哈希值、许可证信息。
+</p>
+
+<p>
+在 SBOM 上可以加安全门控：阻止包含被禁许可证或高危漏洞的组件；阻止未知或未签名的产物；检查 drift，即产物、镜像或依赖是否偏离了最初批准或构建的状态。
+</p>
+
+<p>
+<b>Stage 4：零信任，不信任流水线中的任何部分</b>
+</p>
+
+<p>
+把零信任应用到 CI/CD 意味着：默认不信任流水线的任何部分，不管是代码、用户还是构建 agent。不依赖网络边界，而是持续验证每一次访问和每一个操作。
+</p>
+
+<p>
+具体做法从 <code>用短期身份替代长期密钥</code> 开始（比如 OIDC）。每个流水线阶段只拥有它需要的权限（最小权限原则），runner 与环境的其他部分隔离，尽量使用短期 runner。
+</p>
+
+<p>
+密钥和部署权限需要持续管理：定期轮换密钥，人员角色变更或离开团队时审查部署权限。只有受信任的镜像和构建产物才能往前走，不安全的配置、未批准的组件、有风险的构建被策略直接阻断。每次部署都要保留清晰的审计记录：谁触发了部署、什么时候、涉及哪个提交和产物。
+</p>
+
+<p>
+<b>Stage 5：安全的 AI 自动修复</b>
+</p>
+
+<p>
+这是原文最具前瞻性的部分。把 AI agent 引入 DevSecOps 流水线，修复工作从手动、被动变成自动、主动。AI agent 可以扫描代码变更、识别风险模式、排定优先级，然后建议甚至直接应用修复。
+</p>
+
+<p>
+但 AI 驱动修复也引入新风险：目标劫持（goal hijacking）、中毒记忆（poisoned memory）、被操纵的上下文。OWASP Agentic Security Initiative（ASI）和 AI Security Verification Standard（AISVS）提供了安全使用 AI agent 的指导框架。
+</p>
+
+<p>
+一个关键概念是 <b>Least Agency</b> （最小自主权）：agent 只应该拥有完成任务所需的最小自主权。在实践中，这通常意味着 agent <code>准备</code> 修复方案，然后走正常的 review 流程再合入，而不是直接自动提交。
+</p>
+
+<p>
+还需要区分"什么可以自动修"和"什么必须人工审"：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">可以自动修复</th>
+<th scope="col" class="org-left">必须人工审查</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">小范围依赖更新、版本提升</td>
+<td class="org-left">访问控制变更</td>
+</tr>
+
+<tr>
+<td class="org-left">简单配置修复</td>
+<td class="org-left">安全策略变更</td>
+</tr>
+
+<tr>
+<td class="org-left">遵循已知模式的代码修复（低风险、范围明确）</td>
+<td class="org-left">生产部署逻辑</td>
+</tr>
+
+<tr>
+<td class="org-left">&#xa0;</td>
+<td class="org-left">共享基础设施</td>
+</tr>
+
+<tr>
+<td class="org-left">&#xa0;</td>
+<td class="org-left">关键业务代码</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+回滚和隔离也同样重要。如果 agent 做了一个有问题的修复，必须能停止发布、回退变更、快速回到上一个良好状态。追踪是哪个 agent 操作导致的变更，限制自动化变更可以走多远。
+</p>
+
+<p>
+<b>量子安全加密</b>
+</p>
+
+<p>
+原文还有一节讲量子安全加密：不是说现在就要把所有加密算法都换掉，而是先摸清家底，搞清楚代码、库、容器、平台设置中哪些地方用了加密，跟踪哪些算法是批准的，用策略检查阻止弱算法，维护一份以后需要更新的系统清单。这事对长期数据保护、密钥交换和数字签名最重要。
+</p>
+
+<p>
+<b>可观测性</b>
+</p>
+
+<p>
+流水线安全应该是可度量的。有用的指标包括策略检查失败频率、生产前拦截了多少严重漏洞、修复时间、例外数量。自动保存日志、SBOM 记录、构建产物详情、策略审批、例外记录，这些在审计和事件响应时都是关键证据。
+</p>
+
+<p>
+<b>小结</b>
+</p>
+
+<p>
+这篇指南把 DevSecOps 描述为一个从"检测"到"执行"的演进，不只是发现问题，而是用策略门控、流水线保护、更快更精准的响应来系统性地解决问题。2026 年的趋势是 AI 修复、短期身份、供应链策略门控、以及把流水线本身作为攻击面来保护。AI agent 安全、可审计性和人工审批正在成为标准要求，不是因为 AI 不可靠，而是因为安全流水线 <code>必须</code> 可追溯、可回滚、可问责。
+</p>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-30</span>
+    <span class="post-info">2026-04-30</span>
+    <a href="../../../../../tags/devsecops">DevSecOps</a> : <a href="../../../../../tags/ci-cd">CI/CD</a> : <a href="../../../../../tags/安全">安全</a> : <a href="../../../../../tags/自动化">自动化</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; rywhqcrlkd4ezk2vvgcugcxtjg &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

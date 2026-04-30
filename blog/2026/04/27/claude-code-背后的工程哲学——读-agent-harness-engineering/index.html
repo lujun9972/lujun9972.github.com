@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Claude Code 背后的工程哲学——读 Agent Harness Engineering - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="AI, Claude Code, Harness Engineering, agent" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Claude Code 背后的工程哲学——读 Agent Harness Engineering</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga49ecd0">Claude Code 的套件架构长什么样</a></li>
+<li><a href="#org7eb06c1">你能调整的三个套件组件</a>
+<ul>
+<li><a href="#orgb6dc5a9">CLAUDE.md / AGENTS.md</a></li>
+<li><a href="#org592551d">Hooks</a></li>
+<li><a href="#org9c3b1a6">Skills / MCP 服务器</a></li>
+</ul>
+</li>
+<li><a href="#org571ec53">棘轮思维：把每次犯错变成永久规则</a></li>
+<li><a href="#org6b3b0c8">上下文管理：Claude Code 的隐形工程</a></li>
+<li><a href="#org34c8f30">长程任务的设计模式</a>
+<ul>
+<li><a href="#orgc50e602">规划-生成-评估分离</a></li>
+<li><a href="#orgb13e494">Sprint Contract</a></li>
+</ul>
+</li>
+<li><a href="#org598ce9e">模型升级了，你的套件该不该跟着变</a></li>
+<li><a href="#orga45f971">一个行动框架</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://addyosmani.com/blog/agent-harness-engineering/">Addy Osmani 的 "Agent Harness Engineering"</a>提出了一个核心等式：Agent = Model + Harness。模型是能力，套件（harness）是让能力真正落地的脚手架。一个还行的模型配上优秀的套件，能打败一个优秀的模型配上糟糕的套件。
+</p>
+
+<p>
+Claude Code 就是这个等式的活例子。底层跑的是 Claude 模型，但你每天感受到的行为——文件隔离、权限拦截、自动压缩上下文、子智能体防火墙——全是套件的功劳，不是模型的能力。Addy 的文章用套件工程的框架拆解了智能体设计的方方面面，而 Claude Code 几乎是每个概念的最佳注脚。
+</p>
+
+<p>
+本文从 Claude Code 用户的视角重读 Addy 的文章，看看套件工程的每个概念在 Claude Code 里是怎么落地的，以及你能调整什么。
+</p>
+
+<div id="outline-container-orga49ecd0" class="outline-2">
+<h2 id="orga49ecd0">Claude Code 的套件架构长什么样</h2>
+<div class="outline-text-2" id="text-orga49ecd0">
+<p>
+Fareed Khan 做过一张 <a href="https://fareedkhan.com/2025/01/12/breaking-down-claude-code/">Claude Code 架构图</a>，把文章提到的几乎每个概念都对应到了一个具体组件：
+</p>
+
+<ul class="org-ul">
+<li><b>上下文注入</b> （知识层）→ CLAUDE.md、AGENTS.md、skill 文件在每轮对话中自动加载</li>
+<li><b>循环状态</b> （记忆层）→ 上下文压缩（compaction）、会话续接（continuation）</li>
+<li><b>破坏性操作拦截</b> （权限层）→ permission gate， <code>rm -rf</code> 、 <code>git push --force</code> 这些命令需要你确认</li>
+<li><b>子智能体隔离</b> （多智能体层）→ 子智能体上下文防火墙，每个子智能体只看到自己该看的</li>
+<li><b>工具分发</b> （工具层）→ MCP 服务器和 bash 都注册在工具分发器里</li>
+</ul>
+
+<p>
+Claude Code 之所以比"在网页上用 Claude"好用这么多，不是因为网页版用的模型差，而是因为 Claude Code 为编码场景做了大量套件优化。模型是同一个，套件完全不同。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7eb06c1" class="outline-2">
+<h2 id="org7eb06c1">你能调整的三个套件组件</h2>
+<div class="outline-text-2" id="text-org7eb06c1">
+<p>
+套件工程的核心洞察是：套件不是黑箱，它是你可以调的配置面。Claude Code 让你直接动手的有三样东西。
+</p>
+</div>
+
+<div id="outline-container-orgb6dc5a9" class="outline-3">
+<h3 id="orgb6dc5a9">CLAUDE.md / AGENTS.md</h3>
+<div class="outline-text-3" id="text-orgb6dc5a9">
+<p>
+这是套件中投入产出比最高的配置点——它的内容出现在每轮对话的系统提示词里。放什么？项目的约定：用什么包管理器、测试框架是什么、格式化规则、"不要碰 legacy 目录"、"统一用我们的 logger"。
+</p>
+
+<p>
+两条设计原则：
+</p>
+
+<ol class="org-ol">
+<li><b>保持简短</b> 。HumanLayer 把他们的控制在 60 行以内。每条规则都在争夺模型的注意力，规则越多，每条规则的分量越轻。飞行员检查单，不是风格指南。</li>
+<li><b>每条规则都要"挣"来的</b> 。规则应该能追溯到一次具体的失败。如果你说不出"这条规则是因为那次 agent 干了什么蠢事才加的"，那这条规则可能就是噪声。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org592551d" class="outline-3">
+<h3 id="org592551d">Hooks</h3>
+<div class="outline-text-3" id="text-org592551d">
+<p>
+Hook 是在特定生命周期点运行的脚本——工具调用前、文件编辑后、提交前、会话开始时。它把"我告诉 agent 要做 X"变成了"系统保证执行 X"。
+</p>
+
+<p>
+实用场景：每次编辑后自动运行类型检查和测试，失败了就把错误信息送回循环让 agent 自修正；拦截破坏性命令；提交前检查是否包含敏感文件。
+</p>
+
+<p>
+核心原则： <b>成功时静默，失败时详细</b> 。类型检查通过了，agent 什么也听不到，不浪费注意力。失败了，错误文本直接注入循环。这让反馈循环在正常情况下几乎零成本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9c3b1a6" class="outline-3">
+<h3 id="org9c3b1a6">Skills / MCP 服务器</h3>
+<div class="outline-text-3" id="text-org9c3b1a6">
+<p>
+工具描述本身就是提示词的一部分——模型每次请求都要读一遍所有工具的名称、描述和参数 schema。十个专注的工具胜过五十个功能重叠的。所以你安装的每一个 MCP 服务器都要经过审查：它提供的工具是不是真的必要？它的描述会不会污染上下文？
+</p>
+
+<p>
+还有一个安全维度：工具描述是模型会读的受信文本。一个粗劣的 MCP 服务器可以在你输入任何内容之前就执行提示词注入。安装第三方 MCP 时要像安装 npm 包一样谨慎。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org571ec53" class="outline-2">
+<h2 id="org571ec53">棘轮思维：把每次犯错变成永久规则</h2>
+<div class="outline-text-2" id="text-org571ec53">
+<p>
+套件工程中最重要的习惯：agent 犯了一次错，就加一条规则让它永远不再犯同样的错。不是"下次注意"，而是系统性地堵住漏洞。
+</p>
+
+<p>
+Claude Code 用户的实操版本：
+</p>
+
+<ol class="org-ol">
+<li>agent 提交了一个注释掉的测试 → CLAUDE.md 加一条"永远不要注释掉测试，要么删要么修"</li>
+<li>agent 多次在同一类问题上犯错 → 用 hook 做自动化检查</li>
+<li>agent 总是忘记某个项目约定 → 写进 AGENTS.md，每轮对话都能看到</li>
+</ol>
+
+<p>
+棘轮只往一个方向转：只在真正出过错的地方加规则，只在更强的模型证明某条规则多余时才删掉。AGENTS.md 里的每一行都应该能追溯到一次具体的失败。
+</p>
+
+<p>
+这也是为什么别人的 AGENTS.md 你不能直接抄——适合你的套件是由你的失败历史塑造的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6b3b0c8" class="outline-2">
+<h2 id="org6b3b0c8">上下文管理：Claude Code 的隐形工程</h2>
+<div class="outline-text-2" id="text-org6b3b0c8">
+<p>
+上下文腐败（context rot）是所有 agent 的隐形杀手：随着对话越来越长，模型的推理质量会下降。Claude Code 内建了几种对抗手段：
+</p>
+
+<ul class="org-ul">
+<li><b>自动压缩</b> ：当上下文窗口接近上限时，自动总结旧对话，保留关键信息，释放空间让 agent 继续工作</li>
+<li><b>工具输出截断</b> ：大型工具输出不会完整塞进上下文，只保留头尾，完整内容存在文件系统里按需读取</li>
+<li><b>渐进式披露</b> ：skill 文件不是一次性全加载，而是根据任务需要才展开相关部分</li>
+</ul>
+
+<p>
+Anthropic 还提到了一种更激进的手段：对于特别长的任务，彻底重置会话，从一个紧凑的交接文件重建。压缩不够的时候，你需要带着一份结构化摘要从头开始。这更像是给新工程师做交接，而不是我们通常理解的"记忆"。
+</p>
+
+<p>
+对你来说，最直接的实操建议是：遇到需要"切换思路"的时刻，开一个新 session 比在当前 session 里堆指令更有效。新 session = 干净的上下文 = 更高的有效智能。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org34c8f30" class="outline-2">
+<h2 id="org34c8f30">长程任务的设计模式</h2>
+<div class="outline-text-2" id="text-org34c8f30">
+<p>
+让 agent 自主完成长任务是最难做对的事情。文章提到了几个模式，其中两个在 Claude Code 中特别有实操价值。
+</p>
+</div>
+
+<div id="outline-container-orgc50e602" class="outline-3">
+<h3 id="orgc50e602">规划-生成-评估分离</h3>
+<div class="outline-text-3" id="text-orgc50e602">
+<p>
+把生成和评估交给不同的上下文。Claude Code 的子智能体天然支持这个模式——主智能体写代码，审查子智能体用纯净上下文审查。为什么纯净上下文反而更有效？因为编码智能体工作了几小时后，上下文又长又乱；审查智能体只看 diff，从头读代码，自己重新发现需要的信息。上下文越短，有效智能越高。
+</p>
+
+<p>
+实操：写完代码后，开一个新 session 来审查。新 session 不需要知道你之前做了什么，只需要看 diff 或最终代码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb13e494" class="outline-3">
+<h3 id="orgb13e494">Sprint Contract</h3>
+<div class="outline-text-3" id="text-orgb13e494">
+<p>
+在开始之前写下"什么叫完成"。Addy Osmani 的经验是：写下完成条件比任何提示词调整都能抓到更多的范围蔓延。比如"这个重构的完成条件是：所有测试通过，没有新增的 eslint 警告， <code>git diff --stat</code> 显示只改动了预期的文件"。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org598ce9e" class="outline-2">
+<h2 id="org598ce9e">模型升级了，你的套件该不该跟着变</h2>
+<div class="outline-text-2" id="text-org598ce9e">
+<p>
+Anthropic 的一个关键观察：套件不会随着模型变强而缩小，只会转移。
+</p>
+
+<p>
+Opus 4.6 基本消灭了"上下文焦虑"——以前的 Sonnet 4.5 会在接近上下文极限时匆忙收工，为此写的各种缓解脚本现在都是死代码。但天花板跟着模型一起提高了：以前做不到的任务现在能做了，这些新任务有自己的失败模式。
+</p>
+
+<p>
+对你的 AGENTS.md 来说，这意味着：定期审计。如果某条规则是因为一个模型缺陷而加的（比如"不要一次修改超过三个文件"），而新模型已经不需要这个限制了，就该删掉。规则只应该在它解决一个真实问题时存在。
+</p>
+
+<p>
+还有一个隐含的陷阱：模型和套件之间存在训练耦合。Claude 模型在后训练阶段专门针对 Claude Code 的套件做过优化，所以同一个模型在 Claude Code 里和在别的套件里表现不同。这也是为什么换了模型版本之后，有时需要微调 AGENTS.md——模型变了，之前的"补丁"可能不再需要，也可能需要新的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga45f971" class="outline-2">
+<h2 id="orga45f971">一个行动框架</h2>
+<div class="outline-text-2" id="text-orga45f971">
+<p>
+读完这篇文章，如果你是一个 Claude Code 用户，接下来可以做的事：
+</p>
+
+<ol class="org-ol">
+<li><b>审计你的 CLAUDE.md</b> ：每条规则能不能追溯到一次具体的失败？追溯不到的考虑删除</li>
+<li><b>加一个 hook</b> ：找一个 agent 反复出错的场景，写一个 hook 自动化检查。成功时静默，失败时详细</li>
+<li><b>审查你的 MCP 列表</b> ：每个 MCP 服务器提供的工具是否必要？描述是否精确？</li>
+<li><b>建立棘轮习惯</b> ：下次 agent 犯错时，不要只点"重试"——花 30 秒加一条规则</li>
+</ol>
+
+<p>
+套件工程的核心思想用一句话总结：不要等下一个模型来解决问题，用你手里的配置面把当前模型的能力释放出来。Viv Trivedy（Terminal Bench 2.0 排名 Top 5 的套件设计者）的话作为结尾很合适："好的 agent 构建是一个迭代练习。如果你没有 v0.1，就没法做迭代。"
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-04-27</span>
+    <span class="post-info">2026-04-30</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/claude-code">Claude Code</a> : <a href="../../../../../tags/harness-engineering">Harness Engineering</a> : <a href="../../../../../tags/agent">agent</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; rywhqcrlkd4ezk2vvgcugcxtjg &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
