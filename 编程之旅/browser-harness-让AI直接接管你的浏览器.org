@@ -1,0 +1,205 @@
+#+TITLE: browser-harness：让 AI 直接接管你的浏览器
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: AI, 浏览器自动化, CDP, Python
+#+DATE: [2026-04-27 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+browser-harness[fn:1] 是一个约 1200 行 Python 代码的开源项目，让 AI 通过 Chrome DevTools Protocol 直接控制你的 Chrome 浏览器。它跟 Selenium、Playwright 的根本区别在于：AI 不只是调用预定义的函数，还能自己写新函数、自己修 bug。
+
+* 架构：一条 WebSocket 通道
+
+#+begin_example
+Chrome 浏览器 → CDP WebSocket → daemon.py → Unix Socket → run.py（执行 Python 代码）
+#+end_example
+
+整个系统由三部分组成：
+
+1. *daemon.py* （约 260 行）：通过 WebSocket 连接 Chrome 的 CDP 接口，在本地开一个 Unix socket（ =/tmp/bu-default.sock= ）作为中继。所有请求都是一行 JSON，响应也是一行 JSON
+2. *helpers.py* （约 250 行）：提供给 AI 调用的工具函数——导航、截图、点击、输入、标签页管理等。AI 可以直接编辑这个文件
+3. *run.py* （约 70 行）：入口，启动 daemon，然后执行你传入的 Python 代码。helpers.py 里的函数已自动导入
+
+没有框架，没有中间层，没有 retry 逻辑。AI 拿到的是原始的 CDP 能力。
+
+* 安装
+
+*前提条件* ：Python 3.10+，uv[fn:2]，Chrome 或 Chromium 浏览器。
+
+#+begin_src shell
+git clone https://github.com/browser-use/browser-harness
+cd browser-harness
+uv sync
+uv tool install -e .
+command -v browser-harness
+#+end_src
+
+=uv tool install -e .= 把 browser-harness 安装为全局命令，同时指向仓库源码。这样 AI 编辑了 helpers.py 后，下次调用立刻生效，不需要重新安装。
+
+如果你用的是 Claude Code，可以把 SKILL.md 注册到全局配置中：
+
+#+begin_src shell
+# 在 ~/.claude/CLAUDE.md 中添加一行：
+# @~/src/browser-harness/SKILL.md
+#+end_src
+
+* 浏览器配置：启用远程调试
+
+browser-harness 需要连接你已经打开的 Chrome，而不是自己启动一个新浏览器。这要求 Chrome 开启远程调试端口。
+
+*一次性设置* ：在 Chrome 地址栏输入 =chrome://inspect/#remote-debugging= ，勾选 =Discover network targets= 复选框，点击 =Allow= 确认。这个设置对当前 Chrome 配置文件永久生效——以后每次打开 Chrome 都会自动启用调试端口，不需要重复操作。
+
+Linux 用户如果找不到 =DevToolsActivePort= 文件，可以手动启动 Chrome 并指定调试端口：
+
+#+begin_src shell
+google-chrome --remote-debugging-port=9222 &
+#+end_src
+
+*验证连接* ：
+
+#+begin_src shell
+browser-harness -c "print(page_info())"
+#+end_src
+
+#+begin_example
+{'url': 'chrome://newtab/', 'title': '新标签页', 'w': 1920, 'h': 1080, 'sx': 0, 'sy': 0, 'pw': 1920, 'ph': 1080}
+#+end_example
+
+看到类似输出说明连接成功。 =page_info()= 返回当前标签页的 URL、标题、视口尺寸和滚动位置。
+
+* 基本操作
+
+browser-harness 的使用方式是传入一段 Python 代码，helpers.py 里的函数已自动导入。
+
+*打开新标签页并导航* ：
+
+#+begin_src python
+new_tab("https://github.com/browser-use/browser-harness")
+wait_for_load()
+print(page_info())
+#+end_src
+
+注意第一个操作用 =new_tab()= 而不是 =goto_url()= 。 =goto_url()= 会在当前活跃标签页中导航，会覆盖你正在看的页面。 =new_tab()= 创建新标签页并自动切换过去。
+
+*截图查看页面* ：
+
+#+begin_src python
+capture_screenshot("/tmp/shot.png")
+#+end_src
+
+截图是 browser-harness 最核心的操作方式。AI 通过截图理解页面状态、找到点击目标、验证操作结果。整个工作流是：截图 → 看图 → 操作 → 再截图确认。
+
+*点击和输入* ：
+
+#+begin_src python
+# 坐标点击（最常用，能穿透 iframe 和 shadow DOM）
+click_at_xy(500, 300)
+
+# 输入文本
+type_text("browser automation")
+
+# 按键
+press_key("Enter")
+#+end_src
+
+坐标点击走的是 Chrome 合成器层面的 =Input.dispatchMouseEvent= ，不受 DOM 结构限制。即使有 iframe 嵌套、shadow DOM 遮挡、跨域限制，点击都能正常到达目标。
+
+*执行 JavaScript* ：
+
+#+begin_src python
+# 读取页面标题
+print(js("document.title"))
+
+# 提取所有链接
+links = js("JSON.stringify([...document.querySelectorAll('a')].map(a => ({text: a.textContent, href: a.href})))")
+print(links)
+#+end_src
+
+=js()= 函数直接在页面上下文中执行 JavaScript，适合提取数据、操作 DOM、读取页面状态。表达式中包含 =return= 时会自动包装成立即执行函数。
+
+*标签页管理* ：
+
+#+begin_src python
+# 列出所有标签页
+tabs = list_tabs(include_chrome=False)
+for t in tabs:
+    print(f"{t['title']}: {t['url']}")
+
+# 切换到指定标签页
+switch_tab(tabs[0]["targetId"])
+
+# 被代理控制的标签页会在标题前加 🟢 标记
+#+end_src
+
+* 自我修复：AI 自己写工具
+
+browser-harness 最独特的设计是 AI 可以编辑 helpers.py。当 AI 发现缺少某个功能时，它不会报错退出，而是自己把函数写进去。
+
+项目 README 记录了一个真实案例：AI 需要上传文件，但发现 helpers.py 里没有 =upload_file= 函数。AI 的反应流程：
+
+1. 用 grep 确认 helpers.py 确实没有上传相关函数
+2. 阅读整个 helpers.py，理解代码风格
+3. 调用 CDP 的 =DOM.setFileInputFiles= 接口，在 helpers.py 末尾写了一个完整的 =upload_file= 函数
+4. 调用新写的函数成功上传文件
+
+整个过程无人干预。开发团队后来在 git diff 里看到 helpers.py 从 192 行变成 199 行，才知道 AI 自己加了代码。
+
+这个设计背后的思路是：现代大语言模型对 CDP 协议非常熟悉，训练数据中有大量相关代码和文档。与其花几万行代码封装各种接口，不如直接让 AI 用自己的知识来处理。
+
+* domain-skills 和 interaction-skills
+
+项目内置了两类技能文件，帮助 AI 更高效地操作网站。
+
+*domain-skills* （网站专用知识）：收录了 70+ 个网站的专用操作指南，包括 GitHub、Amazon、LinkedIn、YouTube、Reddit 等。每个网站一个目录，记录了稳定的 CSS 选择器、私有 API 端点、页面结构特点、常见陷阱等。
+
+#+begin_src shell
+# 搜索特定网站的技能
+rg --files domain-skills | grep amazon
+# domain-skills/amazon/...
+#+end_src
+
+AI 在导航到某个网站时会自动查找对应的 domain-skills。你也可以贡献新网站的技能——按项目的设计，技能应该由 AI 在操作过程中自动生成，而不是人工编写。
+
+*interaction-skills* （通用交互技巧）：覆盖 17 种常见交互模式——对话框处理、跨域 iframe、文件上传、拖拽、下拉菜单、shadow DOM 等。当 AI 遇到具体的交互困难时，会参考这些指南。
+
+* 维护命令
+
+#+begin_src shell
+# 查看安装状态、daemon 状态、Chrome 连接状态
+browser-harness --doctor
+
+# 重新连接浏览器（daemon 挂掉时使用）
+browser-harness --setup
+
+# 更新到最新版本
+browser-harness --update -y
+
+# 重启 daemon（让代码修改生效）
+browser-harness --reload
+#+end_src
+
+* 与 Playwright MCP、Browser Use CLI 的区别
+
+| 特性 | browser-harness | Playwright MCP | Browser Use CLI |
+|------|----------------|----------------|-----------------|
+| AI 调用方式 | 直接调用 CDP，无封装 | 调用预定义函数 | 启发式规则驱动 |
+| 遇到未知情况 | AI 自己写代码处理 | 报错 | 规则不覆盖就失败 |
+| 代码量 | ~1200 行 | 较大 | 数万行 |
+| 对 AI 模型要求 | 必须用顶级模型 | 较低 | 较低 |
+| 连接方式 | 连接用户已打开的浏览器 | 启动新浏览器实例 | 启动新浏览器实例 |
+
+核心差异在于设计哲学：Playwright 和 Browser Use 试图把浏览器的复杂性封装起来，提供简单接口；browser-harness 反其道而行，把所有复杂性暴露给 AI，让 AI 自己处理。前者在页面稳定、流程固定的场景下效率高；后者在页面频繁变化、流程不可预测的场景下更有优势。
+
+* 注意事项
+
+- *速度慢* ：每一步 AI 都要看页面、分析情况、做决策，简单任务可能要几分钟
+- *成本高* ：每步操作都要调用大模型 API，传递截图或 DOM 树，token 消耗大
+- *稳定性一般* ：复杂任务中 AI 可能迷路、做错决定、陷入死循环，不适合关键生产系统
+- *安全风险* ：给 AI 控制浏览器的权限相当于给了操作系统级别的操作能力，需要注意恶意网站可能诱导 AI 做危险操作
+
+适合的场景：AI Agent 开发研究、企业内部系统自动化（没有 API 的老旧系统）、浏览器任务探索和原型验证。不适合的场景：生产环境稳定运行、高频率低延迟的自动化、低成本批量操作。
+
+* Footnotes
+
+[fn:1] https://github.com/browser-use/browser-harness
+
+[fn:2] uv 是一个快速的 Python 包管理器，安装方法： =curl -LsSf https://astral.sh/uv/install.sh | sh=
