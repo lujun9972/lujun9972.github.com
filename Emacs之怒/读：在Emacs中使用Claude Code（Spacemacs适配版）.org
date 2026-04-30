@@ -1,0 +1,134 @@
+#+TITLE: 读：在Emacs中使用Claude Code（Spacemacs适配版）
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, Claude Code, Spacemacs
+#+DATE: [2026-04-30 Thu]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Claude Code 是 Anthropic 提供的 CLI 工具，可以直接在终端中与 Claude 对话，让 Claude 读取你的整个项目目录、执行命令、修改文件。而 =claude-code.el= 包把这个能力集成到了 Emacs 中，让你不用离开编辑器就能用 Claude 协助编码。
+
+原文（Will Schenk, [[https://willschenk.com/howto/2025/claude_code_in_emacs/][Claude Code in Emacs]]）介绍了如何在 Emacs 中配置和使用 =claude-code.el= 。下面是我在 Spacemacs 中的适配配置和使用说明。
+
+* 安装 Claude Code CLI
+
+在配置 Emacs 之前，需要先安装 Claude Code 命令行工具：
+
+#+begin_src sh
+npm install -g @anthropic-ai/claude-code
+#+end_src
+
+然后在项目根目录执行 =claude= 来授权和初始化。Claude Code 会读取当前目录及其子目录的所有文件，因此启动时所在的目录决定了它能访问的范围。
+
+* Spacemacs 配置
+
+原文使用 =use-package= + =straight.el= 来安装包。在 Spacemacs 中，配置方式略有不同。
+
+** 安装 vterm、claude-code 和 monet
+
+=vterm= 是终端模拟器，claude-code 用它来与 Claude Code CLI 交互。 =claude-code.el= 和 =monet= 则没有收录到 MELPA 中，需要用 recipe 从 GitHub 直接安装。在 =dotspacemacs-additional-packages= 中一并添加：
+
+#+begin_src elisp
+dotspacemacs-additional-packages
+'(
+  ;; ... 其他包 ...
+  vterm
+  (claude-code :location (recipe :fetcher github :repo "stevemolitor/claude-code.el"))
+  (monet :location (recipe :fetcher github :repo "stevemolitor/monet"))
+  )
+#+end_src
+
+=monet= 是可选的 IDE 集成包，它为 Claude 提供 WebSocket 接口，让 Claude 能感知 Emacs 的上下文（当前打开的文件、光标位置等）。不装 =monet= 不影响基本功能。需要说明的是， =monet= 不依赖 =claude-code= ，两个是独立的包。
+
+** 配置与快捷键
+
+配置代码放在 =dotspacemacs/user-config= 中：
+
+#+begin_src elisp
+(with-eval-after-load 'claude-code
+  ;; 使用 vterm 作为终端后端
+  (setq claude-code-terminal-backend 'vterm)
+
+  ;; IDE 集成（可选）
+  (add-hook 'claude-code-process-environment-functions
+            #'monet-start-server-function)
+  (monet-mode 1))
+
+;; Spacemacs 风格的快捷键
+;; SPC a c 前缀下绑定所有 claude-code 命令
+(spacemacs/set-leader-keys
+  "a c c" 'claude-code                    ; 从当前 buffer 目录启动
+  "a c d" 'claude-code-start-in-directory ; 选择目录启动
+  "a c e" 'claude-code-fix-error-at-point ; 修复光标处的错误
+  "a c r" 'claude-code-send-region        ; 发送选中区域或 buffer
+  "a c o" 'claude-code-send-buffer-file   ; 发送当前文件
+  "a c s" 'claude-code-send-command       ; 发送任意文本命令
+  "a c C" 'claude-code-continue           ; 恢复上次会话
+  "a c R" 'claude-code-resume             ; 选择历史会话恢复
+  "a c k" 'claude-code-kill               ; 终止当前会话
+  "a c m" 'claude-code-transient          ; 打开命令菜单
+  "a c b" 'claude-code-switch-to-buffer   ; 切换到 Claude buffer
+  "a c z" 'claude-code-toggle-read-only-mode) ; 切换文本选择模式
+#+end_src
+
+以上配置将快捷键集中在 =SPC a c= 前缀下，符合 Spacemacs 的应用快捷键惯例。原文使用 =C-c c= 前缀，如果你习惯 Emacs 原生风格，也可以按自己的喜好调整。
+
+* 功能详解
+
+** 启动会话
+
+按 =SPC a c c= 从当前 buffer 所在的目录启动一个 Claude Code 会话。如果需要指定其他目录，按 =SPC a c d= 手动选择。
+
+启动后会在 Emacs 中打开一个 vterm buffer，里面运行着 Claude Code 的交互界面。你可以像在终端中一样直接输入问题，Claude 会读取项目文件后回答。
+
+** 发送上下文
+
+与 Claude 协作的关键在于提供正确的上下文。 =claude-code.el= 提供了几种发送方式：
+
+- =SPC a c e= （ =claude-code-fix-error-at-point= ）：最实用的功能之一。将光标放在错误上，按这个快捷键会连同错误信息、光标位置的代码上下文一并发送给 Claude，Claude 能直接定位到问题所在并给出修复方案。
+
+- =SPC a c r= （ =claude-code-send-region= ）：选中一段代码后发送，或直接发送整个 buffer 内容。适合让 Claude 审查代码、解释逻辑或提出改进建议。
+
+- =SPC a c o= （ =claude-code-send-buffer-file= ）：发送当前文件。与 =send-region= 的区别在于它发送的是文件路径而非内容，Claude 直接从文件系统读取，对大文件更高效。
+
+- =SPC a c s= （ =claude-code-send-command= ）：发送任意文本，不绑定到当前文件。适合问一般性问题。
+
+** 错误修复循环
+
+=claude-code-fix-error-at-point= 是原文特别强调的高频使用场景。典型的工作流是：
+
+1. 在 Emacs 中编辑代码，触发编译或 flycheck 报错
+2. 将光标移到错误行，按 =SPC a c e=
+3. 查看 Claude 的修复建议
+4. 按 =SPC a c s= 告诉 Claude 执行修复
+
+Claude 不仅能修复当前文件，如果有足够的项目上下文，它还能同时修改相关的测试文件或配置文件。原文中提到，Claude Code CLI 运行在一个持久的 shell 会话中，环境变量、工作目录和已安装的依赖在整个会话中保持一致，这意味着 Claude 可以运行测试来验证自己的修复是否正确。
+
+** 会话管理
+
+=claude-code.el= 的对话历史是跨 Emacs 会话持久化的。即使关闭重启 Emacs，之前的对话记录仍然保留。相关快捷键：
+
+- =SPC a c C= ：直接恢复最近一次的会话
+- =SPC a c R= ：从所有历史会话中选择一个恢复
+- =SPC a c k= ：终止不再需要的会话
+
+* 工作模式说明
+
+理解以下三个概念有助于更好地使用 =claude-code.el= ：
+
+** 目录范围决定上下文
+
+Claude Code 以目录为访问边界。在项目根目录启动，Claude 能读取构建文件、文档和完整的源代码树。在子目录启动，访问范围仅限于该子树，这对大型 monorepo 或包含敏感文件的目录很有用。
+
+** 持久 shell 会话
+
+每次启动的 Claude Code 会话运行在一个持久的 shell 进程中。这意味着你在对话中执行的 =cd= 、导出的环境变量、安装的依赖包都会在后续命令中持续生效。Claude 可以在这个会话中执行测试、安装依赖、甚至创建 git 提交。
+
+** IDE 集成
+
+如果安装了 =monet= ，Claude 能获得更多 IDE 层面的上下文，比如当前打开的文件列表、光标所在函数等。不过 =monet= 是独立的包，不依赖 =claude-code= ，两者配合使用时需要分别配置。
+
+* 小结
+
+Claude Code 本身是一个功能完整的 CLI 工具， =claude-code.el= 的作用是把它嵌入到 Emacs 的工作流中，省去了频繁切换窗口的麻烦。Spacemacs 环境下只要注意包的安装方式（用 recipe 从 GitHub 拉取）和快捷键风格（用 SPC 前缀），配置起来并不复杂。
+
+如果你想了解更详细的命令列表和配置选项，可以直接在 Emacs 中通过 =C-h f claude-code= 查阅文档，或查看 GitHub 上的 [[https://github.com/stevemolitor/claude-code.el][claude-code.el 仓库]]。
