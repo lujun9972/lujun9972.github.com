@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：规则引擎——从 if-else 到业务规则管理 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="规则引擎, 设计模式, 架构" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：规则引擎——从 if-else 到业务规则管理</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4a4ad4b">开篇：if-else 的尽头</a></li>
+<li><a href="#org545e9a6">规则引擎是什么：三句话</a></li>
+<li><a href="#org91c5778">规则引擎的决策框架</a></li>
+<li><a href="#org405e318">框架生态速览</a></li>
+<li><a href="#org314d39e">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org4a4ad4b" class="outline-2">
+<h2 id="org4a4ad4b">开篇：if-else 的尽头</h2>
+<div class="outline-text-2" id="text-org4a4ad4b">
+<p>
+大部分软件的业务逻辑都是从几行 if-else 开始的。然后需求雪球越滚越大：新促销、合规调整、用户分层……等回过神来，代码已经复杂到改一个折扣条件要翻遍整个代码库，怕改漏了，怕影响不相干的逻辑。
+</p>
+
+<p>
+这种痛我猜大部分后端开发都经历过。规则引擎（Rule Engine）这个听起来有点年代感的概念，就是为这个场景设计的。
+</p>
+
+<p>
+在 DZone 上读了一篇介绍（<a href="https://dzone.com/articles/how-rule-engines-transform-business-agility">How Rule Engines Transform Business Agility and Code Simplicity</a>，作者 Venkatesh S），把规则引擎的适用场景和边界讲得比较实在。这篇笔记记下关键点和自己的理解。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org545e9a6" class="outline-2">
+<h2 id="org545e9a6">规则引擎是什么：三句话</h2>
+<div class="outline-text-2" id="text-org545e9a6">
+<p>
+第一句：规则引擎把 IF-THEN 从代码里搬到代码外。
+</p>
+
+<p>
+第二句：还是 IF-THEN，只是不用在 Java/Python/Clojure 里写 if-else 了，改成在配置文件或管理界面里写 <code>IF customer.tier = 'GOLD' AND order.total &gt; 100 THEN apply 15% discount</code> 。
+</p>
+
+<p>
+第三句：非开发者也能改这些规则。运营想改折扣、合规想调整审批门槛、风控想加一个新检测规则，他们自己改，不用等你排期。
+</p>
+
+<p>
+这三句话够用了。Drools 的 Rete 算法、前向链后向链、推理引擎怎么匹配规则，这些等真正需要的时候再了解也不迟。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org91c5778" class="outline-2">
+<h2 id="org91c5778">规则引擎的决策框架</h2>
+<div class="outline-text-2" id="text-org91c5778">
+<p>
+什么时候该上规则引擎，什么时候不该，原文给了一些判断标准，整理成四问：
+</p>
+
+<p>
+<b>你的规则变化有多频繁</b> ：规则每周都在变（促销活动、合规政策、风控策略）→ 值得考虑。规则一年改一两次 → 不需要，if-else 更直接。
+</p>
+
+<p>
+<b>非技术人员有没有能力改规则</b> ：运营/合规的人能写 <code>IF score &gt; threshold</code> 这种级别的条件 → 上了规则引擎确实能减少你的负担。他们连 CSV 都填不利索 → 上了规则引擎最后也是你改，白多一层复杂度。
+</p>
+
+<p>
+<b>性能要求多高</b> ：规则引擎运行时做模式匹配，比硬编码的 if-else 慢一个数量级。高并发低延迟的场景（如实时支付风控）需要谨慎评估。批处理、后台审核这类场景无所谓。
+</p>
+
+<p>
+<b>规则的规模有多大</b> ：10 条以下的规则 → if-else 是正确答案。200 条以上 → 规则引擎的收益开始显现，硬编码的复杂性已经失控。10 到 200 条之间是灰色地带，具体情况具体分析。
+</p>
+
+<p>
+原文还列了一张对比表，把传统方式（硬编码逻辑）和规则引擎方式对比得更全面：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">维度</th>
+<th scope="col" class="org-left">硬编码</th>
+<th scope="col" class="org-left">规则引擎</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">变更速度</td>
+<td class="org-left">改代码+测试+部署，论周算</td>
+<td class="org-left">业务人员在 UI 上改，论小时算</td>
+</tr>
+
+<tr>
+<td class="org-left">业务方参与</td>
+<td class="org-left">开发者当传话筒</td>
+<td class="org-left">领域专家直接管理规则</td>
+</tr>
+
+<tr>
+<td class="org-left">复杂度上限</td>
+<td class="org-left">10--20 个条件就难维护了</td>
+<td class="org-left">1000+ 条件也能管</td>
+</tr>
+
+<tr>
+<td class="org-left">审计追踪</td>
+<td class="org-left">逻辑散在代码里，难查决策历史</td>
+<td class="org-left">规则有版本号，谁改了什么一目了然</td>
+</tr>
+
+<tr>
+<td class="org-left">测试影响</td>
+<td class="org-left">改一次全面回归</td>
+<td class="org-left">规则可以单独测</td>
+</tr>
+
+<tr>
+<td class="org-left">出错风险</td>
+<td class="org-left">改复杂条件容易引入 bug</td>
+<td class="org-left">规则独立，改一个不影响其他</td>
+</tr>
+
+<tr>
+<td class="org-left">团队效率</td>
+<td class="org-left">开发者整天改业务逻辑</td>
+<td class="org-left">开发者专注平台能力</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+<div id="outline-container-org405e318" class="outline-2">
+<h2 id="org405e318">框架生态速览</h2>
+<div class="outline-text-2" id="text-org405e318">
+<p>
+规则引擎的生态很丰富，但说实话大部分场景不需要纠结选哪个，了解几个就够了：
+</p>
+
+<ul class="org-ul">
+<li><code>Drools</code> ：Java 生态的老大哥，功能最全但也最重。大型企业级场景首选</li>
+<li><code>Easy Rules</code> ：轻量级 Java 规则引擎，如果你的需求不复杂可以试试这个</li>
+<li><code>JSON Rules Engine</code> ：规则用 JSON 写，和语言无关。适合想把规则存数据库或通过 API 管理的场景</li>
+<li><code>DMN（Decision Model and Notation）</code> ：OMG 标准的决策模型表示法，用 Camunda 等流程引擎可以执行。适合需要跨组织和跨工具协作决策逻辑的场景</li>
+</ul>
+
+<p>
+选框架的核心不是功能对比，而是：你的规则将来由谁维护、用什么工具改、想把这层逻辑放在代码里还是外部系统里。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org314d39e" class="outline-2">
+<h2 id="org314d39e">总结</h2>
+<div class="outline-text-2" id="text-org314d39e">
+<p>
+规则引擎不是银弹。它做的是一笔交易：用一层"规则管理层"替换代码里的散装 if-else。这笔交易值不值，取决于规则的变动频率、维护者的动手能力、以及对性能的容忍度。
+</p>
+
+<p>
+对于大多数项目来说，最优解可能不是"全上规则引擎"也不是"全用 if-else"，而是在业务逻辑最密集、变化最快的部分划出边界，用规则引擎管理起来。其他地方继续用常规代码。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-01</span>
+    <span class="post-info">2026-05-01</span>
+    <a href="../../../../../tags/规则引擎">规则引擎</a> : <a href="../../../../../tags/设计模式">设计模式</a> : <a href="../../../../../tags/架构">架构</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; nvcrsk4lb03ebagxjwngdrxj4g &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：LLM 生产环境六种失败原型——基准测试无法预测的那些故障 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="keywords" content="LLM,AI,生产部署,故障测试,失败模式" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：LLM 生产环境六种失败原型——基准测试无法预测的那些故障</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org204a164">引子：92% 的模型为什么在真实对话中撑不过 5 轮</a></li>
+<li><a href="#org87aca28">六种失败原型</a>
+<ul>
+<li><a href="#orgcbf0651">自信胡诌（Confident Fabricator）</a>
+<ul>
+<li><a href="#org3427948">这是什么</a></li>
+<li><a href="#org9c7ce51">谁更容易胡诌</a></li>
+<li><a href="#orgd74b683">如何测试</a></li>
+</ul>
+</li>
+<li><a href="#org6287324">上下文失忆（Context Amnesiac）</a>
+<ul>
+<li><a href="#orgba55be6">这是什么</a></li>
+<li><a href="#org2f5c288">退化曲线</a></li>
+<li><a href="#org7202c7f">如何测试</a></li>
+</ul>
+</li>
+<li><a href="#org269950a">无限循环（Infinite Looper）</a>
+<ul>
+<li><a href="#org6cf7ead">这是什么</a></li>
+<li><a href="#org0cde57e">如何测试</a></li>
+</ul>
+</li>
+<li><a href="#org0317d01">脆弱的工具调用（Brittle Tool Caller）</a>
+<ul>
+<li><a href="#org0d7f394">这是什么</a></li>
+<li><a href="#org1caa8a6">生产中的准确率</a></li>
+<li><a href="#org34660e1">如何测试</a></li>
+</ul>
+</li>
+<li><a href="#orgdd3e404">过度拒绝（Over-Refuser）</a>
+<ul>
+<li><a href="#org27976a0">这是什么</a></li>
+<li><a href="#org49f18c8">谁的拒绝更离谱</a></li>
+<li><a href="#orgb4e5ab0">如何测试</a></li>
+</ul>
+</li>
+<li><a href="#orgd2f6f6a">Token 燃烧</a>
+<ul>
+<li><a href="#org02b5be1">这是什么</a></li>
+<li><a href="#orgd71a6ed">如何对比</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#orga12b1e0">选型中的失败容忍度——三个真实决策</a>
+<ul>
+<li><a href="#org2213226">医疗问答：宁可选"错误更容易被看出来"的模型</a></li>
+<li><a href="#org0c01d4a">SQL 生成：拥抱上下文退化</a></li>
+<li><a href="#org608487f">客服机器人：宁可选容易"摸清规律"的模型</a></li>
+</ul>
+</li>
+<li><a href="#org0cd1fe4">如何量化容忍度：失败预算</a></li>
+<li><a href="#org05eccaa">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org204a164" class="outline-2">
+<h2 id="org204a164">引子：92% 的模型为什么在真实对话中撑不过 5 轮</h2>
+<div class="outline-text-2" id="text-org204a164">
+<p>
+有一家公司的选 LLM 流程是这样的：看基准测试分数。GPT-4 92%，Claude 89%，选了 GPT-4。理由很简单，92 大于 89。上线两周后，客服聊天机器人开始做奇怪的事。前三个问题回答完美，第四轮突然忘了用户叫什么，第五轮开始自相矛盾，第六轮开始编造公司根本不存在的功能。它的"Premium Diamond Tier"订阅被用户截图发到推特，被转发了 1 万 5 千次。副总裁脸色铁青。
+</p>
+
+<p>
+问题出在哪？基准测试只测单轮问答正确率。生产环境中的失败出在多轮交互中涌现出的复合行为上。原文提出一个反直觉的指标：MTTWB（Mean Time To Weird Behavior，模型在多少轮对话后开始出现怪异行为）。GPT-4 的 MTTWB 是 4.7 轮。这意味着 68% 的客服对话（平均 8 轮以上）中必然出问题。Claude 的 MTTWB 是 12.3 轮，82% 的对话可以完整跑完。那个 3% 的基准测试分差，放到生产环境中是 300% 的对话可靠性差距。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org87aca28" class="outline-2">
+<h2 id="org87aca28">六种失败原型</h2>
+<div class="outline-text-2" id="text-org87aca28">
+</div>
+<div id="outline-container-orgcbf0651" class="outline-3">
+<h3 id="orgcbf0651">自信胡诌（Confident Fabricator）</h3>
+<div class="outline-text-3" id="text-orgcbf0651">
+</div>
+<div id="outline-container-org3427948" class="outline-4">
+<h4 id="org3427948">这是什么</h4>
+<div class="outline-text-4" id="text-org3427948">
+<p>
+模型用笃定的口吻说出完全错误的话。一位开发者花六小时调试一个不存在的 API 端点。GPT-3.5-turbo 用完美的语法描述了 <code>POST /api/v2/users/bulk-archive</code> ，包括示例请求和速率限制说明，但这个端点从未存在过。
+</p>
+
+<p>
+更吓人的是医疗场景：有用户用症状检查器问了一种罕见病"进行性骨化性纤维发育不良"（Fibrodysplasia Ossificans Progressiva），模型自信地建议"布洛芬 500mg 每日两次，轻度拉伸运动，物理治疗可以显著改善"。该病的致命之处在于肌肉组织在受到损伤后变成骨头。物理治疗和拉伸不仅没用，还会主动触发病情恶化。这个幻觉如果进入生产环节，可能导致永久性伤害。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9c7ce51" class="outline-4">
+<h4 id="org9c7ce51">谁更容易胡诌</h4>
+<div class="outline-text-4" id="text-org9c7ce51">
+<p>
+不同模型的胡诌率差异很大，关键发现是：胡诌率与模型大小或基准测试分数没有相关性。原文实测数据：GPT-4 约 2.3%、Claude Opus 约 1.8%、Llama-70B 约 7.2%。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd74b683" class="outline-4">
+<h4 id="orgd74b683">如何测试</h4>
+<div class="outline-text-4" id="text-orgd74b683">
+<p>
+核心思路是"不可能知识测试"：构造模型肯定不知道的内容（不存在的订单号、虚构的 API 方法），看它是否能承认自己不知道。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#19981;&#21487;&#33021;&#30693;&#35782;&#27979;&#35797;&#65306;&#27169;&#22411;&#24212;&#25298;&#32477;&#22238;&#31572;&#26080;&#27861;&#30693;&#36947;&#30340;&#20869;&#23481;
+</span><span class="org-variable-name">test_cases</span> <span class="org-operator">=</span> [
+    <span class="org-string">"&#35746;&#21333;&#21495; #XYZ-99999 &#30340;&#36864;&#36135;&#25919;&#31574;&#26159;&#20160;&#20040;&#65311;"</span>,  <span class="org-comment-delimiter"># </span><span class="org-comment">&#26399;&#26395;&#65306;&#25298;&#31572;
+</span>    <span class="org-string">"&#35831;&#35299;&#37322; configure_stealth_mode() &#36825;&#20010; API &#26041;&#27861;"</span>,  <span class="org-comment-delimiter"># </span><span class="org-comment">&#26399;&#26395;&#65306;&#25298;&#31572;
+</span>]
+
+<span class="org-keyword">for</span> query <span class="org-keyword">in</span> test_cases:
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#23454;&#38469;&#25191;&#34892;&#38656;&#35201; LLM API&#65292;&#27492;&#22788;&#20026;&#36923;&#36753;&#31034;&#24847;
+</span>    <span class="org-variable-name">response</span> <span class="org-operator">=</span> call_llm(query)
+    assert_contains_refusal(response)
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6287324" class="outline-3">
+<h3 id="org6287324">上下文失忆（Context Amnesiac）</h3>
+<div class="outline-text-3" id="text-org6287324">
+</div>
+<div id="outline-container-orgba55be6" class="outline-4">
+<h4 id="orgba55be6">这是什么</h4>
+<div class="outline-text-4" id="text-orgba55be6">
+<p>
+模型丢失对话早期出现过的关键信息。合同分析工具接了一份 200 页的合并协议，用户问"终止通知期是多少"，模型回答"90 天"，但正确答案是 180 天，清楚写在第 47 页。模型读了文档，但它在处理中间 150 页内容时把精确细节压缩成了模糊摘要。
+</p>
+
+<p>
+还有更常见的场景：用户开场说"我是企业版客户，需要配置单点登录"，15 轮对话后用户说"SAML 端点不工作"，模型回答"单点登录需要企业版套餐，要升级吗？"，完全忘了用户一开场就说过自己是企业版。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2f5c288" class="outline-4">
+<h4 id="org2f5c288">退化曲线</h4>
+<div class="outline-text-4" id="text-org2f5c288">
+<p>
+原文在一个法律文档问答任务上测了上下文退化曲线：8K tokens 以内准确率 94.2%，32K 时降到 87.6%，64K 时降到 71.3%，100K+ 时仅 58.9%。而且退化不是线性的：不同模型的退化曲线差异巨大。GPT-4 在上下文占用 50% 时突然崩塌，Claude 优雅地逐渐衰减，Gemini 在 40% 占用时就断崖下跌。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7202c7f" class="outline-4">
+<h4 id="org7202c7f">如何测试</h4>
+<div class="outline-text-4" id="text-org7202c7f">
+<p>
+把关键信息放在上下文的不同位置，测试召回率：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#19978;&#19979;&#25991;&#21484;&#22238;&#27979;&#35797;&#65288;&#31034;&#24847;&#20195;&#30721;&#65292;&#38656; LLM API&#65289;
+</span><span class="org-keyword">for</span> position, prefix_tokens, filler_tokens <span class="org-keyword">in</span> [
+    (<span class="org-string">"&#24320;&#22836;"</span>, 100, 30000),
+    (<span class="org-string">"&#20013;&#37096;"</span>, 15000, 15000),
+    (<span class="org-string">"&#32467;&#23614;"</span>, 29000, 1000),
+]:
+    <span class="org-variable-name">info</span> <span class="org-operator">=</span> <span class="org-string">"&#29992;&#25143;&#26159; Enterprise &#35745;&#21010;&#65292;&#24050;&#21551;&#29992; SSO"</span>
+    <span class="org-variable-name">conversation</span> <span class="org-operator">=</span> build_conversation(prefix_tokens, info, filler_tokens)
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> call_llm(conversation <span class="org-operator">+</span> <span class="org-string">"&#25105;&#26159;&#20160;&#20040;&#35745;&#21010;&#65311;"</span>)
+    <span class="org-keyword">assert</span> <span class="org-string">"Enterprise"</span> <span class="org-keyword">in</span> response, f<span class="org-string">"&#26080;&#27861;&#20174; </span>{position}<span class="org-string"> &#21484;&#22238;&#20449;&#24687;"</span>
+</pre>
+</div>
+
+<p>
+原文的解决方案是切换到混合架构：先用一个模型提取并结构化关键信息，再用另一个模型基于提取结果回答问题。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org269950a" class="outline-3">
+<h3 id="org269950a">无限循环（Infinite Looper）</h3>
+<div class="outline-text-3" id="text-org269950a">
+</div>
+<div id="outline-container-org6cf7ead" class="outline-4">
+<h4 id="org6cf7ead">这是什么</h4>
+<div class="outline-text-4" id="text-org6cf7ead">
+<p>
+在 Agent 工作流中，模型卡死在重复操作中，像卡了带的录音机。一个查询"东京当前天气"的简单任务，Agent 执行了 847 次 API 调用后才被人工杀死。它的循环逻辑是：查天气 API → 拿到 JSON 响应 → 觉得"不完整"（实际上完整）→ 换参数再查一次 → 拿到相同响应 → 再觉得不完整 → 重复 843 次。
+</p>
+
+<p>
+一个代码修复 Agent 在简单测试失败上的表现更夸张：89 次代码修改、156 次测试运行、消耗 2.4M tokens、耗时 18 分钟，仍然没有修好。同一个 bug 给人类开发者，大概反复试三次后就会去问别人"这个测试到底测的是什么"。
+</p>
+
+<p>
+这类循环不会崩溃，不会报错，它们只会默默的消耗资源。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0cde57e" class="outline-4">
+<h4 id="org0cde57e">如何测试</h4>
+<div class="outline-text-4" id="text-org0cde57e">
+<p>
+核心思路是设置循环检测器：不只要限制最大迭代次数，还要检测相似动作的重复。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">class</span> <span class="org-type">LoopDetector</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, max_iterations<span class="org-operator">=</span>10, similarity_threshold<span class="org-operator">=</span>0.85):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">max_iterations</span> <span class="org-operator">=</span> max_iterations
+        <span class="org-keyword">self</span>.<span class="org-variable-name">similarity_threshold</span> <span class="org-operator">=</span> similarity_threshold
+        <span class="org-keyword">self</span>.<span class="org-variable-name">action_history</span> <span class="org-operator">=</span> []
+
+    <span class="org-keyword">def</span> <span class="org-function-name">check</span>(<span class="org-keyword">self</span>, action):
+        <span class="org-keyword">self</span>.action_history.append(action)
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>.action_history.count(action) <span class="org-operator">&gt;=</span> 3:
+            <span class="org-keyword">raise</span> <span class="org-type">RuntimeError</span>(
+                f<span class="org-string">"Loop detected: action repeated 3+ times: </span>{action}<span class="org-string">"</span>
+            )
+        <span class="org-keyword">if</span> <span class="org-builtin">len</span>(<span class="org-keyword">self</span>.action_history) <span class="org-operator">&gt;=</span> <span class="org-keyword">self</span>.max_iterations:
+            <span class="org-keyword">raise</span> <span class="org-type">RuntimeError</span>(
+                f<span class="org-string">"Max iterations (</span>{<span class="org-keyword">self</span>.max_iterations}<span class="org-string">) exceeded"</span>
+            )
+
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#39564;&#35777;&#65306;&#26816;&#27979;&#37325;&#22797;&#21160;&#20316;
+</span><span class="org-variable-name">detector</span> <span class="org-operator">=</span> LoopDetector(max_iterations<span class="org-operator">=</span>5)
+<span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(3):
+    <span class="org-keyword">try</span>:
+        detector.check(<span class="org-string">"query_weather_api"</span>)
+    <span class="org-keyword">except</span> <span class="org-type">RuntimeError</span> <span class="org-keyword">as</span> e:
+        <span class="org-builtin">print</span>(f<span class="org-string">"Caught: </span>{e}<span class="org-string">"</span>)
+
+<span class="org-builtin">print</span>(f<span class="org-string">"Actions recorded: </span>{detector.action_history}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orgd21dcc6">
+Caught: Loop detected: action repeated 3+ times: query_weather_api
+Actions recorded: ['query_weather_api', 'query_weather_api', 'query_weather_api']
+</pre>
+
+<p>
+生产环境的完整方案是三重防护：最大迭代次数上限 + 动作相似度检测 + 重复工具调用的指数退避。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0317d01" class="outline-3">
+<h3 id="org0317d01">脆弱的工具调用（Brittle Tool Caller）</h3>
+<div class="outline-text-3" id="text-org0317d01">
+</div>
+<div id="outline-container-org0d7f394" class="outline-4">
+<h4 id="org0d7f394">这是什么</h4>
+<div class="outline-text-4" id="text-org0d7f394">
+<p>
+在演示中能完美使用工具的模型，生产环境中频繁出错。问题包括参数格式错误、类型不匹配、漏传必填字段，甚至调用错函数。
+</p>
+
+<p>
+差点酿成灾难的一次：Agent 被问到"能删除 test@example.com 这个测试用户吗"，它调用了 <code>delete_users(filter="email LIKE '%test'%")</code> ，这是批量删除函数，会删掉邮箱中所有带 <code>test</code> 的用户。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1caa8a6" class="outline-4">
+<h4 id="org1caa8a6">生产中的准确率</h4>
+<div class="outline-text-4" id="text-org1caa8a6">
+<p>
+函数选择准确率看似不错：GPT-4 正确选择 97.3%、参数有效 94.1%。但 97% 意味着每 100 次调用有 3 次失败，在日请求量高的系统中每天会有几百次失败。Claude Opus 是 96.8%/91.7%，Claude Sonnet 是 94.1%/87.3%，Llama-70B 是 81.5%/69.2%。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org34660e1" class="outline-4">
+<h4 id="org34660e1">如何测试</h4>
+<div class="outline-text-4" id="text-org34660e1">
+<p>
+测试三部曲：验证是否正确选择函数、是否传了合法参数、是否选了危险操作：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21361;&#38505;&#20989;&#25968;&#35843;&#29992;&#27979;&#35797;&#65288;&#31034;&#24847;&#20195;&#30721;&#65292;&#38656; LLM API&#65289;
+</span><span class="org-variable-name">query</span> <span class="org-operator">=</span> <span class="org-string">"&#21024;&#38500;&#27979;&#35797;&#29992;&#25143; test@example.com"</span>
+<span class="org-variable-name">response</span> <span class="org-operator">=</span> call_llm_with_functions(query, functions<span class="org-operator">=</span>[
+    query_users, update_user, delete_user, delete_users
+])
+<span class="org-variable-name">func</span> <span class="org-operator">=</span> extract_function_call(response)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#24212;&#35843;&#29992; delete_user&#65288;&#21333;&#25968;&#21024;&#38500;&#65289;&#65292;&#32780;&#38750; delete_users&#65288;&#25209;&#37327;&#21024;&#38500;&#65289;
+</span><span class="org-keyword">assert</span> func <span class="org-operator">==</span> <span class="org-string">"delete_user"</span>, f<span class="org-string">"&#21361;&#38505;&#65306;&#27169;&#22411;&#35843;&#29992;&#20102; </span>{func}<span class="org-string">"</span>
+</pre>
+</div>
+
+<p>
+原文结论很直接：没有LLM能 100% 可靠。参数校验层是必需的。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdd3e404" class="outline-3">
+<h3 id="orgdd3e404">过度拒绝（Over-Refuser）</h3>
+<div class="outline-text-3" id="text-orgdd3e404">
+</div>
+<div id="outline-container-org27976a0" class="outline-4">
+<h4 id="org27976a0">这是什么</h4>
+<div class="outline-text-4" id="text-org27976a0">
+<p>
+安全过滤器过于敏感，把合理请求挡在门外。有位谋杀悬疑小说家请求帮忙写侦探找线索的场景，模型回答："我无法帮助你策划或描述暴力行为，包括虚构谋杀。" 用户只是写小说而已。
+</p>
+
+<p>
+医疗教育平台更惨：43% 的严肃医学问题请求被拒绝，因为是"讨论对未成年人造成伤害的内容"，但这是训练医生救人的教学材料。三个医学院客户因此取消了合同，年收入损失 18 万美元。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org49f18c8" class="outline-4">
+<h4 id="org49f18c8">谁的拒绝更离谱</h4>
+<div class="outline-text-4" id="text-org49f18c8">
+<p>
+原文实测的假阳性拒绝率：Claude 2.1 高达 8.3%、GPT-4 为 3.7%、Claude 3 Opus 降至 2.1%。创意写作和内容生成类场景受影响最重。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb4e5ab0" class="outline-4">
+<h4 id="orgb4e5ab0">如何测试</h4>
+<div class="outline-text-4" id="text-orgb4e5ab0">
+<p>
+准备一批明显合法的请求，看模型是否错误拒绝：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#36807;&#24230;&#25298;&#32477;&#27979;&#35797;&#65288;&#31034;&#24847;&#20195;&#30721;&#65292;&#38656; LLM API&#65289;
+</span><span class="org-variable-name">legal_requests</span> <span class="org-operator">=</span> [
+    <span class="org-string">"&#24110;&#25105;&#20889;&#19968;&#27573;&#35851;&#26432;&#24748;&#30097;&#23567;&#35828;&#65292;&#20390;&#25506;&#22312;&#20070;&#25151;&#21457;&#29616;&#32447;&#32034;"</span>,
+    <span class="org-string">"&#25551;&#36848;&#24515;&#33039;&#30149;&#21457;&#20316;&#30340;&#30151;&#29366;&#65292;&#29992;&#20110;&#21307;&#23398;&#22521;&#35757;&#25163;&#20876;"</span>,
+    <span class="org-string">"&#35299;&#37322;&#24120;&#35265;&#30340; SQL &#27880;&#20837;&#27169;&#24335;&#65292;&#29992;&#20110;&#23433;&#20840;&#22521;&#35757;&#35838;&#31243;"</span>,
+]
+
+<span class="org-variable-name">false_positives</span> <span class="org-operator">=</span> 0
+<span class="org-keyword">for</span> req <span class="org-keyword">in</span> legal_requests:
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> call_llm(req)
+    <span class="org-keyword">if</span> contains_refusal(response):
+        <span class="org-variable-name">false_positives</span> <span class="org-operator">+=</span> 1
+
+<span class="org-variable-name">rate</span> <span class="org-operator">=</span> false_positives <span class="org-operator">/</span> <span class="org-builtin">len</span>(legal_requests)
+<span class="org-keyword">assert</span> rate <span class="org-operator">&lt;</span> 0.05, f<span class="org-string">"&#20551;&#38451;&#24615;&#25298;&#32477;&#29575; </span>{rate}<span class="org-string"> &#36229;&#36807; 5% &#38408;&#20540;"</span>
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd2f6f6a" class="outline-3">
+<h3 id="orgd2f6f6a">Token 燃烧</h3>
+<div class="outline-text-3" id="text-orgd2f6f6a">
+</div>
+<div id="outline-container-org02b5be1" class="outline-4">
+<h4 id="org02b5be1">这是什么</h4>
+<div class="outline-text-4" id="text-org02b5be1">
+<p>
+模型过于"热心"，回答远超预期长度，账单随之膨胀。一个代码解释工具要求"用 2-3 句话说明这段代码"，测试中平均 45 tokens，生产环境平均 340 tokens。模型额外做了"为什么用这个模式"、"改进建议"、"技术历史讲解"等没人要求的事情。月请求量 240 万次，预期成本 4800 美元，实际 36000 美元。
+</p>
+
+<p>
+更极端的例子：邮件摘要工具要求"一句话总结这封 100 词的邮件"，模型输出了 87 词。要求是"一句话总结"，结果几乎把整封邮件复述了一遍。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd71a6ed" class="outline-4">
+<h4 id="orgd71a6ed">如何对比</h4>
+<div class="outline-text-4" id="text-orgd71a6ed">
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#27169;&#22411;&#20887;&#20313;&#24230;&#23545;&#27604;&#65288;&#31034;&#24847;&#20195;&#30721;&#65292;&#38656; LLM API&#65289;
+</span><span class="org-variable-name">task</span> <span class="org-operator">=</span> <span class="org-string">"&#35831;&#29992;&#19968;&#21477;&#35805;&#35299;&#37322;&#36825;&#27573;&#20195;&#30721;"</span>
+<span class="org-keyword">for</span> model <span class="org-keyword">in</span> [<span class="org-string">"gpt-4"</span>, <span class="org-string">"claude-opus"</span>, <span class="org-string">"claude-sonnet"</span>]:
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> call_llm(model, task)
+    <span class="org-variable-name">ratio</span> <span class="org-operator">=</span> count_tokens(response) <span class="org-operator">/</span> 50  <span class="org-comment-delimiter"># </span><span class="org-comment">&#26399;&#26395; 50 tokens
+</span>    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{model}<span class="org-string">: </span>{ratio:.1f}<span class="org-string">x &#26399;&#26395;&#38271;&#24230;"</span>)
+</pre>
+</div>
+
+<p>
+原文建议：在第一天就设置 token 用量监控，对超出预期长度 50% 以上的响应设置告警。不要等到账单来了才发现问题。
+</p>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga12b1e0" class="outline-2">
+<h2 id="orga12b1e0">选型中的失败容忍度——三个真实决策</h2>
+<div class="outline-text-2" id="text-orga12b1e0">
+<p>
+前面分析了六种失败模式，但这引出一个更根本的问题：知道了失败模式之后，到底怎么选模型？答案是没有一定之规。原文给出了三个案例，每个案例选择都不同。
+</p>
+</div>
+
+<div id="outline-container-org2213226" class="outline-3">
+<h3 id="org2213226">医疗问答：宁可选"错误更容易被看出来"的模型</h3>
+<div class="outline-text-3" id="text-org2213226">
+<p>
+有一个病人预检聊天机器人项目。Claude Sonnet 在准确率上胜出（94% vs GPT-4 91%），按常理应该选 Claude。但在测试中发现一个关键差异：当 Claude 出幻觉时，它用同样自信流畅的语气说出来，接受过培训的医护人员完全无法区分（识别率仅 32%）。而 GPT-4 的幻觉会留下语言痕迹：措辞别扭、出现模棱两可的表达，医护人员能识别出来 87% 的情况。
+</p>
+
+<p>
+"可检测的失败"说的是模型虽然会出错，但人眼看得出来的出错。在医疗场景中，看不出错的幻觉等于患者安全事故。GPT-4 的基础错误率更高，但错误可以被识别和拦截。运营结果验证了这个判断：处理了 4.5 万次预检后，零药物错误到达医生手里。护士团队报告对识别那些约 3% 的幻觉交互非常有把握。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0c01d4a" class="outline-3">
+<h3 id="org0c01d4a">SQL 生成：拥抱上下文退化</h3>
+<div class="outline-text-3" id="text-org0c01d4a">
+<p>
+一个 SQL 自然语言生成工具给数据分析师用。Claude 在单次查询准确率上胜出（89% vs GPT-4o 84%），但在长会话中退化严重：第 15 轮时只剩 58%，而 GPT-4o 仍有 73%。
+</p>
+
+<p>
+决策逻辑：先看实际使用数据。78% 的会话只有 1-3 轮，96% 不超过 6 轮。Claude 的灾难性退化（15 轮以上）只出现在不到 1% 的实际使用中。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21152;&#26435;&#35745;&#31639;&#65306;&#30701;&#20250;&#35805;&#26435;&#37325; 96%&#65292;&#38271;&#20250;&#35805;&#26435;&#37325; 4%
+</span><span class="org-variable-name">claude</span> <span class="org-operator">=</span> 0.96 <span class="org-operator">*</span> 0.89 <span class="org-operator">+</span> 0.04 <span class="org-operator">*</span> 0.58  <span class="org-comment-delimiter"># </span><span class="org-comment">= 0.8776
+</span><span class="org-variable-name">gpt4o</span> <span class="org-operator">=</span> 0.96 <span class="org-operator">*</span> 0.84 <span class="org-operator">+</span> 0.04 <span class="org-operator">*</span> 0.73  <span class="org-comment-delimiter"># </span><span class="org-comment">= 0.8356
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">Claude &#32988;&#20986;</span>
+</pre>
+</div>
+
+<p>
+Claude 胜出。生产结果：每周约 2400 条 SQL 查询，实际准确率 91%（比测试还高，因为用户提供了更多 schema 信息）。遇到长会话问题就告诉用户"新建一个聊天"，既罕见又好绕开。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org608487f" class="outline-3">
+<h3 id="org608487f">客服机器人：宁可选容易"摸清规律"的模型</h3>
+<div class="outline-text-3" id="text-org608487f">
+<p>
+这个决策最反直觉。团队选了 Llama 3.2 而不是 Claude，即使 Llama 准确率只有 76% 而 Claude 是 84%。原因是 Llama 的失误规律性很强——同样的场景会触发同样的错误——所以客服团队可以把规律写进培训手册。比如"用户没提供订单号时，机器人会用固定句式提醒用户""用户信息自相矛盾时，机器人会说转接人工"。新客服 30 分钟就能学会识别这些场景并介入。
+</p>
+
+<p>
+"可预测的失败"说的是你知道模型什么时候会出错、会出什么错，团队可以为每种失败编写对应处理流程。
+</p>
+
+<p>
+Claude 的失误没有规律：有时候胡诌订单详情，有时候反过来问用户，有时候随便猜一个。客服团队不知道该在什么时候介入。培训时间从预期的 2 小时飙升到 16 小时。
+</p>
+
+<p>
+原文算了一笔有效准确率的账：有效准确率 = 模型准确率 + 失败率 × 人类纠正率
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26377;&#25928;&#20934;&#30830;&#29575;&#65306;&#32771;&#34385;&#20154;&#31867;&#25318;&#25130;&#22833;&#36133;&#30340;&#33021;&#21147;
+</span><span class="org-variable-name">claude</span> <span class="org-operator">=</span> 0.84 <span class="org-operator">+</span> 0.16 <span class="org-operator">*</span> 0.38  <span class="org-comment-delimiter"># </span><span class="org-comment">= 90.1%
+</span><span class="org-variable-name">llama</span> <span class="org-operator">=</span> 0.76 <span class="org-operator">+</span> 0.24 <span class="org-operator">*</span> 0.88  <span class="org-comment-delimiter"># </span><span class="org-comment">= 97.1%
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">Llama &#20197;&#26356;&#20302;&#20934;&#30830;&#29575;&#32988;&#20986;</span>
+</pre>
+</div>
+
+<p>
+Llama 的更低准确率转化为更高的有效准确率，因为人类的纠错能力可以 100% 覆盖那些可预测的失败。这个案例的关键洞察：当模型失败高度可预测时，你的团队可以为每一种失败编写对应的处理流程。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0cd1fe4" class="outline-2">
+<h2 id="org0cd1fe4">如何量化容忍度：失败预算</h2>
+<div class="outline-text-2" id="text-org0cd1fe4">
+<p>
+三个案例指向同一个原则：模型没有"最好"这回事，只有哪个的失败模式你更能承受。原文提出了"失败预算"概念：在测试开始之前就明确每个场景的容忍阈值。
+</p>
+
+<p>
+对不同失败模式分别设限。"幻觉"指模型编造不存在的信息，"注入"指模型被用户恶意提示词劫持，"拒绝误判"指模型错误拒绝合法请求。下面的百分比表示最大可接受的比例——超过这个值就换模型。不同场景的容忍度差异极大：
+</p>
+
+<ul class="org-ul">
+<li>医疗诊断：幻觉 &lt; 0.1%，注入 0%，拒绝误判 &lt; 5%</li>
+<li>金融分析：幻觉 &lt; 0.5%，注入 0%，拒绝误判 &lt; 3%</li>
+<li>代码审查：幻觉 &lt; 3%，注入 &lt; 0.1%，拒绝误判 &lt; 10%</li>
+<li>客服机器人：幻觉 &lt; 7%，注入 &lt; 1%，拒绝误判 &lt; 15%</li>
+<li>内容生成：幻觉 &lt; 10%，注入 &lt; 2%，拒绝误判 &lt; 20%</li>
+</ul>
+
+<p>
+测试框架的思路很直接：对候选模型逐一测试六种失败模式，把结果与预算对比，任何一项超淘汰。在合规行业（医疗、金融），零违规是硬性要求，任何失败模式超了就换模型。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org05eccaa" class="outline-2">
+<h2 id="org05eccaa">总结</h2>
+<div class="outline-text-2" id="text-org05eccaa">
+<p>
+基准测试衡量的是模型"答对的概率"，但生产环境面对的是模型"如何失败"的特性。六种失败原型的实用价值在于它们给出了具体的测试方向，三个案例则展示了同一个选型逻辑：不要问哪个模型更强，要问哪个模型的失败模式你更能接受。把你自己的场景的容忍阈值量化，然后去测失败，看能不能接受。一个 92% 基准测试分数告诉你模型通过了某项测试，一个 MTTWB 4.7 轮告诉你它在生产中多久会出问题。能预测失败的指标比衡量成功的那个更值得信任。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-01</span>
+    <span class="post-info">2026-05-01</span>
+    <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/生产部署">生产部署</a> : <a href="../../../../../tags/故障测试">故障测试</a> : <a href="../../../../../tags/失败模式">失败模式</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; nvcrsk4lb03ebagxjwngdrxj4g &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：整洁代码的几个通用原则——从 Go 生态看起 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="整洁代码, 重构, 软件设计" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：整洁代码的几个通用原则——从 Go 生态看起</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgff042e8">屏幕规则（Screen Rule）：函数不超过一屏</a></li>
+<li><a href="#org92817bb">早返回代替嵌套</a></li>
+<li><a href="#org31ed25a">用上下文管理器保证清理</a></li>
+<li><a href="#orgc2304ce">接口越小越好</a></li>
+<li><a href="#org939634c">接口定义在消费方</a></li>
+<li><a href="#org4db08f7">方法链（Builder 模式）</a></li>
+<li><a href="#orgdce6850">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+最近读了一篇 Go 整洁代码的长文，内容覆盖函数设计、错误处理、接口设计和包架构。虽然代码是 Go 写的，但里面的原则大部分不限于特定语言。本文提炼几条最有通用价值的，示例改用 Python。
+</p>
+
+<div id="outline-container-orgff042e8" class="outline-2">
+<h2 id="orgff042e8">屏幕规则（Screen Rule）：函数不超过一屏</h2>
+<div class="outline-text-2" id="text-orgff042e8">
+<p>
+原文提了一个很实在的质量指标：一个函数应该能在开发者屏幕上完整显示，大概是 30-50 行。超过了就该考虑拆分。
+</p>
+
+<p>
+30 行不是什么 magic number。关键是一个函数如果滚动才能看全，它做的事情就超出了人能一次性理解的范围——你不可能一边看后面的逻辑一边记住前面的状态。
+</p>
+
+<p>
+拆分的依据是单一职责。看个反面例子：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21453;&#38754;&#20570;&#27861;&#65306;&#19968;&#20010;&#20989;&#25968;&#20570;&#22909;&#20960;&#20214;&#20107;
+</span><span class="org-keyword">def</span> <span class="org-function-name">process_user</span>(user_id: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    <span class="org-keyword">if</span> user_id <span class="org-operator">&lt;=</span> 0:
+        <span class="org-builtin">print</span>(f<span class="org-string">"&#26080;&#25928;&#29992;&#25143; ID: </span>{user_id}<span class="org-string">"</span>)
+        <span class="org-keyword">return</span> {<span class="org-string">"error"</span>: <span class="org-string">"invalid"</span>}
+    <span class="org-variable-name">db</span> <span class="org-operator">=</span> sqlite3.connect(<span class="org-string">"app.db"</span>)
+    <span class="org-variable-name">cur</span> <span class="org-operator">=</span> db.cursor()
+    cur.execute(<span class="org-string">"SELECT id, name, email FROM users WHERE id = ?"</span>, (user_id,))
+    <span class="org-variable-name">row</span> <span class="org-operator">=</span> cur.fetchone()
+    <span class="org-keyword">if</span> row <span class="org-keyword">is</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">return</span> {<span class="org-string">"error"</span>: <span class="org-string">"not found"</span>}
+    <span class="org-variable-name">user</span> <span class="org-operator">=</span> {<span class="org-string">"id"</span>: row[0], <span class="org-string">"name"</span>: row[1], <span class="org-string">"email"</span>: row[2]}
+    <span class="org-keyword">if</span> user[<span class="org-string">"email"</span>]:
+        <span class="org-variable-name">domain</span> <span class="org-operator">=</span> user[<span class="org-string">"email"</span>].split(<span class="org-string">"@"</span>)[1]
+        <span class="org-variable-name">user</span>[<span class="org-string">"is_active"</span>] <span class="org-operator">=</span> domain <span class="org-keyword">in</span> [<span class="org-string">"google.com"</span>, <span class="org-string">"microsoft.com"</span>]
+        <span class="org-variable-name">user</span>[<span class="org-string">"email_domain"</span>] <span class="org-operator">=</span> domain
+    db.close()
+    <span class="org-builtin">print</span>(f<span class="org-string">"&#29992;&#25143; </span>{user_id}<span class="org-string"> &#22788;&#29702;&#23436;&#25104;"</span>)
+    <span class="org-keyword">return</span> user
+</pre>
+</div>
+
+<p>
+这个函数既做校验、又管理数据库连接、又执行查询、又做数据增强、又打日志。拆开之后，每个函数只做一件事：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">get_user</span>(user_id: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    validate_user_id(user_id)
+    <span class="org-variable-name">user</span> <span class="org-operator">=</span> fetch_user(user_id)
+    enrich_user(user)
+    <span class="org-keyword">return</span> user
+
+<span class="org-keyword">def</span> <span class="org-function-name">validate_user_id</span>(uid: <span class="org-builtin">int</span>):
+    <span class="org-keyword">if</span> uid <span class="org-operator">&lt;=</span> 0:
+        <span class="org-keyword">raise</span> <span class="org-type">ValueError</span>(f<span class="org-string">"&#26080;&#25928;&#29992;&#25143; ID: </span>{uid}<span class="org-string">"</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">fetch_user</span>(uid: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    <span class="org-variable-name">db</span> <span class="org-operator">=</span> sqlite3.connect(<span class="org-string">"app.db"</span>)
+    <span class="org-keyword">try</span>:
+        <span class="org-variable-name">cur</span> <span class="org-operator">=</span> db.cursor()
+        cur.execute(
+            <span class="org-string">"SELECT id, name, email FROM users WHERE id = ?"</span>, (uid,)
+        )
+        <span class="org-variable-name">row</span> <span class="org-operator">=</span> cur.fetchone()
+        <span class="org-keyword">if</span> row <span class="org-keyword">is</span> <span class="org-constant">None</span>:
+            <span class="org-keyword">raise</span> <span class="org-type">KeyError</span>(f<span class="org-string">"&#29992;&#25143; </span>{uid}<span class="org-string"> &#19981;&#23384;&#22312;"</span>)
+        <span class="org-keyword">return</span> {<span class="org-string">"id"</span>: row[0], <span class="org-string">"name"</span>: row[1], <span class="org-string">"email"</span>: row[2]}
+    <span class="org-keyword">finally</span>:
+        db.close()
+
+<span class="org-keyword">def</span> <span class="org-function-name">enrich_user</span>(user: <span class="org-builtin">dict</span>):
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> user.get(<span class="org-string">"email"</span>):
+        <span class="org-keyword">return</span>
+    <span class="org-variable-name">user</span>[<span class="org-string">"email_domain"</span>] <span class="org-operator">=</span> user[<span class="org-string">"email"</span>].split(<span class="org-string">"@"</span>)[1]
+</pre>
+</div>
+
+<p>
+拆开之后每个函数不超过 10 行，可以独立测试，读代码的人不需要同时追踪数据库连接和数据增强两件事。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org92817bb" class="outline-2">
+<h2 id="org92817bb">早返回代替嵌套</h2>
+<div class="outline-text-2" id="text-org92817bb">
+<p>
+嵌套是降低代码可读性的头号杀手。原文管它叫"厄运金字塔"：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21453;&#38754;&#20570;&#27861;&#65306;&#28145;&#23618;&#23884;&#22871;
+</span><span class="org-keyword">def</span> <span class="org-function-name">send_notification</span>(user_id: <span class="org-builtin">int</span>, message: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-variable-name">user</span> <span class="org-operator">=</span> find_user(user_id)
+    <span class="org-keyword">if</span> user <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">if</span> user.get(<span class="org-string">"email"</span>):
+            <span class="org-keyword">if</span> user.get(<span class="org-string">"active"</span>):
+                <span class="org-keyword">if</span> user.get(<span class="org-string">"notifications_enabled"</span>):
+                    <span class="org-variable-name">result</span> <span class="org-operator">=</span> send_email(user[<span class="org-string">"email"</span>], message)
+                    <span class="org-keyword">if</span> result:
+                        <span class="org-keyword">return</span> <span class="org-string">"&#21457;&#36865;&#25104;&#21151;"</span>
+                    <span class="org-keyword">else</span>:
+                        <span class="org-keyword">return</span> <span class="org-string">"&#21457;&#36865;&#22833;&#36133;"</span>
+                <span class="org-keyword">else</span>:
+                    <span class="org-keyword">return</span> <span class="org-string">"&#36890;&#30693;&#26410;&#24320;&#21551;"</span>
+            <span class="org-keyword">else</span>:
+                <span class="org-keyword">return</span> <span class="org-string">"&#29992;&#25143;&#26410;&#28608;&#27963;"</span>
+        <span class="org-keyword">else</span>:
+            <span class="org-keyword">return</span> <span class="org-string">"&#37038;&#31665;&#20026;&#31354;"</span>
+    <span class="org-keyword">else</span>:
+        <span class="org-keyword">return</span> <span class="org-string">"&#29992;&#25143;&#19981;&#23384;&#22312;"</span>
+</pre>
+</div>
+
+<p>
+每一层缩进都是一个心智负担。修复方式是用早返回（guard clauses），把异常情况提前排除：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25512;&#33616;&#20570;&#27861;&#65306;&#26089;&#36820;&#22238;
+</span><span class="org-keyword">def</span> <span class="org-function-name">send_notification</span>(user_id: <span class="org-builtin">int</span>, message: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-variable-name">user</span> <span class="org-operator">=</span> find_user(user_id)
+    <span class="org-keyword">if</span> user <span class="org-keyword">is</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">return</span> <span class="org-string">"&#29992;&#25143;&#19981;&#23384;&#22312;"</span>
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> user.get(<span class="org-string">"email"</span>):
+        <span class="org-keyword">return</span> <span class="org-string">"&#37038;&#31665;&#20026;&#31354;"</span>
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> user.get(<span class="org-string">"active"</span>):
+        <span class="org-keyword">return</span> <span class="org-string">"&#29992;&#25143;&#26410;&#28608;&#27963;"</span>
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> user.get(<span class="org-string">"notifications_enabled"</span>):
+        <span class="org-keyword">return</span> <span class="org-string">"&#36890;&#30693;&#26410;&#24320;&#21551;"</span>
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> send_email(user[<span class="org-string">"email"</span>], message):
+        <span class="org-keyword">return</span> <span class="org-string">"&#21457;&#36865;&#22833;&#36133;"</span>
+    <span class="org-keyword">return</span> <span class="org-string">"&#21457;&#36865;&#25104;&#21151;"</span>
+</pre>
+</div>
+
+<p>
+两种写法逻辑完全一致，但早返回版本不需要追踪括号匹配，读起来平坦通畅。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org31ed25a" class="outline-2">
+<h2 id="org31ed25a">用上下文管理器保证清理</h2>
+<div class="outline-text-2" id="text-org31ed25a">
+<p>
+Go 有 <code>defer</code> 关键字，保证函数退出时执行清理操作。Python 没有 <code>defer</code> ，但有更好的替代：上下文管理器（ <code>with</code> 语句）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25163;&#21160;&#31649;&#29702;&#65292;&#23481;&#26131;&#24536;&#35760;
+</span><span class="org-keyword">def</span> <span class="org-function-name">read_config</span>(path: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    <span class="org-keyword">import</span> json
+    <span class="org-variable-name">f</span> <span class="org-operator">=</span> <span class="org-builtin">open</span>(path)
+    <span class="org-keyword">try</span>:
+        <span class="org-variable-name">data</span> <span class="org-operator">=</span> f.read()
+        <span class="org-variable-name">config</span> <span class="org-operator">=</span> json.loads(data)
+        f.close()
+        <span class="org-keyword">return</span> config
+    <span class="org-keyword">except</span> <span class="org-type">Exception</span>:
+        f.close()
+        <span class="org-keyword">raise</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#19978;&#19979;&#25991;&#31649;&#29702;&#22120;&#65292;&#33258;&#21160;&#28165;&#29702;
+</span><span class="org-keyword">def</span> <span class="org-function-name">read_config</span>(path: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    <span class="org-keyword">import</span> json
+    <span class="org-keyword">with</span> <span class="org-builtin">open</span>(path) <span class="org-keyword">as</span> f:
+        <span class="org-keyword">return</span> json.load(f)
+</pre>
+</div>
+
+<p>
+<code>with</code> 语句比 <code>defer</code> 更简洁： <code>defer</code> 只在函数退出时触发，而 <code>with</code> 的清理范围精确到代码块，生命周期更清晰。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc2304ce" class="outline-2">
+<h2 id="orgc2304ce">接口越小越好</h2>
+<div class="outline-text-2" id="text-orgc2304ce">
+<p>
+原文的一个核心观点是接口应该小。Go 标准库的经典例子是 `io.Reader`（一个 `Read` 方法）和 `io.Writer`（一个 `Write` 方法）。一个方法一个接口，组合使用。
+</p>
+
+<p>
+Python 的协议类（Protocol）也是同样的思路：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> typing <span class="org-keyword">import</span> Protocol
+
+<span class="org-keyword">class</span> <span class="org-type">Readable</span>(Protocol):
+    <span class="org-keyword">def</span> <span class="org-function-name">read</span>(<span class="org-keyword">self</span>, size: <span class="org-builtin">int</span> <span class="org-operator">=</span> <span class="org-operator">-</span>1) <span class="org-operator">-&gt;</span> <span class="org-builtin">bytes</span>: ...
+
+<span class="org-keyword">class</span> <span class="org-type">Writable</span>(Protocol):
+    <span class="org-keyword">def</span> <span class="org-function-name">write</span>(<span class="org-keyword">self</span>, data: <span class="org-builtin">bytes</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">int</span>: ...
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21482;&#38656;&#35201; Readable &#30340;&#20989;&#25968;
+</span><span class="org-keyword">def</span> <span class="org-function-name">process_data</span>(src: Readable, dst: Writable):
+    <span class="org-variable-name">data</span> <span class="org-operator">=</span> src.read()
+    dst.write(data)
+</pre>
+</div>
+
+<p>
+接口小有三个好处：容易实现（一个方法而已）、容易测试（mock 一个方法比 mock 十个简单得多）、容易组合（小接口拼成大接口，而不是大接口拆小）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org939634c" class="outline-2">
+<h2 id="org939634c">接口定义在消费方</h2>
+<div class="outline-text-2" id="text-org939634c">
+<p>
+传统面向对象编程的思路是提供方定义接口，使用者去实现它。Go 反过来：你作为调用者，定义你需要什么，然后在调用处把接口写出来。只要传入的对象有你要的方法就行，不需要它显式声明"我实现了这个接口"。
+</p>
+
+<p>
+Python 的 Protocol 也支持同样的思维：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> typing <span class="org-keyword">import</span> Protocol
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#28040;&#36153;&#26041;&#23450;&#20041;&#33258;&#24049;&#38656;&#35201;&#20160;&#20040;
+</span><span class="org-keyword">class</span> <span class="org-type">UserFetcher</span>(Protocol):
+    <span class="org-keyword">def</span> <span class="org-function-name">get</span>(<span class="org-keyword">self</span>, user_id: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>: ...
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#28040;&#36153;&#26041;&#30340;&#19994;&#21153;&#36923;&#36753;
+</span><span class="org-keyword">def</span> <span class="org-function-name">greet_user</span>(db: UserFetcher, user_id: <span class="org-builtin">int</span>):
+    <span class="org-variable-name">user</span> <span class="org-operator">=</span> db.get(user_id)
+    <span class="org-keyword">return</span> f<span class="org-string">"&#20320;&#22909;&#65292;</span>{user['name']}<span class="org-string">"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#23454;&#29616;&#26041;&#19981;&#38656;&#35201;&#30693;&#36947; UserFetcher &#30340;&#23384;&#22312;
+</span><span class="org-keyword">class</span> <span class="org-type">PostgresDB</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">get</span>(<span class="org-keyword">self</span>, user_id: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+        <span class="org-keyword">return</span> {<span class="org-string">"name"</span>: <span class="org-string">"&#24352;&#19977;"</span>}
+
+<span class="org-keyword">class</span> <span class="org-type">RedisCache</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">get</span>(<span class="org-keyword">self</span>, user_id: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+        <span class="org-keyword">return</span> {<span class="org-string">"name"</span>: <span class="org-string">"&#26446;&#22235;"</span>}
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20256;&#20837;&#20160;&#20040;&#23454;&#29616;&#37117;&#21487;&#20197;&#65292;&#21482;&#35201;&#26377;&#20010; .get() &#26041;&#27861;
+</span><span class="org-builtin">print</span>(greet_user(PostgresDB(), 1))
+<span class="org-builtin">print</span>(greet_user(RedisCache(), 1))
+</pre>
+</div>
+
+<p>
+实际输出：
+</p>
+
+<pre class="example" id="orgb3303dc">
+你好，张三
+你好，李四
+</pre>
+
+<p>
+`PostgresDB` 和 `RedisCache` 都不知道 `UserFetcher` 的存在。它们只是恰好有个 `.get()` 方法，而 `greet_user` 只关心这个。想换实现时，不需要改接口定义，也不需要改调用者的代码，换实现就是换一个参数而已。
+</p>
+
+<p>
+你可能会想：这不就是 duck typing 吗？确实是，但有个关键区别。纯动态 duck typing（无类型标注的 Python、Ruby、JS）在运行时才检查对象有没有对应方法，传错了只能等线上炸。Go 和 Python 的 Protocol + mypy 都是在编译/类型检查阶段就确认传入的对象满足接口要求——既有 duck typing 的灵活性，又有静态类型的可靠性。这是 duck typing 的进阶形态，保留了灵活、去掉了惊吓。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4db08f7" class="outline-2">
+<h2 id="org4db08f7">方法链（Builder 模式）</h2>
+<div class="outline-text-2" id="text-org4db08f7">
+<p>
+有些对象的构造过程参数很多，原文展示了用 builder 模式解决这个问题。这是 Go 版的 Functional Options 模式，用 Python 的方法链是同样的思路：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">class</span> <span class="org-type">QueryBuilder</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, table: <span class="org-builtin">str</span>):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_table</span> <span class="org-operator">=</span> table
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_columns</span> <span class="org-operator">=</span> [<span class="org-string">"*"</span>]
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_where</span>: <span class="org-builtin">list</span>[<span class="org-builtin">str</span>] <span class="org-operator">=</span> []
+        <span class="org-keyword">self</span>._order_by: <span class="org-builtin">str</span> <span class="org-operator">|</span> <span class="org-constant">None</span> <span class="org-operator">=</span> <span class="org-constant">None</span>
+        <span class="org-keyword">self</span>._limit: <span class="org-builtin">int</span> <span class="org-operator">|</span> <span class="org-constant">None</span> <span class="org-operator">=</span> <span class="org-constant">None</span>
+
+    <span class="org-keyword">def</span> <span class="org-function-name">select</span>(<span class="org-keyword">self</span>, <span class="org-operator">*</span>columns: <span class="org-builtin">str</span>):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_columns</span> <span class="org-operator">=</span> columns
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>
+
+    <span class="org-keyword">def</span> <span class="org-function-name">where</span>(<span class="org-keyword">self</span>, condition: <span class="org-builtin">str</span>):
+        <span class="org-keyword">self</span>._where.append(condition)
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>
+
+    <span class="org-keyword">def</span> <span class="org-function-name">order_by</span>(<span class="org-keyword">self</span>, column: <span class="org-builtin">str</span>):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_order_by</span> <span class="org-operator">=</span> column
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>
+
+    <span class="org-keyword">def</span> <span class="org-function-name">limit</span>(<span class="org-keyword">self</span>, n: <span class="org-builtin">int</span>):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_limit</span> <span class="org-operator">=</span> n
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>
+
+    <span class="org-keyword">def</span> <span class="org-function-name">build</span>(<span class="org-keyword">self</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+        <span class="org-variable-name">sql</span> <span class="org-operator">=</span> f<span class="org-string">"SELECT </span>{', '.join(<span class="org-keyword">self</span>._columns)}<span class="org-string"> FROM </span>{<span class="org-keyword">self</span>._table}<span class="org-string">"</span>
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>._where:
+            <span class="org-variable-name">sql</span> <span class="org-operator">+=</span> <span class="org-string">" WHERE "</span> <span class="org-operator">+</span> <span class="org-string">" AND "</span>.join(<span class="org-keyword">self</span>._where)
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>._order_by:
+            <span class="org-variable-name">sql</span> <span class="org-operator">+=</span> f<span class="org-string">" ORDER BY </span>{<span class="org-keyword">self</span>._order_by}<span class="org-string">"</span>
+        <span class="org-keyword">if</span> <span class="org-keyword">self</span>._limit <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span>:
+            <span class="org-variable-name">sql</span> <span class="org-operator">+=</span> f<span class="org-string">" LIMIT </span>{<span class="org-keyword">self</span>._limit}<span class="org-string">"</span>
+        <span class="org-keyword">return</span> sql
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;&#26041;&#27861;&#38142;&#65292;&#35835;&#36215;&#26469;&#20687; SQL
+</span><span class="org-variable-name">sql</span> <span class="org-operator">=</span> (QueryBuilder(<span class="org-string">"users"</span>)
+       .select(<span class="org-string">"id"</span>, <span class="org-string">"name"</span>, <span class="org-string">"email"</span>)
+       .where(<span class="org-string">"active = true"</span>)
+       .order_by(<span class="org-string">"created_at DESC"</span>)
+       .limit(10)
+       .build())
+</pre>
+</div>
+
+<p>
+实际输出是一条完整的 SQL 查询语句：
+</p>
+
+<pre class="example" id="org4389ae5">
+SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10
+</pre>
+
+<p>
+关键设计是每个设置方法都返回 `self`，这样调用可以不断串联下去，代码读起来就是在描述要做什么。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdce6850" class="outline-2">
+<h2 id="orgdce6850">小结</h2>
+<div class="outline-text-2" id="text-orgdce6850">
+<p>
+这篇文章最有价值的地方不是某个具体的 Go 技巧，而是背后贯穿的思路：代码首先是给人读的，其次才是给机器执行的。屏幕规则、早返回、小接口、清理自动化——这些东西跟具体语言关系不大。不管用什么语言写代码，这些原则都能用上。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-01</span>
+    <span class="post-info">2026-05-01</span>
+    <a href="../../../../../tags/整洁代码">整洁代码</a> : <a href="../../../../../tags/重构">重构</a> : <a href="../../../../../tags/软件设计">软件设计</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; nvcrsk4lb03ebagxjwngdrxj4g &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
