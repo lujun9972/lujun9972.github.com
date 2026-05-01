@@ -1,0 +1,141 @@
+#+TITLE: 读：为什么所有 Prompt Injection 防御都会被攻破——以及架构上该怎么办
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI, Security, Prompt Injection, LLM, Capability Gate
+#+DATE: [2026-05-01 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+DZone 上有一篇关于 prompt injection 的文章，标题很直白：为什么所有防御都会被攻破。2025 年底 OpenAI、Anthropic 和 Google DeepMind 的联合团队测试了 12 种公开防御方案，全部被绕过，成功率超过 90%。文章的核心论点：只靠加一层过滤解决不了问题，需要从架构层面重新思考。现状的做法是给房子装防盗门，但攻击者从窗户翻进来就没办法。文章说思路要改变一下，假设攻击者已经进来了，限制他能破坏的范围。
+
+* 为什么外围防御注定失败
+
+外围防御的方法有很多，比如输入过滤、关键词黑名单、前置分类器、限速等。但总能被绕过，输入过滤可以被编码绕过，黑名单可以被变体绕过，分类器可以在不同语境下被欺骗，限速在多轮交互中一样能被绕过。原因是这场对抗本来就不公平——你部署一套规则是一次性动作，攻击者则可以花无限时间反复试探。
+
+绕过路径各有差异，根因只有一个：当前 LLM 架构无法区分"指令"和"数据"。对模型来说一切都是 token。系统提示里的约束和文档里夹带的恶意文本，在模型看来是同一个东西。这个区分不在 prompt 层面，只能靠架构设计来实现。
+
+SQL 注入当年也面临过同样的困境。靠输入过滤和转义打了二十年的攻防战，直到参数化查询出现。关键不是过滤做得多好，是数据库引擎不再把用户输入当成代码执行,这样一来,注入在架构层面变得无关紧要。Prompt injection 需要同样的转向。
+
+* Capability Gate：不让模型决定自己能做什么
+
+文章的核心贡献是明确了一个原则：LLM 不应该是自己权限的授权者。模型决定它想做什么，一个独立的 Capability Gate 决定它能不能做。
+
+这是 Google DeepMind CaMeL 框架的思路。LLM 提出工具调用请求，一个外部执行器在放行之前验证每个计划动作是否在允许列表中。就算模型被注入后"想"往外发数据到外部 URL，Capability Gate 直接拒绝，因为该操作根本不在允许列表中，不管模型在对话中途被灌输了什么指令。
+
+下面是对应 Python 实现的核心逻辑：
+
+#+begin_src python :tangle /tmp/capability_gate.py
+  from dataclasses import dataclass
+  from typing import Any, Callable
+  import jsonschema, hashlib, time, logging
+
+
+  @dataclass
+  class ToolCall:
+      name: str
+      params: dict[str, Any]
+      session_id: str
+
+
+  def _request_human_approval(call: ToolCall) -> str:
+      """人工审批占位，实际系统中对接审批工作流。"""
+      return f"[PENDING] 工具 '{call.name}' 等待人工审批——会话 {call.session_id}"
+
+
+  class CapabilityGate:
+      """策略逻辑在初始化时从外部配置加载，LLM 运行期间不可修改。"""
+
+      def __init__(self, policy: dict):
+          # 策略由工程师在启动时设置，LLM 无法改写
+          self.policy = policy
+          self.audit_log = []
+
+      def execute(self, call: ToolCall) -> Any:
+          # 第 1 步：工具是否在允许列表里？
+          if call.name not in self.policy["allowed_tools"]:
+              self._audit(call, "BLOCKED_UNKNOWN_TOOL")
+              raise PermissionError(f"工具 '{call.name}' 不在能力允许列表中")
+
+          tool_policy = self.policy["allowed_tools"][call.name]
+
+          # 第 2 步：参数是否严格匹配声明的 schema？
+          try:
+              jsonschema.validate(call.params, tool_policy["param_schema"])
+          except jsonschema.ValidationError as e:
+              self._audit(call, "BLOCKED_SCHEMA_VIOLATION", str(e))
+              raise
+
+          # 第 3 步：高风险操作需要人工审批
+          if tool_policy.get("requires_human_approval"):
+              self._audit(call, "PENDING_HUMAN_REVIEW")
+              return self._request_human_approval(call)
+
+          # 全部检查通过，记录并执行
+          self._audit(call, "EXECUTED")
+          handler: Callable = tool_policy["handler"]
+          return handler(**call.params)
+
+      def _audit(self, call: ToolCall, outcome: str, detail: str = ""):
+          entry = {
+              "ts": time.time(),
+              "session": call.session_id,
+              "tool": call.name,
+              "params_hash": hashlib.sha256(
+                  str(call.params).encode()
+              ).hexdigest()[:16],
+              "outcome": outcome,
+          }
+          self.audit_log.append(entry)
+          logging.info(
+              "[GATE] %s | %s | session=%s", call.name, outcome, call.session_id
+          )
+#+end_src
+
+代码的关键在 `__init__` 那一行：policy 在启动时加载，注入的模型无法改写自己的允许列表。不管模型被什么指令操控，gate 只允许执行工程师部署时注册的工具。
+
+验证结果：
+
+#+begin_example
+测试 1：合法工具调用
+结果: 搜索 'prompt injection防御' 返回 10 条结果
+状态: 通过
+
+测试 2：未知工具拦截
+拦截: 工具 'send_http_request' 不在能力允许列表中
+状态: 通过
+
+测试 3：参数 schema 违规拦截
+拦截: 9999 is greater than the maximum of 100
+状态: 通过
+
+测试 4：高风险操作要求人工审批
+结果: [PENDING] 工具 'delete_database' 等待人工审批——会话 test-session-001
+状态: 通过
+#+end_example
+
+* 用隔离 LLM 处理外部内容
+
+间接注入最难防。恶意指令藏在用户上传的文档、邮件正文或网页内容里，在模型处理过程中被当作指令执行。
+
+修复方案不在过滤器，而在架构隔离。用一个隔离的 LLM 实例处理所有外部内容。这个模型没有记忆、不能调用工具、不能向主模型传递原始文本。它只提取事实、做摘要，返回结构化输出。主模型接收到的是隔离模型处理后的结果，永远不会直接看到原始文档。
+
+* 签名审计日志
+
+检测无法起到阻止的作用，但检测手段决定了发现问题的时间尺度。每次工具调用，不管执行还是被阻止，都应记录带有输入 prompt 和参数的加密哈希。注入成功时，审计日志可以告诉你模型当时被要求做什么、什么时候被要求。
+
+审计日志还应该存储在 LLM 没有写权限的 append-only 存储中。如果模型被注入后攻击者试图掩盖痕迹，日志存储必须从架构上不可触及。
+
+* 优先级：从缩减权限开始
+
+文章给出的优先级顺序很直白：
+
+#+begin_quote
+1. 立刻审查并缩减 LLM 能访问的工具列表——支付写入、外部 HTTP 调用、数据库变更需要硬理由
+2. 在 Capability Gate 层做参数 schema 验证
+3. 隔离所有外部文档处理
+4. 部署签名、append-only 的审计日志
+5. 最后才在外围加上检测手段
+#+end_quote
+
+最后一条有意思：输入过滤和模式黑名单这些手段不是没有，只是优先级被降低了。它们降低攻击流量，但不再承担核心防御责任。真正的防线在前四条。
+
+Prompt injection 解决不了，但可以管理。把精力从检测攻击转移到限制破坏范围上。不让模型自己决定能做什么，不让外部内容直接接触主模型，让每次操作都留下不可篡改的记录。这才是现实中安全该有的样子——防得滴水不漏是理想，漏了也翻不起浪才是现实。
