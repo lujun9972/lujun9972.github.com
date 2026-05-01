@@ -1,0 +1,274 @@
+#+TITLE: 读：整洁代码的几个通用原则——从 Go 生态看起
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: 整洁代码, 重构, 软件设计
+#+DATE: [2026-05-01 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近读了一篇 Go 整洁代码的长文，内容覆盖函数设计、错误处理、接口设计和包架构。虽然代码是 Go 写的，但里面的原则大部分不限于特定语言。本文提炼几条最有通用价值的，示例改用 Python。
+
+* 屏幕规则（Screen Rule）：函数不超过一屏
+
+原文提了一个很实在的质量指标：一个函数应该能在开发者屏幕上完整显示，大概是 30-50 行。超过了就该考虑拆分。
+
+30 行不是什么 magic number。关键是一个函数如果滚动才能看全，它做的事情就超出了人能一次性理解的范围——你不可能一边看后面的逻辑一边记住前面的状态。
+
+拆分的依据是单一职责。看个反面例子：
+
+#+begin_src python
+# 反面做法：一个函数做好几件事
+def process_user(user_id: int) -> dict:
+    if user_id <= 0:
+        print(f"无效用户 ID: {user_id}")
+        return {"error": "invalid"}
+    db = sqlite3.connect("app.db")
+    cur = db.cursor()
+    cur.execute("SELECT id, name, email FROM users WHERE id = ?", (user_id,))
+    row = cur.fetchone()
+    if row is None:
+        return {"error": "not found"}
+    user = {"id": row[0], "name": row[1], "email": row[2]}
+    if user["email"]:
+        domain = user["email"].split("@")[1]
+        user["is_active"] = domain in ["google.com", "microsoft.com"]
+        user["email_domain"] = domain
+    db.close()
+    print(f"用户 {user_id} 处理完成")
+    return user
+#+end_src
+
+这个函数既做校验、又管理数据库连接、又执行查询、又做数据增强、又打日志。拆开之后，每个函数只做一件事：
+
+#+begin_src python
+def get_user(user_id: int) -> dict:
+    validate_user_id(user_id)
+    user = fetch_user(user_id)
+    enrich_user(user)
+    return user
+
+def validate_user_id(uid: int):
+    if uid <= 0:
+        raise ValueError(f"无效用户 ID: {uid}")
+
+def fetch_user(uid: int) -> dict:
+    db = sqlite3.connect("app.db")
+    try:
+        cur = db.cursor()
+        cur.execute(
+            "SELECT id, name, email FROM users WHERE id = ?", (uid,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise KeyError(f"用户 {uid} 不存在")
+        return {"id": row[0], "name": row[1], "email": row[2]}
+    finally:
+        db.close()
+
+def enrich_user(user: dict):
+    if not user.get("email"):
+        return
+    user["email_domain"] = user["email"].split("@")[1]
+#+end_src
+
+拆开之后每个函数不超过 10 行，可以独立测试，读代码的人不需要同时追踪数据库连接和数据增强两件事。
+
+* 早返回代替嵌套
+
+嵌套是降低代码可读性的头号杀手。原文管它叫"厄运金字塔"：
+
+#+begin_src python
+# 反面做法：深层嵌套
+def send_notification(user_id: int, message: str) -> str:
+    user = find_user(user_id)
+    if user is not None:
+        if user.get("email"):
+            if user.get("active"):
+                if user.get("notifications_enabled"):
+                    result = send_email(user["email"], message)
+                    if result:
+                        return "发送成功"
+                    else:
+                        return "发送失败"
+                else:
+                    return "通知未开启"
+            else:
+                return "用户未激活"
+        else:
+            return "邮箱为空"
+    else:
+        return "用户不存在"
+#+end_src
+
+每一层缩进都是一个心智负担。修复方式是用早返回（guard clauses），把异常情况提前排除：
+
+#+begin_src python
+# 推荐做法：早返回
+def send_notification(user_id: int, message: str) -> str:
+    user = find_user(user_id)
+    if user is None:
+        return "用户不存在"
+    if not user.get("email"):
+        return "邮箱为空"
+    if not user.get("active"):
+        return "用户未激活"
+    if not user.get("notifications_enabled"):
+        return "通知未开启"
+    if not send_email(user["email"], message):
+        return "发送失败"
+    return "发送成功"
+#+end_src
+
+两种写法逻辑完全一致，但早返回版本不需要追踪括号匹配，读起来平坦通畅。
+
+* 用上下文管理器保证清理
+
+Go 有 =defer= 关键字，保证函数退出时执行清理操作。Python 没有 =defer= ，但有更好的替代：上下文管理器（ =with= 语句）：
+
+#+begin_src python
+# 手动管理，容易忘记
+def read_config(path: str) -> dict:
+    import json
+    f = open(path)
+    try:
+        data = f.read()
+        config = json.loads(data)
+        f.close()
+        return config
+    except Exception:
+        f.close()
+        raise
+
+# 上下文管理器，自动清理
+def read_config(path: str) -> dict:
+    import json
+    with open(path) as f:
+        return json.load(f)
+#+end_src
+
+=with= 语句比 =defer= 更简洁： =defer= 只在函数退出时触发，而 =with= 的清理范围精确到代码块，生命周期更清晰。
+
+* 接口越小越好
+
+原文的一个核心观点是接口应该小。Go 标准库的经典例子是 `io.Reader`（一个 `Read` 方法）和 `io.Writer`（一个 `Write` 方法）。一个方法一个接口，组合使用。
+
+Python 的协议类（Protocol）也是同样的思路：
+
+#+begin_src python
+from typing import Protocol
+
+class Readable(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+class Writable(Protocol):
+    def write(self, data: bytes) -> int: ...
+
+# 只需要 Readable 的函数
+def process_data(src: Readable, dst: Writable):
+    data = src.read()
+    dst.write(data)
+#+end_src
+
+接口小有三个好处：容易实现（一个方法而已）、容易测试（mock 一个方法比 mock 十个简单得多）、容易组合（小接口拼成大接口，而不是大接口拆小）。
+
+* 接口定义在消费方
+
+传统面向对象编程的思路是提供方定义接口，使用者去实现它。Go 反过来：你作为调用者，定义你需要什么，然后在调用处把接口写出来。只要传入的对象有你要的方法就行，不需要它显式声明"我实现了这个接口"。
+
+Python 的 Protocol 也支持同样的思维：
+
+#+begin_src python
+from typing import Protocol
+
+# 消费方定义自己需要什么
+class UserFetcher(Protocol):
+    def get(self, user_id: int) -> dict: ...
+
+# 消费方的业务逻辑
+def greet_user(db: UserFetcher, user_id: int):
+    user = db.get(user_id)
+    return f"你好，{user['name']}"
+
+# 实现方不需要知道 UserFetcher 的存在
+class PostgresDB:
+    def get(self, user_id: int) -> dict:
+        return {"name": "张三"}
+
+class RedisCache:
+    def get(self, user_id: int) -> dict:
+        return {"name": "李四"}
+
+# 传入什么实现都可以，只要有个 .get() 方法
+print(greet_user(PostgresDB(), 1))
+print(greet_user(RedisCache(), 1))
+#+end_src
+
+实际输出：
+
+#+begin_example
+你好，张三
+你好，李四
+#+end_example
+
+`PostgresDB` 和 `RedisCache` 都不知道 `UserFetcher` 的存在。它们只是恰好有个 `.get()` 方法，而 `greet_user` 只关心这个。想换实现时，不需要改接口定义，也不需要改调用者的代码，换实现就是换一个参数而已。
+
+你可能会想：这不就是 duck typing 吗？确实是，但有个关键区别。纯动态 duck typing（无类型标注的 Python、Ruby、JS）在运行时才检查对象有没有对应方法，传错了只能等线上炸。Go 和 Python 的 Protocol + mypy 都是在编译/类型检查阶段就确认传入的对象满足接口要求——既有 duck typing 的灵活性，又有静态类型的可靠性。这是 duck typing 的进阶形态，保留了灵活、去掉了惊吓。
+
+* 方法链（Builder 模式）
+
+有些对象的构造过程参数很多，原文展示了用 builder 模式解决这个问题。这是 Go 版的 Functional Options 模式，用 Python 的方法链是同样的思路：
+
+#+begin_src python
+class QueryBuilder:
+    def __init__(self, table: str):
+        self._table = table
+        self._columns = ["*"]
+        self._where: list[str] = []
+        self._order_by: str | None = None
+        self._limit: int | None = None
+
+    def select(self, *columns: str):
+        self._columns = columns
+        return self
+
+    def where(self, condition: str):
+        self._where.append(condition)
+        return self
+
+    def order_by(self, column: str):
+        self._order_by = column
+        return self
+
+    def limit(self, n: int):
+        self._limit = n
+        return self
+
+    def build(self) -> str:
+        sql = f"SELECT {', '.join(self._columns)} FROM {self._table}"
+        if self._where:
+            sql += " WHERE " + " AND ".join(self._where)
+        if self._order_by:
+            sql += f" ORDER BY {self._order_by}"
+        if self._limit is not None:
+            sql += f" LIMIT {self._limit}"
+        return sql
+
+# 使用方法链，读起来像 SQL
+sql = (QueryBuilder("users")
+       .select("id", "name", "email")
+       .where("active = true")
+       .order_by("created_at DESC")
+       .limit(10)
+       .build())
+#+end_src
+
+实际输出是一条完整的 SQL 查询语句：
+
+#+begin_example
+SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10
+#+end_example
+
+关键设计是每个设置方法都返回 `self`，这样调用可以不断串联下去，代码读起来就是在描述要做什么。
+
+* 小结
+
+这篇文章最有价值的地方不是某个具体的 Go 技巧，而是背后贯穿的思路：代码首先是给人读的，其次才是给机器执行的。屏幕规则、早返回、小接口、清理自动化——这些东西跟具体语言关系不大。不管用什么语言写代码，这些原则都能用上。
