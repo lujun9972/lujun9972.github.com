@@ -1,0 +1,160 @@
+#+TITLE: 读：Java 容器化——从 Fat JAR 到高效 Docker 镜像
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Java, Docker, JVM, 容器, Work
+#+DATE: [2026-05-01 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 开篇：Java 容器化的典型困境
+
+把 Java 应用塞进 Docker 容器看起来很简单：写个 Dockerfile，把 JAR 包扔进去，完事。但实际跑起来会遇到几个典型问题：
+
+- 镜像体积巨大（800MB+），每次 CI 构建都要推几百 MB
+- 启动慢（40 秒+），容器编排平台频繁超时
+- 负载高峰时容器被 OS 静默杀死（OOMKilled），查日志也看不出原因
+
+这三个问题的根因其实一样：把容器当轻量虚拟机用，忽略了 JVM 与容器边界的交互方式。
+
+我在 DZone 上读到一篇很好的总结（Java in a Container: Efficient Development and Deployment With Docker，作者 Ramya vani Rayala），把这些问题和解决方案串了起来。这篇笔记记下关键点和一些补充理解。
+
+* Fat JAR 反模式
+
+最简单的 Dockerfile 大概是这样：
+
+#+begin_src conf :tangle no
+FROM openjdk:11
+COPY target/myapp.jar app.jar
+CMD ["java", "-jar", "app.jar"]
+#+end_src
+
+这里有两个问题。第一，用了完整的 JDK 镜像。生产环境只需要 JRE 来运行程序，不需要编译器、javadoc 等开发工具。JDK 镜像比 JRE 大很多，还增加了攻击面。
+
+第二，所有依赖打包在一个 fat JAR 里，Docker 只有单层。改一行代码就要重新构建整个 JAR，Docker 层缓存全部失效。结果 CI 每次都得推送几百 MB 的未变更数据。
+
+原文用 =dive= （一个 Docker 镜像层分析工具）查看，发现依赖占了镜像体积的 90%，应用代码只占 10%。
+
+* 多阶段构建
+
+最直接的改进是改用多阶段构建（multi-stage build）：
+
+#+begin_src conf :tangle no
+# 构建阶段——用完整 JDK
+FROM openjdk:11 AS builder
+COPY . /src
+RUN ./mvnw package
+
+# 运行阶段——只带 JRE
+FROM openjdk:11-jre
+COPY --from=builder /src/target/myapp.jar app.jar
+CMD ["java", "-jar", "app.jar"]
+#+end_src
+
+构建阶段用包含编译工具的 JDK 镜像，运行阶段只复制编译产物到 JRE 镜像。这样运行镜像里没有编译器、没有源代码，只有运行必需的 JRE 和应用。
+
+不过仔细看，这里仍然是一个 fat JAR 单层。依赖和应用代码混在一起，改代码仍然要重建整个 JAR。
+
+* Spring Boot 分层 JAR
+
+Spring Boot 2.3+ 引入了分层 JAR（layered JAR）机制，把 JAR 包拆成多个内部层。默认分为四层：
+
+- =dependencies= ：第三方依赖，几乎不变
+- =spring-boot-loader= ：Spring Boot 启动加载器
+- =snapshot-dependencies= ：快照版依赖（变化频率介于两者之间）
+- =application= ：应用代码，经常变
+
+利用这个分层结构，可以让 Docker 缓存住那些不常变的层，只重建有改动的层。
+
+首先在 =pom.xml= 中启用分层打包：
+
+#+begin_src xml :tangle no
+<plugin>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-maven-plugin</artifactId>
+    <configuration>
+        <layers>
+            <enabled>true</enabled>
+        </layers>
+    </configuration>
+</plugin>
+#+end_src
+
+构建时先用 =jarmode= 的 =layertools= 命令把分层 JAR 解压到独立目录：
+
+#+begin_src conf :tangle no
+FROM openjdk:11-jre AS layers
+WORKDIR /app
+COPY target/myapp.jar app.jar
+RUN java -Djarmode=layertools -jar app.jar extract
+
+FROM openjdk:11-jre
+COPY --from=layers /app/dependencies/ ./
+COPY --from=layers /app/spring-boot-loader/ ./
+COPY --from=layers /app/snapshot-dependencies/ ./
+COPY --from=layers /app/application/ ./
+ENTRYPOINT ["java", "org.springframework.boot.loader.JarLauncher"]
+#+end_src
+
+=Dockerfile= 中每一行 =COPY= 构成 Docker 的一层缓存。依赖层几乎不变，Docker 构建时直接从缓存取。改一行 Java 代码只需要重新构建最顶层的 =application= 层。原文称这项优化让 CI 构建时间减少了 60%，镜像推送时间减少了 75%。
+
+* JVM 容器感知
+
+这是 Java 容器化最隐蔽的一个陷阱。
+
+*问题的根因* ：JVM 在启动时会根据宿主机内存来算默认堆大小。在容器里，Docker 通过 cgroup 限制了内存上限，但 JVM 默认看不到这个限制，它以为仍然是宿主机的全部内存。比如容器限制 1GB，宿主机 64GB，JVM 按 64GB 算出默认堆大小，堆空间就远远超出了容器能给的容量。
+
+而且堆只是 JVM 内存的一部分。JVM 除了堆还有线程栈、元空间（metaspace）、代码缓存等非堆内存。堆 + 非堆总和超过容器 cgroup 上限时，Linux 内核的 OOM killer 就会静默杀死进程。即使你设置了 =Xmx= 来限制堆大小，非堆部分的波动仍然可能撑爆容器。
+
+*解决办法* ：停止使用固定的 =Xmx= 值，改用百分比参数，让 JVM 按容器内存上限的百分比算堆大小：
+
+#+begin_src conf :tangle no
+ENTRYPOINT ["java", \
+  "-XX:MaxRAMPercentage=75", \
+  "-XX:+ExitOnOutOfMemoryError", \
+  "-jar", "app.jar"]
+#+end_src
+
+=MaxRAMPercentage= 告诉 JVM：最多用容器内存上限的 75% 来做堆，剩下 25% 留给非堆内存。JVM 默认的 =MaxRAMPercentage= 值只有 25%（用 =-XX:+PrintFlagsFinal= 可查看），容器环境下不调高的话堆空间会非常受限。调高到 75% 同时换容器内存规格（比如从 1GB 升到 2GB）时也无需改代码，JVM 自动适配。
+
+=ExitOnOutOfMemoryError= 的作用是：OOM 时直接退出进程，让容器编排平台（Kubernetes 等）检测到崩溃后重启实例。默认行为是进程继续活着但功能异常，表现为"半死不活"的悬挂状态，更难排查。
+
+*版本的坑* ：容器感知的 JVM 参数从 JDK 8u131 开始支持，但 =MaxRAMPercentage= 是从 JDK 8u191 才加入的（更早版本用 =-Xmx= 或 =-XX:MaxRAM= ）。如果你的基础镜像还在用 8u191 之前的 JDK 8，这个参数不生效，需要用 =-XX:MaxRAM= 来指定绝对上限。
+
+* 安全加固
+
+*非 root 用户* ：Java 镜像默认以 root 身份运行。如果应用被攻破，攻击者拿到的就是容器内的 root 权限。应该在 Dockerfile 中创建一个专用用户：
+
+#+begin_src conf :tangle no
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+USER appuser
+#+end_src
+
+*健康检查* ：在 Dockerfile 中添加健康检查指令，让编排平台能判断容器是否还在正常工作：
+
+#+begin_src conf :tangle no
+HEALTHCHECK --interval=30s --timeout=3s \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+#+end_src
+
+Spring Boot Actuator 提供了 =/actuator/health= 端点，返回应用的健康状态。Kubernetes 或 Docker Swarm 可以根据这个检查结果自动重启异常容器。
+
+*更进一步的方向* ：原文还提到了 distroless 镜像（Google 维护的极简基础镜像，只包含应用运行所需的最小依赖，没有 shell、没有包管理器）。它的攻击面更小，但调试也更困难（没有 shell 可登入）。作者表示目前用 Alpine 已经够用，后续计划迁移到 distroless。
+
+* 监控
+
+生产环境中，光靠健康检查还不够。应用什么时候变慢、什么时候内存飙升、什么时候 GC 停顿过长，这些指标最好在问题发生前就暴露出来。
+
+原文推荐的做法是用 Prometheus 从 Spring Boot Actuator 的 =/actuator/prometheus= 端点采集指标，关注三个核心信号：
+
+- JVM 内存使用量，确认是否接近容器上限
+- GC 暂停时间，频繁或暂停时间长说明堆大小可能不合理
+- 容器重启次数，频繁重启说明存在稳定性问题
+
+* 总结
+
+Java 容器化不是写个 Dockerfile 就完事。三个关键点：
+
+1. *Dockerfile 要分层* ：多阶段构建 + Spring Boot 分层 JAR，把依赖和应用代码分开缓存，构建效率提升明显
+2. *JVM 需要容器教育* ：用 MaxRAMPercentage 代替固定 Xmx，让 JVM 按容器上限分配内存，配合 ExitOnOutOfMemoryError 让异常容器自动重启
+3. *安全默认值* ：非 root 用户、健康检查、健康指标监控——这些配置应该在项目初始化时就加上，而不是等出事了再补
+
+就算你用的不是 Java，第一点和第三点也是通用的 Docker 实践。第二点是 Java 专有的问题，但背后是一个更通用的系统教训：运行时的资源假设在容器边界上不可靠，任何语言在容器里跑都不能假定自己能看到全部资源。
