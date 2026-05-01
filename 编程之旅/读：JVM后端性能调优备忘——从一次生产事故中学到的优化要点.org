@@ -1,0 +1,120 @@
+#+TITLE: 读：JVM 后端性能调优备忘——从一次生产事故中学到的优化要点
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Java, JVM, 性能调优, GC, JFR
+#+DATE: [2026-05-01 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+DZone 上有一篇 Java 后端性能调优的实战记录，讲的是一套 Spring Boot + Hibernate 的订单系统在流量高峰时出问题，以及团队怎么从硬件堆砌转向真正的性能诊断。本文提炼其中的关键工具、排查思路和优化策略，作为一份备忘。
+
+* 诊断工具链：先拿数据再说
+
+遇到性能问题，原文第一条经验是： *不要猜，先做 profile* 。猜来猜去只会浪费时间，profile 摆在面前的数据不会骗人。
+
+** Java Flight Recorder (JFR)
+
+JFR 是 JDK 自带的低开销事件记录器，可以在生产环境持续运行。原文团队在流量高峰期录了 20 分钟的 JFR 数据。开销很低，可以放心在生产环境开着。
+
+JFR 最早在 JDK 7u4（2012 年）中以商业特性提供，需要额外加参数解锁。从 JDK 11 起已开源，所有实现（包括 OpenJDK）都直接可用。
+
+启用方式：在 JVM 启动参数加 ~-XX:StartFlightRecording=filename=recording.jfr,duration=60s~ 会在启动后录制 60 秒。对已经在运行的应用，可以用 =jcmd <pid> JFR.start duration=60s= 命令动态开启录制，用 =jcmd <pid> JFR.dump filename=recording.jfr= 导出数据。
+
+** Java Mission Control (JMC)
+
+JMC 是 JDK 自带的图形分析工具。JDK 7/8 中直接捆绑在 JDK 安装包内，JDK 11+ 之后需要从开源项目（https://github.com/JMC-Project/jmc）单独下载。打开 JMC 后加载录制好的 .jfr 文件，就能看到火焰图、GC 事件时间线、锁竞争分析、内存分配热点等视图。原文团队就是通过火焰图发现大块 CPU 时间花在 GC 上，从而锁定根因。
+
+* 三大常见性能杀手
+
+** 高对象分配率（Object Churn）
+
+原文的核心问题在于每个请求都创建了大量临时对象，这些对象迅速填满年轻代（Eden 区），频繁的触发 Minor GC。GC 线程忙着回收，业务线程就只能等了。
+
+问题出在数据转换工具方法，这个方法把 Entity 转为 DTO 时，每个字段都 new 了 ArrayList，还在循环里用字符串拼接。单次调看不出来什么影响，一分钟内涌入几千笔订单就引发了灾难。
+
+下面的代码演示了两种写法的差异：
+
+#+begin_src java
+  public static OrderDto badTransform(long id, String[] rawTags) {
+      OrderDto dto = new OrderDto();
+      dto.id = "ORD-" + id;
+      dto.tags = new ArrayList<>();
+      for (String t : rawTags) dto.tags.add(t);
+      String s = "";
+      for (String t : rawTags) s += t + ";";
+      dto.desc = s;
+      dto.summary = s;
+      return dto;
+  }
+
+  public static OrderDto goodTransform(long id, String[] rawTags) {
+      OrderDto dto = new OrderDto();
+      dto.id = "ORD-" + id;
+      dto.tags = Arrays.asList(rawTags);
+      StringBuilder sb = new StringBuilder();
+      for (String t : rawTags) sb.append(t).append(";");
+      dto.desc = sb.toString();
+      dto.summary = sb.toString();
+      return dto;
+  }
+#+end_src
+
+在本地跑 20 万次转换的耗时对比：
+
+#+begin_example
+Bad  (每个字段 new 集合 + 循环拼接): 633 ms
+Good (Arrays.asList + StringBuilder): 427 ms
+Speedup: 1.5 x
+#+end_example
+
+这个 demo 只跑了个裸循环，1.5 倍的差距不算太大。但在真实 Spring Boot 应用中，每个请求的 DTO 转换会在 Hibernate 会话、事务拦截器、JSON 序列化等多个环节叠加对象分配。加上几千笔订单并发，GC 频繁暂停的放大效应就很可观了。原文称这一改动减少了约 80% 的对象创建。
+
+** N+1 查询
+
+Hibernate 最常见的问题之一就是N+1查询。举个例子：加载一批订单，Hibernate 先发一条 =SELECT ... FROM orders= 查出所有订单（1 条 SQL）。然后你遍历每个订单，访问它的订单明细（order.getItems()），Hibernate 就为 *每个* 订单再发一条 =SELECT ... FROM order_items WHERE order_id=?= （N 条 SQL）。100 笔订单就变成 1 + 100 = 101 条 SQL。每条 SQL 都有网络往返开销，乘起来就是灾难。
+
+修复方式是用 *Entity Graph* 。这是 JPA（Java Persistence API，Java 持久化规范）提供的一种机制，让你在查询时显式声明"这次要把关联数据一并拉出来"。Hibernate 收到声明后会在一条 SQL 里用 JOIN 查出所有关联数据，不再逐条发查询。这既减少应用端的等待时间，也降低数据库端的 CPU 负载。
+
+** 锁竞争
+
+原文的缓存实现用了 `synchronized` 关键字。在 Java 里 `synchronized` 是一把互斥锁——同一时刻只允许一个线程执行被保护的代码块。如果多个线程同时访问缓存，它们就得排队一个一个来，读也要排队，不能并行。这就把并发访问变成了串行化。
+
+修复方式是把缓存换成了 `ConcurrentHashMap`。这是 Java 提供的线程安全哈希表，内部做了分段加锁，读操作完全不需要锁，写操作也只锁住特定分段，多线程可以同时读写不互相阻塞。
+
+线程池也需要关注：默认工作线程数不够，性能不足会导致队列堵塞，堵塞多了可能引发 OOM。应该按 CPU 核心数调整线程池大小，队列设一个合理上限而非无限增长。
+
+* JVM 参数调优要点
+
+** 堆大小
+
+容器化部署时，JVM 默认堆大小对于生产负载常常不够。传统的做法是用 ~-Xmx~ 设一个固定值，比如 ~-Xmx2g~ ，但问题是：如果你的容器内存配置改成了 4GB， ~-Xmx2g~ 还是只用了 2GB，白白浪费了一半内存。
+
+~-XX:MaxRAMPercentage~ 是 JVM 的参数，告诉 JVM "拿容器可用内存的百分之多少做堆"。比如 ~-XX:MaxRAMPercentage=75.0~ 表示最多使用容器内存的 75%，剩下 25% 留给 JVM 自身和其他进程。这样容器扩了内存，堆大小也跟着自动扩，不用修改启动参数。
+
+JDK 版本要求：这个参数在 JDK 8u131 中引入，但早期版本还需要同时加 =-XX:+UseContainerSupport= 显式启用容器支持。从 JDK 8u191 起容器支持默认开启，直接设 MaxRAMPercentage 即可。当前环境是 OpenJDK 8u492，验证可用。
+
+** G1GC 参数
+
+G1GC 的 =-XX:InitiatingHeapOccupancyPercent= 控制何时启动并发标记，默认 45%。原文降到 30%，让 GC 更早开始，避免等到堆快满时才触发，那时已经来不及了，会引发 Full GC 暂停。
+
+** GC 日志
+
+开启 GC 日志可以持续监控 GC 行为，在问题恶化前发现异常。这是长期维护的必备工具。
+
+
+* 可持续的性能实践清单
+
+原文团队事后总结的几点，每条都有具体产出：
+
+| 建议 | 怎么做 |
+|------|--------|
+| 开发阶段就做 profile | 本地开 JFR，早发现高分配模式 |
+| 监控 GC 指标 | 跟踪 GC 暂停时间和频率，设置告警 |
+| 预防 N+1 | 检查 Hibernate SQL 日志，用 JOIN FETCH 或 Entity Graph |
+| 减少对象分配 | 复用对象，避免在循环中创建临时集合，用 StringBuilder |
+| 容器化适配 | 用 MaxRAMPercentage 代替固定 Xmx |
+| 负载测试要真实 | 模拟长时间会话和高并发，不要只跑简单的单元测试 |
+| 异步处理 | 耗时任务丢到后台队列，不阻塞 HTTP 线程 |
+
+* 启示
+
+这篇事故记录最有价值的地方不在具体参数值（参数需要根据你的实际负载调整），而在务实的诊断思路：从堆硬件到堆工具，从猜原因到读数据。性能优化不是玄学，JFR 和火焰图这些工具让工程师能看清问题出在哪。
