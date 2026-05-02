@@ -1,0 +1,195 @@
+#+TITLE: 读：Protesilaos 的 Emacs 合理默认配置 —— 兼与 newcomers-presets 对比
+#+AUTHOR: darksun,Claude Code
+#+TAGS: emacs,protesilaos,newcomers-presets
+#+DATE: [2026-05-02 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+上次整理了 [[./读：Emacs newcomers-presets theme —— 30+ 项新手预设一览.org][newcomers-presets theme]] 的配置清单。几天后，Protesilaos（Prot）在和 Sacha Chua 的 livestream 上聊了这个话题，随后分享了一份自己的"sensible defaults"配置。
+
+Prot 在 Emacs 社区以 themes（Modus/ef 系列）、icon 等包闻名。他这份配置不是个人完整配置，而是"跟不同水平的人交流后，觉得有用的基础配置"。
+
+这篇笔记把他的配置逐段过一遍，顺带对比两种思路的差异。
+
+* 两种思路的根本差异
+
+| 方面     | newcomers-presets               | Prot 的方案                         |
+|----------+---------------------------------+-------------------------------------|
+| 形式     | Emacs theme， =load-theme= 加载 | 配置片段，合并到 =init.el=          |
+| 开关     | 随时 =disable-theme= 关闭       | 修改 =init.el= 移除                 |
+| 作用域   | 只设 =setopt= / =add-hook=      | 可设任何 Elisp                      |
+| 包依赖   | 纯内置，不装包                  | 推荐 6 个第三方包                   |
+| 改动范围 | 30+ 项细微调整                  | 更激进（如 =custom-safe-themes= t） |
+
+newcomers-presets 的定位是"开箱即友好的默认值"：不改用户的配置习惯，不满意可以关掉。Prot 的思路则是"给一份我觉得对的配置"，他认为对新手来说，一开始就用对的设置比"错了再改"更省事。
+
+* custom-file 分离
+
+#+begin_src emacs-lisp
+(setq custom-file (locate-user-emacs-file "custom.el"))
+(load custom-file :no-error-if-file-is-missing)
+#+end_src
+
+Prot 第一件事就是把 =custom.el= 从 =init.el= 里拆出来，单独用一个文件存 =M-x customize= 产生的配置。没有 =custom-file= 时，Emacs 把这些自动生成的配置直接写进 =init.el= ，跟手写配置混在一起。想删掉某个 customize 项得在 =init.el= 里翻半天，分不清哪些是自动写的、哪些是自己手写的。
+
+这一条和 newcomers-presets 不冲突，无论哪种方案，都应该设 =custom-file= 。
+
+* 包仓库优先级
+
+#+begin_src emacs-lisp
+(setq package-archives
+      '(("gnu-elpa" . "https://elpa.gnu.org/packages/")
+        ("nongnu" . "https://elpa.nongnu.org/nongnu/")
+        ("melpa" . "https://melpa.org/packages/")))
+(setq package-archive-priorities
+      '(("gnu-elpa" . 3)
+        ("nongnu" . 2)
+        ("melpa" . 1)))
+#+end_src
+
+Prot 把 GNU ELPA 的优先级设为最高（3），NonGNU 其次（2），MELPA 最低（1）。 =gnu-elpa= 这个名字比默认的 =gnu= 更直观（新手容易混淆 =gnu= 和 =elpa= ）。
+
+newcomers-presets 没动包仓库配置，只设了 =package-autosuggest-mode= 提醒用户装包。
+
+* 通用设置（General options）
+
+#+begin_src emacs-lisp
+(defun prot/keyboard-quit-dwim ()
+  "Do-What-I-Mean behaviour for a general `keyboard-quit'."
+  (interactive)
+  (cond
+   ((region-active-p)
+    (keyboard-quit))
+   ((derived-mode-p 'completion-list-mode)
+    (delete-completion-window))
+   ((> (minibuffer-depth) 0)
+    (abort-recursive-edit))
+   (t
+    (keyboard-quit))))
+#+end_src
+
+=C-g= 被绑定到一个 DWIM 函数：激活了区域就取消选择，打开了 minibuffer 就关闭，Completions buffer 被选中就关闭，否则退出的常规行为。这个函数把 =C-g= 改成了一个通用的"取消当前操作"按钮，非常实用。
+
+#+begin_src emacs-lisp
+(set-face-attribute 'default nil :family "Aporetic Sans Mono" :height 160)
+(set-face-attribute 'fixed-pitch nil :family "Aporetic Serif Mono" :height 1.0)
+(set-face-attribute 'variable-pitch nil :family "Aporetic Sans" :height 1.0)
+#+end_src
+
+字体设的是 Prot 自己做的 Aporetic 系列字体。读者换成自己的字体即可。
+
+#+begin_src emacs-lisp
+  (setq custom-safe-themes t)
+  (setq use-short-answers t)
+  (setq read-answer-short t)
+  (setq help-window-select t)
+  (setq help-window-keep-selected t)
+  (setq window-combination-resize t)
+  (setq save-interprogram-paste-before-kill t)
+  (setq completion-category-defaults nil)
+#+end_src
+
+几个值得注意的：
+
+- =custom-safe-themes t= ：最激进的一行。不再询问每个 theme 是否安全。Prot 的理由是"理论上任何 Elisp 文件都能跑任意代码，theme 安全提示在安全层面没实际作用"。这个看个人风险偏好。
+- =use-short-answers t= ：把 =yes/no= 改成 =y/n= 。Emacs 28 引入，省事。
+- =help-window-select t= + =help-window-keep-selected t= ：打开帮助窗口时自动聚焦，且在帮助 buffer 中继续按快捷键不会跳回原来的窗口。newcomers-presets 没设这些。
+- =save-interprogram-paste-before-kill t= ：从系统剪贴板粘贴后，下次 kill 不会覆盖粘贴的内容。防止粘贴后不小心删掉东西找不回来。
+
+* 会话与编辑
+
+#+begin_src emacs-lisp
+(savehist-mode 1)
+(delete-selection-mode 1)
+#+end_src
+
+=savehist-mode= 和 newcomers-presets 里的 =savehist-mode t= 一回事。 =delete-selection-mode= （选中文本后输入直接替换）newcomers-presets 没设。
+
+* 书签
+
+#+begin_src emacs-lisp
+(setq bookmark-fringe-mark nil)
+(setq bookmark-save-flag 1)
+#+end_src
+
+关闭 fringe 上的书签图标（很多人不知道那是什么），且每增删一次书签就立即保存文件，而不是等 Emacs 退出时再写。
+
+* Dired
+
+#+begin_src emacs-lisp
+(setq dired-kill-when-opening-new-dired-buffer t)
+(setq dired-auto-revert-buffer #'dired-directory-changed-p)
+(setq dired-recursive-copies 'always)
+(setq dired-recursive-deletes 'always)
+(setq delete-by-moving-to-trash t)
+(setq dired-create-destination-dirs 'ask)
+#+end_src
+
+Prot 的 Dired 配置比 newcomers-presets 丰富得多：
+- 打开新目录时复用当前 Dired buffer，不产生一堆 buffer
+- 递归复制和删除不需要确认（但删除走回收站，所以安全）
+- =delete-by-moving-to-trash t= ：删除文件不进回收站的人应该不多
+
+* Isearch
+
+#+begin_src emacs-lisp
+(setq isearch-lazy-count t)
+(setq lazy-count-prefix-format "(%s/%s) ")
+(setq lazy-count-suffix-format nil)
+#+end_src
+
+搜索时实时显示"当前匹配 /总匹配数"。Emacs 30 开始默认就有，但 Prot 把格式改成了更紧凑的 =(%s/%s)= 前缀。
+
+* Ediff
+
+#+begin_src emacs-lisp
+(setq ediff-split-window-function 'split-window-horizontally)
+(setq ediff-window-setup-function 'ediff-setup-windows-plain)
+#+end_src
+
+Ediff 的默认窗口布局在平铺窗口管理器上几乎没法用：控制面板会单独开一个 frame。Prot 把它改成水平分割的窗口内布局，这也是社区常见的优化。
+
+* 辅助窗口布局（display-buffer-alist）
+
+让帮助窗口、occur/grep 结果等出现在合适的位置，而不是随机占一个窗口。
+
+#+begin_src emacs-lisp
+(add-to-list 'display-buffer-alist
+             '((or . ((derived-mode . occur-mode)
+                      (derived-mode . grep-mode)
+                      (derived-mode . Buffer-menu-mode)
+                      (derived-mode . log-view-mode)
+                      (derived-mode . help-mode)))
+               (display-buffer-reuse-mode-window display-buffer-below-selected)
+               (body-function . select-window)))
+#+end_src
+
+上例让 occur-mode、grep-mode 等辅助 buffer 优先复用一个同类型的窗口，否则在当前窗口下方打开，并自动聚焦。 =display-buffer-alist= 是 Emacs 窗口管理的高级话题，初学者可以直接照抄。
+
+* 推荐的包
+
+Prot 把推荐的包分了两级：
+
+*ESSENTIAL：vertico + marginalia*
+
+#+begin_src emacs-lisp
+(vertico-mode 1)
+(marginalia-mode 1)
+#+end_src
+
+=vertico= 提供垂直的补全候选列表（类似 Emacs 30 的 =minibuffer-visible-completions= 但更成熟）， =marginalia= 在 minibuffer 中给每个候选显示额外信息（如文件大小、函数签名）。
+
+有意思的是，newcomers-presets 选择了 Emacs 30 原生的补全增强，而 Prot 推荐了第三方包。两种方案都能用，但 vertico 的生态更成熟、社区用户更多。
+
+*VERY USEFUL：orderless + consult + embark + trashed*
+
+- =orderless= — 灵活的补全匹配方式（输入空格分隔的关键词，匹配包含所有关键词的候选），替代 Prot 配置中的 =completion-styles=
+- =consult= — 增强版搜索/跳转命令（ =consult-buffer= 、 =consult-line= 等）
+- =embark= — 对任意候选执行操作（比如在 minibuffer 中对文件候选执行复制、重命名等）
+- =trashed= — 回收站的文件管理器，跟 =delete-by-moving-to-trash= 配合使用
+
+* 总结
+
+Prot 这份配置和 newcomers-presets 不是替代关系。newcomers-presets 的目标是"给 Emacs 新手一个更好的默认值，不满意随时关"，改动谨慎、可逆。Prot 的配置更接近"一个 Emacs 老手认为初学者应该用的设置"，有些选择比较个人化（ =custom-safe-themes t= 、DWIM 的 =C-g= ）。
+
+对读者来说，两个可以同时用：先加载 newcomers-presets 获得基础改进，再从 Prot 的配置里挑自己需要的片段加上。newcomers-presets 的完整代码在 Emacs 源码的 =etc/themes/newcomers-presets-theme.el= ，Prot 的这份配置在 [[https://protesilaos.com/codelog/2026-04-30-emacs-decent-default-sacha-chua/][他的博客]]。
