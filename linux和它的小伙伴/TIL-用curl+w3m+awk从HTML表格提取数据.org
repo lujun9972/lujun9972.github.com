@@ -1,0 +1,91 @@
+#+TITLE: TIL-用 curl + w3m + awk 从 HTML 表格提取数据
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: linux, shell, awk, w3m, html
+#+DATE: [2026-05-02 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+从网页的 HTML 表格里提取结构化数据是运维中的常见需求。手动复制粘贴遇到换行和空格就乱成一团。
+
+一种思路是用 Python 写脚本解析 HTML，但杀鸡用牛刀。Linux 命令行本身就有一整套工具可以搞定这件事。
+
+* 场景
+
+先准备一个本地 HTML 文件作为数据源（实际使用中换成 =curl= 抓取的 URL 即可）：
+
+#+begin_src shell
+cat > /tmp/retailers.html << 'EOF'
+<html>
+<body>
+<table class="data">
+<tr><th>排名</th><th>名称</th><th>营收</th></tr>
+<tr><td>1</td><td>Wal-Mart</td><td>$307.7B</td></tr>
+<tr><td>2</td><td>Kroger</td><td>$78.3B</td></tr>
+<tr><td>3</td><td>Target</td><td>$65.8B</td></tr>
+<tr><td>4</td><td>Walgreen</td><td>$61.2B</td></tr>
+<tr><td>5</td><td>The Home Depot</td><td>$60.2B</td></tr>
+</table>
+</body>
+</html>
+EOF
+#+end_src
+
+#+RESULTS:
+
+我们的目标是提取"名称"这一列。
+
+* 工具链
+
+整个管道由四步组成：
+
+第一步，用 =hxnormalize= 把 HTML 转成标准 XHTML 格式（某些网页的标签不闭合，直接处理会出事）：
+
+第二步，用 =hxselect= 按 CSS 选择器提取目标表格：
+
+第三步，用 =w3m -dump= 把 HTML 表格渲染成格式化文本（这会自动生成对齐好的列）：
+
+第四步，用 `awk` 按固定宽度提取需要的列：
+
+组合起来就是一条命令：
+
+#+begin_src shell :results raw
+cat /tmp/retailers.html \
+  | hxnormalize -x \
+  | hxselect -s '\n' 'table.data' \
+  | w3m -dump -cols 2000 -T 'text/html' \
+  | awk 'BEGIN{FIELDWIDTHS="5 29"}{gsub(/^[ \t]+/, "", $2); gsub(/[ \t]+$/, "", $2); print $2}'
+#+end_src
+
+#+RESULTS:
+名称
+Wal-Mart
+Kroger
+Target
+Walgreen
+The Home Depot
+
+
+* 关键技巧拆解
+
+=hxnormalize= 和 =hxselect= 来自 `html-xml-utils` 包。`hxnormalize -x` 补全缺失的结束标签、输出 XHTML；`hxselect 'table.data'` 提取 CSS 选择器匹配的元素，`-s '\n'` 让每个元素之间插空行，防止 w3m 把相邻行粘在一起。
+
+=w3m -dump= 会把 HTML 渲染成纯文本表格，列宽自动对齐。`-cols 2000` 防止长行被截断导致列错位。这一步拿到的是固定宽度的文本，类似于这样：
+
+#+begin_example
+ 排名             名称                营收
+1       Wal-Mart                  $307.7B
+2       Kroger                    $78.3B
+3       Target                    $65.8B
+4       Walgreen                  $61.2B
+5       The Home Depot            $60.2B
+#+end_example
+
+=awk FIELDWIDTHS= 是 GNU Awk 的功能（不是 POSIX 标准）。`FIELDWIDTHS="5 29"` 告诉 awk 按字符宽度切分字段：前 5 个字符是第一个字段（排名），接着 29 个字符是第二个字段（名称），剩下的全归第三个字段（营收）。
+
+后面的两个 =gsub= 去掉字段 2 首尾的空白，最后打印出公司名。
+
+* 注意事项
+
+- `html-xml-utils` 和 `w3m` 不是系统默认安装的，需要先装：`pacman -S html-xml-utils w3m` （Arch）或 `apt install html-xml-utils w3m` （Debian/Ubuntu）
+- `FIELDWIDTHS` 只在 GNU Awk 中可用，其他版本（如 mawk）不支持
+- 列宽需要根据实际表格调整。不确定宽度时，可以先跑完 =w3m= 步骤看看列的边界在哪里
