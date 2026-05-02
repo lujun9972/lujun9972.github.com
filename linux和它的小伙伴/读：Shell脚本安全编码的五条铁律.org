@@ -1,0 +1,174 @@
+#+TITLE: 读：Shell脚本安全编码的五条铁律
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: shell, security, bash, 安全
+#+DATE: [2026-05-02 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+虽说 Linux 比 Windows 病毒少，但这不是天生的免疫力。互联网上每时每刻都有扫描器在探测漏洞，从脚本小子到国家级黑客，都在找你的系统入口。
+
+Shell 脚本是 Linux 运维的日常工具，但正因为常用，安全问题反而容易被忽略。这篇笔记整理自 Linux Journal 上 Dave Taylor 写的 *Writing Secure Shell Scripts* ，总结五条脚本安全铁律，每条都有攻击示例和防御方法。
+
+* 铁律一：调用外部命令时指定完整路径
+
+先看一个经典的木马攻击场景。
+
+攻击者在 =/tmp= 下放一个名为 =ls= 的脚本，内容如下：
+
+#+begin_src shell
+#!/bin/sh
+
+if [ "$USER" = "root" ] ; then
+  /bin/cp /bin/sh /tmp/.secretshell
+  /bin/chown root /tmp/.secretshell
+  /bin/chmod 4666 /tmp/.secretshell
+fi
+
+exec /bin/ls $*
+#+end_src
+
+这个脚本做了两件事：如果你是 root，它偷偷复制一个 =/bin/sh= 到 =/tmp/.secretshell= 并设为 setuid root（任何人运行它都获得 root 权限）；然后假装什么都没发生，把参数传给真正的 =/bin/ls= 继续执行。
+
+如果 =PATH= 里包含了当前目录（ =.= ），而你恰好又在 =/tmp= 下执行 =ls= ，调用的就是这个木马脚本而不是系统的 =/bin/ls= 。
+
+更可怕的是，即便你的 =PATH= 里没有显式的 =.= ，如果 =PATH= 开头是 =:= ，它一样会先搜索当前目录（空字符串等于当前目录）：
+
+#+begin_src shell
+PATH=":/bin:/usr/bin:$HOME/bin"
+#+end_src
+
+来看一个实际演示。我们先写一个假的 =ls= 脚本，让它只打印一行提醒，然后调真正的 =ls= 完成工作：
+
+#+begin_src shell
+cat > /tmp/ls << 'EOF'
+#!/bin/sh
+echo "【警告】调用了 /tmp/ls，不是系统的 /bin/ls！" >&2
+exec /bin/ls "$@"
+EOF
+chmod +x /tmp/ls
+#+end_src
+
+#+begin_src shell
+cd /tmp
+PATH=".:/bin:/usr/bin" ls
+#+end_src
+
+#+begin_example
+【警告】调用了 /tmp/ls，不是系统的 /bin/ls！
+...
+
+#+end_example
+
+*防御方法：* 两条规则二选一。
+1. 脚本中调用外部命令始终使用完整路径，比如 =/bin/ls= 而不是 =ls= 。
+2. 绝不让 =.= 出现在 =PATH= 中，即使在末尾也不行。好习惯是只在 =PATH= 中放绝对路径。
+
+* 铁律二：不要将密码硬编码到脚本中
+
+最容易犯的安全错误就是把密码直接写在脚本里：
+
+#+begin_src shell
+PASSWORD="froBOZ69"
+#+end_src
+
+或者藏在别名里：
+
+#+begin_src shell
+alias synth='echo secretpw | pbcopy; sftp adt@wsynth.net'
+#+end_src
+
+这两个做法的共同问题是：密码以明文形式躺在磁盘上。只要有人能读取这个文件（备份泄露、版本控制上传、同事误操作），密码就暴露了。
+
+*防御方法：* 使用专门的密码管理工具（如 pass 、 gopass ）或密钥代理（ssh-agent）。至少，也要把密码放在只有自己可读的环境变量文件里（ =~/.env= ，权限设为 =600= ），然后在脚本中 source 它。
+
+* 铁律三：用户输入必须引用和消毒
+
+下面这段脚本看起来无害：
+
+#+begin_src shell
+echo -n "要查哪个文件？"
+read name
+ls -l $name
+#+end_src
+
+但如果用户输入的"文件名"是：
+
+#+begin_src shell
+. ; /bin/rm -Rf /
+#+end_src
+
+那实际执行的就成了 =ls -l . ; /bin/rm -Rf /= ：先列当前目录，然后递归删除根分区。
+
+来做一个实际演示。注意，要演示分号注入，脚本必须用 =eval= 来解析参数。没有 =eval= 的话，Shell 不会在变量扩展后重新识别分号为命令分隔符：
+
+#+begin_src shell
+cat > /tmp/vuln_eval.sh << 'EOF'
+#!/bin/sh
+echo "查文件: $1"
+eval ls -l $1
+EOF
+chmod +x /tmp/vuln_eval.sh
+#+end_src
+
+#+begin_src shell
+/tmp/vuln_eval.sh "nonexistent; echo '分号注入成功！'"
+#+end_src
+
+#+begin_example
+查文件: nonexistent; echo '分号注入成功！'
+ls: 无法访问 'nonexistent': 没有那个文件或目录
+分号注入成功！
+#+end_example
+
+注意最后一行： =echo= 命令确实执行了（"分号注入成功" 被打印出来）。这就是命令注入：输入中的分号被解析为命令分隔符。
+
+光用 =eval= 还不够，还必须加上引号。如果把 =eval ls -l $1= 改为 =eval ls -l "$1"= ，分号就会变成普通字符，不再起到命令分隔的作用。
+
+除了分号，反引号是另一种注入方式，而且不需要 =eval= 就能生效。Shell 在变量扩展阶段就会执行反引号里的命令：
+
+#+begin_src shell
+/tmp/vuln_eval.sh "`echo '反引号注入成功'`"
+#+end_src
+
+#+begin_example
+查文件: 反引号注入成功
+ls: 无法访问 '反引号注入成功': 没有那个文件或目录
+#+end_example
+
+反引号里的 =echo= 命令确实被执行了，它的输出被当成了"文件名"参数传给 =ls= 。
+
+*防御方法：* 引用变量是最简单的防线：
+
+#+begin_src shell
+/bin/ls -l "$name"
+#+end_src
+
+但引用只能防止单词分割，不能防止命令注入。如果你的脚本需要处理来自未知用户的输入，更可靠的做法是对输入做消毒：只允许字母、数字和一小组安全标点，碰到其他字符就直接报错退出。
+
+* 铁律四：不要用 Shell 脚本写 CGI
+
+搭建了 Linux Web 服务器，想写个简单的 CGI 脚本查系统负载？Shell 脚本确实是最快的选择：
+
+#+begin_src shell
+#!/bin/sh
+
+echo "Content-type: text/html"; echo ""
+echo "Uptime on the Server:<pre>"
+uptime
+echo "</pre>"
+#+end_src
+
+这个脚本本身问题不大，但它展示了一种危险模式：Web 请求会触发 Shell 执行。一旦脚本需要处理用户输入（比如做站内搜索），攻击面就完全打开了：任何人都能通过构造 HTTP 参数向你的服务器注入命令。
+
+*防御方法：* 即使只是简单的 CGI 功能，也不要用 Shell 脚本。用编译型语言（C、Go）或至少是提供了良好输入安全保证的脚本语言（Python、Ruby 等）来实现。这些语言对特殊字符的处理比 Shell 更可控。或者直接使用第三方搜索服务（如 Google Custom Search Engine），从源头避免这个问题。
+
+* 铁律五：编码始终关注安全
+
+上面四条铁律覆盖了 Shell 脚本最常见的攻击面，但安全不是做完就了事的检查项。每次写脚本时都应该问自己：
+
+1. 这个脚本会调用哪些外部命令？路径可靠吗？
+2. 脚本里有没有敏感信息（密码、密钥）？
+3. 脚本的输入从哪里来？可信吗？不可信的话有没有消毒？
+4. 脚本会被谁执行？以什么权限执行？
+
+如果对这些问题没有把握，可以参考一些好的编码规范，比如 Google 的 *Shell Style Guide* 。Apple 官方也有一份 *Shell Script Security* 文档值得阅读。编写安全的 Shell 脚本与其说靠技巧，不如说靠习惯：每次写脚本时多问自己几句。
