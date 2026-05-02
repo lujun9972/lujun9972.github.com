@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL-用 curl + w3m + awk 从 HTML 表格提取数据 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="linux, shell, awk, w3m, html" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL-用 curl + w3m + awk 从 HTML 表格提取数据</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb584a51">场景</a></li>
+<li><a href="#orge3a0ff8">工具链</a></li>
+<li><a href="#orga5e039a">关键技巧拆解</a></li>
+<li><a href="#org9f281b1">注意事项</a></li>
+</ul>
+</div>
+</div>
+<p>
+从网页的 HTML 表格里提取结构化数据是运维中的常见需求。手动复制粘贴遇到换行和空格就乱成一团。
+</p>
+
+<p>
+一种思路是用 Python 写脚本解析 HTML，但杀鸡用牛刀。Linux 命令行本身就有一整套工具可以搞定这件事。
+</p>
+
+<div id="outline-container-orgb584a51" class="outline-2">
+<h2 id="orgb584a51">场景</h2>
+<div class="outline-text-2" id="text-orgb584a51">
+<p>
+先准备一个本地 HTML 文件作为数据源（实际使用中换成 <code>curl</code> 抓取的 URL 即可）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; /tmp/retailers.html &lt;&lt; <span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+&lt;html&gt;
+&lt;body&gt;
+&lt;table class="data"&gt;
+&lt;tr&gt;&lt;th&gt;&#25490;&#21517;&lt;/th&gt;&lt;th&gt;&#21517;&#31216;&lt;/th&gt;&lt;th&gt;&#33829;&#25910;&lt;/th&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;1&lt;/td&gt;&lt;td&gt;Wal-Mart&lt;/td&gt;&lt;td&gt;$307.7B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;2&lt;/td&gt;&lt;td&gt;Kroger&lt;/td&gt;&lt;td&gt;$78.3B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;3&lt;/td&gt;&lt;td&gt;Target&lt;/td&gt;&lt;td&gt;$65.8B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;4&lt;/td&gt;&lt;td&gt;Walgreen&lt;/td&gt;&lt;td&gt;$61.2B&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;5&lt;/td&gt;&lt;td&gt;The Home Depot&lt;/td&gt;&lt;td&gt;$60.2B&lt;/td&gt;&lt;/tr&gt;
+&lt;/table&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+EOF</span>
+</pre>
+</div>
+
+<p>
+我们的目标是提取"名称"这一列。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge3a0ff8" class="outline-2">
+<h2 id="orge3a0ff8">工具链</h2>
+<div class="outline-text-2" id="text-orge3a0ff8">
+<p>
+整个管道由四步组成：
+</p>
+
+<p>
+第一步，用 <code>hxnormalize</code> 把 HTML 转成标准 XHTML 格式（某些网页的标签不闭合，直接处理会出事）：
+</p>
+
+<p>
+第二步，用 <code>hxselect</code> 按 CSS 选择器提取目标表格：
+</p>
+
+<p>
+第三步，用 <code>w3m -dump</code> 把 HTML 表格渲染成格式化文本（这会自动生成对齐好的列）：
+</p>
+
+<p>
+第四步，用 `awk` 按固定宽度提取需要的列：
+</p>
+
+<p>
+组合起来就是一条命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /tmp/retailers.html <span class="org-sh-escaped-newline">\</span>
+  | hxnormalize -x <span class="org-sh-escaped-newline">\</span>
+  | hxselect -s <span class="org-string">'\n'</span> <span class="org-string">'table.data'</span> <span class="org-sh-escaped-newline">\</span>
+  | w3m -dump -cols 2000 -T <span class="org-string">'text/html'</span> <span class="org-sh-escaped-newline">\</span>
+  | awk <span class="org-string">'BEGIN{FIELDWIDTHS="5 29"}{gsub(/^[ \t]+/, "", $2); gsub(/[ \t]+$/, "", $2); print $2}'</span>
+</pre>
+</div>
+
+<p>
+名称
+Wal-Mart
+Kroger
+Target
+Walgreen
+The Home Depot
+</p>
+</div>
+</div>
+
+
+<div id="outline-container-orga5e039a" class="outline-2">
+<h2 id="orga5e039a">关键技巧拆解</h2>
+<div class="outline-text-2" id="text-orga5e039a">
+<p>
+<code>hxnormalize</code> 和 <code>hxselect</code> 来自 `html-xml-utils` 包。`hxnormalize -x` 补全缺失的结束标签、输出 XHTML；`hxselect 'table.data'` 提取 CSS 选择器匹配的元素，`-s '\n'` 让每个元素之间插空行，防止 w3m 把相邻行粘在一起。
+</p>
+
+<p>
+<code>w3m -dump</code> 会把 HTML 渲染成纯文本表格，列宽自动对齐。`-cols 2000` 防止长行被截断导致列错位。这一步拿到的是固定宽度的文本，类似于这样：
+</p>
+
+<pre class="example" id="org65e13ba">
+ 排名             名称                营收
+1       Wal-Mart                  $307.7B
+2       Kroger                    $78.3B
+3       Target                    $65.8B
+4       Walgreen                  $61.2B
+5       The Home Depot            $60.2B
+</pre>
+
+<p>
+<code>awk FIELDWIDTHS</code> 是 GNU Awk 的功能（不是 POSIX 标准）。`FIELDWIDTHS="5 29"` 告诉 awk 按字符宽度切分字段：前 5 个字符是第一个字段（排名），接着 29 个字符是第二个字段（名称），剩下的全归第三个字段（营收）。
+</p>
+
+<p>
+后面的两个 <code>gsub</code> 去掉字段 2 首尾的空白，最后打印出公司名。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9f281b1" class="outline-2">
+<h2 id="org9f281b1">注意事项</h2>
+<div class="outline-text-2" id="text-org9f281b1">
+<ul class="org-ul">
+<li>`html-xml-utils` 和 `w3m` 不是系统默认安装的，需要先装：`pacman -S html-xml-utils w3m` （Arch）或 `apt install html-xml-utils w3m` （Debian/Ubuntu）</li>
+<li>`FIELDWIDTHS` 只在 GNU Awk 中可用，其他版本（如 mawk）不支持</li>
+<li>列宽需要根据实际表格调整。不确定宽度时，可以先跑完 <code>w3m</code> 步骤看看列的边界在哪里</li>
+</ul>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-02</span>
+    <span class="post-info">2026-05-02</span>
+    <a href="../../../../../tags/linux">linux</a> : <a href="../../../../../tags/shell">shell</a> : <a href="../../../../../tags/awk">awk</a> : <a href="../../../../../tags/w3m">w3m</a> : <a href="../../../../../tags/html">html</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; e1l4ph4qrhju1ov0vk0vbxsjaa &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

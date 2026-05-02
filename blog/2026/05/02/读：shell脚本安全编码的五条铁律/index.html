@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Shell脚本安全编码的五条铁律 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="shell, security, bash, 安全" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Shell脚本安全编码的五条铁律</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org812c481">铁律一：调用外部命令时指定完整路径</a></li>
+<li><a href="#org4b2c6a2">铁律二：不要将密码硬编码到脚本中</a></li>
+<li><a href="#orgb8b5458">铁律三：用户输入必须引用和消毒</a></li>
+<li><a href="#orga5562c9">铁律四：不要用 Shell 脚本写 CGI</a></li>
+<li><a href="#orgd63a9ad">铁律五：编码始终关注安全</a></li>
+</ul>
+</div>
+</div>
+<p>
+虽说 Linux 比 Windows 病毒少，但这不是天生的免疫力。互联网上每时每刻都有扫描器在探测漏洞，从脚本小子到国家级黑客，都在找你的系统入口。
+</p>
+
+<p>
+Shell 脚本是 Linux 运维的日常工具，但正因为常用，安全问题反而容易被忽略。这篇笔记整理自 Linux Journal 上 Dave Taylor 写的 <b>Writing Secure Shell Scripts</b> ，总结五条脚本安全铁律，每条都有攻击示例和防御方法。
+</p>
+
+<div id="outline-container-org812c481" class="outline-2">
+<h2 id="org812c481">铁律一：调用外部命令时指定完整路径</h2>
+<div class="outline-text-2" id="text-org812c481">
+<p>
+先看一个经典的木马攻击场景。
+</p>
+
+<p>
+攻击者在 <code>/tmp</code> 下放一个名为 <code>ls</code> 的脚本，内容如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">sh</span><span class="org-comment">
+</span>
+<span class="org-keyword">if</span> [ <span class="org-string">"$USER"</span> = <span class="org-string">"root"</span> ] ; <span class="org-keyword">then</span>
+  /bin/cp /bin/sh /tmp/.secretshell
+  /bin/chown root /tmp/.secretshell
+  /bin/chmod 4666 /tmp/.secretshell
+<span class="org-keyword">fi</span>
+
+<span class="org-keyword">exec</span> /bin/ls $<span class="org-variable-name">*</span>
+</pre>
+</div>
+
+<p>
+这个脚本做了两件事：如果你是 root，它偷偷复制一个 <code>/bin/sh</code> 到 <code>/tmp/.secretshell</code> 并设为 setuid root（任何人运行它都获得 root 权限）；然后假装什么都没发生，把参数传给真正的 <code>/bin/ls</code> 继续执行。
+</p>
+
+<p>
+如果 <code>PATH</code> 里包含了当前目录（ <code>.</code> ），而你恰好又在 <code>/tmp</code> 下执行 <code>ls</code> ，调用的就是这个木马脚本而不是系统的 <code>/bin/ls</code> 。
+</p>
+
+<p>
+更可怕的是，即便你的 <code>PATH</code> 里没有显式的 <code>.</code> ，如果 <code>PATH</code> 开头是 <code>:</code> ，它一样会先搜索当前目录（空字符串等于当前目录）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">PATH</span>=<span class="org-string">":/bin:/usr/bin:$HOME/bin"</span>
+</pre>
+</div>
+
+<p>
+来看一个实际演示。我们先写一个假的 <code>ls</code> 脚本，让它只打印一行提醒，然后调真正的 <code>ls</code> 完成工作：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; /tmp/ls &lt;&lt; <span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+#!/bin/sh
+echo "&#12304;&#35686;&#21578;&#12305;&#35843;&#29992;&#20102; /tmp/ls&#65292;&#19981;&#26159;&#31995;&#32479;&#30340; /bin/ls&#65281;" &gt;&amp;2
+exec /bin/ls "$@"
+EOF
+</span>chmod +x /tmp/ls
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">cd</span> /tmp
+<span class="org-variable-name">PATH</span>=<span class="org-string">".:/bin:/usr/bin"</span> ls
+</pre>
+</div>
+
+<pre class="example" id="orgcbaffce">
+【警告】调用了 /tmp/ls，不是系统的 /bin/ls！
+...
+
+</pre>
+
+<p>
+<b>防御方法：</b> 两条规则二选一。
+</p>
+<ol class="org-ol">
+<li>脚本中调用外部命令始终使用完整路径，比如 <code>/bin/ls</code> 而不是 <code>ls</code> 。</li>
+<li>绝不让 <code>.</code> 出现在 <code>PATH</code> 中，即使在末尾也不行。好习惯是只在 <code>PATH</code> 中放绝对路径。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org4b2c6a2" class="outline-2">
+<h2 id="org4b2c6a2">铁律二：不要将密码硬编码到脚本中</h2>
+<div class="outline-text-2" id="text-org4b2c6a2">
+<p>
+最容易犯的安全错误就是把密码直接写在脚本里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">PASSWORD</span>=<span class="org-string">"froBOZ69"</span>
+</pre>
+</div>
+
+<p>
+或者藏在别名里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">alias</span> <span class="org-variable-name">synth</span>=<span class="org-string">'echo secretpw | pbcopy; sftp adt@wsynth.net'</span>
+</pre>
+</div>
+
+<p>
+这两个做法的共同问题是：密码以明文形式躺在磁盘上。只要有人能读取这个文件（备份泄露、版本控制上传、同事误操作），密码就暴露了。
+</p>
+
+<p>
+<b>防御方法：</b> 使用专门的密码管理工具（如 pass 、 gopass ）或密钥代理（ssh-agent）。至少，也要把密码放在只有自己可读的环境变量文件里（ <code>~/.env</code> ，权限设为 <code>600</code> ），然后在脚本中 source 它。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb8b5458" class="outline-2">
+<h2 id="orgb8b5458">铁律三：用户输入必须引用和消毒</h2>
+<div class="outline-text-2" id="text-orgb8b5458">
+<p>
+下面这段脚本看起来无害：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> -n <span class="org-string">"&#35201;&#26597;&#21738;&#20010;&#25991;&#20214;&#65311;"</span>
+<span class="org-builtin">read</span> name
+ls -l $<span class="org-variable-name">name</span>
+</pre>
+</div>
+
+<p>
+但如果用户输入的"文件名"是：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">.</span> ; /bin/rm -Rf /
+</pre>
+</div>
+
+<p>
+那实际执行的就成了 <code>ls -l . ; /bin/rm -Rf /</code> ：先列当前目录，然后递归删除根分区。
+</p>
+
+<p>
+来做一个实际演示。注意，要演示分号注入，脚本必须用 <code>eval</code> 来解析参数。没有 <code>eval</code> 的话，Shell 不会在变量扩展后重新识别分号为命令分隔符：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat &gt; /tmp/vuln_eval.sh &lt;&lt; <span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+#!/bin/sh
+echo "&#26597;&#25991;&#20214;: $1"
+eval ls -l $1
+EOF
+</span>chmod +x /tmp/vuln_eval.sh
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">/tmp/vuln_eval.sh <span class="org-string">"nonexistent; echo '&#20998;&#21495;&#27880;&#20837;&#25104;&#21151;&#65281;'"</span>
+</pre>
+</div>
+
+<pre class="example" id="org2476979">
+查文件: nonexistent; echo '分号注入成功！'
+ls: 无法访问 'nonexistent': 没有那个文件或目录
+分号注入成功！
+</pre>
+
+<p>
+注意最后一行： <code>echo</code> 命令确实执行了（"分号注入成功" 被打印出来）。这就是命令注入：输入中的分号被解析为命令分隔符。
+</p>
+
+<p>
+光用 <code>eval</code> 还不够，还必须加上引号。如果把 <code>eval ls -l $1</code> 改为 <code>eval ls -l "$1"</code> ，分号就会变成普通字符，不再起到命令分隔的作用。
+</p>
+
+<p>
+除了分号，反引号是另一种注入方式，而且不需要 <code>eval</code> 就能生效。Shell 在变量扩展阶段就会执行反引号里的命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">/tmp/vuln_eval.sh <span class="org-string">"`echo '&#21453;&#24341;&#21495;&#27880;&#20837;&#25104;&#21151;'`"</span>
+</pre>
+</div>
+
+<pre class="example" id="org773dc7f">
+查文件: 反引号注入成功
+ls: 无法访问 '反引号注入成功': 没有那个文件或目录
+</pre>
+
+<p>
+反引号里的 <code>echo</code> 命令确实被执行了，它的输出被当成了"文件名"参数传给 <code>ls</code> 。
+</p>
+
+<p>
+<b>防御方法：</b> 引用变量是最简单的防线：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">/bin/ls -l <span class="org-string">"$name"</span>
+</pre>
+</div>
+
+<p>
+但引用只能防止单词分割，不能防止命令注入。如果你的脚本需要处理来自未知用户的输入，更可靠的做法是对输入做消毒：只允许字母、数字和一小组安全标点，碰到其他字符就直接报错退出。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga5562c9" class="outline-2">
+<h2 id="orga5562c9">铁律四：不要用 Shell 脚本写 CGI</h2>
+<div class="outline-text-2" id="text-orga5562c9">
+<p>
+搭建了 Linux Web 服务器，想写个简单的 CGI 脚本查系统负载？Shell 脚本确实是最快的选择：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">sh</span><span class="org-comment">
+</span>
+<span class="org-builtin">echo</span> <span class="org-string">"Content-type: text/html"</span>; <span class="org-builtin">echo</span> <span class="org-string">""</span>
+<span class="org-builtin">echo</span> <span class="org-string">"Uptime on the Server:&lt;pre&gt;"</span>
+uptime
+<span class="org-builtin">echo</span> <span class="org-string">"&lt;/pre&gt;"</span>
+</pre>
+</div>
+
+<p>
+这个脚本本身问题不大，但它展示了一种危险模式：Web 请求会触发 Shell 执行。一旦脚本需要处理用户输入（比如做站内搜索），攻击面就完全打开了：任何人都能通过构造 HTTP 参数向你的服务器注入命令。
+</p>
+
+<p>
+<b>防御方法：</b> 即使只是简单的 CGI 功能，也不要用 Shell 脚本。用编译型语言（C、Go）或至少是提供了良好输入安全保证的脚本语言（Python、Ruby 等）来实现。这些语言对特殊字符的处理比 Shell 更可控。或者直接使用第三方搜索服务（如 Google Custom Search Engine），从源头避免这个问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd63a9ad" class="outline-2">
+<h2 id="orgd63a9ad">铁律五：编码始终关注安全</h2>
+<div class="outline-text-2" id="text-orgd63a9ad">
+<p>
+上面四条铁律覆盖了 Shell 脚本最常见的攻击面，但安全不是做完就了事的检查项。每次写脚本时都应该问自己：
+</p>
+
+<ol class="org-ol">
+<li>这个脚本会调用哪些外部命令？路径可靠吗？</li>
+<li>脚本里有没有敏感信息（密码、密钥）？</li>
+<li>脚本的输入从哪里来？可信吗？不可信的话有没有消毒？</li>
+<li>脚本会被谁执行？以什么权限执行？</li>
+</ol>
+
+<p>
+如果对这些问题没有把握，可以参考一些好的编码规范，比如 Google 的 <b>Shell Style Guide</b> 。Apple 官方也有一份 <b>Shell Script Security</b> 文档值得阅读。编写安全的 Shell 脚本与其说靠技巧，不如说靠习惯：每次写脚本时多问自己几句。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-02</span>
+    <span class="post-info">2026-05-02</span>
+    <a href="../../../../../tags/shell">shell</a> : <a href="../../../../../tags/security">security</a> : <a href="../../../../../tags/bash">bash</a> : <a href="../../../../../tags/安全">安全</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; e1l4ph4qrhju1ov0vk0vbxsjaa &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
