@@ -1,0 +1,184 @@
+#+TITLE: 控制 Bash 历史记录的 6 个场景
+#+AUTHOR: darksun,Claude Code
+#+TAGS: bash,linux,history,安全
+#+DATE: [2026-05-02 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+你多半遇到过这个情况：在共享服务器上敲了一行带密码的 curl，回车瞬间就后悔了。Bash 默认把所有输入的命令都记在 =~/.bash_history= 里，对你的账号有读权限的人都能看这个文件的内容。
+
+好在 Bash 提供了精细的控制手段，关键看你在什么场景。
+
+* Bash 历史记录的工作原理
+
+先理解 Bash 什么时候写历史，才能控制它。
+
+会话中，每条命令先进入内存中的历史列表。会话正常结束时，这个列表追加写入 =~/.bash_history= 。如果终端崩溃或被 kill 掉，当前会话的历史全部丢失。
+
+三个关键环境变量：
+
+#+begin_src sh
+echo $HISTFILE
+echo $HISTSIZE
+echo $HISTFILESIZE
+#+end_src
+
+#+begin_example
+/home/lujun9972/.bash_history
+5000
+
+#+end_example
+
+- =HISTFILE= ：历史写入的文件
+- =HISTSIZE= ：内存中保留的命令数（默认 5000）
+- =HISTFILESIZE= ：磁盘文件最大行数（空表示不限）
+
+理解了"内存中"和"写入磁盘"之间的时间差，后面的技巧就清晰了。
+
+* 场景一：命令还没执行，但不想被记下来
+
+假设你要跑这行命令：
+
+#+begin_src sh
+export API_KEY="supersecretkey123"
+#+end_src
+
+回车前，在命令最前面加一个空格：
+
+#+begin_src sh
+ export API_KEY="supersecretkey123"
+#+end_src
+
+前提是 =HISTCONTROL= 包含 =ignorespace= 。先检查一下：
+
+#+begin_src sh
+echo $HISTCONTROL
+#+end_src
+
+#+begin_example
+ignorespace:erasedups
+#+end_example
+
+看到 =ignorespace= 或 =ignoreboth= 就没问题。如果没设，加到 =~/.bashrc= ：
+
+#+begin_src sh
+export HISTCONTROL=ignorespace
+#+end_src
+
+然后重新加载：
+
+#+begin_src sh
+source ~/.bashrc
+#+end_src
+
+* 场景二：命令已经执行了，想删掉
+
+先查看历史列表找到行号：
+
+#+begin_src sh
+history
+#+end_src
+
+#+begin_example
+ 497  sudo systemctl restart nginx
+ 498  export DB_PASS="hunter2"
+ 499  curl https://api.example.com/token
+ 500  ls -la /etc/nginx
+#+end_example
+
+删除第 498 行：
+
+#+begin_src sh
+history -d 498
+history
+#+end_src
+
+#+begin_example
+ 497  sudo systemctl restart nginx
+ 499  curl https://api.example.com/token
+ 500  ls -la /etc/nginx
+#+end_example
+
+删除只在内存中生效。会话正常结束时，Bash 把当前内存列表写入磁盘，所以磁盘文件也会同步更新。
+
+但有一个坑：如果被删的命令之前已经写入磁盘（例如之前的会话写入了，或 =PROMPT_COMMAND= 自动追加了历史）， =history -d= 只删内存，磁盘文件不受影响。这时需要用 =history -w= 覆写整个文件来彻底清除：
+
+#+begin_src sh
+history -w
+#+end_src
+
+这条命令把当前内存列表（不包含第 498 行）直接覆写 =~/.bash_history= 。
+
+* 场景三：ls/cd/clear 刷屏，历史被淹没了
+
+连续敲了十几次 =cd= 和 =ls= ，回看历史发现全被这些刷屏了，真正有用的命令反而找不到。
+
+解决方案：让 Bash 跳过和上一条完全相同的命令。
+
+#+begin_src sh
+export HISTCONTROL=ignoredups
+#+end_src
+
+设完之后，连续敲 10 次 =ls= ，历史里只记一条。
+
+结合空格忽略就是 =ignoreboth= ：
+
+#+begin_src sh
+export HISTCONTROL=ignoreboth
+#+end_src
+
+加到 =~/.bashrc= 持久化：
+
+#+begin_src sh
+echo 'export HISTCONTROL=ignoreboth' >> ~/.bashrc
+source ~/.bashrc
+#+end_src
+
+* 场景四：某类命令永远不想被记录
+
+空格前缀需要每次手动加，容易忘。更彻底的做法是用 =HISTIGNORE= 定义模式，匹配的命令根本不进入历史列表：
+
+#+begin_src sh
+export HISTIGNORE="ls*:cd*:pwd:clear:history:export *:curl *token*"
+#+end_src
+
+模式之间用冒号分隔，支持通配符。上面这行会忽略所有以 =ls= 、 =cd= 开头的命令，以及所有 =export= 和带 =token= 参数的 =curl= 。
+
+加到 =~/.bashrc= 后记得 =source= 。注意别设太宽，不然忽略了 =sudo *= ，所有特权命令的审计痕迹都没了。
+
+* 场景五：整个会话不留痕迹
+
+有些场景（配置凭据、排查安全事件、在共享机器上干活），你希望当前会话的任何操作都不写磁盘：
+
+#+begin_src sh
+export HISTFILE=/dev/null
+#+end_src
+
+设完之后，当前会话照常在内存中记录历史（能用上下键翻看），但会话结束时不会写入磁盘。内存列表直接蒸发。
+
+相比 =unset HISTFILE= ，设成 =/dev/null= 更可移植，所有发行版行为一致。
+
+* 场景六：历史文件积了太多，想清空重来
+
+最直接的办法：
+
+#+begin_src sh
+history -c && history -w
+#+end_src
+
+=history -c= 清空内存中的列表， =history -w= 把空列表覆写到磁盘。 =&&= 保证第一条成功了才跑第二条，不会意外搞砸。
+
+执行后 =cat ~/.bash_history= 返回空。
+
+* 总结
+
+| 场景 | 方法 |
+|------|------|
+| 单条命令不想被记 | 命令前加空格（需 =ignorespace= ） |
+| 已执行的命令要删除 | =history -d= 行号 |
+| =ls= /=cd= 刷屏 | =HISTCONTROL=ignoredups= |
+| 某类命令永不记录 | =HISTIGNORE= |
+| 整个会话不留痕迹 | =HISTFILE=/dev/null= |
+| 清空所有历史 | =history -c && history -w= |
+
+建议现在就把 =export HISTCONTROL=ignoreboth= 加到 =~/.bashrc= ，然后想想 =HISTIGNORE= 里应该放哪些模式： =export= 、带认证头的 =curl= 、密码相关的命令都可以放进去。
