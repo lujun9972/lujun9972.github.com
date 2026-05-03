@@ -1,0 +1,161 @@
+#+TITLE: 一次埋点，任意后端：OpenTelemetry 的可观测性标准化设计
+#+AUTHOR: darksun,Claude Code
+#+TAGS: OpenTelemetry, 可观测性, FastAPI, 运维, 监控
+#+DATE: [2026-05-03 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+本文从 SigNoz 博客的一篇 OpenTelemetry FastAPI 实战指南出发,提炼 OTel 的核心设计思想。原文是面向 FastAPI 的实操教程,但这套方案背后是可观测性的通用标准化思路。不限于 Python,不限于 FastAPI,也不限于 SigNoz。
+
+* 可观测性的碎片化困境
+
+微服务架构流行起来之后,一个请求会经过多个服务。你想追踪它,就得在每个服务里埋点采集数据。问题是,每家的监控方案不一样:用 Jaeger 是一套 SDK,用 Prometheus 又是一套,用商业 APM 又是一套。换一个后端,之前埋的点全废了。
+
+这种"绑定式"的可观测性方案维护成本很高:一家企业用了三套监控工具,就有三套埋点代码,升级一个后端的 SDK 版本可能要改一个系统的全部 tracing 代码。OpenTelemetry(简称 OTel)要解决的就是这个问题:定义一套与后端无关的标准化采集规范,你埋一次点,就能对接任意兼容的后端。
+
+* 三层分离:Instrumentation / Export / Backend
+
+OTel 的核心设计可以概括为三层分离:
+
+- *Instrumentation 层(采集)*:负责在代码中创建 span、记录 metrics、收集 logs。这一层与后端无关,只关心"数据怎么采"。
+- *Export 层(传输)*:通过 exporter 把采集到的数据发给后端。OTLP(OpenTelemetry Protocol)是 OTel 自家的传输协议,支持 gRPC 和 HTTP 两种方式。
+- *Backend 层(展示)*:接收并可视化数据。Jaeger、Zipkin、Prometheus、SigNoz,甚至国产监控平台,只要支持 OTLP 就能接入。
+
+这三层的关系可以用一个类比来理解:Instrumentation 是拍照,Export 是洗照片和邮寄,Backend 是相册。你拍照的方式跟最后用哪本相册无关,胶卷冲出来之后放哪本相册都行。
+
+* 统一的数据模型
+
+OTel 定义了三种核心数据类型,合在一起构成"可观测性三大支柱":
+
+- *Traces(链路追踪)*:记录一个请求在系统中的完整行程。每个服务处理这个请求时创建一个 span,span 之间通过 parent-child 关系串联起来。
+- *Metrics(指标)*:聚合后的性能数据,比如请求延迟 P99、错误率、QPS。适合做仪表盘和告警。
+- *Logs(日志)*:应用中产生的事件记录。OTel 用 OpenTelemetry Logs Bridge API 把日志和 trace 关联起来,不替代现有日志框架。
+
+Traces 是 OTel 最核心的设计。它的关键机制是上下文传播(context propagation):通过 HTTP 头(标准是 =traceparent=)或 gRPC metadata,把 trace ID 从一个服务传到下一个。这样一来,即使请求跨了 5 个服务,也能在同一个火焰图里看到整条链路,不需要人工拼接。
+
+* 以 FastAPI 为例看 Instrumentation 层怎么工作
+
+原文用 FastAPI(一个 Python web 框架)作为示例。抛开 FastAPI 的具体细节,只看 OTel 的 instrumentation 流程:
+
+1. *安装 distro*: =opentelemetry-distro= 会自动配置常见选项,比如加载 exporter、设置 SDK provider等。这是为了降低上手成本,避免新手自己拼装各种组件。
+2. *安装对应框架的 instrumentation 包*: 运行 =opentelemetry-bootstrap --action=install= 会检测你的应用用了哪些库,自动装对应的埋点包(如 FastAPI、httpx、Redis 等)。
+3. *通过 CLI 启动*:在启动命令前加 =opentelemetry-instrument=,它会在运行时注入埋点代码,不需要修改业务代码。
+
+三步下来,请求延迟、调用关系、错误信息就能自动采集了,不需要改一行业务代码。
+
+用环境变量控制 exporter 的配置也很直观:
+
+#+begin_src shell
+OTEL_TRACES_EXPORTER=console,otlp \
+  OTEL_SERVICE_NAME=sample-fastapi-app \
+  OTEL_RESOURCE_ATTRIBUTES=deployment.environment=local \
+  OTEL_EXPORTER_OTLP_ENDPOINT="https://ingest.your-region.signoz.cloud:443" \
+  OTEL_EXPORTER_OTLP_HEADERS="signoz-ingestion-key=your-key" \
+  OTEL_EXPORTER_OTLP_PROTOCOL=grpc \
+  opentelemetry-instrument uvicorn app.main:app --host localhost --port 5002
+#+end_src
+
+这里 =console= 表示同时输出到控制台方便调试,=otlp= 表示发到后端。用环境变量而非代码配置,也让不同环境(开发、测试、生产)的 exporter 配置可以分离。
+
+* 进阶设计:自动采集之外的扩展点
+
+OTel 的自动 instrumentation 覆盖了常见场景,但业务逻辑的观测需要手动加埋点。OTel 提供了几个扩展点,让你在自动采集之外按需定制:
+
+** SpanProcessor:在 span 生命周期中介入
+
+你可以在 span 创建和结束时附加自定义逻辑。下面的例子在 span 开始时就注入环境标识,同时在 span 结束时打印信息:
+
+#+begin_src python
+from opentelemetry.context import Context
+from opentelemetry import trace
+from opentelemetry.sdk.trace import SpanProcessor, Span, ReadableSpan, TracerProvider
+
+tracer_provider: TracerProvider = trace.get_tracer_provider()
+
+class AppContextSpanProcessor(SpanProcessor):
+    def on_start(self, span: Span, parent_context: Context | None = None):
+        common_attributes = {
+            "app.environ": "canary",
+            "app.release": "2026.04",
+            "app.contract_type": "ai_cloud",
+        }
+        span.set_attributes(common_attributes)
+
+        if span.name == "sensitive_operation":
+            span.set_attribute("app.contract_type", "[REDACTED]")
+
+    def on_end(self, span: ReadableSpan):
+        print("on span end:", span.name, span.attributes)
+
+tracer_provider.add_span_processor(AppContextSpanProcessor())
+#+end_src
+
+这个模式对运维场景特别有用:你可以在一层统一的 processor 中给所有 span 注入环境标签(集群名、机房、版本号),而不需要每个业务方法单独加。上面的代码还演示了敏感操作的脱敏处理:span 名称匹配 =sensitive_operation= 时,contract_type 会被替换为 =[REDACTED]=
+
+** Custom Sampler:按业务逻辑决定采样
+
+对于高流量应用,全量采样成本太高。OTel 支持自定义采样器,按请求属性决定哪些 trace 保留。下面的示例只保留带 =high_priority= 属性的 span:
+
+#+begin_src python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.sampling import Sampler, SamplingResult, Decision, ParentBased
+
+class AppContextSampler(Sampler):
+    def should_sample(self, parent_context, trace_id, name, kind, attributes, links=None, trace_state=None):
+        if attributes is not None and attributes.get("high_priority"):
+            return SamplingResult(Decision.RECORD_AND_SAMPLE,
+                                  attributes=attributes, trace_state=trace_state)
+        return SamplingResult(Decision.DROP, trace_state=trace_state)
+
+    def get_description(self):
+        return "AppContextSampler"
+
+sampler = ParentBased(root=AppContextSampler())
+provider = TracerProvider(sampler=sampler)
+trace.set_tracer_provider(provider)
+#+end_src
+
+=ParentBased= 包装器的作用是:如果上游服务决定采样某个请求,你的服务也尊重这个决定,避免父子 span 断裂。丢弃一个 root span 没问题,但如果丢弃了 child span 却保留了 parent span,火焰图里就会出现残缺的调用链。
+
+** Middleware:在 Web 框架层面添加上下文
+
+在 web 框架层面,可以用 middleware 给每个请求注入上下文信息,比如处理耗时和服务器标识:
+
+#+begin_src python
+from fastapi import FastAPI, Request
+from opentelemetry import trace
+from time import time
+
+app = FastAPI()
+
+@app.middleware("http")
+async def handle_request_metadata(request: Request, call_next):
+    start_time = time()
+    response = await call_next(request)
+    process_time = time() - start_time
+
+    span = trace.get_current_span()
+    span.add_event("process_time", {"value": process_time})
+    span.set_attribute("served_by", f"{app.title}-{app.version}")
+
+    return response
+#+end_src
+
+这三个扩展示例:自动采集做 80%,手动扩展做剩下的 20%。自动 instrumentation 覆盖通用框架,自定义 processor/sampler/middleware 覆盖业务特定需求。两者通过同一套数据模型协作,不冲突。
+
+* 实际意义:可观测性标准化带来的自由
+
+OTel 的标准化设计有几个特别值得关注的实际意义:
+
+1. *避免厂商锁定*:OTel 是 CNCF 毕业项目,与云厂商无关。你可以在自建的 Jaeger + Prometheus 上做开发和调试,生产环境对接商业 APM 或国产监控平台,只需改 exporter 配置,采集代码不用动。
+
+2. *适合多云和混合部署*:如果服务部分在公有云、部分在私有机房,OTel 的统一采集层可以让两边用同一套 instrumentation,数据发到同一个后端或分别发到不同后端。
+
+3. *团队分工更清晰*:Instrumentation 层由开发团队维护(他们熟悉代码),Backend 层由运维团队维护(他们熟悉监控平台)。中间的 exporter 配置只是环境变量,不涉及代码改动。这个分层跟 Linux 的"一切皆文件"设计哲学类似,上层不用关心下层实现,只要接口一致就能协作。
+
+* 总结
+
+OpenTelemetry 解决的核心问题是:怎么让采集与后端解耦。它的三层架构和数据模型标准化,让可观测性不再是每换一个工具就重来一次的重复劳动。
+
+这种"一次埋点,任意后端"的设计思路,跟 USB-C 统一充电接口类似:接口标准化之后,两端可以各自演进。后端平台竞争功能和价格,instrumentation 层专注数据的质量和覆盖度。你不需要在两者之间做绑定式选择。
