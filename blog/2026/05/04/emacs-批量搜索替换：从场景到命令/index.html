@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Emacs 批量搜索替换：从场景到命令 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="Emacs, 搜索替换, rgrep, dired, ibuffer" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Emacs 批量搜索替换：从场景到命令</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga4803e3">一个前提：两种正则语法</a></li>
+<li><a href="#org363dcf1">搜目录下的文件</a>
+<ul>
+<li><a href="#orgce6a7d1">rgrep</a></li>
+<li><a href="#org0a04185">find-grep-dired</a></li>
+<li><a href="#orgbb5de3f">find-name-dired / find-lisp-find-dired</a></li>
+<li><a href="#org80ed7e6">vc-git-grep</a></li>
+</ul>
+</li>
+<li><a href="#org2615da5">搜/替 project</a></li>
+<li><a href="#org6496f19">搜/替标记的文件（Dired 内操作）</a></li>
+<li><a href="#orgd6bf3e1">搜/替 buffer（IBuffer 内操作）</a></li>
+<li><a href="#org1e23b61">tags / xref / eglot</a></li>
+<li><a href="#orgc16f0af">安全提醒</a></li>
+<li><a href="#org2c2f72a">速查表</a></li>
+</ul>
+</div>
+</div>
+<p>
+大部分 Emacs 用户熟悉的搜索替换也就是 <code>M-%</code> 替换当前 buffer 的文本、 <code>C-s</code> 递增搜索当前 buffer。但遇到"替换整个项目"或"搜所有标记的文件"时，很多人就卡住了，不知道该用什么命令。
+</p>
+
+<p>
+Emacs 的批量搜索替换命令分布在 rgrep、Dired、IBuffer、project、xref 等多个子系统里，每种正则语法还不一样。<a href="http://yummymelon.com/devnull/bulk-search-replace-commands-for-files-and-buffers-in-emacs.html">Charles Choi 最近整理了一份全景清单</a>，把 20 多条命令列在一张大表里。本文在他的清单基础上，按使用场景重新分类，帮你快速找到对应的命令。
+</p>
+
+<div id="outline-container-orga4803e3" class="outline-2">
+<h2 id="orga4803e3">一个前提：两种正则语法</h2>
+<div class="outline-text-2" id="text-orga4803e3">
+<p>
+所有涉及正则表达式的搜索/替换命令，都需要了解 Emacs 用什么正则语法。总共有两种：
+</p>
+
+<ul class="org-ul">
+<li><b>grep regexp</b> ：命令会调用外部 <code>grep</code> 程序，正则语法跟你用的 grep 版本有关（GNU grep、BSD grep 规则不同）。这类命令包括 <code>rgrep</code> 、 <code>project-find-regexp</code> 、 <code>dired-do-find-regexp</code></li>
+<li><b>Emacs regexp</b> ：命令用 Emacs 自己的正则引擎，语法在 help 里查 <code>(info "(elisp) Syntax of Regexps")</code> 。这类命令包括 <code>tags-search</code> 、 <code>dired-do-query-replace-regexp</code> 、 <code>ibuffer-do-*-regexp</code></li>
+</ul>
+
+<p>
+两种正则的转义规则不同。不确定的时候，用 <code>M-x re-builder</code> 测试一下你的正则。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org363dcf1" class="outline-2">
+<h2 id="org363dcf1">搜目录下的文件</h2>
+<div class="outline-text-2" id="text-org363dcf1">
+<p>
+这是最常用的场景：在一个目录（可能递归）里搜索所有文件。
+</p>
+</div>
+
+<div id="outline-container-orgce6a7d1" class="outline-3">
+<h3 id="orgce6a7d1">rgrep</h3>
+<div class="outline-text-3" id="text-orgce6a7d1">
+<p>
+<code>rgrep</code> 是"在目录中搜索"的标准命令。它调用外部 grep，语法是 grep regexp。运行后会让你输入 pattern、文件匹配模式（默认 <code>*.*</code> ）和目录，结果展示在 <code>*grep*</code> buffer 里。
+</p>
+
+<p>
+比如搜 <code>src/</code> 目录下所有 <code>*.el</code> 文件中包含 <code>defun</code> 的行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mkdir -p /tmp/rgrep-demo/src
+cat &gt; /tmp/rgrep-demo/src/utils.el &lt;&lt;<span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+(defun add (a b) (+ a b))
+(defun subtract (a b) (- a b))
+;; helper function
+(defun multiply (a b) (* a b))
+EOF
+</span>
+cat &gt; /tmp/rgrep-demo/src/main.el &lt;&lt;<span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+(defun main ()
+  (message "hello"))
+(defvar *version* "1.0")
+EOF
+</span>
+grep -rnH <span class="org-string">"defun"</span> /tmp/rgrep-demo/src/
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org4039c8b">
+/tmp/rgrep-demo/src/main.el:1:(defun main ()
+/tmp/rgrep-demo/src/utils.el:1:(defun add (a b) (+ a b))
+/tmp/rgrep-demo/src/utils.el:2:(defun subtract (a b) (- a b))
+/tmp/rgrep-demo/src/utils.el:4:(defun multiply (a b) (* a b))
+
+</pre>
+
+<p>
+<code>*grep*</code> buffer 里的每行结果直接回车就能跳到那行。如果你装了 <code>wgrep</code> ，还能直接在结果 buffer 里编辑，改完 <code>C-x C-s</code> 批量写回文件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0a04185" class="outline-3">
+<h3 id="org0a04185">find-grep-dired</h3>
+<div class="outline-text-3" id="text-org0a04185">
+<p>
+<code>find-grep-dired</code> 搜索目录下匹配内容的文件，搜索结果不是 <code>*grep*</code> buffer，而是一个 Dired buffer。这样你可以直接在搜索结果上做标记、批量操作。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep -rl <span class="org-string">"defun"</span> /tmp/rgrep-demo/src/
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org942e5f8">
+/tmp/rgrep-demo/src/main.el
+/tmp/rgrep-demo/src/utils.el
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgbb5de3f" class="outline-3">
+<h3 id="orgbb5de3f">find-name-dired / find-lisp-find-dired</h3>
+<div class="outline-text-3" id="text-orgbb5de3f">
+<p>
+这两个按文件名而不是内容来搜索。 <code>find-name-dired</code> 用 shell pattern（ <code>*.el</code> ）， <code>find-lisp-find-dired</code> 用 Emacs regexp。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">find /tmp/rgrep-demo -name <span class="org-string">"*.el"</span> -type f
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org30d3284">
+/tmp/rgrep-demo/src/main.el
+/tmp/rgrep-demo/src/utils.el
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org80ed7e6" class="outline-3">
+<h3 id="org80ed7e6">vc-git-grep</h3>
+<div class="outline-text-3" id="text-org80ed7e6">
+<p>
+如果你在 git 仓库里， <code>vc-git-grep</code> 调用 <code>git grep</code> 来搜索。结果展示在 <code>*grep*</code> buffer 里，和 <code>rgrep</code> 一样可以跳转。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2615da5" class="outline-2">
+<h2 id="org2615da5">搜/替 project</h2>
+<div class="outline-text-2" id="text-org2615da5">
+<p>
+<code>project-find-regexp</code> 和 <code>project-query-replace-regexp</code> 是 Emacs 28+ 引入的 project 功能。Emacs 根据 <code>project-vc</code> 自动识别项目根目录（一般就是 git 仓库根目录），不需要你手动指定目录。
+</p>
+
+<ul class="org-ul">
+<li><code>project-find-regexp</code> ：调用外部 grep 搜索整个 project，结果在 <code>*grep*</code> buffer</li>
+<li><code>project-query-replace-regexp</code> ：在 project 范围内逐一询问替换，用 Emacs regexp。替换时会遍历所有项目文件，每处问你 y/n/!</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org6496f19" class="outline-2">
+<h2 id="org6496f19">搜/替标记的文件（Dired 内操作）</h2>
+<div class="outline-text-2" id="text-org6496f19">
+<p>
+在 Dired 里用 <code>m</code> 标记了若干文件后，可以对这批文件执行搜索替换。这是最灵活的方式。你可以混选不同目录的文件，不限某个 project。
+</p>
+
+<ul class="org-ul">
+<li><code>dired-do-isearch</code> / <code>dired-do-isearch-regexp</code> ：在标记的文件里递增搜索。 <code>C-s</code> 跳到下一个匹配、 <code>C-r</code> 回退，在所有文件间无缝切换</li>
+<li><code>dired-do-query-replace-regexp</code> ：在标记的文件里逐一替换（Emacs regexp）</li>
+<li><code>dired-do-find-regexp</code> ：在标记的文件里搜索，结果展示在 <code>*grep*</code> buffer（grep regexp）。和 <code>dired-do-find-regexp-and-replace</code> 是一对：一个查一个替换</li>
+<li><code>dired-do-search</code> ：在标记的文件里搜索第一个匹配（Emacs regexp），跳到该文件并高亮</li>
+</ul>
+
+<p>
+这些都是在 Dired 里 <code>m</code> 标记文件后用的命令，不需要提前退出 Dired。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd6bf3e1" class="outline-2">
+<h2 id="orgd6bf3e1">搜/替 buffer（IBuffer 内操作）</h2>
+<div class="outline-text-2" id="text-orgd6bf3e1">
+<p>
+IBuffer 和 Dired 类似，但它操作的是 buffer 而不是文件。用 <code>m</code> 标记 buffer 后：
+</p>
+
+<ul class="org-ul">
+<li><code>ibuffer-do-isearch</code> / <code>ibuffer-do-isearch-regexp</code> ：在标记的 buffer 里递增搜索</li>
+<li><code>ibuffer-do-query-replace</code> / <code>ibuffer-do-query-replace-regexp</code> ：逐一替换（普通文本或 Emacs regexp）</li>
+<li><code>ibuffer-do-occur</code> ：在标记的 buffer 中搜索匹配的行，集中展示在 <code>*Occur*</code> buffer 里</li>
+</ul>
+
+<p>
+<code>ibuffer-do-occur</code> 特别适合在多个 buffer 里"看一眼哪些行匹配"。结果展示在 <code>*Occur*</code> buffer 里，每条结果可以回车跳转。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1e23b61" class="outline-2">
+<h2 id="org1e23b61">tags / xref / eglot</h2>
+<div class="outline-text-2" id="text-org1e23b61">
+<p>
+这三个不依赖于文件结构或 buffer 列表，而是基于代码语义或 TAGS 文件来搜索替换。
+</p>
+
+<ul class="org-ul">
+<li><code>tags-search</code> ：基于 TAGS 文件的搜索（Emacs regexp）。适合没有 LSP 支持的项目，用 <code>etags~/~ctags</code> 生成 TAGS 文件后就能用</li>
+<li><code>xref-find-references-and-replace</code> ：搜索并替换所有引用。Emacs 29+ 内置，适合有 TAGS 或 LSP 的项目</li>
+<li><code>xref-query-replace-in-results</code> ：在 <code>*xref*</code> 结果 buffer 中按 <code>r</code> 触发替换</li>
+<li><code>eglot-rename</code> ：重命名符号。需要 Eglot（LSP 客户端）支持，选好语言服务器后一键重命名当前符号</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc16f0af" class="outline-2">
+<h2 id="orgc16f0af">安全提醒</h2>
+<div class="outline-text-2" id="text-orgc16f0af">
+<p>
+批量搜索替换命令就像电动工具：用好了效率翻倍，用砸了麻烦很大。
+</p>
+
+<ul class="org-ul">
+<li>做替换前确认文件已经备份（git commit 或手动备份都行）</li>
+<li>不确定正则对不对的时候，先用 <code>re-builder</code> 测试</li>
+<li>部分命令只改 buffer 不自动存盘，替换完成后检查哪些 buffer 是 modified 状态，用 IBuffer 批量保存</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2c2f72a" class="outline-2">
+<h2 id="org2c2f72a">速查表</h2>
+<div class="outline-text-2" id="text-org2c2f72a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">场景</th>
+<th scope="col" class="org-left">命令</th>
+<th scope="col" class="org-left">正则类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">搜目录下文件</td>
+<td class="org-left">rgrep</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">搜目录，结果展示为 Dired</td>
+<td class="org-left">find-grep-dired</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">按文件名搜索目录</td>
+<td class="org-left">find-name-dired</td>
+<td class="org-left">shell pattern</td>
+</tr>
+
+<tr>
+<td class="org-left">按文件名 regexp 搜索</td>
+<td class="org-left">find-lisp-find-dired</td>
+<td class="org-left">Emacs</td>
+</tr>
+
+<tr>
+<td class="org-left">git 仓库里搜</td>
+<td class="org-left">vc-git-grep</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">搜 project</td>
+<td class="org-left">project-find-regexp</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">project 范围替换</td>
+<td class="org-left">project-query-replace-regexp</td>
+<td class="org-left">Emacs</td>
+</tr>
+
+<tr>
+<td class="org-left">Dired 标记文件后搜索</td>
+<td class="org-left">dired-do-find-regexp</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">Dired 标记文件后替换</td>
+<td class="org-left">dired-do-find-regexp-and-replace</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">Dired 标记文件后逐一确认替换</td>
+<td class="org-left">dired-do-query-replace-regexp</td>
+<td class="org-left">Emacs</td>
+</tr>
+
+<tr>
+<td class="org-left">Dired 标记文件后递增搜索</td>
+<td class="org-left">dired-do-isearch</td>
+<td class="org-left">普通文本</td>
+</tr>
+
+<tr>
+<td class="org-left">IBuffer 标记 buffer 后搜索</td>
+<td class="org-left">ibuffer-do-find-regexp</td>
+<td class="org-left">grep</td>
+</tr>
+
+<tr>
+<td class="org-left">IBuffer 标记 buffer 后替换</td>
+<td class="org-left">ibuffer-do-query-replace-regexp</td>
+<td class="org-left">Emacs</td>
+</tr>
+
+<tr>
+<td class="org-left">基于 TAGS 搜索</td>
+<td class="org-left">tags-search</td>
+<td class="org-left">Emacs</td>
+</tr>
+
+<tr>
+<td class="org-left">搜索符号引用并替换</td>
+<td class="org-left">xref-find-references-and-replace</td>
+<td class="org-left">语义</td>
+</tr>
+
+<tr>
+<td class="org-left">Eglot 重命名符号</td>
+<td class="org-left">eglot-rename</td>
+<td class="org-left">语义</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-04</span>
+    <span class="post-info">2026-05-04</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/搜索替换">搜索替换</a> : <a href="../../../../../tags/rgrep">rgrep</a> : <a href="../../../../../tags/dired">dired</a> : <a href="../../../../../tags/ibuffer">ibuffer</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; acrcebrcupsetj21tpkunvq0he &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
