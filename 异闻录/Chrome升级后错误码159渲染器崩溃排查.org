@@ -1,0 +1,188 @@
+#+TITLE: Chrome 升级后错误码 159 渲染器崩溃排查
+#+AUTHOR: lujun9972, Claude
+#+TAGS: 异闻录,Linux,Chrome,浏览器,调试
+#+DATE: [2026-05-02 五 18:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 故障现象
+
+某天打开 Chrome，所有网页都显示：
+
+#+begin_example
+  哦哟，崩溃啦！显示此网页时出了问题。
+  错误代码：159
+#+end_example
+
+同一台机器上的 Firefox 一切正常。
+
+* 排查过程
+
+** 第一步：排除网络层
+
+浏览器打不开网页，第一反应是网络问题。但 Firefox 能正常访问，说明网络本身没问题。为了严谨，还是验证一下：
+
+#+begin_src shell
+  # DNS 正常
+  cat /etc/resolv.conf
+  # nameserver 8.8.8.8
+
+  # 连通性正常
+  curl -sI https://www.baidu.com
+  # HTTP/1.1 200 OK
+
+  # IPv6 也正常
+  curl -sI -6 https://www.baidu.com
+  # HTTP/1.1 200 OK
+
+  # 没有代理
+  env | grep -i proxy
+  # （无输出）
+
+  gsettings get org.gnome.system.proxy mode
+  # 'none'
+#+end_src
+
+网络层全部正常，排除。
+
+** 第二步：对比两个浏览器
+
+既然网络没问题，那就对比 Chrome 和 Firefox 本身：
+
+#+begin_src shell
+  google-chrome-stable --version
+  # Google Chrome 92.0.4515.159
+
+  firefox --version
+  # Mozilla Firefox 150.0
+#+end_src
+
+*Chrome 92* —— 这个版本号让我愣了一下。Chrome 92 发布于 **2021 年 8 月**，距今将近 5 年，落后当前版本约 43 个大版本。而 Firefox 150 是最新版。
+
+#+BEGIN_QUOTE
+*小知识：Chrome 的大版本号意味着什么？*
+
+Chrome 大约每 4 周发布一个大版本。从 92 到 135+，中间经历了约 43 个大版本的迭代。每个大版本都会引入新的 Web API、CSS 特性、JavaScript 功能以及安全修复。5 年不更新的浏览器，面对 2026 年的现代网页，基本等于一个"时间旅行者"来到了未来。
+#+END_QUOTE
+
+** 第三步：检查证书库异常
+
+在对比过程中，我还发现了一个可疑的东西：
+
+#+begin_src shell
+  certutil -d sql:$HOME/.pki/nssdb -L
+  # Certificate Nickname                          Trust Attributes
+  #                                                SSL,S/MIME,JAR/XPI
+  # ECAgentCA                                     CT,C,C
+#+end_src
+
+=~/.pki/nssdb= 中有一个 **ECAgentCA** 自定义 CA 证书。这通常是企业安全软件（零信任代理、终端安全软件）用于 SSL 拦截的证书。
+
+#+BEGIN_QUOTE
+*小知识：Chrome 和 Firefox 的证书库为什么不同？*
+
+Chrome 在 Linux 上使用 **NSS** （Network Security Services）证书库，路径在 =~/.pki/nssdb= 。Firefox 使用自己 **独立** 的证书库，路径在 =~/.mozilla/firefox/<profile>/cert9.db= 。
+
+这意味着如果有安全软件通过注入自定义 CA 证书来拦截 HTTPS 流量，Chrome 和 Firefox 的表现可能不同。Firefox 不读 NSS 库，所以可能完全不受影响。
+#+END_QUOTE
+
+不过在本案例中，ECAgentCA 是一个 *干扰项* ，不是真正的根因。
+
+** 第四步：理解错误码含义
+
+回到错误信息本身： **错误代码 159** 。这个代码对应 Windows 的 =STATUS_BREAKPOINT= （=0x80000003=），在 Chrome 中表示经典的 **"Aw, Snap!" 渲染器崩溃**。
+
+关键理解：这不是"连不上网页"，而是" *网页数据已经收到了，但渲染引擎在尝试显示页面时崩溃了* "。
+
+#+begin_example
+  正常流程：请求 → 接收 HTML/JS/CSS → 渲染引擎解析绘制 → 显示页面
+  本案情况：请求 → 接收 HTML/JS/CSS → 渲染引擎崩溃！(STATUS_BREAKPOINT)
+#+end_example
+
+这完美解释了为什么 Firefox 没问题——Firefox 有自己的渲染引擎（Gecko），能正常处理现代网页。
+
+** 根因确认
+
+Chrome 92 的渲染引擎（Blink + V8）发布于 2021 年。2026 年的现代网页大量使用了这 5 年间引入的新特性：
+
+- *CSS* ：Container Queries、=:has()= 选择器、View Transitions、=color-mix()= 、Nesting 等
+- *JavaScript* ：新的 API（Structured Clone、Import Maps 等）、语法扩展
+- *Web APIs* ：新的 Web GPU、各种新标准接口
+
+旧版渲染器遇到这些不认识的代码，直接崩溃。
+
+#+BEGIN_QUOTE
+*小知识：浏览器为什么遇到不认识的代码会崩溃而不是跳过？*
+
+理想情况下，浏览器应该优雅降级（graceful degradation）——遇到不支持的特性就跳过。但实际上：
+
+1. JavaScript 执行是 *不可跳过* 的——一个新 API 的 polyfill 可能依赖旧版浏览器根本没有的底层机制
+2. CSS 布局是 *全局计算* 的——一个不支持的布局函数可能导致整个布局引擎进入未定义状态
+3. 渲染引擎内部数据结构 5 年来不断演进，旧版引擎的内存布局可能与新版网页的 DOM 结构不兼容
+
+所以"崩溃"其实是旧引擎面对新网页时的正常反应。
+#+END_QUOTE
+
+* 解决方案
+
+#+begin_src shell
+  # Arch Linux 升级 Chrome
+  yay -Syu google-chrome
+#+end_src
+
+升级过程中 yay 可能询问 =vulkan-driver= 依赖。这里需要根据实际使用的显卡驱动来选：
+
+#+begin_src shell
+  # 先检查自己用的什么驱动
+  lspci | grep -iE 'vga|3d'
+  # 00:02.0 VGA compatible controller: Intel Corporation 3rd Gen Core processor
+  # 01:00.0 3D controller: NVIDIA Corporation GF117M [GeForce 610M/710M...]
+
+  lsmod | grep -E 'nvidia|nouveau'
+  # nouveau  3792896  2    ← 用的是 nouveau（开源驱动）
+#+end_src
+
+yay 列出的选项中，默认 =1) nvidia-utils= 是 NVIDIA 私有驱动。如果你的 NVIDIA 显卡用的是 *nouveau* 开源驱动（像我一样），应该选 **=vulkan-nouveau=** （当时是第 8 项）。
+
+#+BEGIN_QUOTE
+*小知识：为什么老 NVIDIA 显卡用 nouveau 而不是官方驱动？*
+
+NVIDIA 的私有驱动对老显卡有"支持周期"——通常 5 年左右就停止更新。我的 GeForce GT 620M 系列早已过了支持期，最新版 =nvidia-utils= 可能根本不支持这块显卡。而 =nouveau= 是社区维护的开源驱动，虽然性能不如私有驱动，但对老硬件的兼容性更好，而且在 Arch Linux 上由内核直接支持。
+#+END_QUOTE
+
+升级完成后，Chrome 恢复正常，所有网页都能正常显示。
+
+* 复盘
+
+** 排查思路
+
+#+begin_example
+  现象：Chrome 打不开网页，错误码 159
+    │
+    ├─ 1. 验证网络层（DNS/连通性/代理）
+    │     → 全部正常，排除网络问题
+    │
+    ├─ 2. 对比 Chrome vs Firefox 版本
+    │     → Chrome 92 (2021) vs Firefox 150 (2026)
+    │     → 版本差距巨大
+    │
+    ├─ 3. 检查证书库
+    │     → 发现 ECAgentCA（干扰项，非根因）
+    │
+    ├─ 4. 理解错误码 159 的含义
+    │     → STATUS_BREAKPOINT：渲染器崩溃
+    │     → 不是网络问题，是渲染引擎问题
+    │
+    └─ 5. 确认根因：Chrome 92 渲染引擎无法处理现代网页
+          → 升级 Chrome → 问题解决
+#+end_example
+
+** 经验教训
+
+1. *错误码比直觉重要* ：第一反应是网络问题，但错误码 159 明确说是渲染器崩溃。读懂错误信息能省去大量无用的排查。
+
+2. *对比法是利器* ：同一台机器上两个浏览器的行为差异，直接把问题范围从"系统级"缩小到"Chrome 自身"。
+
+3. *软件不更新是最大的技术债* ：Chrome 92 落后 5 年、43 个大版本，不仅功能缺失，安全漏洞也数不胜数。在 Arch Linux 这种滚动更新的发行版上，定期 =pacman -Syu= 是基本素养。
+
+4. *注意驱动匹配* ：升级过程中 vulkan-driver 的选择要看实际加载的驱动模块，而不是看显卡品牌。NVIDIA 显卡 + nouveau 驱动 ≠ nvidia-utils。

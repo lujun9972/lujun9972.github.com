@@ -1,0 +1,61 @@
+#+TITLE: TIL: image-mode 的 header-line 中显示图片尺寸
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, TIL, image-mode
+#+DATE: [2026-05-03 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Emacs ~image-mode~ 打开图片只显示图像，不告诉你尺寸多大、文件多大。弹出去用 ~identify~ 或 ~file~ 查又太麻烦。
+
+其实一行钩子就能搞定：
+
+#+BEGIN_SRC emacs-lisp
+(defun my/image-mode-show-dimensions ()
+  "在 header-line 中显示图片像素和文件大小。"
+  (when (and (derived-mode-p 'image-mode)
+             buffer-file-name
+             (file-exists-p buffer-file-name))
+    (condition-case err
+        (let* ((image (or (image-get-display-property)
+                          (create-image buffer-file-name)))
+               (size (image-size image t))
+               (width (car size))
+               (height (cdr size))
+               (bytes (file-attribute-size
+                       (file-attributes buffer-file-name))))
+          (setq header-line-format
+                (format " %d x %d px   %s"
+                        width height
+                        (file-size-human-readable bytes))))
+      (error
+       (setq header-line-format
+             (format " image dimensions unavailable: %S" err))))))
+
+(add-hook 'image-mode-hook #'my/image-mode-show-dimensions)
+#+END_SRC
+
+效果像这样（header-line 上多了一行）：
+
+#+BEGIN_EXAMPLE
+1920 x 1080 px  2.4M
+#+END_EXAMPLE
+
+* 几个要点
+
+- ~image-get-display-property~ 优先：如果图片已经在 buffer 中显示，直接用已有 spec，省一次文件读取。没有的话才用 ~create-image~ 从文件创建
+- ~image-size~ 第二个参数传 ~t~ ：返回像素尺寸而非 canvas 单位
+- ~file-size-human-readable~ ：把 ~2516582~ 变成 ~2.4M~
+- ~condition-case~ 兜底：imagemagick 出问题、格式不支持之类的情况，不在 =*Messages*= 里炸开，header-line 上安静显示错误消息
+
+* 别忘了 C-c C-c 的情况
+
+~image-mode~ 按 ~C-c C-c~ 会在图像和文本视图之间切换，切换后 header-line 不会自动刷新。需要多挂一个钩子：
+
+#+BEGIN_SRC emacs-lisp
+  (add-hook 'image-mode-new-window-functions
+            (lambda (&rest _) (my/image-mode-show-dimensions)))
+#+END_SRC
+
+这个钩子在 buffer 重新显示图像时触发，保证切换视图后尺寸信息还在。
+
+原文：[[https://www.emacs.dyerdwelling.family/emacs/20260430074958-emacs--a-tiny-header-line-tweak:-image-dimensions-in-image-mode/][A tiny header-line tweak: image dimensions in image-mode]]

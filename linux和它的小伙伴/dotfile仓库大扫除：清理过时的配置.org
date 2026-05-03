@@ -1,0 +1,87 @@
+#+TITLE: dotfile仓库大扫除：清理过时的配置
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-05-02 六 08:00]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+用了近十年的 dotfile 仓库，里面堆积了不少过时的配置。趁着周末用 Claude Code 做了一次全面清理，记录一下发现的问题和修复过程。
+
+* 发现的问题
+
+** yaourt 全面废弃
+
+早年 Arch Linux 用户都用 =yaourt= 作为 AUR 助手，但它早在 2018 年前后就被社区废弃了。仓库里几乎所有文件都在引用它：
+
+- =dotfile.org= 中的 Awesome WM 配置
+- =reinstall-arch.org= 安装笔记
+- =arch-ansible/= 自动化部署剧本
+
+统统替换为 =yay=，这个最省心，改就完了。
+
+** 大量软件包已不存在或改名
+
+检查 =reinstall-arch.org= 中的安装命令时，发现很多包要么从仓库移除了，要么改名了。用 =pacman -Si= 一个个验证，结果令人唏嘘：
+
+| 旧包名 | 现状 | 替代 |
+|--------|------|------|
+| =shadowsocks= | 改名为 =shadowsocks-rust= | Rust 重写版 |
+| =shadowsocks-qt5= | 已移除 | =v2ray-desktop= |
+| =newsbeuter= | 改名为 =newsboat= | 功能更强 |
+| =fcitx-im= | 已移除 | =fcitx5-im= + =fcitx5-chinese-addons= |
+| =python-virtualenvwrapper= | 已移除 | pip install virtualenvwrapper |
+| =wpa_actiond= | 已移除 | =iwd= 或 =NetworkManager= |
+| =xorg-server-utils= | 已移除 | 功能已拆分为独立包 |
+| =rox= | 已移除 | =pcmanfm= |
+| =moc= | 已移除 | =cmus= |
+| =finch= | 已移除 | =weechat= |
+| =wyrd= | 已移除 | =calcurse= 或 Org-mode |
+| =fbterm= | 仅 AUR 可用 | TTY 下凑合用 |
+| =nutstore= | 仅 AUR 可用 | 仍可安装 |
+| =anki20-bin= | AUR 已删除 | 已进官方 extra 源，直接 =pacman -S anki= |
+| =netease-musicbox-git= | 长期未更新 | =go-musicfox-git= 或 =netease-cloud-music-gtk4= |
+
+** Awesome WM 废弃 API
+
+用 `awesome -k` 检查配置语法通过，但源码里翻出了好多 =awful.util.*= 调用，这些在官方文档里都已经标注废弃了：
+
+- =awful.util.spawn= → =awful.spawn=
+- =awful.util.spawn_with_shell= → =awful.spawn.with_shell=
+- =awful.util.get_themes_dir()= → =gears.filesystem.get_themes_dir()=
+- =awful.util.get_cache_dir()= → =gears.filesystem.get_cache_dir()=
+
+好在当前版本（Awesome 4.3）还有兼容层，一次性全换了，10 处修改。
+
+** Docker 镜像地址失效
+
+自动化脚本中配置 Docker 镜像加速的地址 =http://31d9bf6d.m.daocloud.io= 还是远古 DaoCloud 格式。curl 实测可用性，替换为三个经过验证的国内镜像：
+
+- =https://docker.xuanyuan.me=
+- =https://docker.1ms.run=
+- =https://docker.m.daocloud.io=
+
+同时改掉了 =curl ... | sh= 的不安全安装方式，直接用 Ansible 写 =daemon.json=。
+
+* 一些有意思的发现
+
+** openssh 节装的是 git
+
+=reinstall-arch.org= 中 openssh 安装章节写的是 =pacman -S git=，显然是复制粘贴时忘了改。这种错误要不是逐行过一遍根本发现不了。
+
+** cmus 节装的是 moc
+
+标题叫 cmus，命令装的却是 moc（而且 moc 也已经没了）。10 年前的笔记手误。
+
+** fcitx 生态的变迁
+
+fcitx4 已经彻底从 Arch 仓库移除了，取而代之的是 fcitx5。但环境变量（=GTK_IM_MODULE=、=QT_IM_MODULE=、=XMODIFIERS=）对 fcitx5 同样适用，这点没变。
+
+* 经验总结
+
+1. **定期清理 dotfile 仓库**，尤其是用了近十年的。很多配置当时写的时候没问题，但环境变了之后就成了死代码。
+
+2. **用 Claude Code 做这种清理很顺手**：让它先全面分析找出问题，然后逐个修复。中间需要验证包是否存在、API 是否可用，直接让它执行命令就行了。发现存疑的地方，直接说"验证一下"就能得到结果。
+
+3. **过时的安装文档比没有文档更危险**。如果有人（包括未来的自己）照着旧文档装系统，结果装到一半发现包不存在了，那体验很糟糕。要么保持更新，要么明确标注已过时。
+
+4. **Arch Linux 的滚动更新对配置文件有持续影响**。不像 LTS 发行版安一次管五年，Arch 用户需要时不时审视自己的配置是否还跟得上。

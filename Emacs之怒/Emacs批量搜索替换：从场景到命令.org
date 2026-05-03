@@ -1,0 +1,159 @@
+#+TITLE: Emacs 批量搜索替换：从场景到命令
+#+AUTHOR: lujun9972
+#+TAGS: Emacs, 搜索替换, rgrep, dired, ibuffer
+#+DATE: [2026-05-04 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+大部分 Emacs 用户熟悉的搜索替换也就是 ~M-%~ 替换当前 buffer 的文本、 ~C-s~ 递增搜索当前 buffer。但遇到"替换整个项目"或"搜所有标记的文件"时，很多人就卡住了，不知道该用什么命令。
+
+Emacs 的批量搜索替换命令分布在 rgrep、Dired、IBuffer、project、xref 等多个子系统里，每种正则语法还不一样。[[http://yummymelon.com/devnull/bulk-search-replace-commands-for-files-and-buffers-in-emacs.html][Charles Choi 最近整理了一份全景清单]]，把 20 多条命令列在一张大表里。本文在他的清单基础上，按使用场景重新分类，帮你快速找到对应的命令。
+
+* 一个前提：两种正则语法
+
+所有涉及正则表达式的搜索/替换命令，都需要了解 Emacs 用什么正则语法。总共有两种：
+
+- *grep regexp* ：命令会调用外部 ~grep~ 程序，正则语法跟你用的 grep 版本有关（GNU grep、BSD grep 规则不同）。这类命令包括 ~rgrep~ 、 ~project-find-regexp~ 、 ~dired-do-find-regexp~
+- *Emacs regexp* ：命令用 Emacs 自己的正则引擎，语法在 help 里查 ~(info "(elisp) Syntax of Regexps")~ 。这类命令包括 ~tags-search~ 、 ~dired-do-query-replace-regexp~ 、 ~ibuffer-do-*-regexp~
+
+两种正则的转义规则不同。不确定的时候，用 ~M-x re-builder~ 测试一下你的正则。
+
+* 搜目录下的文件
+
+这是最常用的场景：在一个目录（可能递归）里搜索所有文件。
+
+** rgrep
+
+~rgrep~ 是"在目录中搜索"的标准命令。它调用外部 grep，语法是 grep regexp。运行后会让你输入 pattern、文件匹配模式（默认 ~*.*~ ）和目录，结果展示在 ~*grep*~ buffer 里。
+
+比如搜 ~src/~ 目录下所有 ~*.el~ 文件中包含 ~defun~ 的行：
+
+#+BEGIN_SRC shell :dir /tmp :tangle /tmp/rgrep-demo.sh
+mkdir -p /tmp/rgrep-demo/src
+cat > /tmp/rgrep-demo/src/utils.el <<'EOF'
+(defun add (a b) (+ a b))
+(defun subtract (a b) (- a b))
+;; helper function
+(defun multiply (a b) (* a b))
+EOF
+
+cat > /tmp/rgrep-demo/src/main.el <<'EOF'
+(defun main ()
+  (message "hello"))
+(defvar *version* "1.0")
+EOF
+
+grep -rnH "defun" /tmp/rgrep-demo/src/
+#+END_SRC
+
+执行结果：
+
+#+BEGIN_EXAMPLE
+/tmp/rgrep-demo/src/main.el:1:(defun main ()
+/tmp/rgrep-demo/src/utils.el:1:(defun add (a b) (+ a b))
+/tmp/rgrep-demo/src/utils.el:2:(defun subtract (a b) (- a b))
+/tmp/rgrep-demo/src/utils.el:4:(defun multiply (a b) (* a b))
+
+#+END_EXAMPLE
+
+~*grep*~ buffer 里的每行结果直接回车就能跳到那行。如果你装了 ~wgrep~ ，还能直接在结果 buffer 里编辑，改完 ~C-x C-s~ 批量写回文件。
+
+** find-grep-dired
+
+~find-grep-dired~ 搜索目录下匹配内容的文件，搜索结果不是 ~*grep*~ buffer，而是一个 Dired buffer。这样你可以直接在搜索结果上做标记、批量操作。
+
+#+BEGIN_SRC shell :dir /tmp
+grep -rl "defun" /tmp/rgrep-demo/src/
+#+END_SRC
+
+执行结果：
+
+#+BEGIN_EXAMPLE
+/tmp/rgrep-demo/src/main.el
+/tmp/rgrep-demo/src/utils.el
+#+END_EXAMPLE
+
+** find-name-dired / find-lisp-find-dired
+
+这两个按文件名而不是内容来搜索。 ~find-name-dired~ 用 shell pattern（ ~*.el~ ）， ~find-lisp-find-dired~ 用 Emacs regexp。
+
+#+BEGIN_SRC shell :dir /tmp
+find /tmp/rgrep-demo -name "*.el" -type f
+#+END_SRC
+
+执行结果：
+
+#+BEGIN_EXAMPLE
+/tmp/rgrep-demo/src/main.el
+/tmp/rgrep-demo/src/utils.el
+#+END_EXAMPLE
+
+** vc-git-grep
+
+如果你在 git 仓库里， ~vc-git-grep~ 调用 ~git grep~ 来搜索。结果展示在 ~*grep*~ buffer 里，和 ~rgrep~ 一样可以跳转。
+
+* 搜/替 project
+
+~project-find-regexp~ 和 ~project-query-replace-regexp~ 是 Emacs 28+ 引入的 project 功能。Emacs 根据 ~project-vc~ 自动识别项目根目录（一般就是 git 仓库根目录），不需要你手动指定目录。
+
+- ~project-find-regexp~ ：调用外部 grep 搜索整个 project，结果在 ~*grep*~ buffer
+- ~project-query-replace-regexp~ ：在 project 范围内逐一询问替换，用 Emacs regexp。替换时会遍历所有项目文件，每处问你 y/n/!
+
+* 搜/替标记的文件（Dired 内操作）
+
+在 Dired 里用 ~m~ 标记了若干文件后，可以对这批文件执行搜索替换。这是最灵活的方式。你可以混选不同目录的文件，不限某个 project。
+
+- ~dired-do-isearch~ / ~dired-do-isearch-regexp~ ：在标记的文件里递增搜索。 ~C-s~ 跳到下一个匹配、 ~C-r~ 回退，在所有文件间无缝切换
+- ~dired-do-query-replace-regexp~ ：在标记的文件里逐一替换（Emacs regexp）
+- ~dired-do-find-regexp~ ：在标记的文件里搜索，结果展示在 ~*grep*~ buffer（grep regexp）。和 ~dired-do-find-regexp-and-replace~ 是一对：一个查一个替换
+- ~dired-do-search~ ：在标记的文件里搜索第一个匹配（Emacs regexp），跳到该文件并高亮
+
+这些都是在 Dired 里 ~m~ 标记文件后用的命令，不需要提前退出 Dired。
+
+* 搜/替 buffer（IBuffer 内操作）
+
+IBuffer 和 Dired 类似，但它操作的是 buffer 而不是文件。用 ~m~ 标记 buffer 后：
+
+- ~ibuffer-do-isearch~ / ~ibuffer-do-isearch-regexp~ ：在标记的 buffer 里递增搜索
+- ~ibuffer-do-query-replace~ / ~ibuffer-do-query-replace-regexp~ ：逐一替换（普通文本或 Emacs regexp）
+- ~ibuffer-do-occur~ ：在标记的 buffer 中搜索匹配的行，集中展示在 ~*Occur*~ buffer 里
+
+~ibuffer-do-occur~ 特别适合在多个 buffer 里"看一眼哪些行匹配"。结果展示在 ~*Occur*~ buffer 里，每条结果可以回车跳转。
+
+* tags / xref / eglot
+
+这三个不依赖于文件结构或 buffer 列表，而是基于代码语义或 TAGS 文件来搜索替换。
+
+- ~tags-search~ ：基于 TAGS 文件的搜索（Emacs regexp）。适合没有 LSP 支持的项目，用 ~etags~/~ctags~ 生成 TAGS 文件后就能用
+- ~xref-find-references-and-replace~ ：搜索并替换所有引用。Emacs 29+ 内置，适合有 TAGS 或 LSP 的项目
+- ~xref-query-replace-in-results~ ：在 ~*xref*~ 结果 buffer 中按 ~r~ 触发替换
+- ~eglot-rename~ ：重命名符号。需要 Eglot（LSP 客户端）支持，选好语言服务器后一键重命名当前符号
+
+* 安全提醒
+
+批量搜索替换命令就像电动工具：用好了效率翻倍，用砸了麻烦很大。
+
+- 做替换前确认文件已经备份（git commit 或手动备份都行）
+- 不确定正则对不对的时候，先用 ~re-builder~ 测试
+- 部分命令只改 buffer 不自动存盘，替换完成后检查哪些 buffer 是 modified 状态，用 IBuffer 批量保存
+
+* 速查表
+
+| 场景 | 命令 | 正则类型 |
+|------|------|----------|
+| 搜目录下文件 | rgrep | grep |
+| 搜目录，结果展示为 Dired | find-grep-dired | grep |
+| 按文件名搜索目录 | find-name-dired | shell pattern |
+| 按文件名 regexp 搜索 | find-lisp-find-dired | Emacs |
+| git 仓库里搜 | vc-git-grep | grep |
+| 搜 project | project-find-regexp | grep |
+| project 范围替换 | project-query-replace-regexp | Emacs |
+| Dired 标记文件后搜索 | dired-do-find-regexp | grep |
+| Dired 标记文件后替换 | dired-do-find-regexp-and-replace | grep |
+| Dired 标记文件后逐一确认替换 | dired-do-query-replace-regexp | Emacs |
+| Dired 标记文件后递增搜索 | dired-do-isearch | 普通文本 |
+| IBuffer 标记 buffer 后搜索 | ibuffer-do-find-regexp | grep |
+| IBuffer 标记 buffer 后替换 | ibuffer-do-query-replace-regexp | Emacs |
+| 基于 TAGS 搜索 | tags-search | Emacs |
+| 搜索符号引用并替换 | xref-find-references-and-replace | 语义 |
+| Eglot 重命名符号 | eglot-rename | 语义 |
