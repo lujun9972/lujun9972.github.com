@@ -1,0 +1,245 @@
+#+TITLE: 读：2026 年构建 Python 库的现代工具链
+#+AUTHOR: darksun,Claude Code
+#+TAGS: Python, uv, ruff, 编程工具, 最佳实践
+#+DATE: [2026-05-03 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 开篇：Python 工具链的"大统一"时代
+
+如果你在 2020 年问一个 Python 开发者"用什么工具构建库"，你得到的答案会因人而异。Poetry、pipenv、flit、hatch，每个都有各自的拥趸。Lint 用 flake8，格式化用 black，类型检查用 mypy，三套工具各管一摊。到了 2025–2026 年，情况已经大为改观。
+
+Stephen Funk 在 [[https://stephenlf.dev/blog/python-library-in-2026/][Building a Python Library in 2026]] 中总结了现代 Python 库开发的实操经验。核心信息是：工具链已经收敛到了 Astral 一家的产品上。这篇文章基于原文内容，结合中国开发者的实际环境做了解读。
+
+* 项目初始化：uv 的一站式体验
+
+当前 Python 生态里受到最多关注的新工具是 Astral 公司开发的 =uv= 。它同时取代了 pip、poetry、pyenv、virtualenv、hatch 等多个工具的功能，而且性能比 pip 快 10–100 倍。
+
+初始化一个新库只需要一条命令：
+
+#+begin_src shell
+uv init --lib my-package
+#+end_src
+
+这条命令会生成以下目录结构：
+
+#+begin_example
+.
+├── .git
+│   └── ...
+├── .gitignore
+├── pyproject.toml
+├── .python-version
+├── README.md
+└── src
+    └── my_package
+        ├── __init__.py
+        └── py.typed
+#+end_example
+
+这里采用了 =src/= 布局：库代码放在 =src/my_package/= 下，而非直接在项目根目录下。这样做的好处是，测试时导入的是安装后的包而非源代码目录，能提前暴露包打包配置的问题。
+
+=pyproject.toml= 包含了项目的元数据，它遵循 Python 官方的 pyproject.toml 规范。[project] 部分中 =description= 和 =authors= 字段对 PyPI 页面渲染很重要， =keywords= 和 =classifiers= 可以让 LLM（如 Claude）帮忙填写。
+
+版本号遵循 SemVer 标准（主版本号.次版本号.修订号，对应 major.minor.patch）。用 uv 管理版本，不要手动改文件：
+
+#+begin_src shell
+uv version --bump {major,minor,patch}
+#+end_src
+
+* Linting 和格式化：ruff 接管一切
+
+几年前，社区还在用 flake8（lint）加 black（format）加 isort（排序 import）的组合。现在 Astral 的 =ruff= 可以替代这三个工具。
+
+#+begin_src shell
+uv add --dev ruff
+#+end_src
+
+日常使用方式：
+
+#+begin_src shell
+uv run ruff check      # lint 检查
+uv run ruff check --fix # lint 检查并自动修复
+uv run ruff format      # 格式化代码
+#+end_src
+
+由于这些命令会频繁运行，原文建议用 Makefile 或 just 等命令运行器来记录它们，避免每次都翻文档。
+
+#+begin_src makefile
+# Makefile
+lint:
+    uv run ruff check
+
+format:
+    uv run ruff format --check
+
+fix:
+    uv run ruff check --fix
+#+end_src
+
+* 类型检查：三个选择，一个结论
+
+类型注解在 2026 年已经是 Python 库的标配。缺少类型注解的库很难声称自己有"质量保证"。类型签名能让 IDE 自动补全和静态检查发现潜在 bug。
+
+类型检查工具有三个选项：
+
+| 工具 | 开发者 | 特点 |
+|------|--------|------|
+| =mypy= | 社区标杆 | 生态最完善，文档最全，兼容性最好 |
+| =ty= | Astral（ruff 作者） | 与 uv/ruff 同源，但尚在早期 |
+| =pyrefly= | Meta | 较新，仍在快速迭代 |
+
+原文建议三个都试一遍再做选择。uv 让试错变得简单：
+
+#+begin_src shell
+# 临时安装并运行，不影响项目依赖
+uv run --with mypy mypy src/
+uv run --with ty ty check
+uv run --with pyrefly pyrefly check
+
+# 选定后作为 dev 依赖加入
+uv add --dev mypy
+#+end_src
+
+=mypy= 目前仍是事实标准，生态最完善。如果你刚开始接触类型注解，原文推荐 [[https://github.com/anthonywritescode/typing-puzzles][typing-puzzles]] 这个练习仓库来练手。
+
+* 测试：pytest 就够了
+
+测试文件通常放在项目根目录下的 =tests/= 目录中，可以进一步分为 =tests/unit= 和 =tests/integration= 。
+
+=unittest= 是 Python 内置的测试框架，不依赖第三方库就能用。但大多数项目选择 =pytest= ，因为它写起来更简洁（不需要继承 TestCase 类，用普通 assert 即可断言），插件生态也更丰富。
+
+#+begin_src shell
+uv add --dev pytest pytest-cov
+#+end_src
+
+=pytest-cov= 用来统计代码覆盖率。原文特别提到，覆盖率指标虽然名声不太好（容易被滥用为 KPI），但在实践中确实帮助他发现了很多 bug。
+
+#+begin_src makefile
+# 单元测试，频繁运行
+test:
+    uv run pytest --cov=my_package \
+    --cov-report=term-missing tests/unit
+
+# 集成测试，发布前运行
+test-integration:
+    uv run pytest tests/unit tests/integration
+#+end_src
+
+** 多版本测试
+
+很多性能敏感的 Python 库依赖 C 扩展，而 C 扩展在新 Python 版本发布时偶尔会出现兼容问题。原文展示了用 uv 测试多版本的方法，不需要 tox 或 nox 这类额外工具（tox 是传统的多环境测试框架，nox 是其现代替代品，它们都需要额外的配置文件和学习成本）：
+
+#+begin_src makefile
+test-versions:
+  uv python find 3.12 \
+    || uv python install 3.12
+  uv run --python 3.12 pytest tests/unit
+  uv python find 3.13 \
+    || uv python install 3.13
+  uv run --python 3.13 pytest tests/unit
+#+end_src
+
+这里 =uv python find= 先检查本地是否有该版本，没有则自动安装。 =uv run --python 3.12= 则指定用哪个解释器运行。
+
+* 代码质量维护：CI 和 pre-commit
+
+** CI 脚本
+
+没有自动化检查，代码质量撑不了多久。原文提供了一个极简的 GitHub Actions CI 脚本，核心逻辑是：检查版本号是否变了，如果变了就运行 lint、类型检查和测试，全部通过后再构建发布。
+
+#+begin_src bash
+#!/usr/bin/env bash
+
+uv sync
+
+# 获取当前版本号
+CURR_VER=$(uv version --short)
+
+# 获取上一个提交的版本号
+git restore -s HEAD~ -W pyproject.toml
+PRIOR_VER=$(uv version --short)
+git restore .
+
+if [ "$CURR_VER" = "$PRIOR_VER" ]; then
+  # 版本号没变，说明没有新发布
+  exit
+fi
+
+# 代码质量检查
+uv run ruff check
+uv run ruff format --check
+uv run mypy src/
+uv run pytest tests/
+
+# 构建并发布
+uv build
+uv publish
+#+end_src
+
+这个脚本的思路很有意思：不是每次 push 都跑完整的质量检查，而是只在版本号变更时才触发构建和发布管道。平时的提交只跑 lint 和测试，这样 CI 的开销会小很多。
+
+原文还特别提醒，GitHub Actions marketplace 上的第三方 action 曾经是供应链攻击的目标，建议将关键 action 的代码 vendored（复制到仓库内管理），而不是直接引用 marketplace 上的版本。
+
+** pre-commit 钩子
+
+CI 检查的问题是反馈周期太长：提交代码，等几分钟，才知道格式不对。 =pre-commit= 工具把同样的检查移动到 =git commit= 之前执行，在本地就能发现问题。
+
+#+begin_src shell
+uv add --dev pre-commit
+uv run pre-commit sample-config  # 生成 .pre-commit-config.yaml
+# ... 编辑配置文件添加 hooks ...
+uv run pre-commit install  # 安装 git hooks
+#+end_src
+
+社区已经预先配置了大量可用的 pre-commit hooks。例如 =astral-sh/ruff-pre-commit= 可以在提交前自动运行 =ruff= 的 lint 和格式化检查。
+
+把安装脚本也放进 Makefile，方便其他开发者设置：
+
+#+begin_src makefile
+setup:
+    uv sync
+    uv run pre-commit install
+#+end_src
+
+* 发布：不一定需要 PyPI
+
+=uv build && uv publish= 是标准的发布流程。但原文分享了一个不常见的做法：对于小团队来说，不一定要把库发布到 PyPI。
+
+原文作者的公司只有三个活跃的 Python 开发者，不值得为这三个人搭建私有 PyPI 仓库。但由于合规要求，他们也不能把内部库发布到公共 PyPI。他们的方案是直接从源码安装：
+
+#+begin_src shell
+cd ~/my-personal-project/
+uv add ~/my-package
+#+end_src
+
+=uv add= 接受本地路径，uv 会自动处理构建、缓存和链接，效果和从 PyPI 安装几乎一样。唯一需要做的是用一个 cron 定时任务定期更新仓库代码。
+
+这个方案对国内开发者尤其有用：访问 PyPI 需要换源或代理，但直接从 Git 仓库安装就没有这个烦恼了。
+
+* 参考项目：大厂怎么用
+
+原文列举了两个参考项目：
+
+| 项目 | Lint | Format | 构建 | 测试 | 类型检查 | CI |
+|------|------|--------|------|------|----------|-----|
+| openai-python | ruff | black | hatchling(rye) | pytest+nox | pyright+mypy | GitHub Actions |
+| polars | ruff | ruff | setuptools | pytest+cov | mypy | GitHub Actions |
+
+OpenAI 的 Python SDK 创建于 2020 年，使用的还是 =rye=(uv 的前身)。考虑到 OpenAI 刚收购了 Astral，他们大概率会迁移到 uv。
+
+Polars 的情况比较特殊，它是 Rust 实现的 Python 库，构建系统受限于 setuptools-rust。即便如此，uv 仍然可以正常管理其依赖和虚拟环境。
+
+OpenAI SDK 同时用了 =pyright= 和 =mypy= 两个类型检查工具。这是因为不同的类型检查器对类型注解的解析行为有细微差异，同时用两个可以覆盖各自盲区。
+
+* 总结
+
+2026 年的 Python 库开发已经形成了一个清晰的工具栈：
+
+- =uv= 管理一切（项目创建、依赖、虚拟环境、构建、发布）
+- =ruff= 负责 lint 和格式化
+- =mypy= 负责类型检查
+- =pytest= + =pytest-cov= 负责测试
+- pre-commit + CI 负责自动化执行以上检查
+
+这个栈最大的好处是工具数量少（主要来自 Astral 一家），各工具之间没有配置冲突。对于 2020 年需要同时维护 flake8 配置、black 配置、isort 配置、poetry 配置的时代来说，这无疑是一个进步。
