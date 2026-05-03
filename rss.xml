@@ -4,10 +4,685 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sat, 02 May 2026 03:44:05 UTC</pubDate>
-    <lastBuildDate>Sat, 02 May 2026 03:44:05 UTC</lastBuildDate>
+    <pubDate>Sun, 03 May 2026 00:07:43 UTC</pubDate>
+    <lastBuildDate>Sun, 03 May 2026 00:07:43 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>从CSS选择器到自然语言：网页自动化的两种范式与取舍框架</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/从css选择器到自然语言：网页自动化的两种范式与取舍框架/index.html</link>
+<description>* 引子：为什么写爬虫这么容易坏
+
+假设你要从某个电商网站抓取笔记本电脑的价格。传统做法是打开浏览器的开发者工具, 找到价格元素的 CSS 类名, 然后这样写：
+
+#+begin_src python
+price = await card.locator(&quot;h4.price&quot;).text_content()
+#+end_src
+
+这条代码今天能跑。但明天呢？设计稿一改, 这个类名很可能就变了。你得重新打开开发者工具, 重新定位, 重写选择器。页面改版一次, 爬虫就死一次。
+
+维护 CSS 选择器的成本常常被低估：初版写爬虫花 1 小时, 后续维护可能花 10 小时。而且每次改动都是重复劳动, 没有任何累积价值。
+
+如果换一种思路呢？不说&quot;提取 h4.price 的内容&quot;, 而是说&quot;帮我找到所有 NVIDIA 显卡的游戏本, 提取名字、价格和 GPU 型号&quot;。让程序自动理解页面, 自动定位元素, 而不是你替它定位。
+
+这就引出了网页自动化的两种不同范式。
+
+* 两种范式
+
+** 精确指令范式
+
+这是传统的做法：你告诉程序每一步怎么做。
+
+#+begin_src text
+1. 打开 URL
+2. 找到 class=&quot;product-card&quot; 的元素
+3. 在它里面找到 class=&quot;price&quot; 的元素
+4. 读取文本内容
+#+end_src
+
+优点是指令精确, 执行速度快, 结果确定。但缺点也很明显：你对页面的结构做了假设, 页面一改假设就失效。每次页面更新都是一次人工维护。
+
+** 目标描述范式
+
+这是新做法：你告诉程序你想要什么, 它自己想办法。
+
+#+begin_src text
+目标：找到 RTX 50 系列的游戏本, 预算 1500 美元以内, 提取名称、价格和显卡型号
+#+end_src
+
+程序（一个 LLM 驱动的 Agent）自己打开网页, 自己识别哪些元素是产品卡片, 自己找到价格和规格信息。你不需要关心页面的 HTML 结构。
+
+缺点是慢（每次执行都需要 LLM 推理）, 贵（每次调用都有 Token 成本）, 而且结果不保证一致。同一个任务跑两次可能拿到不同的数据。
+
+** 核心区别
+
+| 维度 | 精确指令 | 目标描述 |
+|------|----------|----------|
+| 你写什么 | 操作步骤 | 最终目标 |
+| 对页面结构的依赖 | 强, 类名/层级固定 | 弱, 语义理解 |
+| 页面改版后 | 代码需要重写 | 通常还能跑 |
+| 执行速度 | 毫秒到秒级 | 秒到分钟级 |
+| 运行成本 | 几乎为零 | 每次有 LLM 推理成本 |
+| 结果确定性 | 完全相同 | 每次可能不同 |
+| 适用任务 | 规则明确的操作 | 需要判断和综合的任务 |
+
+这个表格说明一件事：两个范式没有绝对优劣。重点不在&quot;哪个更好&quot;, 得先搞清楚&quot;什么时候用哪个&quot;。
+
+* 自主化的自动化：Agent + Judge 架构
+
+目标描述范式内部是一套闭环系统, 不是调一次 LLM 就完事。
+
+** Worker 循环
+
+Agent 拿到任务后进入一个循环：
+
+1. *执行 (Action)* ：从内置工具箱中选一个操作（导航、点击、提取、滚动）
+2. *评估 (Eval)* ：上一步操作成功了吗？如果失败就重试
+3. *记忆 (Memory)* ：记录已经完成的工作, 避免重复
+4. *规划 (Next Goal)* ：基于当前进度决定下一步做什么
+
+这个循环的好处是能自我纠正。传统脚本碰到意外情况就直接崩溃, Agent 的 Eval 步骤能发现失败并调整策略。比如某个按钮没找到, 不会抛出异常退出, 而是尝试其他方式定位。
+
+** Judge 独立审查
+
+Worker 完成后, 第二个 LLM 作为 Judge 审查结果。
+
+这个设计的思路是这样的：人做复杂任务时容易自我感觉良好, 看不到自己的盲区。LLM 也一样。Worker 看到的是完整的思考过程, 容易觉得自己&quot;做得还不错&quot;。Judge 只看到原始任务和最终结果, 能以新视角找出问题。
+
+在该示例中, Judge 发现 Worker 把一篇关于加密技术的文章错误归类为 AI 相关文章。这个分类错误并不显眼, 但 Judge 抓住了。
+
+** 通用设计原则
+
+Agent + Judge 架构不限于网页爬虫。它的本质是两个角色的分离：
+
+- 一个能做决策的执行器 + 一个能发现问题的评审器
+- 执行器负责灵活应对变化, 评审器负责把住质量底线
+- 两者视角不同, 才能相互制衡
+
+如果你在设计 AI 工作流, 可以试试这个分离模式。
+
+* 四个决策维度
+
+下面是四个核心取舍维度, 帮助你判断哪种范式适合当前任务。
+
+** 速度 vs 灵活性
+
+精确指令范式快。定位一个元素是毫秒级的操作。但这个快建立在&quot;页面结构稳定&quot;的假设上。页面一改, 快就没意义了, 因为代码跑不了。
+
+目标描述范式慢。每次操作都有 LLM 推理延迟, 一个简单的数据提取任务可能花 30 到 60 秒。但这个慢换来了适应性：页面结构变了, Agent 通常还能自己找路。
+
+取舍逻辑：如果页面稳定、任务频繁执行, 精确指令更划算。如果任务是一次性的、或者目标站点经常改版, 目标描述的总体成本（开发时间加维护时间）反而更低。
+
+** 确定性 vs 适应性
+
+精确指令范式每次执行结果完全相同。这在很多场景下是硬要求。比如金融数据的定时采集, 结果不一致比慢更可怕。
+
+目标描述范式每次都可能走不同路径。同一个提取任务, 两次运行之间分类结果可能不一样。
+
+取舍逻辑：需要审计级可靠性的场景选精确指令。能容忍&quot;今天的结果和昨天有细微差异&quot;的场景再考虑目标描述。
+
+** 成本结构
+
+精确指令范式的成本是一次性的开发成本。写爬虫花时间, 但跑起来几乎不花钱。
+
+目标描述范式正相反。每次执行都有 Token 成本。Hacker News 示例跑了 42,339 个 Token, 花费约 12 美分（用 GPT-4o）。看起来不多, 但请注意：后续步骤会携带完整对话历史, 步骤越长上下文越大, 成本会加速增长。
+
+降低成本有三种方式：
+
+- 换便宜模型。GPT-4o-mini 或 Haiku 能把成本降到两美分以下
+- 用本地模型。Ollama 或 LM Studio 可以把单次运行成本降到零。注意需要 30B+ 参数级别的模型才能可靠输出结构化结果
+- 缩短提示词。每少一步推理, 上下文就少几千 Token
+
+** 任务类型
+
+精确指令适合规则匹配型任务。&quot;提取 class=price 的文本内容&quot;、&quot;点击 class=next-page 的按钮&quot;。这些任务不需要 LLM, 用了反而添乱。
+
+目标描述适合判断综合型任务。&quot;找出所有 AI 相关的故事&quot;、&quot;总结这些产品的共同点&quot;、&quot;挑出性价比最高的那一款&quot;。这些任务需要某种程度的理解, 纯规则无法完成。
+
+* 新范式什么时候翻车
+
+目标描述范式不是万能药。Newegg 购物网站的实验就是一个典型的失败案例。
+
+任务是筛选&quot;1500 美元以内、RTX 50 系列、32GB 内存&quot;的游戏本。Agent 出了三个问题：
+
+1. 价格过滤器输入了数值但没有点击 APPLY。页面没刷新, 结果里混入了超出预算的产品
+2. 32GB 内存条件被静默忽略。最终返回的全部是 16GB 内存的笔记本
+3. 翻页只做了第一页, 没有收集全部结果
+
+三个问题指向同一个根因：LLM 对精确约束条件不够敏感。Agent 倾向于&quot;差不多就行了&quot;, 而不是&quot;必须严格满足每个条件&quot;。
+
+翻译成更通用的表述：目标描述范式适合&quot;软约束&quot;任务（帮我找有趣的故事）, 但不适合&quot;硬约束&quot;任务（必须精确满足 N 个条件）。如果把硬约束任务交给目标描述范式, 约束条件很可能被突破。
+
+* 决策树
+
+综合上面的分析, 下面是一个简单的决策流程：
+
+1. 任务涉及精确的数字过滤吗（预算 1500 元、32GB 内存）？
+   - 是 → 用精确指令范式。把条件写死在代码里, 确保每个都被严格执行
+   - 否 → 看第 2 条
+2. 任务需要判断或分类吗（&quot;哪篇是 AI 相关文章&quot;&quot;这个产品的卖点是什么&quot;）？
+   - 是 → 目标描述范式很合适
+   - 否 → 看第 3 条
+3. 任务频率高、对速度敏感吗？
+   - 是 → 精确指令范式更好
+   - 否 → 两个都能用, 按开发时间成本选
+
+决策核心只有一句话： *规则清晰、频繁执行的任务用精确指令；需要判断、页面多变的任务用目标描述。*
+
+* 不是二选一
+
+评论区有一个观点值得单独拿出来说。读者 Jason Zions 提了一个思路：让 LLM 帮你生成 CSS 选择器。
+
+具体做法是这样的：
+
+1. 用目标描述范式跑一次。Agent 在页面上找到你要的数据
+2. 把 Agent 实际用到的定位方式（CSS 选择器、XPath）记录下来
+3. 以后的任务直接用这些选择器跑精确指令, 又快又省钱
+4. 页面结构改了怎么办？再跑一次 Agent, 更新选择器
+
+这个办法把两种范式串联成一个工作流。LLM 做它最擅长的&quot;适应变化&quot;部分, 精确脚本做它最擅长的&quot;重复执行&quot;部分。谁适合干什么就干什么, 不做非此即彼的选择。
+
+相比直接做单选题, 这个组合方案可能更值得在实际项目中尝试。
+
+* 总结
+
+网页自动化正在经历从&quot;写指令&quot;到&quot;说目标&quot;的转变。但新范式不是在替换旧范式, 而是在旧范式之上增加了一层能力。
+
+精确指令范式适合高频执行、需要确定性、精确约束的任务。
+目标描述范式适合需要判断和综合、页面多变、一次性的任务。
+
+两者之间的选择不是技术选型, 而是对任务本质的判断：你的任务更像一条流水线, 还是更像一次探索？
+</description>
+<pubDate>2026-05-03</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/从css选择器到自然语言：网页自动化的两种范式与取舍框架/index.html</guid>
+</item>
+<item>
+<title>读：Emacs newcomers-presets theme —— 30+ 项新手预设一览</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/读：emacs-newcomers-presets-theme-——-30+-项新手预设一览/index.html</link>
+<description>Emacs 开发版（2026 年 2 月起）里塞了一个叫 =newcomers-presets= 的 theme。加载它之后，Emacs 一口气给你设好 30+ 项配置，不用自己一个个去找。
+
+这个 theme 会在 Emacs 31 中正式发布。想现在试的，跑：
+
+#+begin_src emacs-lisp
+M-x load-theme RET newcomers-presets RET
+#+end_src
+
+启动界面上也有入口。想永久启用的话， =M-x customize-themes= 勾上再保存就行。
+
+Sacha Chua 在 [[https://sachachua.com/blog/2026/04/what-s-in-the-emacs-newcomers-presets-theme/][博客]] 里逐条做了记录，我按功能分类整理如下。
+
+* 键盘快捷键
+
+#+begin_src emacs-lisp
+(setopt repeat-mode t)
+#+end_src
+
+启用 repeat-mode 后，部分命令可以用快捷键的最后一段来重复。比如用 =C-x n n= 进入 =narrow= 状态后，再按 =n= 就能继续 narrow，不用每次按完整的 =C-x n n= 。
+
+* 外观
+
+#+begin_src emacs-lisp
+(pixel-scroll-mode 1)
+#+end_src
+
+滚动平滑了，不再是一行一行跳。
+
+#+begin_src emacs-lisp
+(add-hook &#39;prog-mode-hook &#39;display-line-numbers-mode)
+(add-hook &#39;text-mode-hook &#39;display-line-numbers-mode)
+#+end_src
+
+代码和文本 buffer 默认都显示行号。
+
+#+begin_src emacs-lisp
+(setopt column-number-mode t)
+#+end_src
+
+模式行显示列号。
+
+
+#+begin_src emacs-lisp
+(setopt font-use-system-font t)
+#+end_src
+
+Emacs 使用系统默认等宽字体，而非自身配置的字体。
+
+#+begin_src emacs-lisp
+(setopt frame-resize-pixelwise t)
+(setopt window-resize-pixelwise t)
+#+end_src
+
+窗口和 frame 可以按像素调整，不受字符网格的限制。
+
+#+begin_src emacs-lisp
+(setopt frame-inhibit-implied-resize t)
+#+end_src
+
+改了字体或调整界面元素时 frame 大小不变，不会出现改个字体窗口就跟着跳的情况。
+
+#+begin_src emacs-lisp
+(setopt mode-line-compact &#39;long)
+#+end_src
+
+模式行太宽时自动压缩，连续空格合并成单个。
+
+* 会话持久化
+
+#+begin_src emacs-lisp
+(setopt savehist-mode t)
+#+end_src
+
+Minibuffer 历史跨会话保存。下次打开 Emacs， =M-x= 里用 =M-p= =M-n= 还能翻到上次敲过的命令。
+
+#+begin_src emacs-lisp
+(setopt save-place-mode t)
+#+end_src
+
+记录每个文件的上次光标位置。
+
+#+begin_src emacs-lisp
+(setopt recentf-mode t)
+#+end_src
+
+记录最近打开的文件， =M-x recentf-open-files= 或 =C-x C-r= 快速打开。
+
+* 补全
+
+这一组配置影响补全候选列表的行为（ =M-x TAB= 或其他需要补全的场景）。
+
+#+begin_src emacs-lisp
+(setopt minibuffer-visible-completions t)
+#+end_src
+
+可以用上下箭头在 minibuffer 中直接选择补全候选， =RET= 确认选中项。
+
+#+begin_src emacs-lisp
+(setopt completions-detailed t)
+#+end_src
+
+补全列表展示更多细节（如 =C-h o= 的函数说明）。
+
+#+begin_src emacs-lisp
+(setopt completions-group t)
+#+end_src
+
+候选按命令或来源分组显示。
+
+#+begin_src emacs-lisp
+(setopt completion-auto-select &#39;second-tab)
+#+end_src
+
+第一次按 TAB 显示补全列表，第二次 TAB 跳转到补全 buffer。
+
+#+begin_src emacs-lisp
+(setopt completion-eager-update t)
+#+end_src
+
+补全 buffer 随输入实时更新筛选。
+
+#+begin_src emacs-lisp
+(setopt completion-styles &#39;(basic emacs22 flex))
+#+end_src
+
+补全风格设为三种：
+- =basic= ：按前缀匹配
+- =emacs22= ：光标前后分别作为前缀和后缀匹配
+- =flex= ：模糊匹配（ =a-b= 可以匹配 =apple-banana= ）
+
+#+begin_src emacs-lisp
+(setopt global-completion-preview-mode t)
+#+end_src
+
+在光标位置自动显示补全预览。TAB 接受建议， =M-i= 补全最长公共前缀。
+
+#+begin_src emacs-lisp
+(setopt tab-always-indent &#39;complete)
+#+end_src
+
+TAB 优先尝试缩进，如果当前行已经缩进过了就触发补全。部分编程语言有自己的变量控制这个行为（如 =c-tab-always-indent= ），可能需要额外调整。
+
+* 帮助
+
+#+begin_src emacs-lisp
+(setopt which-key-mode t)
+#+end_src
+
+按完快捷键前缀（比如 =C-c= ）后稍等片刻，Emacs 会弹出后续可用的按键列表。对新手熟悉快捷键很有帮助。
+
+* Tab bar
+
+#+begin_src emacs-lisp
+(setopt tab-bar-show 0)
+#+end_src
+
+始终显示 tab bar。Tab 可以保存窗口布局和 buffer 组合，点击 tab 切换配置，点 + 新建 tab。
+
+#+begin_src emacs-lisp
+(setopt tab-bar-history-mode t)
+#+end_src
+
+Tab 配置变更的历史可前后导航，类似浏览器前进/后退。
+
+* Dired
+
+#+begin_src emacs-lisp
+(setopt dired-auto-revert-buffer t)
+#+end_src
+
+每次重新进入目录时自动刷新 Dired buffer。
+
+#+begin_src emacs-lisp
+(setopt dired-mouse-drag-files t)
+#+end_src
+
+支持鼠标拖放文件。Ctrl+左键拖放复制文件，Shift+左键拖放移动，Meta+左键拖放创建链接。X11、Haiku、macOS、GNUstep 上还可以拖到 Emacs 外的应用程序。
+
+#+begin_src emacs-lisp
+(setopt shell-command-prompt-show-cwd t)
+#+end_src
+
+执行 shell 命令时显示当前目录。
+
+* 包管理
+
+#+begin_src emacs-lisp
+(setopt package-autosuggest-mode t)
+#+end_src
+
+打开一个文件时，如果 Emacs 知道有可选包能提供额外支持，会在模式行显示 [Upgrade?] 提示。比如打开 =Dockerfile= 时提示安装 =dockerfile-mode= 。
+
+#+begin_src emacs-lisp
+(setopt package-menu-use-current-if-no-marks nil)
+#+end_src
+
+在 =M-x list-packages= 中， =x= （ =package-menu-execute= ）不再默认操作当前行。需要先用 =i= 标记安装、 =d= 标记删除、 =u= 取消标记，再用 =x= 执行。防止误操作。
+
+* 代码
+
+#+begin_src emacs-lisp
+(add-hook &#39;prog-mode-hook &#39;flyspell-mode)
+#+end_src
+
+在代码 buffer 中启用拼写检查。
+
+#+begin_src emacs-lisp
+(setopt compilation-scroll-output &#39;first-error)
+#+end_src
+
+=M-x compile= 时，编译输出窗口会自动滚动，但停在第一个错误处。
+
+#+begin_src emacs-lisp
+(setopt global-xref-mouse-mode t)
+#+end_src
+
+Ctrl+左键点击函数名，跳转到定义（ =xref-find-definitions-at-mouse= ）。
+
+#+begin_src emacs-lisp
+(setopt electric-pair-mode t)
+#+end_src
+
+自动插入匹配的括号、花括号、方括号。
+
+#+begin_src emacs-lisp
+(setopt indent-tabs-mode nil)
+#+end_src
+
+缩通用空格而非制表符。
+
+#+begin_src emacs-lisp
+(setopt editorconfig-mode t)
+#+end_src
+
+支持 =.editorconfig= 文件，跨项目统一缩进风格。
+
+#+begin_src emacs-lisp
+(setopt etags-regen-mode t)
+#+end_src
+
+保存文件时自动重新生成 TAGS 表。用 etags 做代码跳转的场景下比较有用。
+
+* 版本控制
+
+#+begin_src emacs-lisp
+(setopt vc-auto-revert-mode t)
+#+end_src
+
+版本控制更新的文件自动从磁盘重新加载。
+
+#+begin_src emacs-lisp
+(setopt vc-dir-save-some-buffers-on-revert t)
+#+end_src
+
+目录有版本控制变更但你有未保存的修改时，Emacs 会询问是否先保存再回退。
+
+#+begin_src emacs-lisp
+(setopt vc-find-revision-no-save t)
+#+end_src
+
+=vc-find-revision= 查看历史版本时在临时 buffer 中显示，不替换当前文件。
+
+#+begin_src emacs-lisp
+(setopt vc-follow-symlinks t)
+#+end_src
+
+打开版本控制仓库中的符号链接时，自动跳转到真实文件。
+
+#+begin_src emacs-lisp
+(setopt vc-use-incoming-outgoing-prefixes t)
+#+end_src
+
+=C-x v I= 和 =C-x v O= 的子命令增加快捷键——如 =C-x v I L= 是 =vc-root-log-incoming= ， =C-x v O L= 是 =vc-root-log-outgoing= 。用 =C-x v I C-h= 和 =C-x v O C-h= 查看全部子命令。
+
+#+begin_src emacs-lisp
+(setopt vc-deduce-backend-nonvc-modes t)
+#+end_src
+
+在所有 buffer 中自动检测版本控制系统。标准 Emacs 只在 Dired、shell、eshell、compilation-mode 中检测。
+
+* 总结
+
+这 30+ 项配置的完整代码可以到 =etc/themes/newcomers-presets-theme.el= 查看。如果你用的是 Emacs 30 或更早版本，可以把需要的配置项挑出来加到自己的配置里。
+
+想一次性体验全部效果的话，上面列出的配置按顺序放到 =init.el= 里就能用。注意 =newcomers-presets= 是一个自定义 theme，和普通 theme 互不影响，你可以同时启用一个颜色 theme 和这个预设 theme。
+</description>
+<pubDate>2026-05-02</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/读：emacs-newcomers-presets-theme-——-30+-项新手预设一览/index.html</guid>
+</item>
+<item>
+<title>读：Protesilaos 的 Emacs 合理默认配置 —— 兼与 newcomers-presets 对比</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/读：protesilaos-的-emacs-合理默认配置-——-兼与-newcomers-presets-对比/index.html</link>
+<description>上次整理了 [[./读：Emacs newcomers-presets theme —— 30+ 项新手预设一览.org][newcomers-presets theme]] 的配置清单。几天后，Protesilaos（Prot）在和 Sacha Chua 的 livestream 上聊了这个话题，随后分享了一份自己的&quot;sensible defaults&quot;配置。
+
+Prot 在 Emacs 社区以 themes（Modus/ef 系列）、icon 等包闻名。他这份配置不是个人完整配置，而是&quot;跟不同水平的人交流后，觉得有用的基础配置&quot;。
+
+这篇笔记把他的配置逐段过一遍，顺带对比两种思路的差异。
+
+* 两种思路的根本差异
+
+| 方面     | newcomers-presets               | Prot 的方案                         |
+|----------+---------------------------------+-------------------------------------|
+| 形式     | Emacs theme， =load-theme= 加载 | 配置片段，合并到 =init.el=          |
+| 开关     | 随时 =disable-theme= 关闭       | 修改 =init.el= 移除                 |
+| 作用域   | 只设 =setopt= / =add-hook=      | 可设任何 Elisp                      |
+| 包依赖   | 纯内置，不装包                  | 推荐 6 个第三方包                   |
+| 改动范围 | 30+ 项细微调整                  | 更激进（如 =custom-safe-themes= t） |
+
+newcomers-presets 的定位是&quot;开箱即友好的默认值&quot;：不改用户的配置习惯，不满意可以关掉。Prot 的思路则是&quot;给一份我觉得对的配置&quot;，他认为对新手来说，一开始就用对的设置比&quot;错了再改&quot;更省事。
+
+* custom-file 分离
+
+#+begin_src emacs-lisp
+(setq custom-file (locate-user-emacs-file &quot;custom.el&quot;))
+(load custom-file :no-error-if-file-is-missing)
+#+end_src
+
+Prot 第一件事就是把 =custom.el= 从 =init.el= 里拆出来，单独用一个文件存 =M-x customize= 产生的配置。没有 =custom-file= 时，Emacs 把这些自动生成的配置直接写进 =init.el= ，跟手写配置混在一起。想删掉某个 customize 项得在 =init.el= 里翻半天，分不清哪些是自动写的、哪些是自己手写的。
+
+这一条和 newcomers-presets 不冲突，无论哪种方案，都应该设 =custom-file= 。
+
+* 包仓库优先级
+
+#+begin_src emacs-lisp
+(setq package-archives
+      &#39;((&quot;gnu-elpa&quot; . &quot;https://elpa.gnu.org/packages/&quot;)
+        (&quot;nongnu&quot; . &quot;https://elpa.nongnu.org/nongnu/&quot;)
+        (&quot;melpa&quot; . &quot;https://melpa.org/packages/&quot;)))
+(setq package-archive-priorities
+      &#39;((&quot;gnu-elpa&quot; . 3)
+        (&quot;nongnu&quot; . 2)
+        (&quot;melpa&quot; . 1)))
+#+end_src
+
+Prot 把 GNU ELPA 的优先级设为最高（3），NonGNU 其次（2），MELPA 最低（1）。 =gnu-elpa= 这个名字比默认的 =gnu= 更直观（新手容易混淆 =gnu= 和 =elpa= ）。
+
+newcomers-presets 没动包仓库配置，只设了 =package-autosuggest-mode= 提醒用户装包。
+
+* 通用设置（General options）
+
+#+begin_src emacs-lisp
+(defun prot/keyboard-quit-dwim ()
+  &quot;Do-What-I-Mean behaviour for a general `keyboard-quit&#39;.&quot;
+  (interactive)
+  (cond
+   ((region-active-p)
+    (keyboard-quit))
+   ((derived-mode-p &#39;completion-list-mode)
+    (delete-completion-window))
+   ((&gt; (minibuffer-depth) 0)
+    (abort-recursive-edit))
+   (t
+    (keyboard-quit))))
+#+end_src
+
+=C-g= 被绑定到一个 DWIM 函数：激活了区域就取消选择，打开了 minibuffer 就关闭，Completions buffer 被选中就关闭，否则退出的常规行为。这个函数把 =C-g= 改成了一个通用的&quot;取消当前操作&quot;按钮，非常实用。
+
+#+begin_src emacs-lisp
+(set-face-attribute &#39;default nil :family &quot;Aporetic Sans Mono&quot; :height 160)
+(set-face-attribute &#39;fixed-pitch nil :family &quot;Aporetic Serif Mono&quot; :height 1.0)
+(set-face-attribute &#39;variable-pitch nil :family &quot;Aporetic Sans&quot; :height 1.0)
+#+end_src
+
+字体设的是 Prot 自己做的 Aporetic 系列字体。读者换成自己的字体即可。
+
+#+begin_src emacs-lisp
+  (setq custom-safe-themes t)
+  (setq use-short-answers t)
+  (setq read-answer-short t)
+  (setq help-window-select t)
+  (setq help-window-keep-selected t)
+  (setq window-combination-resize t)
+  (setq save-interprogram-paste-before-kill t)
+  (setq completion-category-defaults nil)
+#+end_src
+
+几个值得注意的：
+
+- =custom-safe-themes t= ：最激进的一行。不再询问每个 theme 是否安全。Prot 的理由是&quot;理论上任何 Elisp 文件都能跑任意代码，theme 安全提示在安全层面没实际作用&quot;。这个看个人风险偏好。
+- =use-short-answers t= ：把 =yes/no= 改成 =y/n= 。Emacs 28 引入，省事。
+- =help-window-select t= + =help-window-keep-selected t= ：打开帮助窗口时自动聚焦，且在帮助 buffer 中继续按快捷键不会跳回原来的窗口。newcomers-presets 没设这些。
+- =save-interprogram-paste-before-kill t= ：从系统剪贴板粘贴后，下次 kill 不会覆盖粘贴的内容。防止粘贴后不小心删掉东西找不回来。
+
+* 会话与编辑
+
+#+begin_src emacs-lisp
+(savehist-mode 1)
+(delete-selection-mode 1)
+#+end_src
+
+=savehist-mode= 和 newcomers-presets 里的 =savehist-mode t= 一回事。 =delete-selection-mode= （选中文本后输入直接替换）newcomers-presets 没设。
+
+* 书签
+
+#+begin_src emacs-lisp
+(setq bookmark-fringe-mark nil)
+(setq bookmark-save-flag 1)
+#+end_src
+
+关闭 fringe 上的书签图标（很多人不知道那是什么），且每增删一次书签就立即保存文件，而不是等 Emacs 退出时再写。
+
+* Dired
+
+#+begin_src emacs-lisp
+(setq dired-kill-when-opening-new-dired-buffer t)
+(setq dired-auto-revert-buffer #&#39;dired-directory-changed-p)
+(setq dired-recursive-copies &#39;always)
+(setq dired-recursive-deletes &#39;always)
+(setq delete-by-moving-to-trash t)
+(setq dired-create-destination-dirs &#39;ask)
+#+end_src
+
+Prot 的 Dired 配置比 newcomers-presets 丰富得多：
+- 打开新目录时复用当前 Dired buffer，不产生一堆 buffer
+- 递归复制和删除不需要确认（但删除走回收站，所以安全）
+- =delete-by-moving-to-trash t= ：删除文件不进回收站的人应该不多
+
+* Isearch
+
+#+begin_src emacs-lisp
+(setq isearch-lazy-count t)
+(setq lazy-count-prefix-format &quot;(%s/%s) &quot;)
+(setq lazy-count-suffix-format nil)
+#+end_src
+
+搜索时实时显示&quot;当前匹配 /总匹配数&quot;。Emacs 30 开始默认就有，但 Prot 把格式改成了更紧凑的 =(%s/%s)= 前缀。
+
+* Ediff
+
+#+begin_src emacs-lisp
+(setq ediff-split-window-function &#39;split-window-horizontally)
+(setq ediff-window-setup-function &#39;ediff-setup-windows-plain)
+#+end_src
+
+Ediff 的默认窗口布局在平铺窗口管理器上几乎没法用：控制面板会单独开一个 frame。Prot 把它改成水平分割的窗口内布局，这也是社区常见的优化。
+
+* 辅助窗口布局（display-buffer-alist）
+
+让帮助窗口、occur/grep 结果等出现在合适的位置，而不是随机占一个窗口。
+
+#+begin_src emacs-lisp
+(add-to-list &#39;display-buffer-alist
+             &#39;((or . ((derived-mode . occur-mode)
+                      (derived-mode . grep-mode)
+                      (derived-mode . Buffer-menu-mode)
+                      (derived-mode . log-view-mode)
+                      (derived-mode . help-mode)))
+               (display-buffer-reuse-mode-window display-buffer-below-selected)
+               (body-function . select-window)))
+#+end_src
+
+上例让 occur-mode、grep-mode 等辅助 buffer 优先复用一个同类型的窗口，否则在当前窗口下方打开，并自动聚焦。 =display-buffer-alist= 是 Emacs 窗口管理的高级话题，初学者可以直接照抄。
+
+* 推荐的包
+
+Prot 把推荐的包分了两级：
+
+*ESSENTIAL：vertico + marginalia*
+
+#+begin_src emacs-lisp
+(vertico-mode 1)
+(marginalia-mode 1)
+#+end_src
+
+=vertico= 提供垂直的补全候选列表（类似 Emacs 30 的 =minibuffer-visible-completions= 但更成熟）， =marginalia= 在 minibuffer 中给每个候选显示额外信息（如文件大小、函数签名）。
+
+有意思的是，newcomers-presets 选择了 Emacs 30 原生的补全增强，而 Prot 推荐了第三方包。两种方案都能用，但 vertico 的生态更成熟、社区用户更多。
+
+*VERY USEFUL：orderless + consult + embark + trashed*
+
+- =orderless= — 灵活的补全匹配方式（输入空格分隔的关键词，匹配包含所有关键词的候选），替代 Prot 配置中的 =completion-styles=
+- =consult= — 增强版搜索/跳转命令（ =consult-buffer= 、 =consult-line= 等）
+- =embark= — 对任意候选执行操作（比如在 minibuffer 中对文件候选执行复制、重命名等）
+- =trashed= — 回收站的文件管理器，跟 =delete-by-moving-to-trash= 配合使用
+
+* 总结
+
+Prot 这份配置和 newcomers-presets 不是替代关系。newcomers-presets 的目标是&quot;给 Emacs 新手一个更好的默认值，不满意随时关&quot;，改动谨慎、可逆。Prot 的配置更接近&quot;一个 Emacs 老手认为初学者应该用的设置&quot;，有些选择比较个人化（ =custom-safe-themes t= 、DWIM 的 =C-g= ）。
+
+对读者来说，两个可以同时用：先加载 newcomers-presets 获得基础改进，再从 Prot 的配置里挑自己需要的片段加上。newcomers-presets 的完整代码在 Emacs 源码的 =etc/themes/newcomers-presets-theme.el= ，Prot 的这份配置在 [[https://protesilaos.com/codelog/2026-04-30-emacs-decent-default-sacha-chua/][他的博客]]。
+</description>
+<pubDate>2026-05-02</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/读：protesilaos-的-emacs-合理默认配置-——-兼与-newcomers-presets-对比/index.html</guid>
+</item>
 <item>
 <title>TIL-用 curl + w3m + awk 从 HTML 表格提取数据</title>
 <link>https://lujun9972.github.io/blog/2026/05/02/til-用-curl-+-w3m-+-awk-从-html-表格提取数据/index.html</link>
@@ -98,6 +773,190 @@ The Home Depot
 </description>
 <pubDate>2026-05-02</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/02/til-用-curl-+-w3m-+-awk-从-html-表格提取数据/index.html</guid>
+</item>
+<item>
+<title>控制 Bash 历史记录的 6 个场景</title>
+<link>https://lujun9972.github.io/blog/2026/05/02/控制-bash-历史记录的-6-个场景/index.html</link>
+<description>你多半遇到过这个情况：在共享服务器上敲了一行带密码的 curl，回车瞬间就后悔了。Bash 默认把所有输入的命令都记在 =~/.bash_history= 里，对你的账号有读权限的人都能看这个文件的内容。
+
+好在 Bash 提供了精细的控制手段，关键看你在什么场景。
+
+* Bash 历史记录的工作原理
+
+先理解 Bash 什么时候写历史，才能控制它。
+
+会话中，每条命令先进入内存中的历史列表。会话正常结束时，这个列表追加写入 =~/.bash_history= 。如果终端崩溃或被 kill 掉，当前会话的历史全部丢失。
+
+三个关键环境变量：
+
+#+begin_src sh
+echo $HISTFILE
+echo $HISTSIZE
+echo $HISTFILESIZE
+#+end_src
+
+#+begin_example
+/home/lujun9972/.bash_history
+5000
+
+#+end_example
+
+- =HISTFILE= ：历史写入的文件
+- =HISTSIZE= ：内存中保留的命令数（默认 5000）
+- =HISTFILESIZE= ：磁盘文件最大行数（空表示不限）
+
+理解了&quot;内存中&quot;和&quot;写入磁盘&quot;之间的时间差，后面的技巧就清晰了。
+
+* 场景一：命令还没执行，但不想被记下来
+
+假设你要跑这行命令：
+
+#+begin_src sh
+export API_KEY=&quot;supersecretkey123&quot;
+#+end_src
+
+回车前，在命令最前面加一个空格：
+
+#+begin_src sh
+ export API_KEY=&quot;supersecretkey123&quot;
+#+end_src
+
+前提是 =HISTCONTROL= 包含 =ignorespace= 。先检查一下：
+
+#+begin_src sh
+echo $HISTCONTROL
+#+end_src
+
+#+begin_example
+ignorespace:erasedups
+#+end_example
+
+看到 =ignorespace= 或 =ignoreboth= 就没问题。如果没设，加到 =~/.bashrc= ：
+
+#+begin_src sh
+export HISTCONTROL=ignorespace
+#+end_src
+
+然后重新加载：
+
+#+begin_src sh
+source ~/.bashrc
+#+end_src
+
+* 场景二：命令已经执行了，想删掉
+
+先查看历史列表找到行号：
+
+#+begin_src sh
+history
+#+end_src
+
+#+begin_example
+ 497  sudo systemctl restart nginx
+ 498  export DB_PASS=&quot;hunter2&quot;
+ 499  curl https://api.example.com/token
+ 500  ls -la /etc/nginx
+#+end_example
+
+删除第 498 行：
+
+#+begin_src sh
+history -d 498
+history
+#+end_src
+
+#+begin_example
+ 497  sudo systemctl restart nginx
+ 499  curl https://api.example.com/token
+ 500  ls -la /etc/nginx
+#+end_example
+
+删除只在内存中生效。会话正常结束时，Bash 把当前内存列表写入磁盘，所以磁盘文件也会同步更新。
+
+但有一个坑：如果被删的命令之前已经写入磁盘（例如之前的会话写入了，或 =PROMPT_COMMAND= 自动追加了历史）， =history -d= 只删内存，磁盘文件不受影响。这时需要用 =history -w= 覆写整个文件来彻底清除：
+
+#+begin_src sh
+history -w
+#+end_src
+
+这条命令把当前内存列表（不包含第 498 行）直接覆写 =~/.bash_history= 。
+
+* 场景三：ls/cd/clear 刷屏，历史被淹没了
+
+连续敲了十几次 =cd= 和 =ls= ，回看历史发现全被这些刷屏了，真正有用的命令反而找不到。
+
+解决方案：让 Bash 跳过和上一条完全相同的命令。
+
+#+begin_src sh
+export HISTCONTROL=ignoredups
+#+end_src
+
+设完之后，连续敲 10 次 =ls= ，历史里只记一条。
+
+结合空格忽略就是 =ignoreboth= ：
+
+#+begin_src sh
+export HISTCONTROL=ignoreboth
+#+end_src
+
+加到 =~/.bashrc= 持久化：
+
+#+begin_src sh
+echo &#39;export HISTCONTROL=ignoreboth&#39; &gt;&gt; ~/.bashrc
+source ~/.bashrc
+#+end_src
+
+* 场景四：某类命令永远不想被记录
+
+空格前缀需要每次手动加，容易忘。更彻底的做法是用 =HISTIGNORE= 定义模式，匹配的命令根本不进入历史列表：
+
+#+begin_src sh
+export HISTIGNORE=&quot;ls*:cd*:pwd:clear:history:export *:curl *token*&quot;
+#+end_src
+
+模式之间用冒号分隔，支持通配符。上面这行会忽略所有以 =ls= 、 =cd= 开头的命令，以及所有 =export= 和带 =token= 参数的 =curl= 。
+
+加到 =~/.bashrc= 后记得 =source= 。注意别设太宽，不然忽略了 =sudo *= ，所有特权命令的审计痕迹都没了。
+
+* 场景五：整个会话不留痕迹
+
+有些场景（配置凭据、排查安全事件、在共享机器上干活），你希望当前会话的任何操作都不写磁盘：
+
+#+begin_src sh
+export HISTFILE=/dev/null
+#+end_src
+
+设完之后，当前会话照常在内存中记录历史（能用上下键翻看），但会话结束时不会写入磁盘。内存列表直接蒸发。
+
+相比 =unset HISTFILE= ，设成 =/dev/null= 更可移植，所有发行版行为一致。
+
+* 场景六：历史文件积了太多，想清空重来
+
+最直接的办法：
+
+#+begin_src sh
+history -c &amp;&amp; history -w
+#+end_src
+
+=history -c= 清空内存中的列表， =history -w= 把空列表覆写到磁盘。 =&amp;&amp;= 保证第一条成功了才跑第二条，不会意外搞砸。
+
+执行后 =cat ~/.bash_history= 返回空。
+
+* 总结
+
+| 场景 | 方法 |
+|------|------|
+| 单条命令不想被记 | 命令前加空格（需 =ignorespace= ） |
+| 已执行的命令要删除 | =history -d= 行号 |
+| =ls= /=cd= 刷屏 | =HISTCONTROL=ignoredups= |
+| 某类命令永不记录 | =HISTIGNORE= |
+| 整个会话不留痕迹 | =HISTFILE=/dev/null= |
+| 清空所有历史 | =history -c &amp;&amp; history -w= |
+
+建议现在就把 =export HISTCONTROL=ignoreboth= 加到 =~/.bashrc= ，然后想想 =HISTIGNORE= 里应该放哪些模式： =export= 、带认证头的 =curl= 、密码相关的命令都可以放进去。
+</description>
+<pubDate>2026-05-02</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/02/控制-bash-历史记录的-6-个场景/index.html</guid>
 </item>
 <item>
 <title>读：Shell脚本安全编码的五条铁律</title>
@@ -1140,701 +1999,6 @@ req-002: BLOCKED
 </description>
 <pubDate>2026-05-01</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/01/读：prompt-injection-五层纵深防御——从输入过滤到审计追踪/index.html</guid>
-</item>
-<item>
-<title>读：为什么所有 Prompt Injection 防御都会被攻破——以及架构上该怎么办</title>
-<link>https://lujun9972.github.io/blog/2026/05/01/读：为什么所有-prompt-injection-防御都会被攻破——以及架构上该怎么办/index.html</link>
-<description>DZone 上有一篇关于 prompt injection 的文章，标题很直白：为什么所有防御都会被攻破。2025 年底 OpenAI、Anthropic 和 Google DeepMind 的联合团队测试了 12 种公开防御方案，全部被绕过，成功率超过 90%。文章的核心论点：只靠加一层过滤解决不了问题，需要从架构层面重新思考。现状的做法是给房子装防盗门，但攻击者从窗户翻进来就没办法。文章说思路要改变一下，假设攻击者已经进来了，限制他能破坏的范围。
-
-* 为什么外围防御注定失败
-
-外围防御的方法有很多，比如输入过滤、关键词黑名单、前置分类器、限速等。但总能被绕过，输入过滤可以被编码绕过，黑名单可以被变体绕过，分类器可以在不同语境下被欺骗，限速在多轮交互中一样能被绕过。原因是这场对抗本来就不公平——你部署一套规则是一次性动作，攻击者则可以花无限时间反复试探。
-
-绕过路径各有差异，根因只有一个：当前 LLM 架构无法区分&quot;指令&quot;和&quot;数据&quot;。对模型来说一切都是 token。系统提示里的约束和文档里夹带的恶意文本，在模型看来是同一个东西。这个区分不在 prompt 层面，只能靠架构设计来实现。
-
-SQL 注入当年也面临过同样的困境。靠输入过滤和转义打了二十年的攻防战，直到参数化查询出现。关键不是过滤做得多好，是数据库引擎不再把用户输入当成代码执行,这样一来,注入在架构层面变得无关紧要。Prompt injection 需要同样的转向。
-
-* Capability Gate：不让模型决定自己能做什么
-
-文章的核心贡献是明确了一个原则：LLM 不应该是自己权限的授权者。模型决定它想做什么，一个独立的 Capability Gate 决定它能不能做。
-
-这是 Google DeepMind CaMeL 框架的思路。LLM 提出工具调用请求，一个外部执行器在放行之前验证每个计划动作是否在允许列表中。就算模型被注入后&quot;想&quot;往外发数据到外部 URL，Capability Gate 直接拒绝，因为该操作根本不在允许列表中，不管模型在对话中途被灌输了什么指令。
-
-下面是对应 Python 实现的核心逻辑：
-
-#+begin_src python :tangle /tmp/capability_gate.py
-  from dataclasses import dataclass
-  from typing import Any, Callable
-  import jsonschema, hashlib, time, logging
-
-
-  @dataclass
-  class ToolCall:
-      name: str
-      params: dict[str, Any]
-      session_id: str
-
-
-  def _request_human_approval(call: ToolCall) -&gt; str:
-      &quot;&quot;&quot;人工审批占位，实际系统中对接审批工作流。&quot;&quot;&quot;
-      return f&quot;[PENDING] 工具 &#39;{call.name}&#39; 等待人工审批——会话 {call.session_id}&quot;
-
-
-  class CapabilityGate:
-      &quot;&quot;&quot;策略逻辑在初始化时从外部配置加载，LLM 运行期间不可修改。&quot;&quot;&quot;
-
-      def __init__(self, policy: dict):
-          # 策略由工程师在启动时设置，LLM 无法改写
-          self.policy = policy
-          self.audit_log = []
-
-      def execute(self, call: ToolCall) -&gt; Any:
-          # 第 1 步：工具是否在允许列表里？
-          if call.name not in self.policy[&quot;allowed_tools&quot;]:
-              self._audit(call, &quot;BLOCKED_UNKNOWN_TOOL&quot;)
-              raise PermissionError(f&quot;工具 &#39;{call.name}&#39; 不在能力允许列表中&quot;)
-
-          tool_policy = self.policy[&quot;allowed_tools&quot;][call.name]
-
-          # 第 2 步：参数是否严格匹配声明的 schema？
-          try:
-              jsonschema.validate(call.params, tool_policy[&quot;param_schema&quot;])
-          except jsonschema.ValidationError as e:
-              self._audit(call, &quot;BLOCKED_SCHEMA_VIOLATION&quot;, str(e))
-              raise
-
-          # 第 3 步：高风险操作需要人工审批
-          if tool_policy.get(&quot;requires_human_approval&quot;):
-              self._audit(call, &quot;PENDING_HUMAN_REVIEW&quot;)
-              return self._request_human_approval(call)
-
-          # 全部检查通过，记录并执行
-          self._audit(call, &quot;EXECUTED&quot;)
-          handler: Callable = tool_policy[&quot;handler&quot;]
-          return handler(**call.params)
-
-      def _audit(self, call: ToolCall, outcome: str, detail: str = &quot;&quot;):
-          entry = {
-              &quot;ts&quot;: time.time(),
-              &quot;session&quot;: call.session_id,
-              &quot;tool&quot;: call.name,
-              &quot;params_hash&quot;: hashlib.sha256(
-                  str(call.params).encode()
-              ).hexdigest()[:16],
-              &quot;outcome&quot;: outcome,
-          }
-          self.audit_log.append(entry)
-          logging.info(
-              &quot;[GATE] %s | %s | session=%s&quot;, call.name, outcome, call.session_id
-          )
-#+end_src
-
-代码的关键在 `__init__` 那一行：policy 在启动时加载，注入的模型无法改写自己的允许列表。不管模型被什么指令操控，gate 只允许执行工程师部署时注册的工具。
-
-验证结果：
-
-#+begin_example
-测试 1：合法工具调用
-结果: 搜索 &#39;prompt injection防御&#39; 返回 10 条结果
-状态: 通过
-
-测试 2：未知工具拦截
-拦截: 工具 &#39;send_http_request&#39; 不在能力允许列表中
-状态: 通过
-
-测试 3：参数 schema 违规拦截
-拦截: 9999 is greater than the maximum of 100
-状态: 通过
-
-测试 4：高风险操作要求人工审批
-结果: [PENDING] 工具 &#39;delete_database&#39; 等待人工审批——会话 test-session-001
-状态: 通过
-#+end_example
-
-* 用隔离 LLM 处理外部内容
-
-间接注入最难防。恶意指令藏在用户上传的文档、邮件正文或网页内容里，在模型处理过程中被当作指令执行。
-
-修复方案不在过滤器，而在架构隔离。用一个隔离的 LLM 实例处理所有外部内容。这个模型没有记忆、不能调用工具、不能向主模型传递原始文本。它只提取事实、做摘要，返回结构化输出。主模型接收到的是隔离模型处理后的结果，永远不会直接看到原始文档。
-
-* 签名审计日志
-
-检测无法起到阻止的作用，但检测手段决定了发现问题的时间尺度。每次工具调用，不管执行还是被阻止，都应记录带有输入 prompt 和参数的加密哈希。注入成功时，审计日志可以告诉你模型当时被要求做什么、什么时候被要求。
-
-审计日志还应该存储在 LLM 没有写权限的 append-only 存储中。如果模型被注入后攻击者试图掩盖痕迹，日志存储必须从架构上不可触及。
-
-* 优先级：从缩减权限开始
-
-文章给出的优先级顺序很直白：
-
-#+begin_quote
-1. 立刻审查并缩减 LLM 能访问的工具列表——支付写入、外部 HTTP 调用、数据库变更需要硬理由
-2. 在 Capability Gate 层做参数 schema 验证
-3. 隔离所有外部文档处理
-4. 部署签名、append-only 的审计日志
-5. 最后才在外围加上检测手段
-#+end_quote
-
-最后一条有意思：输入过滤和模式黑名单这些手段不是没有，只是优先级被降低了。它们降低攻击流量，但不再承担核心防御责任。真正的防线在前四条。
-
-Prompt injection 解决不了，但可以管理。把精力从检测攻击转移到限制破坏范围上。不让模型自己决定能做什么，不让外部内容直接接触主模型，让每次操作都留下不可篡改的记录。这才是现实中安全该有的样子——防得滴水不漏是理想，漏了也翻不起浪才是现实。
-</description>
-<pubDate>2026-05-01</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/01/读：为什么所有-prompt-injection-防御都会被攻破——以及架构上该怎么办/index.html</guid>
-</item>
-<item>
-<title>读：JVM 后端性能调优备忘——从一次生产事故中学到的优化要点</title>
-<link>https://lujun9972.github.io/blog/2026/05/01/读：jvm-后端性能调优备忘——从一次生产事故中学到的优化要点/index.html</link>
-<description>DZone 上有一篇 Java 后端性能调优的实战记录，讲的是一套 Spring Boot + Hibernate 的订单系统在流量高峰时出问题，以及团队怎么从硬件堆砌转向真正的性能诊断。本文提炼其中的关键工具、排查思路和优化策略，作为一份备忘。
-
-* 诊断工具链：先拿数据再说
-
-遇到性能问题，原文第一条经验是： *不要猜，先做 profile* 。猜来猜去只会浪费时间，profile 摆在面前的数据不会骗人。
-
-** Java Flight Recorder (JFR)
-
-JFR 是 JDK 自带的低开销事件记录器，可以在生产环境持续运行。原文团队在流量高峰期录了 20 分钟的 JFR 数据。开销很低，可以放心在生产环境开着。
-
-JFR 最早在 JDK 7u4（2012 年）中以商业特性提供，需要额外加参数解锁。从 JDK 11 起已开源，所有实现（包括 OpenJDK）都直接可用。
-
-启用方式：在 JVM 启动参数加 ~-XX:StartFlightRecording=filename=recording.jfr,duration=60s~ 会在启动后录制 60 秒。对已经在运行的应用，可以用 =jcmd &lt;pid&gt; JFR.start duration=60s= 命令动态开启录制，用 =jcmd &lt;pid&gt; JFR.dump filename=recording.jfr= 导出数据。
-
-** Java Mission Control (JMC)
-
-JMC 是 JDK 自带的图形分析工具。JDK 7/8 中直接捆绑在 JDK 安装包内，JDK 11+ 之后需要从开源项目（https://github.com/JMC-Project/jmc）单独下载。打开 JMC 后加载录制好的 .jfr 文件，就能看到火焰图、GC 事件时间线、锁竞争分析、内存分配热点等视图。原文团队就是通过火焰图发现大块 CPU 时间花在 GC 上，从而锁定根因。
-
-* 三大常见性能杀手
-
-** 高对象分配率（Object Churn）
-
-原文的核心问题在于每个请求都创建了大量临时对象，这些对象迅速填满年轻代（Eden 区），频繁的触发 Minor GC。GC 线程忙着回收，业务线程就只能等了。
-
-问题出在数据转换工具方法，这个方法把 Entity 转为 DTO 时，每个字段都 new 了 ArrayList，还在循环里用字符串拼接。单次调看不出来什么影响，一分钟内涌入几千笔订单就引发了灾难。
-
-下面的代码演示了两种写法的差异：
-
-#+begin_src java
-  public static OrderDto badTransform(long id, String[] rawTags) {
-      OrderDto dto = new OrderDto();
-      dto.id = &quot;ORD-&quot; + id;
-      dto.tags = new ArrayList&lt;&gt;();
-      for (String t : rawTags) dto.tags.add(t);
-      String s = &quot;&quot;;
-      for (String t : rawTags) s += t + &quot;;&quot;;
-      dto.desc = s;
-      dto.summary = s;
-      return dto;
-  }
-
-  public static OrderDto goodTransform(long id, String[] rawTags) {
-      OrderDto dto = new OrderDto();
-      dto.id = &quot;ORD-&quot; + id;
-      dto.tags = Arrays.asList(rawTags);
-      StringBuilder sb = new StringBuilder();
-      for (String t : rawTags) sb.append(t).append(&quot;;&quot;);
-      dto.desc = sb.toString();
-      dto.summary = sb.toString();
-      return dto;
-  }
-#+end_src
-
-在本地跑 20 万次转换的耗时对比：
-
-#+begin_example
-Bad  (每个字段 new 集合 + 循环拼接): 633 ms
-Good (Arrays.asList + StringBuilder): 427 ms
-Speedup: 1.5 x
-#+end_example
-
-这个 demo 只跑了个裸循环，1.5 倍的差距不算太大。但在真实 Spring Boot 应用中，每个请求的 DTO 转换会在 Hibernate 会话、事务拦截器、JSON 序列化等多个环节叠加对象分配。加上几千笔订单并发，GC 频繁暂停的放大效应就很可观了。原文称这一改动减少了约 80% 的对象创建。
-
-** N+1 查询
-
-Hibernate 最常见的问题之一就是N+1查询。举个例子：加载一批订单，Hibernate 先发一条 =SELECT ... FROM orders= 查出所有订单（1 条 SQL）。然后你遍历每个订单，访问它的订单明细（order.getItems()），Hibernate 就为 *每个* 订单再发一条 =SELECT ... FROM order_items WHERE order_id=?= （N 条 SQL）。100 笔订单就变成 1 + 100 = 101 条 SQL。每条 SQL 都有网络往返开销，乘起来就是灾难。
-
-修复方式是用 *Entity Graph* 。这是 JPA（Java Persistence API，Java 持久化规范）提供的一种机制，让你在查询时显式声明&quot;这次要把关联数据一并拉出来&quot;。Hibernate 收到声明后会在一条 SQL 里用 JOIN 查出所有关联数据，不再逐条发查询。这既减少应用端的等待时间，也降低数据库端的 CPU 负载。
-
-** 锁竞争
-
-原文的缓存实现用了 `synchronized` 关键字。在 Java 里 `synchronized` 是一把互斥锁——同一时刻只允许一个线程执行被保护的代码块。如果多个线程同时访问缓存，它们就得排队一个一个来，读也要排队，不能并行。这就把并发访问变成了串行化。
-
-修复方式是把缓存换成了 `ConcurrentHashMap`。这是 Java 提供的线程安全哈希表，内部做了分段加锁，读操作完全不需要锁，写操作也只锁住特定分段，多线程可以同时读写不互相阻塞。
-
-线程池也需要关注：默认工作线程数不够，性能不足会导致队列堵塞，堵塞多了可能引发 OOM。应该按 CPU 核心数调整线程池大小，队列设一个合理上限而非无限增长。
-
-* JVM 参数调优要点
-
-** 堆大小
-
-容器化部署时，JVM 默认堆大小对于生产负载常常不够。传统的做法是用 ~-Xmx~ 设一个固定值，比如 ~-Xmx2g~ ，但问题是：如果你的容器内存配置改成了 4GB， ~-Xmx2g~ 还是只用了 2GB，白白浪费了一半内存。
-
-~-XX:MaxRAMPercentage~ 是 JVM 的参数，告诉 JVM &quot;拿容器可用内存的百分之多少做堆&quot;。比如 ~-XX:MaxRAMPercentage=75.0~ 表示最多使用容器内存的 75%，剩下 25% 留给 JVM 自身和其他进程。这样容器扩了内存，堆大小也跟着自动扩，不用修改启动参数。
-
-JDK 版本要求：这个参数在 JDK 8u131 中引入，但早期版本还需要同时加 =-XX:+UseContainerSupport= 显式启用容器支持。从 JDK 8u191 起容器支持默认开启，直接设 MaxRAMPercentage 即可。当前环境是 OpenJDK 8u492，验证可用。
-
-** G1GC 参数
-
-G1GC 的 =-XX:InitiatingHeapOccupancyPercent= 控制何时启动并发标记，默认 45%。原文降到 30%，让 GC 更早开始，避免等到堆快满时才触发，那时已经来不及了，会引发 Full GC 暂停。
-
-** GC 日志
-
-开启 GC 日志可以持续监控 GC 行为，在问题恶化前发现异常。这是长期维护的必备工具。
-
-
-* 可持续的性能实践清单
-
-原文团队事后总结的几点，每条都有具体产出：
-
-| 建议 | 怎么做 |
-|------|--------|
-| 开发阶段就做 profile | 本地开 JFR，早发现高分配模式 |
-| 监控 GC 指标 | 跟踪 GC 暂停时间和频率，设置告警 |
-| 预防 N+1 | 检查 Hibernate SQL 日志，用 JOIN FETCH 或 Entity Graph |
-| 减少对象分配 | 复用对象，避免在循环中创建临时集合，用 StringBuilder |
-| 容器化适配 | 用 MaxRAMPercentage 代替固定 Xmx |
-| 负载测试要真实 | 模拟长时间会话和高并发，不要只跑简单的单元测试 |
-| 异步处理 | 耗时任务丢到后台队列，不阻塞 HTTP 线程 |
-
-* 启示
-
-这篇事故记录最有价值的地方不在具体参数值（参数需要根据你的实际负载调整），而在务实的诊断思路：从堆硬件到堆工具，从猜原因到读数据。性能优化不是玄学，JFR 和火焰图这些工具让工程师能看清问题出在哪。
-</description>
-<pubDate>2026-05-01</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/01/读：jvm-后端性能调优备忘——从一次生产事故中学到的优化要点/index.html</guid>
-</item>
-<item>
-<title>读：Java 容器化——从 Fat JAR 到高效 Docker 镜像</title>
-<link>https://lujun9972.github.io/blog/2026/05/01/读：java-容器化——从-fat-jar-到高效-docker-镜像/index.html</link>
-<description>* 开篇：Java 容器化的典型困境
-
-把 Java 应用塞进 Docker 容器看起来很简单：写个 Dockerfile，把 JAR 包扔进去，完事。但实际跑起来会遇到几个典型问题：
-
-- 镜像体积巨大（800MB+），每次 CI 构建都要推几百 MB
-- 启动慢（40 秒+），容器编排平台频繁超时
-- 负载高峰时容器被 OS 静默杀死（OOMKilled），查日志也看不出原因
-
-这三个问题的根因其实一样：把容器当轻量虚拟机用，忽略了 JVM 与容器边界的交互方式。
-
-我在 DZone 上读到一篇很好的总结（Java in a Container: Efficient Development and Deployment With Docker，作者 Ramya vani Rayala），把这些问题和解决方案串了起来。这篇笔记记下关键点和一些补充理解。
-
-* Fat JAR 反模式
-
-最简单的 Dockerfile 大概是这样：
-
-#+begin_src conf :tangle no
-FROM openjdk:11
-COPY target/myapp.jar app.jar
-CMD [&quot;java&quot;, &quot;-jar&quot;, &quot;app.jar&quot;]
-#+end_src
-
-这里有两个问题。第一，用了完整的 JDK 镜像。生产环境只需要 JRE 来运行程序，不需要编译器、javadoc 等开发工具。JDK 镜像比 JRE 大很多，还增加了攻击面。
-
-第二，所有依赖打包在一个 fat JAR 里，Docker 只有单层。改一行代码就要重新构建整个 JAR，Docker 层缓存全部失效。结果 CI 每次都得推送几百 MB 的未变更数据。
-
-原文用 =dive= （一个 Docker 镜像层分析工具）查看，发现依赖占了镜像体积的 90%，应用代码只占 10%。
-
-* 多阶段构建
-
-最直接的改进是改用多阶段构建（multi-stage build）：
-
-#+begin_src conf :tangle no
-# 构建阶段——用完整 JDK
-FROM openjdk:11 AS builder
-COPY . /src
-RUN ./mvnw package
-
-# 运行阶段——只带 JRE
-FROM openjdk:11-jre
-COPY --from=builder /src/target/myapp.jar app.jar
-CMD [&quot;java&quot;, &quot;-jar&quot;, &quot;app.jar&quot;]
-#+end_src
-
-构建阶段用包含编译工具的 JDK 镜像，运行阶段只复制编译产物到 JRE 镜像。这样运行镜像里没有编译器、没有源代码，只有运行必需的 JRE 和应用。
-
-不过仔细看，这里仍然是一个 fat JAR 单层。依赖和应用代码混在一起，改代码仍然要重建整个 JAR。
-
-* Spring Boot 分层 JAR
-
-Spring Boot 2.3+ 引入了分层 JAR（layered JAR）机制，把 JAR 包拆成多个内部层。默认分为四层：
-
-- =dependencies= ：第三方依赖，几乎不变
-- =spring-boot-loader= ：Spring Boot 启动加载器
-- =snapshot-dependencies= ：快照版依赖（变化频率介于两者之间）
-- =application= ：应用代码，经常变
-
-利用这个分层结构，可以让 Docker 缓存住那些不常变的层，只重建有改动的层。
-
-首先在 =pom.xml= 中启用分层打包：
-
-#+begin_src xml :tangle no
-&lt;plugin&gt;
-    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;
-    &lt;artifactId&gt;spring-boot-maven-plugin&lt;/artifactId&gt;
-    &lt;configuration&gt;
-        &lt;layers&gt;
-            &lt;enabled&gt;true&lt;/enabled&gt;
-        &lt;/layers&gt;
-    &lt;/configuration&gt;
-&lt;/plugin&gt;
-#+end_src
-
-构建时先用 =jarmode= 的 =layertools= 命令把分层 JAR 解压到独立目录：
-
-#+begin_src conf :tangle no
-FROM openjdk:11-jre AS layers
-WORKDIR /app
-COPY target/myapp.jar app.jar
-RUN java -Djarmode=layertools -jar app.jar extract
-
-FROM openjdk:11-jre
-COPY --from=layers /app/dependencies/ ./
-COPY --from=layers /app/spring-boot-loader/ ./
-COPY --from=layers /app/snapshot-dependencies/ ./
-COPY --from=layers /app/application/ ./
-ENTRYPOINT [&quot;java&quot;, &quot;org.springframework.boot.loader.JarLauncher&quot;]
-#+end_src
-
-=Dockerfile= 中每一行 =COPY= 构成 Docker 的一层缓存。依赖层几乎不变，Docker 构建时直接从缓存取。改一行 Java 代码只需要重新构建最顶层的 =application= 层。原文称这项优化让 CI 构建时间减少了 60%，镜像推送时间减少了 75%。
-
-* JVM 容器感知
-
-这是 Java 容器化最隐蔽的一个陷阱。
-
-*问题的根因* ：JVM 在启动时会根据宿主机内存来算默认堆大小。在容器里，Docker 通过 cgroup 限制了内存上限，但 JVM 默认看不到这个限制，它以为仍然是宿主机的全部内存。比如容器限制 1GB，宿主机 64GB，JVM 按 64GB 算出默认堆大小，堆空间就远远超出了容器能给的容量。
-
-而且堆只是 JVM 内存的一部分。JVM 除了堆还有线程栈、元空间（metaspace）、代码缓存等非堆内存。堆 + 非堆总和超过容器 cgroup 上限时，Linux 内核的 OOM killer 就会静默杀死进程。即使你设置了 =Xmx= 来限制堆大小，非堆部分的波动仍然可能撑爆容器。
-
-*解决办法* ：停止使用固定的 =Xmx= 值，改用百分比参数，让 JVM 按容器内存上限的百分比算堆大小：
-
-#+begin_src conf :tangle no
-ENTRYPOINT [&quot;java&quot;, \
-  &quot;-XX:MaxRAMPercentage=75&quot;, \
-  &quot;-XX:+ExitOnOutOfMemoryError&quot;, \
-  &quot;-jar&quot;, &quot;app.jar&quot;]
-#+end_src
-
-=MaxRAMPercentage= 告诉 JVM：最多用容器内存上限的 75% 来做堆，剩下 25% 留给非堆内存。JVM 默认的 =MaxRAMPercentage= 值只有 25%（用 =-XX:+PrintFlagsFinal= 可查看），容器环境下不调高的话堆空间会非常受限。调高到 75% 同时换容器内存规格（比如从 1GB 升到 2GB）时也无需改代码，JVM 自动适配。
-
-=ExitOnOutOfMemoryError= 的作用是：OOM 时直接退出进程，让容器编排平台（Kubernetes 等）检测到崩溃后重启实例。默认行为是进程继续活着但功能异常，表现为&quot;半死不活&quot;的悬挂状态，更难排查。
-
-*版本的坑* ：容器感知的 JVM 参数从 JDK 8u131 开始支持，但 =MaxRAMPercentage= 是从 JDK 8u191 才加入的（更早版本用 =-Xmx= 或 =-XX:MaxRAM= ）。如果你的基础镜像还在用 8u191 之前的 JDK 8，这个参数不生效，需要用 =-XX:MaxRAM= 来指定绝对上限。
-
-* 安全加固
-
-*非 root 用户* ：Java 镜像默认以 root 身份运行。如果应用被攻破，攻击者拿到的就是容器内的 root 权限。应该在 Dockerfile 中创建一个专用用户：
-
-#+begin_src conf :tangle no
-RUN groupadd -r appuser &amp;&amp; useradd -r -g appuser appuser
-USER appuser
-#+end_src
-
-*健康检查* ：在 Dockerfile 中添加健康检查指令，让编排平台能判断容器是否还在正常工作：
-
-#+begin_src conf :tangle no
-HEALTHCHECK --interval=30s --timeout=3s \
-  CMD curl -f http://localhost:8080/actuator/health || exit 1
-#+end_src
-
-Spring Boot Actuator 提供了 =/actuator/health= 端点，返回应用的健康状态。Kubernetes 或 Docker Swarm 可以根据这个检查结果自动重启异常容器。
-
-*更进一步的方向* ：原文还提到了 distroless 镜像（Google 维护的极简基础镜像，只包含应用运行所需的最小依赖，没有 shell、没有包管理器）。它的攻击面更小，但调试也更困难（没有 shell 可登入）。作者表示目前用 Alpine 已经够用，后续计划迁移到 distroless。
-
-* 监控
-
-生产环境中，光靠健康检查还不够。应用什么时候变慢、什么时候内存飙升、什么时候 GC 停顿过长，这些指标最好在问题发生前就暴露出来。
-
-原文推荐的做法是用 Prometheus 从 Spring Boot Actuator 的 =/actuator/prometheus= 端点采集指标，关注三个核心信号：
-
-- JVM 内存使用量，确认是否接近容器上限
-- GC 暂停时间，频繁或暂停时间长说明堆大小可能不合理
-- 容器重启次数，频繁重启说明存在稳定性问题
-
-* 总结
-
-Java 容器化不是写个 Dockerfile 就完事。三个关键点：
-
-1. *Dockerfile 要分层* ：多阶段构建 + Spring Boot 分层 JAR，把依赖和应用代码分开缓存，构建效率提升明显
-2. *JVM 需要容器教育* ：用 MaxRAMPercentage 代替固定 Xmx，让 JVM 按容器上限分配内存，配合 ExitOnOutOfMemoryError 让异常容器自动重启
-3. *安全默认值* ：非 root 用户、健康检查、健康指标监控——这些配置应该在项目初始化时就加上，而不是等出事了再补
-
-就算你用的不是 Java，第一点和第三点也是通用的 Docker 实践。第二点是 Java 专有的问题，但背后是一个更通用的系统教训：运行时的资源假设在容器边界上不可靠，任何语言在容器里跑都不能假定自己能看到全部资源。
-</description>
-<pubDate>2026-05-01</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/01/读：java-容器化——从-fat-jar-到高效-docker-镜像/index.html</guid>
-</item>
-<item>
-<title>读：整洁代码的几个通用原则——从 Go 生态看起</title>
-<link>https://lujun9972.github.io/blog/2026/05/01/读：整洁代码的几个通用原则——从-go-生态看起/index.html</link>
-<description>最近读了一篇 Go 整洁代码的长文，内容覆盖函数设计、错误处理、接口设计和包架构。虽然代码是 Go 写的，但里面的原则大部分不限于特定语言。本文提炼几条最有通用价值的，示例改用 Python。
-
-* 屏幕规则（Screen Rule）：函数不超过一屏
-
-原文提了一个很实在的质量指标：一个函数应该能在开发者屏幕上完整显示，大概是 30-50 行。超过了就该考虑拆分。
-
-30 行不是什么 magic number。关键是一个函数如果滚动才能看全，它做的事情就超出了人能一次性理解的范围——你不可能一边看后面的逻辑一边记住前面的状态。
-
-拆分的依据是单一职责。看个反面例子：
-
-#+begin_src python
-# 反面做法：一个函数做好几件事
-def process_user(user_id: int) -&gt; dict:
-    if user_id &lt;= 0:
-        print(f&quot;无效用户 ID: {user_id}&quot;)
-        return {&quot;error&quot;: &quot;invalid&quot;}
-    db = sqlite3.connect(&quot;app.db&quot;)
-    cur = db.cursor()
-    cur.execute(&quot;SELECT id, name, email FROM users WHERE id = ?&quot;, (user_id,))
-    row = cur.fetchone()
-    if row is None:
-        return {&quot;error&quot;: &quot;not found&quot;}
-    user = {&quot;id&quot;: row[0], &quot;name&quot;: row[1], &quot;email&quot;: row[2]}
-    if user[&quot;email&quot;]:
-        domain = user[&quot;email&quot;].split(&quot;@&quot;)[1]
-        user[&quot;is_active&quot;] = domain in [&quot;google.com&quot;, &quot;microsoft.com&quot;]
-        user[&quot;email_domain&quot;] = domain
-    db.close()
-    print(f&quot;用户 {user_id} 处理完成&quot;)
-    return user
-#+end_src
-
-这个函数既做校验、又管理数据库连接、又执行查询、又做数据增强、又打日志。拆开之后，每个函数只做一件事：
-
-#+begin_src python
-def get_user(user_id: int) -&gt; dict:
-    validate_user_id(user_id)
-    user = fetch_user(user_id)
-    enrich_user(user)
-    return user
-
-def validate_user_id(uid: int):
-    if uid &lt;= 0:
-        raise ValueError(f&quot;无效用户 ID: {uid}&quot;)
-
-def fetch_user(uid: int) -&gt; dict:
-    db = sqlite3.connect(&quot;app.db&quot;)
-    try:
-        cur = db.cursor()
-        cur.execute(
-            &quot;SELECT id, name, email FROM users WHERE id = ?&quot;, (uid,)
-        )
-        row = cur.fetchone()
-        if row is None:
-            raise KeyError(f&quot;用户 {uid} 不存在&quot;)
-        return {&quot;id&quot;: row[0], &quot;name&quot;: row[1], &quot;email&quot;: row[2]}
-    finally:
-        db.close()
-
-def enrich_user(user: dict):
-    if not user.get(&quot;email&quot;):
-        return
-    user[&quot;email_domain&quot;] = user[&quot;email&quot;].split(&quot;@&quot;)[1]
-#+end_src
-
-拆开之后每个函数不超过 10 行，可以独立测试，读代码的人不需要同时追踪数据库连接和数据增强两件事。
-
-* 早返回代替嵌套
-
-嵌套是降低代码可读性的头号杀手。原文管它叫&quot;厄运金字塔&quot;：
-
-#+begin_src python
-# 反面做法：深层嵌套
-def send_notification(user_id: int, message: str) -&gt; str:
-    user = find_user(user_id)
-    if user is not None:
-        if user.get(&quot;email&quot;):
-            if user.get(&quot;active&quot;):
-                if user.get(&quot;notifications_enabled&quot;):
-                    result = send_email(user[&quot;email&quot;], message)
-                    if result:
-                        return &quot;发送成功&quot;
-                    else:
-                        return &quot;发送失败&quot;
-                else:
-                    return &quot;通知未开启&quot;
-            else:
-                return &quot;用户未激活&quot;
-        else:
-            return &quot;邮箱为空&quot;
-    else:
-        return &quot;用户不存在&quot;
-#+end_src
-
-每一层缩进都是一个心智负担。修复方式是用早返回（guard clauses），把异常情况提前排除：
-
-#+begin_src python
-# 推荐做法：早返回
-def send_notification(user_id: int, message: str) -&gt; str:
-    user = find_user(user_id)
-    if user is None:
-        return &quot;用户不存在&quot;
-    if not user.get(&quot;email&quot;):
-        return &quot;邮箱为空&quot;
-    if not user.get(&quot;active&quot;):
-        return &quot;用户未激活&quot;
-    if not user.get(&quot;notifications_enabled&quot;):
-        return &quot;通知未开启&quot;
-    if not send_email(user[&quot;email&quot;], message):
-        return &quot;发送失败&quot;
-    return &quot;发送成功&quot;
-#+end_src
-
-两种写法逻辑完全一致，但早返回版本不需要追踪括号匹配，读起来平坦通畅。
-
-* 用上下文管理器保证清理
-
-Go 有 =defer= 关键字，保证函数退出时执行清理操作。Python 没有 =defer= ，但有更好的替代：上下文管理器（ =with= 语句）：
-
-#+begin_src python
-# 手动管理，容易忘记
-def read_config(path: str) -&gt; dict:
-    import json
-    f = open(path)
-    try:
-        data = f.read()
-        config = json.loads(data)
-        f.close()
-        return config
-    except Exception:
-        f.close()
-        raise
-
-# 上下文管理器，自动清理
-def read_config(path: str) -&gt; dict:
-    import json
-    with open(path) as f:
-        return json.load(f)
-#+end_src
-
-=with= 语句比 =defer= 更简洁： =defer= 只在函数退出时触发，而 =with= 的清理范围精确到代码块，生命周期更清晰。
-
-* 接口越小越好
-
-原文的一个核心观点是接口应该小。Go 标准库的经典例子是 `io.Reader`（一个 `Read` 方法）和 `io.Writer`（一个 `Write` 方法）。一个方法一个接口，组合使用。
-
-Python 的协议类（Protocol）也是同样的思路：
-
-#+begin_src python
-from typing import Protocol
-
-class Readable(Protocol):
-    def read(self, size: int = -1) -&gt; bytes: ...
-
-class Writable(Protocol):
-    def write(self, data: bytes) -&gt; int: ...
-
-# 只需要 Readable 的函数
-def process_data(src: Readable, dst: Writable):
-    data = src.read()
-    dst.write(data)
-#+end_src
-
-接口小有三个好处：容易实现（一个方法而已）、容易测试（mock 一个方法比 mock 十个简单得多）、容易组合（小接口拼成大接口，而不是大接口拆小）。
-
-* 接口定义在消费方
-
-传统面向对象编程的思路是提供方定义接口，使用者去实现它。Go 反过来：你作为调用者，定义你需要什么，然后在调用处把接口写出来。只要传入的对象有你要的方法就行，不需要它显式声明&quot;我实现了这个接口&quot;。
-
-Python 的 Protocol 也支持同样的思维：
-
-#+begin_src python
-from typing import Protocol
-
-# 消费方定义自己需要什么
-class UserFetcher(Protocol):
-    def get(self, user_id: int) -&gt; dict: ...
-
-# 消费方的业务逻辑
-def greet_user(db: UserFetcher, user_id: int):
-    user = db.get(user_id)
-    return f&quot;你好，{user[&#39;name&#39;]}&quot;
-
-# 实现方不需要知道 UserFetcher 的存在
-class PostgresDB:
-    def get(self, user_id: int) -&gt; dict:
-        return {&quot;name&quot;: &quot;张三&quot;}
-
-class RedisCache:
-    def get(self, user_id: int) -&gt; dict:
-        return {&quot;name&quot;: &quot;李四&quot;}
-
-# 传入什么实现都可以，只要有个 .get() 方法
-print(greet_user(PostgresDB(), 1))
-print(greet_user(RedisCache(), 1))
-#+end_src
-
-实际输出：
-
-#+begin_example
-你好，张三
-你好，李四
-#+end_example
-
-`PostgresDB` 和 `RedisCache` 都不知道 `UserFetcher` 的存在。它们只是恰好有个 `.get()` 方法，而 `greet_user` 只关心这个。想换实现时，不需要改接口定义，也不需要改调用者的代码，换实现就是换一个参数而已。
-
-你可能会想：这不就是 duck typing 吗？确实是，但有个关键区别。纯动态 duck typing（无类型标注的 Python、Ruby、JS）在运行时才检查对象有没有对应方法，传错了只能等线上炸。Go 和 Python 的 Protocol + mypy 都是在编译/类型检查阶段就确认传入的对象满足接口要求——既有 duck typing 的灵活性，又有静态类型的可靠性。这是 duck typing 的进阶形态，保留了灵活、去掉了惊吓。
-
-* 方法链（Builder 模式）
-
-有些对象的构造过程参数很多，原文展示了用 builder 模式解决这个问题。这是 Go 版的 Functional Options 模式，用 Python 的方法链是同样的思路：
-
-#+begin_src python
-class QueryBuilder:
-    def __init__(self, table: str):
-        self._table = table
-        self._columns = [&quot;*&quot;]
-        self._where: list[str] = []
-        self._order_by: str | None = None
-        self._limit: int | None = None
-
-    def select(self, *columns: str):
-        self._columns = columns
-        return self
-
-    def where(self, condition: str):
-        self._where.append(condition)
-        return self
-
-    def order_by(self, column: str):
-        self._order_by = column
-        return self
-
-    def limit(self, n: int):
-        self._limit = n
-        return self
-
-    def build(self) -&gt; str:
-        sql = f&quot;SELECT {&#39;, &#39;.join(self._columns)} FROM {self._table}&quot;
-        if self._where:
-            sql += &quot; WHERE &quot; + &quot; AND &quot;.join(self._where)
-        if self._order_by:
-            sql += f&quot; ORDER BY {self._order_by}&quot;
-        if self._limit is not None:
-            sql += f&quot; LIMIT {self._limit}&quot;
-        return sql
-
-# 使用方法链，读起来像 SQL
-sql = (QueryBuilder(&quot;users&quot;)
-       .select(&quot;id&quot;, &quot;name&quot;, &quot;email&quot;)
-       .where(&quot;active = true&quot;)
-       .order_by(&quot;created_at DESC&quot;)
-       .limit(10)
-       .build())
-#+end_src
-
-实际输出是一条完整的 SQL 查询语句：
-
-#+begin_example
-SELECT id, name, email FROM users WHERE active = true ORDER BY created_at DESC LIMIT 10
-#+end_example
-
-关键设计是每个设置方法都返回 `self`，这样调用可以不断串联下去，代码读起来就是在描述要做什么。
-
-* 小结
-
-这篇文章最有价值的地方不是某个具体的 Go 技巧，而是背后贯穿的思路：代码首先是给人读的，其次才是给机器执行的。屏幕规则、早返回、小接口、清理自动化——这些东西跟具体语言关系不大。不管用什么语言写代码，这些原则都能用上。
-</description>
-<pubDate>2026-05-01</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/01/读：整洁代码的几个通用原则——从-go-生态看起/index.html</guid>
 </item>
 </channel>
 </rss>
