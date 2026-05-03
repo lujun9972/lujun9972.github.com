@@ -1,0 +1,124 @@
+#+TITLE: 读：7 Techniques That Supercharged My Claude-Assisted Development
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Claude Code,AI,开发效率,skill
+#+DATE: [2026-05-03 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Claude Code 用了一段时间，算重度用户了。写博客、改配置、知识管理基本都在上面。DZone 上 Vivek Katarya 的这篇文章列出了 7 个进阶技巧，我对照着自己的使用经验梳理一遍，看看哪些已经在用了、哪些是新学的、哪些有不同看法。
+
+* 技巧 1：停止审批每个命令
+
+Claude Code 默认每个操作都要弹确认： =Run npm test? (Y/N)= 。安全是安全，但迭代的时候频繁打断很影响节奏。
+
+解决方案是在 =~/.claude/settings.json= 里配一个白名单：
+
+#+begin_src json  :tangle ~/.claude/settings.json
+{
+  "permissions": {
+    "allow": [
+      "Read(~/Codebase)",
+      "Edit(~/Codebase)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}
+#+end_src
+
+配了之后，这些操作就不再弹确认了。原文的 advice 是只放只读或低风险操作。我加了 =Bash(grep:*)= 和 =Bash(cat:*)= 用来做代码搜索，确实方便很多。涉及生产环境或密钥的操作继续弹确认，这个分寸自己把握。
+
+原文还特意警告了 =--dangerously-skip-permissions= 这个 flag：等于给 Claude 开了 God Mode，风险远大于便利。别用。
+
+* 技巧 2：让 Claude 自己改配置
+
+Claude Code 能改自己的配置文件。想改什么直接说就行，不用翻文档找 JSON 路径。
+
+比如我把换行快捷键改了：
+
+: 把换行快捷键改成 Shift+Enter。
+
+想调权限也一样：
+
+: 更新权限，让 bash 命令 ls、grep、tail 不用确认就能执行。
+
+这个我经常用。调整 verbose 级别、diff 格式、文件搜索范围，想到了就丢一句话过去，省了手动编辑 JSON 的功夫。
+
+一个限制：改完配置后要手动重启 Claude 才生效，它没法给自己发 SIGHUP。
+
+* 技巧 3：给 Claude 一个入口文件
+
+Claude 默认会自动探索代码库来理解上下文。项目大了之后，它会在无关文件上浪费 token。
+
+解决方案是写一个入口脚本（比如 =scripts/context.sh= ），只展示 Claude 真正需要的信息：
+
+#+begin_src shell  :tangle scripts/context.sh
+#!/bin/bash
+
+echo "README:"
+cat README.md
+
+echo
+echo "Key services:"
+grep -r "class .*Service" src/
+#+end_src
+
+然后告诉 Claude："每次需要项目上下文时，先跑 =scripts/context.sh= "。这句指令可以在对话里直接说。
+
+再配合 =.claudeignore= 过滤掉 node_modules/、build/ 、*.log 这些噪音，效果更好。原理跟 =.gitignore= 一样，不让 Claude 在无关文件上浪费 token。
+
+* 技巧 4：把 fix-test 循环交给 skill
+
+原文举了一个例子：不用自己跑测试、看失败、再修，直接告诉 Claude：
+
+: 跑测试，标记失败用例，修好，再跑。直到全通过，或者最多重试 3 次。
+
+原本来回 15 分钟的循环变成一句话。然后可以把这条指令保存成 skill（ =~/.claude/commands/fix-test/SKILL.md= ），以后直接复用。
+
+我的场景不太一样（写代码修测试不是日常），但这个模式本身通用。比如写博客的时候，lint 报了一堆格式错误，直接告诉 Claude "把 lint 报的问题全修了，修完再跑一遍确认"。跟 fix-test 循环是一个套路，把迭代交给它，我等结果就好。
+
+* 技巧 5：链式调用 skills
+
+有了几个基础 skill（write-unit-tests、fix-test、create-pr）之后，下一步是把它们串联成一个高阶 skill。
+
+比如定义一个 =sanitize-and-publish= 的 skill，自动跑 fix-build → check-coverage → write-unit-tests → fix-tests → create-pr。原文形容得好：像管理一个轻量级的多代理流水线。
+
+这个我还没系统性做，但思路对。比如我现在的 =url2blog= 其实已经在链式调用了，它内部又调了 brainstorming 和 人味儿 两个子 skill。按原文的思路，可以把这些拆成更细粒度的独立 skill，再组合出更高阶的流程。下次可以试试。
+
+* 技巧 6：用 worktree 并行跑多个会话
+
+单会话不够用时，可以用 Git worktree 开多个并行的 Claude 实例。一个修 bug、一个重构模块、一个搞原型：
+
+: claude --worktree feature-x
+
+每个实例有自己的工作目录，互不干扰。干完后把 worktree 合到对应分支就行。
+
+superpowers 里其实已经有 =using-git-worktrees= skill 封装了这个流程，但我平时很少需要并行开多个会话。偶尔需要同时做两件事时（比如这篇博文写到一半，突然想试另一个写法），直接用 =claude --worktree= 起一个新实例，互不干扰。
+
+* 技巧 7：复杂任务先出计划
+
+原文说这是"提升输出质量最管用的一个习惯"：
+
+: 先生成一个分步计划，识别边界情况，提出澄清问题。我确认后再执行。
+
+Claude 的第一版计划通常 80% 对。那漏掉的 20% 正好是 bug 和回归问题所在。花两分钟确认，经常能省下两小时。
+
+这一点完全同意。我现在用 =superpowers:brainstorming= 和 =writing-plans= 就是这个流程，先想清楚再动手。尤其在写代码或写博文之前，plan first 能把方向跑偏的风险降到最低。
+
+* 几个补充
+
+原文末尾还有几个技巧：
+
+- *用 Orchestrator 管理多会话* ：会话多了以后切换成本很高，Orchestrator 这类工具帮助协调多个 Claude 实例
+- *让 Claude 自我审查* ：在你自己做 code review 之前，让 Claude 先 review 自己的改动。它能抓到不少逻辑和流程上的问题
+- *让 Claude 自己改进 skill* ：用 Skill Creator 让 Claude 迭代自己的工具集，工作流会自动演进
+
+最后一个我最近在实践。做了 =log-reviewer= skill 之后，确实感觉到了"让 AI 自己造工具"的正循环。每次用 skill 写博文、改代码，都在积累经验，下次就更顺手。
+
+* 总结
+
+原文把 Claude Code 比作"一个写代码极快、但需要明确指令的初级工程师"。这个比喻贴切。权限白名单、入口文件、skill 链、plan-first，这些东西搭配在一起之后，重复劳动减少、迭代变快、脑子省出来想真正的问题。
+
+这 7 个技巧里，fix-test 循环、链式 skill、plan-first 这几个我已经在用了，而且用出了自己的变体。权限白名单和 self-configure 属于"知道但没认真配"的，写这篇的时候顺便补上了。worktree 并行有现成 skill 可以用，只是平时场景不多。
