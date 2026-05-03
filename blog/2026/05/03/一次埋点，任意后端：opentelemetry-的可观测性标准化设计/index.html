@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>一次埋点，任意后端：OpenTelemetry 的可观测性标准化设计 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="keywords" content="OpenTelemetry, 可观测性, FastAPI, 运维, 监控" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">一次埋点，任意后端：OpenTelemetry 的可观测性标准化设计</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge2a0dc8">可观测性的碎片化困境</a></li>
+<li><a href="#org13a3123">三层分离:Instrumentation / Export / Backend</a></li>
+<li><a href="#orgc8c348d">统一的数据模型</a></li>
+<li><a href="#org8b1a81c">以 FastAPI 为例看 Instrumentation 层怎么工作</a></li>
+<li><a href="#orgb3c3c31">进阶设计:自动采集之外的扩展点</a>
+<ul>
+<li><a href="#orgd5fcc4c">SpanProcessor:在 span 生命周期中介入</a></li>
+<li><a href="#orgc02134e">Custom Sampler:按业务逻辑决定采样</a></li>
+<li><a href="#orge3ab416">Middleware:在 Web 框架层面添加上下文</a></li>
+</ul>
+</li>
+<li><a href="#org5e208a0">实际意义:可观测性标准化带来的自由</a></li>
+<li><a href="#orgdf8be41">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文从 SigNoz 博客的一篇 OpenTelemetry FastAPI 实战指南出发,提炼 OTel 的核心设计思想。原文是面向 FastAPI 的实操教程,但这套方案背后是可观测性的通用标准化思路。不限于 Python,不限于 FastAPI,也不限于 SigNoz。
+</p>
+
+<div id="outline-container-orge2a0dc8" class="outline-2">
+<h2 id="orge2a0dc8">可观测性的碎片化困境</h2>
+<div class="outline-text-2" id="text-orge2a0dc8">
+<p>
+微服务架构流行起来之后,一个请求会经过多个服务。你想追踪它,就得在每个服务里埋点采集数据。问题是,每家的监控方案不一样:用 Jaeger 是一套 SDK,用 Prometheus 又是一套,用商业 APM 又是一套。换一个后端,之前埋的点全废了。
+</p>
+
+<p>
+这种"绑定式"的可观测性方案维护成本很高:一家企业用了三套监控工具,就有三套埋点代码,升级一个后端的 SDK 版本可能要改一个系统的全部 tracing 代码。OpenTelemetry(简称 OTel)要解决的就是这个问题:定义一套与后端无关的标准化采集规范,你埋一次点,就能对接任意兼容的后端。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org13a3123" class="outline-2">
+<h2 id="org13a3123">三层分离:Instrumentation / Export / Backend</h2>
+<div class="outline-text-2" id="text-org13a3123">
+<p>
+OTel 的核心设计可以概括为三层分离:
+</p>
+
+<ul class="org-ul">
+<li><b>Instrumentation 层(采集)</b>:负责在代码中创建 span、记录 metrics、收集 logs。这一层与后端无关,只关心"数据怎么采"。</li>
+<li><b>Export 层(传输)</b>:通过 exporter 把采集到的数据发给后端。OTLP(OpenTelemetry Protocol)是 OTel 自家的传输协议,支持 gRPC 和 HTTP 两种方式。</li>
+<li><b>Backend 层(展示)</b>:接收并可视化数据。Jaeger、Zipkin、Prometheus、SigNoz,甚至国产监控平台,只要支持 OTLP 就能接入。</li>
+</ul>
+
+<p>
+这三层的关系可以用一个类比来理解:Instrumentation 是拍照,Export 是洗照片和邮寄,Backend 是相册。你拍照的方式跟最后用哪本相册无关,胶卷冲出来之后放哪本相册都行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc8c348d" class="outline-2">
+<h2 id="orgc8c348d">统一的数据模型</h2>
+<div class="outline-text-2" id="text-orgc8c348d">
+<p>
+OTel 定义了三种核心数据类型,合在一起构成"可观测性三大支柱":
+</p>
+
+<ul class="org-ul">
+<li><b>Traces(链路追踪)</b>:记录一个请求在系统中的完整行程。每个服务处理这个请求时创建一个 span,span 之间通过 parent-child 关系串联起来。</li>
+<li><b>Metrics(指标)</b>:聚合后的性能数据,比如请求延迟 P99、错误率、QPS。适合做仪表盘和告警。</li>
+<li><b>Logs(日志)</b>:应用中产生的事件记录。OTel 用 OpenTelemetry Logs Bridge API 把日志和 trace 关联起来,不替代现有日志框架。</li>
+</ul>
+
+<p>
+Traces 是 OTel 最核心的设计。它的关键机制是上下文传播(context propagation):通过 HTTP 头(标准是 <code>traceparent</code>)或 gRPC metadata,把 trace ID 从一个服务传到下一个。这样一来,即使请求跨了 5 个服务,也能在同一个火焰图里看到整条链路,不需要人工拼接。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8b1a81c" class="outline-2">
+<h2 id="org8b1a81c">以 FastAPI 为例看 Instrumentation 层怎么工作</h2>
+<div class="outline-text-2" id="text-org8b1a81c">
+<p>
+原文用 FastAPI(一个 Python web 框架)作为示例。抛开 FastAPI 的具体细节,只看 OTel 的 instrumentation 流程:
+</p>
+
+<ol class="org-ol">
+<li><b>安装 distro</b>: <code>opentelemetry-distro</code> 会自动配置常见选项,比如加载 exporter、设置 SDK provider等。这是为了降低上手成本,避免新手自己拼装各种组件。</li>
+<li><b>安装对应框架的 instrumentation 包</b>: 运行 <code>opentelemetry-bootstrap --action=install</code> 会检测你的应用用了哪些库,自动装对应的埋点包(如 FastAPI、httpx、Redis 等)。</li>
+<li><b>通过 CLI 启动</b>:在启动命令前加 <code>opentelemetry-instrument</code>,它会在运行时注入埋点代码,不需要修改业务代码。</li>
+</ol>
+
+<p>
+三步下来,请求延迟、调用关系、错误信息就能自动采集了,不需要改一行业务代码。
+</p>
+
+<p>
+用环境变量控制 exporter 的配置也很直观:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">OTEL_TRACES_EXPORTER</span>=console,otlp <span class="org-sh-escaped-newline">\</span>
+  <span class="org-variable-name">OTEL_SERVICE_NAME</span>=sample-fastapi-app <span class="org-sh-escaped-newline">\</span>
+  <span class="org-variable-name">OTEL_RESOURCE_ATTRIBUTES</span>=deployment.environment=local <span class="org-sh-escaped-newline">\</span>
+  <span class="org-variable-name">OTEL_EXPORTER_OTLP_ENDPOINT</span>=<span class="org-string">"https://ingest.your-region.signoz.cloud:443"</span> <span class="org-sh-escaped-newline">\</span>
+  <span class="org-variable-name">OTEL_EXPORTER_OTLP_HEADERS</span>=<span class="org-string">"signoz-ingestion-key=your-key"</span> <span class="org-sh-escaped-newline">\</span>
+  <span class="org-variable-name">OTEL_EXPORTER_OTLP_PROTOCOL</span>=grpc <span class="org-sh-escaped-newline">\</span>
+  opentelemetry-instrument uvicorn app.main:app --host localhost --port 5002
+</pre>
+</div>
+
+<p>
+这里 <code>console</code> 表示同时输出到控制台方便调试,=otlp= 表示发到后端。用环境变量而非代码配置,也让不同环境(开发、测试、生产)的 exporter 配置可以分离。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb3c3c31" class="outline-2">
+<h2 id="orgb3c3c31">进阶设计:自动采集之外的扩展点</h2>
+<div class="outline-text-2" id="text-orgb3c3c31">
+<p>
+OTel 的自动 instrumentation 覆盖了常见场景,但业务逻辑的观测需要手动加埋点。OTel 提供了几个扩展点,让你在自动采集之外按需定制:
+</p>
+</div>
+
+<div id="outline-container-orgd5fcc4c" class="outline-3">
+<h3 id="orgd5fcc4c">SpanProcessor:在 span 生命周期中介入</h3>
+<div class="outline-text-3" id="text-orgd5fcc4c">
+<p>
+你可以在 span 创建和结束时附加自定义逻辑。下面的例子在 span 开始时就注入环境标识,同时在 span 结束时打印信息:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> opentelemetry.context <span class="org-keyword">import</span> Context
+<span class="org-keyword">from</span> opentelemetry <span class="org-keyword">import</span> trace
+<span class="org-keyword">from</span> opentelemetry.sdk.trace <span class="org-keyword">import</span> SpanProcessor, Span, ReadableSpan, TracerProvider
+
+<span class="org-variable-name">tracer_provider</span>: TracerProvider <span class="org-operator">=</span> trace.get_tracer_provider()
+
+<span class="org-keyword">class</span> <span class="org-type">AppContextSpanProcessor</span>(SpanProcessor):
+    <span class="org-keyword">def</span> <span class="org-function-name">on_start</span>(<span class="org-keyword">self</span>, span: Span, parent_context: Context <span class="org-operator">|</span> <span class="org-constant">None</span> <span class="org-operator">=</span> <span class="org-constant">None</span>):
+        <span class="org-variable-name">common_attributes</span> <span class="org-operator">=</span> {
+            <span class="org-string">"app.environ"</span>: <span class="org-string">"canary"</span>,
+            <span class="org-string">"app.release"</span>: <span class="org-string">"2026.04"</span>,
+            <span class="org-string">"app.contract_type"</span>: <span class="org-string">"ai_cloud"</span>,
+        }
+        span.set_attributes(common_attributes)
+
+        <span class="org-keyword">if</span> span.name <span class="org-operator">==</span> <span class="org-string">"sensitive_operation"</span>:
+            span.set_attribute(<span class="org-string">"app.contract_type"</span>, <span class="org-string">"[REDACTED]"</span>)
+
+    <span class="org-keyword">def</span> <span class="org-function-name">on_end</span>(<span class="org-keyword">self</span>, span: ReadableSpan):
+        <span class="org-builtin">print</span>(<span class="org-string">"on span end:"</span>, span.name, span.attributes)
+
+tracer_provider.add_span_processor(AppContextSpanProcessor())
+</pre>
+</div>
+
+<p>
+这个模式对运维场景特别有用:你可以在一层统一的 processor 中给所有 span 注入环境标签(集群名、机房、版本号),而不需要每个业务方法单独加。上面的代码还演示了敏感操作的脱敏处理:span 名称匹配 <code>sensitive_operation</code> 时,contract_type 会被替换为 <code>[REDACTED]</code>
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc02134e" class="outline-3">
+<h3 id="orgc02134e">Custom Sampler:按业务逻辑决定采样</h3>
+<div class="outline-text-3" id="text-orgc02134e">
+<p>
+对于高流量应用,全量采样成本太高。OTel 支持自定义采样器,按请求属性决定哪些 trace 保留。下面的示例只保留带 <code>high_priority</code> 属性的 span:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> opentelemetry <span class="org-keyword">import</span> trace
+<span class="org-keyword">from</span> opentelemetry.sdk.trace <span class="org-keyword">import</span> TracerProvider
+<span class="org-keyword">from</span> opentelemetry.sdk.trace.sampling <span class="org-keyword">import</span> Sampler, SamplingResult, Decision, ParentBased
+
+<span class="org-keyword">class</span> <span class="org-type">AppContextSampler</span>(Sampler):
+    <span class="org-keyword">def</span> <span class="org-function-name">should_sample</span>(<span class="org-keyword">self</span>, parent_context, trace_id, name, kind, attributes, links<span class="org-operator">=</span><span class="org-constant">None</span>, trace_state<span class="org-operator">=</span><span class="org-constant">None</span>):
+        <span class="org-keyword">if</span> attributes <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span> <span class="org-keyword">and</span> attributes.get(<span class="org-string">"high_priority"</span>):
+            <span class="org-keyword">return</span> SamplingResult(Decision.RECORD_AND_SAMPLE,
+                                  attributes<span class="org-operator">=</span>attributes, trace_state<span class="org-operator">=</span>trace_state)
+        <span class="org-keyword">return</span> SamplingResult(Decision.DROP, trace_state<span class="org-operator">=</span>trace_state)
+
+    <span class="org-keyword">def</span> <span class="org-function-name">get_description</span>(<span class="org-keyword">self</span>):
+        <span class="org-keyword">return</span> <span class="org-string">"AppContextSampler"</span>
+
+<span class="org-variable-name">sampler</span> <span class="org-operator">=</span> ParentBased(root<span class="org-operator">=</span>AppContextSampler())
+<span class="org-variable-name">provider</span> <span class="org-operator">=</span> TracerProvider(sampler<span class="org-operator">=</span>sampler)
+trace.set_tracer_provider(provider)
+</pre>
+</div>
+
+<p>
+<code>ParentBased</code> 包装器的作用是:如果上游服务决定采样某个请求,你的服务也尊重这个决定,避免父子 span 断裂。丢弃一个 root span 没问题,但如果丢弃了 child span 却保留了 parent span,火焰图里就会出现残缺的调用链。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge3ab416" class="outline-3">
+<h3 id="orge3ab416">Middleware:在 Web 框架层面添加上下文</h3>
+<div class="outline-text-3" id="text-orge3ab416">
+<p>
+在 web 框架层面,可以用 middleware 给每个请求注入上下文信息,比如处理耗时和服务器标识:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> fastapi <span class="org-keyword">import</span> FastAPI, Request
+<span class="org-keyword">from</span> opentelemetry <span class="org-keyword">import</span> trace
+<span class="org-keyword">from</span> time <span class="org-keyword">import</span> time
+
+<span class="org-variable-name">app</span> <span class="org-operator">=</span> FastAPI()
+
+<span class="org-type">@app.middleware</span>(<span class="org-string">"http"</span>)
+<span class="org-keyword">async def</span> <span class="org-function-name">handle_request_metadata</span>(request: Request, call_next):
+    <span class="org-variable-name">start_time</span> <span class="org-operator">=</span> time()
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> <span class="org-keyword">await</span> call_next(request)
+    <span class="org-variable-name">process_time</span> <span class="org-operator">=</span> time() <span class="org-operator">-</span> start_time
+
+    <span class="org-variable-name">span</span> <span class="org-operator">=</span> trace.get_current_span()
+    span.add_event(<span class="org-string">"process_time"</span>, {<span class="org-string">"value"</span>: process_time})
+    span.set_attribute(<span class="org-string">"served_by"</span>, f<span class="org-string">"</span>{app.title}<span class="org-string">-</span>{app.version}<span class="org-string">"</span>)
+
+    <span class="org-keyword">return</span> response
+</pre>
+</div>
+
+<p>
+这三个扩展示例:自动采集做 80%,手动扩展做剩下的 20%。自动 instrumentation 覆盖通用框架,自定义 processor/sampler/middleware 覆盖业务特定需求。两者通过同一套数据模型协作,不冲突。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5e208a0" class="outline-2">
+<h2 id="org5e208a0">实际意义:可观测性标准化带来的自由</h2>
+<div class="outline-text-2" id="text-org5e208a0">
+<p>
+OTel 的标准化设计有几个特别值得关注的实际意义:
+</p>
+
+<ol class="org-ol">
+<li><b>避免厂商锁定</b>:OTel 是 CNCF 毕业项目,与云厂商无关。你可以在自建的 Jaeger + Prometheus 上做开发和调试,生产环境对接商业 APM 或国产监控平台,只需改 exporter 配置,采集代码不用动。</li>
+
+<li><b>适合多云和混合部署</b>:如果服务部分在公有云、部分在私有机房,OTel 的统一采集层可以让两边用同一套 instrumentation,数据发到同一个后端或分别发到不同后端。</li>
+
+<li><b>团队分工更清晰</b>:Instrumentation 层由开发团队维护(他们熟悉代码),Backend 层由运维团队维护(他们熟悉监控平台)。中间的 exporter 配置只是环境变量,不涉及代码改动。这个分层跟 Linux 的"一切皆文件"设计哲学类似,上层不用关心下层实现,只要接口一致就能协作。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgdf8be41" class="outline-2">
+<h2 id="orgdf8be41">总结</h2>
+<div class="outline-text-2" id="text-orgdf8be41">
+<p>
+OpenTelemetry 解决的核心问题是:怎么让采集与后端解耦。它的三层架构和数据模型标准化,让可观测性不再是每换一个工具就重来一次的重复劳动。
+</p>
+
+<p>
+这种"一次埋点,任意后端"的设计思路,跟 USB-C 统一充电接口类似:接口标准化之后,两端可以各自演进。后端平台竞争功能和价格,instrumentation 层专注数据的质量和覆盖度。你不需要在两者之间做绑定式选择。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-03</span>
+    <span class="post-info">2026-05-03</span>
+    <a href="../../../../../tags/opentelemetry">OpenTelemetry</a> : <a href="../../../../../tags/可观测性">可观测性</a> : <a href="../../../../../tags/fastapi">FastAPI</a> : <a href="../../../../../tags/运维">运维</a> : <a href="../../../../../tags/监控">监控</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ds5r5dszg3eenmbmpnlugfotxe &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

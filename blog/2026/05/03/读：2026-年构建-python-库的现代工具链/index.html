@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：2026 年构建 Python 库的现代工具链 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="keywords" content="Python, uv, ruff, 编程工具, 最佳实践" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：2026 年构建 Python 库的现代工具链</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org37a0993">开篇：Python 工具链的"大统一"时代</a></li>
+<li><a href="#org67bc7a8">项目初始化：uv 的一站式体验</a></li>
+<li><a href="#org5ed5a10">Linting 和格式化：ruff 接管一切</a></li>
+<li><a href="#org34b5be2">类型检查：三个选择，一个结论</a></li>
+<li><a href="#org102d814">测试：pytest 就够了</a>
+<ul>
+<li><a href="#org269b67b">多版本测试</a></li>
+</ul>
+</li>
+<li><a href="#orged37b96">代码质量维护：CI 和 pre-commit</a>
+<ul>
+<li><a href="#orgb52a1d5">CI 脚本</a></li>
+<li><a href="#orgaeed4b6">pre-commit 钩子</a></li>
+</ul>
+</li>
+<li><a href="#org5c5d7bd">发布：不一定需要 PyPI</a></li>
+<li><a href="#org9f61be0">参考项目：大厂怎么用</a></li>
+<li><a href="#org9bc0827">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org37a0993" class="outline-2">
+<h2 id="org37a0993">开篇：Python 工具链的"大统一"时代</h2>
+<div class="outline-text-2" id="text-org37a0993">
+<p>
+如果你在 2020 年问一个 Python 开发者"用什么工具构建库"，你得到的答案会因人而异。Poetry、pipenv、flit、hatch，每个都有各自的拥趸。Lint 用 flake8，格式化用 black，类型检查用 mypy，三套工具各管一摊。到了 2025–2026 年，情况已经大为改观。
+</p>
+
+<p>
+Stephen Funk 在 <a href="https://stephenlf.dev/blog/python-library-in-2026/">Building a Python Library in 2026</a> 中总结了现代 Python 库开发的实操经验。核心信息是：工具链已经收敛到了 Astral 一家的产品上。这篇文章基于原文内容，结合中国开发者的实际环境做了解读。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org67bc7a8" class="outline-2">
+<h2 id="org67bc7a8">项目初始化：uv 的一站式体验</h2>
+<div class="outline-text-2" id="text-org67bc7a8">
+<p>
+当前 Python 生态里受到最多关注的新工具是 Astral 公司开发的 <code>uv</code> 。它同时取代了 pip、poetry、pyenv、virtualenv、hatch 等多个工具的功能，而且性能比 pip 快 10–100 倍。
+</p>
+
+<p>
+初始化一个新库只需要一条命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv init --lib my-package
+</pre>
+</div>
+
+<p>
+这条命令会生成以下目录结构：
+</p>
+
+<pre class="example" id="orge97ff42">
+.
+├── .git
+│   └── ...
+├── .gitignore
+├── pyproject.toml
+├── .python-version
+├── README.md
+└── src
+    └── my_package
+        ├── __init__.py
+        └── py.typed
+</pre>
+
+<p>
+这里采用了 <code>src/</code> 布局：库代码放在 <code>src/my_package/</code> 下，而非直接在项目根目录下。这样做的好处是，测试时导入的是安装后的包而非源代码目录，能提前暴露包打包配置的问题。
+</p>
+
+<p>
+<code>pyproject.toml</code> 包含了项目的元数据，它遵循 Python 官方的 pyproject.toml 规范。[project] 部分中 <code>description</code> 和 <code>authors</code> 字段对 PyPI 页面渲染很重要， <code>keywords</code> 和 <code>classifiers</code> 可以让 LLM（如 Claude）帮忙填写。
+</p>
+
+<p>
+版本号遵循 SemVer 标准（主版本号.次版本号.修订号，对应 major.minor.patch）。用 uv 管理版本，不要手动改文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv version --bump {major,minor,patch}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5ed5a10" class="outline-2">
+<h2 id="org5ed5a10">Linting 和格式化：ruff 接管一切</h2>
+<div class="outline-text-2" id="text-org5ed5a10">
+<p>
+几年前，社区还在用 flake8（lint）加 black（format）加 isort（排序 import）的组合。现在 Astral 的 <code>ruff</code> 可以替代这三个工具。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv add --dev ruff
+</pre>
+</div>
+
+<p>
+日常使用方式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv run ruff check      <span class="org-comment-delimiter"># </span><span class="org-comment">lint &#26816;&#26597;
+</span>uv run ruff check --fix <span class="org-comment-delimiter"># </span><span class="org-comment">lint &#26816;&#26597;&#24182;&#33258;&#21160;&#20462;&#22797;
+</span>uv run ruff format      <span class="org-comment-delimiter"># </span><span class="org-comment">&#26684;&#24335;&#21270;&#20195;&#30721;</span>
+</pre>
+</div>
+
+<p>
+由于这些命令会频繁运行，原文建议用 Makefile 或 just 等命令运行器来记录它们，避免每次都翻文档。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-comment-delimiter"># </span><span class="org-comment">Makefile
+</span><span class="org-makefile-targets">lint</span>:
+    uv run ruff check
+
+<span class="org-makefile-targets">format</span>:
+    uv run ruff format --check
+
+<span class="org-makefile-targets">fix</span>:
+    uv run ruff check --fix
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org34b5be2" class="outline-2">
+<h2 id="org34b5be2">类型检查：三个选择，一个结论</h2>
+<div class="outline-text-2" id="text-org34b5be2">
+<p>
+类型注解在 2026 年已经是 Python 库的标配。缺少类型注解的库很难声称自己有"质量保证"。类型签名能让 IDE 自动补全和静态检查发现潜在 bug。
+</p>
+
+<p>
+类型检查工具有三个选项：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">工具</th>
+<th scope="col" class="org-left">开发者</th>
+<th scope="col" class="org-left">特点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>mypy</code></td>
+<td class="org-left">社区标杆</td>
+<td class="org-left">生态最完善，文档最全，兼容性最好</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>ty</code></td>
+<td class="org-left">Astral（ruff 作者）</td>
+<td class="org-left">与 uv/ruff 同源，但尚在早期</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>pyrefly</code></td>
+<td class="org-left">Meta</td>
+<td class="org-left">较新，仍在快速迭代</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+原文建议三个都试一遍再做选择。uv 让试错变得简单：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20020;&#26102;&#23433;&#35013;&#24182;&#36816;&#34892;&#65292;&#19981;&#24433;&#21709;&#39033;&#30446;&#20381;&#36182;
+</span>uv run --with mypy mypy src/
+uv run --with ty ty check
+uv run --with pyrefly pyrefly check
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#36873;&#23450;&#21518;&#20316;&#20026; dev &#20381;&#36182;&#21152;&#20837;
+</span>uv add --dev mypy
+</pre>
+</div>
+
+<p>
+<code>mypy</code> 目前仍是事实标准，生态最完善。如果你刚开始接触类型注解，原文推荐 <a href="https://github.com/anthonywritescode/typing-puzzles">typing-puzzles</a> 这个练习仓库来练手。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org102d814" class="outline-2">
+<h2 id="org102d814">测试：pytest 就够了</h2>
+<div class="outline-text-2" id="text-org102d814">
+<p>
+测试文件通常放在项目根目录下的 <code>tests/</code> 目录中，可以进一步分为 <code>tests/unit</code> 和 <code>tests/integration</code> 。
+</p>
+
+<p>
+<code>unittest</code> 是 Python 内置的测试框架，不依赖第三方库就能用。但大多数项目选择 <code>pytest</code> ，因为它写起来更简洁（不需要继承 TestCase 类，用普通 assert 即可断言），插件生态也更丰富。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv add --dev pytest pytest-cov
+</pre>
+</div>
+
+<p>
+<code>pytest-cov</code> 用来统计代码覆盖率。原文特别提到，覆盖率指标虽然名声不太好（容易被滥用为 KPI），但在实践中确实帮助他发现了很多 bug。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21333;&#20803;&#27979;&#35797;&#65292;&#39057;&#32321;&#36816;&#34892;
+</span><span class="org-makefile-targets">test</span>:
+    uv run pytest --cov=my_package \
+    <span class="org-variable-name">--cov-report</span>=term-missing tests/unit
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#38598;&#25104;&#27979;&#35797;&#65292;&#21457;&#24067;&#21069;&#36816;&#34892;
+</span><span class="org-makefile-targets">test-integration</span>:
+    uv run pytest tests/unit tests/integration
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org269b67b" class="outline-3">
+<h3 id="org269b67b">多版本测试</h3>
+<div class="outline-text-3" id="text-org269b67b">
+<p>
+很多性能敏感的 Python 库依赖 C 扩展，而 C 扩展在新 Python 版本发布时偶尔会出现兼容问题。原文展示了用 uv 测试多版本的方法，不需要 tox 或 nox 这类额外工具（tox 是传统的多环境测试框架，nox 是其现代替代品，它们都需要额外的配置文件和学习成本）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-makefile-targets">test-versions</span>:
+  uv python find 3.12 \
+    || uv python install 3.12
+  uv run --python 3.12 pytest tests/unit
+  uv python find 3.13 \
+    || uv python install 3.13
+  uv run --python 3.13 pytest tests/unit
+</pre>
+</div>
+
+<p>
+这里 <code>uv python find</code> 先检查本地是否有该版本，没有则自动安装。 <code>uv run --python 3.12</code> 则指定用哪个解释器运行。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orged37b96" class="outline-2">
+<h2 id="orged37b96">代码质量维护：CI 和 pre-commit</h2>
+<div class="outline-text-2" id="text-orged37b96">
+</div>
+<div id="outline-container-orgb52a1d5" class="outline-3">
+<h3 id="orgb52a1d5">CI 脚本</h3>
+<div class="outline-text-3" id="text-orgb52a1d5">
+<p>
+没有自动化检查，代码质量撑不了多久。原文提供了一个极简的 GitHub Actions CI 脚本，核心逻辑是：检查版本号是否变了，如果变了就运行 lint、类型检查和测试，全部通过后再构建发布。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter">#</span><span class="org-comment">!/usr/bin/</span><span class="org-keyword">env</span><span class="org-comment"> bash
+</span>
+uv sync
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#33719;&#21462;&#24403;&#21069;&#29256;&#26412;&#21495;
+</span><span class="org-variable-name">CURR_VER</span>=$(<span class="org-sh-quoted-exec">uv version --short</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#33719;&#21462;&#19978;&#19968;&#20010;&#25552;&#20132;&#30340;&#29256;&#26412;&#21495;
+</span>git restore -s HEAD~ -W pyproject.toml
+<span class="org-variable-name">PRIOR_VER</span>=$(<span class="org-sh-quoted-exec">uv version --short</span>)
+git restore .
+
+<span class="org-keyword">if</span> [ <span class="org-string">"$CURR_VER"</span> = <span class="org-string">"$PRIOR_VER"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-comment-delimiter"># </span><span class="org-comment">&#29256;&#26412;&#21495;&#27809;&#21464;&#65292;&#35828;&#26126;&#27809;&#26377;&#26032;&#21457;&#24067;
+</span>  <span class="org-keyword">exit</span>
+<span class="org-keyword">fi</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20195;&#30721;&#36136;&#37327;&#26816;&#26597;
+</span>uv run ruff check
+uv run ruff format --check
+uv run mypy src/
+uv run pytest tests/
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26500;&#24314;&#24182;&#21457;&#24067;
+</span>uv build
+uv publish
+</pre>
+</div>
+
+<p>
+这个脚本的思路很有意思：不是每次 push 都跑完整的质量检查，而是只在版本号变更时才触发构建和发布管道。平时的提交只跑 lint 和测试，这样 CI 的开销会小很多。
+</p>
+
+<p>
+原文还特别提醒，GitHub Actions marketplace 上的第三方 action 曾经是供应链攻击的目标，建议将关键 action 的代码 vendored（复制到仓库内管理），而不是直接引用 marketplace 上的版本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgaeed4b6" class="outline-3">
+<h3 id="orgaeed4b6">pre-commit 钩子</h3>
+<div class="outline-text-3" id="text-orgaeed4b6">
+<p>
+CI 检查的问题是反馈周期太长：提交代码，等几分钟，才知道格式不对。 <code>pre-commit</code> 工具把同样的检查移动到 <code>git commit</code> 之前执行，在本地就能发现问题。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">uv add --dev pre-commit
+uv run pre-commit sample-config  <span class="org-comment-delimiter"># </span><span class="org-comment">&#29983;&#25104; .pre-commit-config.yaml
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">... &#32534;&#36753;&#37197;&#32622;&#25991;&#20214;&#28155;&#21152; hooks ...
+</span>uv run pre-commit install  <span class="org-comment-delimiter"># </span><span class="org-comment">&#23433;&#35013; git hooks</span>
+</pre>
+</div>
+
+<p>
+社区已经预先配置了大量可用的 pre-commit hooks。例如 <code>astral-sh/ruff-pre-commit</code> 可以在提交前自动运行 <code>ruff</code> 的 lint 和格式化检查。
+</p>
+
+<p>
+把安装脚本也放进 Makefile，方便其他开发者设置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-makefile-targets">setup</span>:
+    uv sync
+    uv run pre-commit install
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5c5d7bd" class="outline-2">
+<h2 id="org5c5d7bd">发布：不一定需要 PyPI</h2>
+<div class="outline-text-2" id="text-org5c5d7bd">
+<p>
+<code>uv build &amp;&amp; uv publish</code> 是标准的发布流程。但原文分享了一个不常见的做法：对于小团队来说，不一定要把库发布到 PyPI。
+</p>
+
+<p>
+原文作者的公司只有三个活跃的 Python 开发者，不值得为这三个人搭建私有 PyPI 仓库。但由于合规要求，他们也不能把内部库发布到公共 PyPI。他们的方案是直接从源码安装：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">cd</span> ~/my-personal-project/
+uv add ~/my-package
+</pre>
+</div>
+
+<p>
+<code>uv add</code> 接受本地路径，uv 会自动处理构建、缓存和链接，效果和从 PyPI 安装几乎一样。唯一需要做的是用一个 cron 定时任务定期更新仓库代码。
+</p>
+
+<p>
+这个方案对国内开发者尤其有用：访问 PyPI 需要换源或代理，但直接从 Git 仓库安装就没有这个烦恼了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9f61be0" class="outline-2">
+<h2 id="org9f61be0">参考项目：大厂怎么用</h2>
+<div class="outline-text-2" id="text-org9f61be0">
+<p>
+原文列举了两个参考项目：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">项目</th>
+<th scope="col" class="org-left">Lint</th>
+<th scope="col" class="org-left">Format</th>
+<th scope="col" class="org-left">构建</th>
+<th scope="col" class="org-left">测试</th>
+<th scope="col" class="org-left">类型检查</th>
+<th scope="col" class="org-left">CI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">openai-python</td>
+<td class="org-left">ruff</td>
+<td class="org-left">black</td>
+<td class="org-left">hatchling(rye)</td>
+<td class="org-left">pytest+nox</td>
+<td class="org-left">pyright+mypy</td>
+<td class="org-left">GitHub Actions</td>
+</tr>
+
+<tr>
+<td class="org-left">polars</td>
+<td class="org-left">ruff</td>
+<td class="org-left">ruff</td>
+<td class="org-left">setuptools</td>
+<td class="org-left">pytest+cov</td>
+<td class="org-left">mypy</td>
+<td class="org-left">GitHub Actions</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+OpenAI 的 Python SDK 创建于 2020 年，使用的还是 =rye=(uv 的前身)。考虑到 OpenAI 刚收购了 Astral，他们大概率会迁移到 uv。
+</p>
+
+<p>
+Polars 的情况比较特殊，它是 Rust 实现的 Python 库，构建系统受限于 setuptools-rust。即便如此，uv 仍然可以正常管理其依赖和虚拟环境。
+</p>
+
+<p>
+OpenAI SDK 同时用了 <code>pyright</code> 和 <code>mypy</code> 两个类型检查工具。这是因为不同的类型检查器对类型注解的解析行为有细微差异，同时用两个可以覆盖各自盲区。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9bc0827" class="outline-2">
+<h2 id="org9bc0827">总结</h2>
+<div class="outline-text-2" id="text-org9bc0827">
+<p>
+2026 年的 Python 库开发已经形成了一个清晰的工具栈：
+</p>
+
+<ul class="org-ul">
+<li><code>uv</code> 管理一切（项目创建、依赖、虚拟环境、构建、发布）</li>
+<li><code>ruff</code> 负责 lint 和格式化</li>
+<li><code>mypy</code> 负责类型检查</li>
+<li><code>pytest</code> + <code>pytest-cov</code> 负责测试</li>
+<li>pre-commit + CI 负责自动化执行以上检查</li>
+</ul>
+
+<p>
+这个栈最大的好处是工具数量少（主要来自 Astral 一家），各工具之间没有配置冲突。对于 2020 年需要同时维护 flake8 配置、black 配置、isort 配置、poetry 配置的时代来说，这无疑是一个进步。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-03</span>
+    <span class="post-info">2026-05-03</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/uv">uv</a> : <a href="../../../../../tags/ruff">ruff</a> : <a href="../../../../../tags/编程工具">编程工具</a> : <a href="../../../../../tags/最佳实践">最佳实践</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ds5r5dszg3eenmbmpnlugfotxe &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

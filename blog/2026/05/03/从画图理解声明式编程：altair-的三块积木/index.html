@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>从画图理解声明式编程：Altair 的三块积木 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="声明式编程,数据可视化,编程范式,API设计" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">从画图理解声明式编程：Altair 的三块积木</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org55b6b92">引子：两个画图程序员的对话</a></li>
+<li><a href="#orge1bbd92">Altair 的三块积木：Data→Mark→Encode</a></li>
+<li><a href="#orgf321a62">你其实早就用过声明式</a></li>
+<li><a href="#org4c86c41">什么时候不该用声明式</a></li>
+<li><a href="#org9545b0d">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org55b6b92" class="outline-2">
+<h2 id="org55b6b92">引子：两个画图程序员的对话</h2>
+<div class="outline-text-2" id="text-org55b6b92">
+<p>
+假设你要画一张散点图：横轴是电影制作预算，纵轴是全球票房，每个点按类型着色。
+</p>
+
+<p>
+以下是 18 部电影的数据，保存为 <code>/tmp/movies.csv</code> 。在 Org-mode 中按 <code>C-c C-v t</code> 生成文件，或直接复制数据手动创建：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-csv">Title,Production Budget,Worldwide Gross,Major Genre,IMDB Rating,MPAA Rating
+The Whole Ten Yards,30000000.0,26323969.0,Comedy,5.1,PG-13
+Dream With The Fishes,1000000.0,542909.0,Drama,6.6,R
+Godzilla,125000000.0,376000000.0,Action,4.8,PG-13
+Exit Wounds,33000000.0,79958599.0,Action,5.2,R
+Doom,70000000.0,54612337.0,Horror,5.2,R
+The Avengers,60000000.0,48585416.0,Action,3.4,PG-13
+First Daughter,30000000.0,10419084.0,Romantic Comedy,4.7,PG
+Raising Victor Vargas,800000.0,2811439.0,Drama,7.1,R
+Tin Cup,45000000.0,75854588.0,Romantic Comedy,6.1,R
+Pirates of the Caribbean: Dead Man's Chest,225000000.0,1065659812.0,Adventure,7.3,PG-13
+Fighting Tommy Riley,300000.0,10514.0,Drama,6.6,R
+The Funeral,12500000.0,1412799.0,Drama,6.4,R
+Under Siege 2: Dark Territory,60000000.0,104324083.0,Action,5.1,R
+Banlieue 13,15000000.0,11208291.0,Action,7.1,R
+"You, Me and Dupree",54000000.0,130402010.0,Comedy,6.1,PG-13
+Supercross,30000000.0,3252550.0,Action,2.9,PG-13
+Emma,5900000.0,37831658.0,Romantic Comedy,6.8,PG
+Woman on Top,8000000.0,10192613.0,Romantic Comedy,4.9,R
+</pre>
+</div>
+
+<p>
+用 Matplotlib 写：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> matplotlib
+matplotlib.use(<span class="org-string">'Agg'</span>)
+<span class="org-keyword">import</span> matplotlib.pyplot <span class="org-keyword">as</span> plt
+<span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
+
+<span class="org-variable-name">movies</span> <span class="org-operator">=</span> pd.read_csv(<span class="org-string">"/tmp/movies.csv"</span>)
+<span class="org-variable-name">fig</span>, <span class="org-variable-name">ax</span> <span class="org-operator">=</span> plt.subplots(figsize<span class="org-operator">=</span>(10, 6))
+<span class="org-keyword">for</span> genre <span class="org-keyword">in</span> movies[<span class="org-string">"Major Genre"</span>].unique():
+    <span class="org-variable-name">subset</span> <span class="org-operator">=</span> movies[movies[<span class="org-string">"Major Genre"</span>] <span class="org-operator">==</span> genre]
+    ax.scatter(subset[<span class="org-string">"Production Budget"</span>], subset[<span class="org-string">"Worldwide Gross"</span>],
+               label<span class="org-operator">=</span>genre, alpha<span class="org-operator">=</span>0.7)
+ax.set_xlabel(<span class="org-string">"Production Budget"</span>)
+ax.set_ylabel(<span class="org-string">"Worldwide Gross"</span>)
+ax.legend()
+plt.tight_layout()
+plt.savefig(<span class="org-string">"images/matplotlib-scatter.png"</span>)
+plt.close()
+<span class="org-builtin">print</span>(<span class="org-string">"images/matplotlib-scatter.png"</span>, end<span class="org-operator">=</span><span class="org-string">""</span>)
+</pre>
+</div>
+
+
+<div id="org26dad06" class="figure">
+<p><img src="../../../../../assets/blog/2026/05/03/从画图理解声明式编程：altair-的三块积木/matplotlib-scatter.png" alt="matplotlib-scatter.png" />
+</p>
+</div>
+
+<p>
+用 Altair 写：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> altair <span class="org-keyword">as</span> alt
+<span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
+
+<span class="org-variable-name">movies</span> <span class="org-operator">=</span> pd.read_csv(<span class="org-string">"/tmp/movies.csv"</span>)
+<span class="org-variable-name">chart</span> <span class="org-operator">=</span> alt.Chart(movies).mark_point().encode(
+    x<span class="org-operator">=</span><span class="org-string">"Production Budget:Q"</span>,
+    y<span class="org-operator">=</span><span class="org-string">"Worldwide Gross:Q"</span>,
+    color<span class="org-operator">=</span><span class="org-string">"Major Genre:N"</span>
+)
+chart.save(<span class="org-string">"images/altair-basic.png"</span>)
+<span class="org-builtin">print</span>(<span class="org-string">"images/altair-basic.png"</span>, end<span class="org-operator">=</span><span class="org-string">""</span>)
+</pre>
+</div>
+
+
+<div id="org0429c70" class="figure">
+<p><img src="../../../../../assets/blog/2026/05/03/从画图理解声明式编程：altair-的三块积木/altair-basic.png" alt="altair-basic.png" />
+</p>
+</div>
+
+<p>
+两段代码做了同一件事，但思维方式完全不同。Matplotlib 是命令式的：你一步步告诉它 "创建画布 → 添加坐标轴 → 遍历数据 → 画点 → 设标签 → 加图例 → 调整布局"。代码是你的操作清单。Altair 是声明式的：你告诉它 "数据在这里，横轴是制作预算，纵轴是票房，按类型着色"。剩下的事情：坐标轴范围、刻度位置、图例排列、颜色映射：Altair 自己决定。
+</p>
+
+<p>
+这两种范式差异的实质是 <i>描述意图（what）vs 控制过程（how）</i> ，不是 "哪个库更方便" 的技术选型问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge1bbd92" class="outline-2">
+<h2 id="orge1bbd92">Altair 的三块积木：Data→Mark→Encode</h2>
+<div class="outline-text-2" id="text-orge1bbd92">
+<p>
+Altair 的每个图表都遵循同一个模式，由三个部分组成：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">alt.Chart(&#25968;&#25454;).mark_&#24418;&#29366;().encode(&#21015; &#8594; &#35270;&#35273;&#23646;&#24615;&#30340;&#26144;&#23556;)
+</pre>
+</div>
+
+<p>
+用更直观的说法：
+</p>
+
+<ul class="org-ul">
+<li><b>Data</b> ：你的数据 ： 一个 pandas DataFrame</li>
+<li><b>Mark</b> ：你想要的视觉形状 ： 柱状条（mark_bar）、点（mark_point）、线（mark_line）、弧（mark_arc）</li>
+<li><b>Encode</b> ：数据列到视觉属性的映射 ： 哪列放 X 轴、哪列染色、哪列控制点的大小</li>
+</ul>
+
+<p>
+拿一周每日步数数据试一下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> altair <span class="org-keyword">as</span> alt
+<span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
+
+<span class="org-variable-name">steps</span> <span class="org-operator">=</span> pd.DataFrame({
+    <span class="org-string">"Day"</span>: [<span class="org-string">"Mon"</span>, <span class="org-string">"Tue"</span>, <span class="org-string">"Wed"</span>, <span class="org-string">"Thu"</span>, <span class="org-string">"Fri"</span>, <span class="org-string">"Sat"</span>, <span class="org-string">"Sun"</span>],
+    <span class="org-string">"Steps"</span>: [5432, 7890, 6210, 8765, 4567, 10234, 9430]
+})
+
+<span class="org-variable-name">weekly_steps</span> <span class="org-operator">=</span> alt.Chart(steps).mark_bar().encode(
+    x<span class="org-operator">=</span><span class="org-string">"Day:O"</span>,
+    y<span class="org-operator">=</span><span class="org-string">"Steps:Q"</span>
+)
+weekly_steps.save(<span class="org-string">"images/altair-weekly.png"</span>)
+<span class="org-builtin">print</span>(<span class="org-string">"images/altair-weekly.png"</span>, end<span class="org-operator">=</span><span class="org-string">""</span>)
+</pre>
+</div>
+
+
+<div id="org8ef0458" class="figure">
+<p><img src="../../../../../assets/blog/2026/05/03/从画图理解声明式编程：altair-的三块积木/altair-weekly.png" alt="altair-weekly.png" />
+</p>
+</div>
+
+<p>
+这段代码在 Jupyter Notebook 中会生成一张柱状图，X 轴是星期，Y 轴是步数。 
+</p>
+
+<p>
+这种声明式写法的核心特点就是：每行代码都在描述数据的一个维度，而不是在操作图表的一个部件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf321a62" class="outline-2">
+<h2 id="orgf321a62">你其实早就用过声明式</h2>
+<div class="outline-text-2" id="text-orgf321a62">
+<p>
+Altair 的 Data→Mark→Encode 不是独创。声明式编程你可能每天都在用，只是没意识到它属于同一个范式。
+</p>
+
+<p>
+<b>SQL：声明式语言的代表</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> department, <span class="org-builtin">AVG</span>(salary)
+<span class="org-keyword">FROM</span> employees
+<span class="org-keyword">WHERE</span> years_of_experience &gt; 3
+<span class="org-keyword">GROUP</span> <span class="org-keyword">BY</span> department
+<span class="org-keyword">HAVING</span> <span class="org-builtin">AVG</span>(salary) &gt; 50000
+</pre>
+</div>
+
+<p>
+你描述你要什么：各部门中工龄 3 年以上员工的平均薪资，只显示平均薪资超过 5 万的部门。数据库自己决定用哪个索引、什么连接顺序、怎么并行执行。
+</p>
+
+<p>
+SQL 和 Altair 共享同一个核心哲学： <i>你描述结果，系统选择路径</i> 。
+</p>
+
+<p>
+<b>正则表达式：用模式匹配替代过程</b>
+</p>
+
+<p>
+<code>^\d{3}-\d{2}-\d{4}$</code> 就是一个声明："我要一个 XXX-XX-XXXX 格式的字符串"。你不需要写循环逐字符检查，正则引擎帮你做。
+</p>
+
+<p>
+<b>Clojure 的 core.logic</b>
+</p>
+
+<p>
+函数式语言中的逻辑编程库更是直接把 "声明约束条件" 作为核心范式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(run* [q]
+  (membero q [1 2 3])
+  (membero q [2 3 4]))
+;; =&gt; (2 3)
+</pre>
+</div>
+
+<p>
+你不是在写 "遍历第一个列表，对每个元素检查是否在第二个列表中"。你只是在声明约束条件："q 要在第一个列表中，也要在第二个列表中"。然后 core.logic 自己找出所有满足条件的 q。
+</p>
+
+<p>
+这些例子的共同模式是： <i>你描述问题，而不是实现方案</i> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4c86c41" class="outline-2">
+<h2 id="org4c86c41">什么时候不该用声明式</h2>
+<div class="outline-text-2" id="text-org4c86c41">
+<p>
+声明式不是银弹。Altair 和声明式编程都有适用范围：
+</p>
+
+<p>
+<b>像素级定制</b>
+</p>
+
+<p>
+当你要精确控制每个元素的颜色值、字体大小、位置偏移时，声明式的 "自动推断" 就成了障碍。Altair 允许覆盖默认值，但语法会更啰嗦，而且失去声明式的简洁感。这种场景 Matplotlib 仍是更好的选择。
+</p>
+
+<p>
+<b>3D 可视化</b>
+</p>
+
+<p>
+Altair 严格 2D。需要 3D 图得回 Matplotlib 或 Plotly。声明式通常不擅长处理 "非常规" 的视觉映射。
+</p>
+
+<p>
+<b>大数据集</b>
+</p>
+
+<p>
+Altair 把数据嵌入图表规范为 JSON，超过 5000 行会触发 <code>MaxRowsError</code> 。解决方案有 VegaFusion（服务端聚合）或通过 URL 传递数据，但相比 Matplotlib 的直接渲染，额外步骤不少。
+</p>
+
+<p>
+这就像用 SQL 做复杂的数据清洗：虽然也能做，但用 Python 写个循环可能更直接。声明式在你需要 "标准做法的 80%" 时最高效，剩下 20% 的非常规需求可能反而更费力。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9545b0d" class="outline-2">
+<h2 id="org9545b0d">总结</h2>
+<div class="outline-text-2" id="text-org9545b0d">
+<p>
+Altair 用一个简单的模式（Data→Mark→Encode）展示了声明式编程在数据可视化中的力量。它的每个例子都遵循一个原则： <i>描述数据，而不是操作图表</i> 。
+</p>
+
+<p>
+这个原则你早就见过：SQL 声明你要什么数据而不说怎么查，正则描述文本模式而不写逐字符匹配的循环，Clojure core.logic 声明约束条件而不写遍历逻辑。
+</p>
+
+<p>
+声明式的价值不是省几行代码，而是让代码表达意图而非实现细节。当你能用一句 <code>color="Major Genre:N"</code> 而不是一个 for 循环加 <code>ax.scatter()</code> 来做同一件事时，你就能腾出精力去想真正重要的问题：数据在说什么。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-03</span>
+    <span class="post-info">2026-05-03</span>
+    <a href="../../../../../tags/声明式编程">声明式编程</a> : <a href="../../../../../tags/数据可视化">数据可视化</a> : <a href="../../../../../tags/编程范式">编程范式</a> : <a href="../../../../../tags/api设计">API设计</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ds5r5dszg3eenmbmpnlugfotxe &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

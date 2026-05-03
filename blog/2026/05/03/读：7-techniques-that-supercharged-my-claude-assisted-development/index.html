@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：7 Techniques That Supercharged My Claude-Assisted Development - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Claude Code,AI,开发效率,skill" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：7 Techniques That Supercharged My Claude-Assisted Development</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgd751146">技巧 1：停止审批每个命令</a></li>
+<li><a href="#orgd5f582f">技巧 2：让 Claude 自己改配置</a></li>
+<li><a href="#orgc817042">技巧 3：给 Claude 一个入口文件</a></li>
+<li><a href="#org49c6823">技巧 4：把 fix-test 循环交给 skill</a></li>
+<li><a href="#orge2e84a8">技巧 5：链式调用 skills</a></li>
+<li><a href="#orgd5d8ed4">技巧 6：用 worktree 并行跑多个会话</a></li>
+<li><a href="#org4ee6655">技巧 7：复杂任务先出计划</a></li>
+<li><a href="#org28204e1">几个补充</a></li>
+<li><a href="#org04c9233">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Claude Code 用了一段时间，算重度用户了。写博客、改配置、知识管理基本都在上面。DZone 上 Vivek Katarya 的这篇文章列出了 7 个进阶技巧，我对照着自己的使用经验梳理一遍，看看哪些已经在用了、哪些是新学的、哪些有不同看法。
+</p>
+
+<div id="outline-container-orgd751146" class="outline-2">
+<h2 id="orgd751146">技巧 1：停止审批每个命令</h2>
+<div class="outline-text-2" id="text-orgd751146">
+<p>
+Claude Code 默认每个操作都要弹确认： <code>Run npm test? (Y/N)</code> 。安全是安全，但迭代的时候频繁打断很影响节奏。
+</p>
+
+<p>
+解决方案是在 <code>~/.claude/settings.json</code> 里配一个白名单：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-json">{
+  "permissions": {
+    "allow": [
+      "Read(~/Codebase)",
+      "Edit(~/Codebase)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}
+</pre>
+</div>
+
+<p>
+配了之后，这些操作就不再弹确认了。原文的 advice 是只放只读或低风险操作。我加了 <code>Bash(grep:*)</code> 和 <code>Bash(cat:*)</code> 用来做代码搜索，确实方便很多。涉及生产环境或密钥的操作继续弹确认，这个分寸自己把握。
+</p>
+
+<p>
+原文还特意警告了 <code>--dangerously-skip-permissions</code> 这个 flag：等于给 Claude 开了 God Mode，风险远大于便利。别用。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd5f582f" class="outline-2">
+<h2 id="orgd5f582f">技巧 2：让 Claude 自己改配置</h2>
+<div class="outline-text-2" id="text-orgd5f582f">
+<p>
+Claude Code 能改自己的配置文件。想改什么直接说就行，不用翻文档找 JSON 路径。
+</p>
+
+<p>
+比如我把换行快捷键改了：
+</p>
+
+<pre class="example">
+把换行快捷键改成 Shift+Enter。
+</pre>
+
+
+<p>
+想调权限也一样：
+</p>
+
+<pre class="example">
+更新权限，让 bash 命令 ls、grep、tail 不用确认就能执行。
+</pre>
+
+
+<p>
+这个我经常用。调整 verbose 级别、diff 格式、文件搜索范围，想到了就丢一句话过去，省了手动编辑 JSON 的功夫。
+</p>
+
+<p>
+一个限制：改完配置后要手动重启 Claude 才生效，它没法给自己发 SIGHUP。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc817042" class="outline-2">
+<h2 id="orgc817042">技巧 3：给 Claude 一个入口文件</h2>
+<div class="outline-text-2" id="text-orgc817042">
+<p>
+Claude 默认会自动探索代码库来理解上下文。项目大了之后，它会在无关文件上浪费 token。
+</p>
+
+<p>
+解决方案是写一个入口脚本（比如 <code>scripts/context.sh</code> ），只展示 Claude 真正需要的信息：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span>
+<span class="org-builtin">echo</span> <span class="org-string">"README:"</span>
+cat README.md
+
+<span class="org-builtin">echo</span>
+<span class="org-builtin">echo</span> <span class="org-string">"Key services:"</span>
+grep -r <span class="org-string">"class .*Service"</span> src/
+</pre>
+</div>
+
+<p>
+然后告诉 Claude："每次需要项目上下文时，先跑 <code>scripts/context.sh</code> "。这句指令可以在对话里直接说。
+</p>
+
+<p>
+再配合 <code>.claudeignore</code> 过滤掉 node_modules/、build/ 、*.log 这些噪音，效果更好。原理跟 <code>.gitignore</code> 一样，不让 Claude 在无关文件上浪费 token。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org49c6823" class="outline-2">
+<h2 id="org49c6823">技巧 4：把 fix-test 循环交给 skill</h2>
+<div class="outline-text-2" id="text-org49c6823">
+<p>
+原文举了一个例子：不用自己跑测试、看失败、再修，直接告诉 Claude：
+</p>
+
+<pre class="example">
+跑测试，标记失败用例，修好，再跑。直到全通过，或者最多重试 3 次。
+</pre>
+
+
+<p>
+原本来回 15 分钟的循环变成一句话。然后可以把这条指令保存成 skill（ <code>~/.claude/commands/fix-test/SKILL.md</code> ），以后直接复用。
+</p>
+
+<p>
+我的场景不太一样（写代码修测试不是日常），但这个模式本身通用。比如写博客的时候，lint 报了一堆格式错误，直接告诉 Claude "把 lint 报的问题全修了，修完再跑一遍确认"。跟 fix-test 循环是一个套路，把迭代交给它，我等结果就好。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge2e84a8" class="outline-2">
+<h2 id="orge2e84a8">技巧 5：链式调用 skills</h2>
+<div class="outline-text-2" id="text-orge2e84a8">
+<p>
+有了几个基础 skill（write-unit-tests、fix-test、create-pr）之后，下一步是把它们串联成一个高阶 skill。
+</p>
+
+<p>
+比如定义一个 <code>sanitize-and-publish</code> 的 skill，自动跑 fix-build → check-coverage → write-unit-tests → fix-tests → create-pr。原文形容得好：像管理一个轻量级的多代理流水线。
+</p>
+
+<p>
+这个我还没系统性做，但思路对。比如我现在的 <code>url2blog</code> 其实已经在链式调用了，它内部又调了 brainstorming 和 人味儿 两个子 skill。按原文的思路，可以把这些拆成更细粒度的独立 skill，再组合出更高阶的流程。下次可以试试。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd5d8ed4" class="outline-2">
+<h2 id="orgd5d8ed4">技巧 6：用 worktree 并行跑多个会话</h2>
+<div class="outline-text-2" id="text-orgd5d8ed4">
+<p>
+单会话不够用时，可以用 Git worktree 开多个并行的 Claude 实例。一个修 bug、一个重构模块、一个搞原型：
+</p>
+
+<pre class="example">
+claude --worktree feature-x
+</pre>
+
+
+<p>
+每个实例有自己的工作目录，互不干扰。干完后把 worktree 合到对应分支就行。
+</p>
+
+<p>
+superpowers 里其实已经有 <code>using-git-worktrees</code> skill 封装了这个流程，但我平时很少需要并行开多个会话。偶尔需要同时做两件事时（比如这篇博文写到一半，突然想试另一个写法），直接用 <code>claude --worktree</code> 起一个新实例，互不干扰。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4ee6655" class="outline-2">
+<h2 id="org4ee6655">技巧 7：复杂任务先出计划</h2>
+<div class="outline-text-2" id="text-org4ee6655">
+<p>
+原文说这是"提升输出质量最管用的一个习惯"：
+</p>
+
+<pre class="example">
+先生成一个分步计划，识别边界情况，提出澄清问题。我确认后再执行。
+</pre>
+
+
+<p>
+Claude 的第一版计划通常 80% 对。那漏掉的 20% 正好是 bug 和回归问题所在。花两分钟确认，经常能省下两小时。
+</p>
+
+<p>
+这一点完全同意。我现在用 <code>superpowers:brainstorming</code> 和 <code>writing-plans</code> 就是这个流程，先想清楚再动手。尤其在写代码或写博文之前，plan first 能把方向跑偏的风险降到最低。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org28204e1" class="outline-2">
+<h2 id="org28204e1">几个补充</h2>
+<div class="outline-text-2" id="text-org28204e1">
+<p>
+原文末尾还有几个技巧：
+</p>
+
+<ul class="org-ul">
+<li><b>用 Orchestrator 管理多会话</b> ：会话多了以后切换成本很高，Orchestrator 这类工具帮助协调多个 Claude 实例</li>
+<li><b>让 Claude 自我审查</b> ：在你自己做 code review 之前，让 Claude 先 review 自己的改动。它能抓到不少逻辑和流程上的问题</li>
+<li><b>让 Claude 自己改进 skill</b> ：用 Skill Creator 让 Claude 迭代自己的工具集，工作流会自动演进</li>
+</ul>
+
+<p>
+最后一个我最近在实践。做了 <code>log-reviewer</code> skill 之后，确实感觉到了"让 AI 自己造工具"的正循环。每次用 skill 写博文、改代码，都在积累经验，下次就更顺手。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org04c9233" class="outline-2">
+<h2 id="org04c9233">总结</h2>
+<div class="outline-text-2" id="text-org04c9233">
+<p>
+原文把 Claude Code 比作"一个写代码极快、但需要明确指令的初级工程师"。这个比喻贴切。权限白名单、入口文件、skill 链、plan-first，这些东西搭配在一起之后，重复劳动减少、迭代变快、脑子省出来想真正的问题。
+</p>
+
+<p>
+这 7 个技巧里，fix-test 循环、链式 skill、plan-first 这几个我已经在用了，而且用出了自己的变体。权限白名单和 self-configure 属于"知道但没认真配"的，写这篇的时候顺便补上了。worktree 并行有现成 skill 可以用，只是平时场景不多。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-03</span>
+    <span class="post-info">2026-05-04</span>
+    <a href="../../../../../tags/claude-code">Claude Code</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/开发效率">开发效率</a> : <a href="../../../../../tags/skill">skill</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; ds5r5dszg3eenmbmpnlugfotxe &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
