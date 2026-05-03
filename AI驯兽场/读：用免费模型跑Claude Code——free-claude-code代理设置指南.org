@@ -1,0 +1,125 @@
+#+TITLE: 读：用免费模型跑 Claude Code——free-claude-code 代理设置指南
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI,Claude Code,免费,代理,省钱
+#+DATE: [2026-05-03 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+有一篇 jdon 的热文介绍了一个免费使用 Claude Code 的方法，原理是用一个代理程序把 Claude Code 的请求转发给其他免费或本地模型。GitHub 上七千三百多颗星，看起来很多人都想省这笔钱。本文是一篇实操指南，告诉你这玩意儿怎么装、怎么用、以及最重要的：代价是什么。
+
+* 原理：一个电话总机
+
+Claude Code 的收费方式是按使用量计费。用得重的话一个月账单确实能上千美元。free-claude-code 的原理很简单：在你的电脑上跑一个代理程序，它假装自己是 Anthropic 的 API 服务器。Claude Code 把请求发给这个代理，代理再转发给其他模型提供商（NVIDIA NIM、OpenRouter、DeepSeek，或者你本地的模型），然后把回答返回给 Claude Code。NVIDIA NIM 是英伟达提供的模型推理服务平台，免费层可以调用 Llama、Gemma 等开源模型，适合入门试用。
+
+中间多了一层转发，所以响应速度比直连 Anthropic 慢，而且免费模型的工具调用能力远不如 Claude 自身。
+
+* 安装
+
+** 前提
+
+- Python 3.10 以上，需要装好 pip
+- 一个 [[https://www.nvidia.com/en-us/ai/][NVIDIA NIM]] 的免费 API 密钥（推荐新手用这个，不用绑信用卡）
+- 或者装好 LM Studio / Ollama 用来跑本地模型
+
+** 第一步：装 uv
+
+uv 是一个 Python 包管理器，这项目用它来管理依赖。
+
+#+begin_src bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+#+end_src
+
+这是 uv 官方安装方式，脚本来自 Astral 官方域名。如果对管道执行脚本不放心，也可以用 =pip install uv= 替代。装完后重启终端让 uv 命令生效。
+
+** 第二步：克隆项目
+
+#+begin_src bash
+git clone https://github.com/joshuakirsch/free-claude-code.git
+cd free-claude-code
+uv sync
+#+end_src
+
+=uv sync= 会下载所有依赖，需要一两分钟。
+
+** 第三步：配置
+
+复制配置文件：
+
+#+begin_src bash
+cp .env.example .env
+#+end_src
+
+编辑 =.env= 文件，找到以下行去掉注释并填入你的 API 密钥：
+
+#+begin_src text
+PROVIDER=NVIDIA_NIM
+NVIDIA_NIM_API_KEY=你的密钥
+#+end_src
+
+NVIDIA NIM 的 API 密钥去 [[https://build.nvidia.com/][NVIDIA build 平台]] 注册获取。如果选本地模型，PROVIDER 改成 =LM_STUDIO= 或 =OLLAMA= 。
+
+* 运行
+
+启动代理，保持这个终端开着：
+
+#+begin_src bash
+uv run python -m free_claude_code
+#+end_src
+
+看到 =Starting proxy on :8082= 就说明代理在跑了。
+
+新开一个终端，设置环境变量让 Claude Code 把请求发到代理：
+
+#+begin_src bash
+export ANTHROPIC_BASE_URL=http://localhost:8082
+export ANTHROPIC_AUTH_TOKEN="fake-key-please-ignore"
+#+end_src
+
+然后在这个终端里启动 Claude Code：
+
+#+begin_src bash
+claude
+#+end_src
+
+首次运行会问 API 密钥，填 =fake-key-please-ignore= 就行。问要不要发数据给 Anthropic，选 no。然后就能用了。
+
+* 最关键的代价：工具调用能力
+
+这可能是整个方案最大的坑。Claude Code 的强大在于它擅长调用各种工具：读文件、写文件、执行命令、搜索代码。这是模型能力的一部分，不是代理能模拟的。
+
+免费模型在这方面的表现差距很大。你让代理改文件，它可能输出一段文字说"好的我现在来修改"，但实际上什么也没发生。free-claude-code 的作者写了一个启发式解析器来猜模型的意图，把"我想改文件"这种文字翻译成真正的文件写入操作。但这个解析器的准确率大概七成，也就是说三次里有一次会猜错。
+
+解决方法是把任务拆得特别细。不要让它自己判断用什么工具，直接告诉它具体命令。比如不要说"帮我看看这个目录"，而是说"请执行 ls -la"。
+
+* 模型映射玩法
+
+这个代理支持一个实用的功能：给 Claude Code 的不同模型层级指定不同的后端。Claude Code 自己会根据任务复杂度选模型——简单任务用 Haiku，中等用 Sonnet，最难用 Opus。在 =.env= 中可以配置映射：
+
+#+begin_src text
+MODEL_MAPPING={"opus": "nvidia/llama-3.1-405b-instruct", "sonnet": "nvidia/llama-3.1-70b-instruct", "haiku": "google/gemma-2-9b-it"}
+#+end_src
+
+这样简单任务走小模型节省资源，复杂任务走大模型尽量保证质量。当然，再怎么映射也达不到真 Claude 的水平，只是优化有限资源的使用策略。
+
+* 本地模型
+
+如果在意数据隐私，可以完全在本地跑。用 LM Studio 下载一个模型（比如 Llama 3.2 3B 或 Qwen2.5 7B），启动本地 API 服务，然后修改 =.env= 把 PROVIDER 改成 =LM_STUDIO= ，指向本地的 API 地址。所有请求都不出本机。
+
+但本地小模型的智商差距更明显。处理复杂嵌套函数、跨文件重构这类任务基本靠不住。适合批量重命名、查字符串、生成配置模板这类简单操作。
+
+* 什么场景值得用
+
+免费代理最适用的场景：
+
+- *学习阶段* ：刚学编程，需要 AI 帮忙解释代码、出练习题。模型笨一点反而逼你多思考
+- *离线环境* ：长途飞机、没有网络的地方。提前搭好本地模型，至少能查语法补全括号
+- *非敏感项目* ：个人博客、公开的开源项目。内容本来公开，泄露了也没损失
+- *模型对比评测* ：快速切换不同后端，比较各模型在编码任务上的表现
+
+不适用场景：涉及公司代码、商业项目、客户交付的产品。一两百美元的月费不够赔一个生产事故。如果用量不大，Claude Pro 二十美元一个月其实够用。
+
+* 总结
+
+free-claude-code 是一个巧妙的工具，它证明了 Claude Code 的接口设计足够开放：只要中间人协议搭好，就能把不同模型接进来。但接口开放不意味着能力等价。免费模型的工具调用能力是硬伤，无法通过代理层弥补。
+
+如果你想省那二十美元，用这个代理解闷学习完全没问题。如果你写的是正经代码，那二十美元换来的稳定性和模型能力，比自己折腾代理划算得多。
