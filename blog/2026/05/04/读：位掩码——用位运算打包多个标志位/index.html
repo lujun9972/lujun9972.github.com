@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：位掩码——用位运算打包多个标志位 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="位运算, 位掩码, 编程基础, Python" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：位掩码——用位运算打包多个标志位</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org445837d">问题：一堆 bool 字段的尴尬</a></li>
+<li><a href="#org10cb6ca">位运算基础：AND、OR、XOR</a></li>
+<li><a href="#orgcacc7d7">清除标志和位移</a></li>
+<li><a href="#org5e919a8">打包一个辅助类</a></li>
+<li><a href="#org320d846">什么时候该用位掩码</a></li>
+</ul>
+</div>
+</div>
+<p>
+最近读到 Martin Tournoij 的一篇文章 (<a href="https://www.arp242.net/bitmask.html">Bitmasks explained</a>)，位掩码本身不难：用 0 和 1 开关某些标志位。但在代码里自如地运用 AND、OR、XOR 这些位运算，往往需要一个"突然开窍"的时刻。原文用一个终端着色库做案例，从需求出发讲到位运算原理，节奏很好。本文按原文思路整理，示例改用 Python。
+</p>
+
+<div id="outline-container-org445837d" class="outline-2">
+<h2 id="org445837d">问题：一堆 bool 字段的尴尬</h2>
+<div class="outline-text-2" id="text-org445837d">
+<p>
+假设你在设计一个 API token 的权限系统：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">class</span> <span class="org-type">TokenPermissions</span>:
+    count: <span class="org-builtin">bool</span>
+    export: <span class="org-builtin">bool</span>
+    site_read: <span class="org-builtin">bool</span>
+    site_create: <span class="org-builtin">bool</span>
+    site_update: <span class="org-builtin">bool</span>
+</pre>
+</div>
+
+<p>
+看着挺清爽。但想检查"只有 count 权限被开启"，代码就变丑了：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">if</span> p.count <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.export <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_read <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_create <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_update:
+    ...
+</pre>
+</div>
+
+<p>
+检查"是否有任意一个权限被开启"也不好看。函数参数也一样，连续几个 bool 传进去，调用方根本分不清哪个是哪个：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">do_something(<span class="org-constant">False</span>, <span class="org-constant">False</span>, <span class="org-constant">True</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;&#19977;&#20010;&#21442;&#25968;&#26159;&#20160;&#20040;&#65311;</span>
+</pre>
+</div>
+
+<p>
+位掩码就是解决这类问题的：把多个标志压缩到一个整数里，用位运算来检查和组合。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org10cb6ca" class="outline-2">
+<h2 id="org10cb6ca">位运算基础：AND、OR、XOR</h2>
+<div class="outline-text-2" id="text-org10cb6ca">
+<p>
+先快速过一遍三种核心位运算。它们跟逻辑运算（ <code>and</code> 、 <code>or</code> ）原理相同，只不过不是一个真假值，而是对整数的每一位分别做判断，拼出新的整数。
+</p>
+
+<p>
+*AND（&amp;）*：两个位都是 1，结果才是 1。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">0b0011 &amp; 0b0101 &#30340;&#36880;&#20301;&#36807;&#31243;&#65306;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;3&#20301;: 0 AND 0 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;2&#20301;: 0 AND 1 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;1&#20301;: 1 AND 0 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;0&#20301;: 1 AND 1 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#32467;&#26524;: 0b0001
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b0011 <span class="org-operator">&amp;</span> 0b0101))
+</pre>
+</div>
+
+<p>
+AND 的核心用途是 <b>检查某个标志是否被设置</b> 。做法是用一个"掩码"去 AND，只保留你关心的那一位，其余位全部清零。结果不为 0，说明那一位是 1。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">BOLD</span> <span class="org-operator">=</span> 0b00000001  <span class="org-comment-delimiter"># </span><span class="org-comment">&#31532; 0 &#20301;
+</span><span class="org-variable-name">ITALIC</span> <span class="org-operator">=</span> 0b00000100  <span class="org-comment-delimiter"># </span><span class="org-comment">&#31532; 2 &#20301;
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21482;&#35774;&#32622;&#20102; BOLD
+</span><span class="org-variable-name">attr</span> <span class="org-operator">=</span> BOLD
+<span class="org-builtin">print</span>(f<span class="org-string">"BOLD &#35774;&#32622;&#20102;&#21527;&#65311; </span>{attr <span class="org-operator">&amp;</span> BOLD <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)   <span class="org-comment-delimiter"># </span><span class="org-comment">True
+</span><span class="org-builtin">print</span>(f<span class="org-string">"ITALIC &#35774;&#32622;&#20102;&#21527;&#65311; </span>{attr <span class="org-operator">&amp;</span> ITALIC <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">False
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21516;&#26102;&#35774;&#32622; BOLD &#21644; ITALIC
+</span><span class="org-variable-name">attr</span> <span class="org-operator">=</span> BOLD <span class="org-operator">|</span> ITALIC  <span class="org-comment-delimiter"># </span><span class="org-comment">&#31245;&#21518;&#20250;&#35762; OR
+</span><span class="org-builtin">print</span>(f<span class="org-string">"BOLD &#35774;&#32622;&#20102;&#21527;&#65311; </span>{attr <span class="org-operator">&amp;</span> BOLD <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)   <span class="org-comment-delimiter"># </span><span class="org-comment">True
+</span><span class="org-builtin">print</span>(f<span class="org-string">"ITALIC &#35774;&#32622;&#20102;&#21527;&#65311; </span>{attr <span class="org-operator">&amp;</span> ITALIC <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">True</span>
+</pre>
+</div>
+
+<pre class="example">
+BOLD 设置了吗？ True
+ITALIC 设置了吗？ False
+BOLD 设置了吗？ True
+ITALIC 设置了吗？ True
+</pre>
+
+
+<p>
+注意 <code>attr &amp; BOLD !</code> 0= 也可以写成 <code>attr &amp; BOLD == BOLD</code> ，两种写法等价。
+</p>
+
+<p>
+**OR（ <code>|</code> ）**：任意一个位是 1，结果就是 1。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">0b0011 | 0b0101
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;3&#20301;: 0 OR 0 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;2&#20301;: 0 OR 1 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;1&#20301;: 1 OR 0 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;0&#20301;: 1 OR 1 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#32467;&#26524;: 0b0111
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b0011 <span class="org-operator">|</span> 0b0101))
+</pre>
+</div>
+
+<pre class="example">
+0b111
+</pre>
+
+
+<p>
+OR 用来 <b>组合多个标志</b> 。这正是文章开头那个终端着色库的用法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">RED</span> <span class="org-operator">=</span> 0b00000001
+<span class="org-variable-name">BOLD</span> <span class="org-operator">=</span> 0b00000010
+<span class="org-variable-name">UNDERLINE</span> <span class="org-operator">=</span> 0b00000100
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">"&#32418;&#33394;&#21152;&#31895;" = RED | BOLD
+</span><span class="org-variable-name">style</span> <span class="org-operator">=</span> RED <span class="org-operator">|</span> BOLD
+<span class="org-builtin">print</span>(f<span class="org-string">"&#32452;&#21512;&#20540;: </span>{<span class="org-builtin">bin</span>(style)}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">0b11</span>
+</pre>
+</div>
+
+<pre class="example">
+组合值: 0b11
+</pre>
+
+
+<p>
+对比一下，不用位掩码的写法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">apply_color</span>(use_red<span class="org-operator">=</span><span class="org-constant">False</span>, use_bold<span class="org-operator">=</span><span class="org-constant">False</span>, use_underline<span class="org-operator">=</span><span class="org-constant">False</span>):
+    ...
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35843;&#29992;&#26041;&#65306;&#36825;&#19977;&#20010;&#21442;&#25968;&#21738;&#20010;&#26159;&#21738;&#20010;&#65311;
+</span>apply_color(<span class="org-constant">True</span>, <span class="org-constant">True</span>, <span class="org-constant">False</span>)
+</pre>
+</div>
+
+<p>
+用了位掩码之后：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">apply_color(RED <span class="org-operator">|</span> BOLD)  <span class="org-comment-delimiter"># </span><span class="org-comment">&#19968;&#30446;&#20102;&#28982;</span>
+</pre>
+</div>
+
+<p>
+**XOR（^）**：两个位不同时结果为 1，相同时结果为 0。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">0b0011 ^ 0b0101
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;3&#20301;: 0 XOR 0 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;2&#20301;: 0 XOR 1 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;1&#20301;: 1 XOR 0 = 1
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;0&#20301;: 1 XOR 1 = 0
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#32467;&#26524;: 0b0110
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b0011 <span class="org-operator">^</span> 0b0101))
+</pre>
+</div>
+
+<p>
+XOR 的用途是 <b>翻转标志</b> ：把 1 变 0、把 0 变 1。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">BOLD</span> <span class="org-operator">=</span> 0b00000010
+
+<span class="org-variable-name">attr</span> <span class="org-operator">=</span> BOLD
+<span class="org-builtin">print</span>(f<span class="org-string">"&#21021;&#22987;: BOLD=</span>{attr <span class="org-operator">&amp;</span> BOLD <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">True
+</span>
+<span class="org-variable-name">attr</span> <span class="org-operator">=</span> attr <span class="org-operator">^</span> BOLD  <span class="org-comment-delimiter"># </span><span class="org-comment">&#32763;&#36716; BOLD
+</span><span class="org-builtin">print</span>(f<span class="org-string">"&#32763;&#36716;&#21518;: BOLD=</span>{attr <span class="org-operator">&amp;</span> BOLD <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">False
+</span>
+<span class="org-variable-name">attr</span> <span class="org-operator">=</span> attr <span class="org-operator">^</span> BOLD  <span class="org-comment-delimiter"># </span><span class="org-comment">&#20877;&#32763;&#36716;
+</span><span class="org-builtin">print</span>(f<span class="org-string">"&#20877;&#32763;&#36716;: BOLD=</span>{attr <span class="org-operator">&amp;</span> BOLD <span class="org-operator">!=</span> 0}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">True</span>
+</pre>
+</div>
+
+<pre class="example">
+初始: BOLD=True
+翻转后: BOLD=False
+再翻转: BOLD=True
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgcacc7d7" class="outline-2">
+<h2 id="orgcacc7d7">清除标志和位移</h2>
+<div class="outline-text-2" id="text-orgcacc7d7">
+<p>
+**AND NOT**：清除某个标志位。Python 没有单独的 <code>AND NOT</code> 运算符，但可以用 <code>AND + 取反</code> 实现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">BOLD</span> <span class="org-operator">=</span> 0b00000010
+
+<span class="org-variable-name">attr</span> <span class="org-operator">=</span> BOLD <span class="org-operator">|</span> 0b00000001  <span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622;&#20102; BOLD &#21644;&#26368;&#20302;&#20301;
+</span><span class="org-builtin">print</span>(f<span class="org-string">"&#28165;&#38500;&#21069;: </span>{<span class="org-builtin">bin</span>(attr)}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">0b11
+</span>
+<span class="org-variable-name">attr</span> <span class="org-operator">=</span> attr <span class="org-operator">&amp;</span> <span class="org-operator">~</span>BOLD  <span class="org-comment-delimiter"># </span><span class="org-comment">&#28165;&#38500; BOLD &#20301;
+</span><span class="org-builtin">print</span>(f<span class="org-string">"&#28165;&#38500;&#21518;: </span>{<span class="org-builtin">bin</span>(attr)}<span class="org-string">"</span>)  <span class="org-comment-delimiter"># </span><span class="org-comment">0b1&#65292;BOLD &#20301;&#24050;&#28165;&#38646;</span>
+</pre>
+</div>
+
+<pre class="example">
+清除前: 0b11
+清除后: 0b1
+</pre>
+
+
+<p>
+<code>~</code> 是取反运算符（NOT），把所有位翻转。 <code>~BOLD</code> 就是"除了 BOLD 那一位，其余全是 1"的掩码。用它去 AND，等于只清除 BOLD 位，其他位原样保留。
+</p>
+
+<p>
+**位移（&gt;&gt;、&lt;&lt;）**：把所有位往右或往左移动若干位。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21491;&#31227;&#65306;&#25152;&#26377;&#20301;&#21521;&#21491;&#25386;&#65292;&#21491;&#36793;&#28322;&#20986;&#30340;&#20301;&#20002;&#24323;
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b1010 <span class="org-operator">&gt;&gt;</span> 1))  <span class="org-comment-delimiter"># </span><span class="org-comment">0b101&#65288;&#21491;&#31227;1&#20301;&#65289;
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b1010 <span class="org-operator">&gt;&gt;</span> 2))  <span class="org-comment-delimiter"># </span><span class="org-comment">0b10&#65288;&#21491;&#31227;2&#20301;&#65292;&#26411;&#23614;&#30340; 0 &#20002;&#20102;&#65289;
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#24038;&#31227;&#65306;&#25152;&#26377;&#20301;&#21521;&#24038;&#25386;&#65292;&#21491;&#36793;&#34917; 0
+</span><span class="org-builtin">print</span>(<span class="org-builtin">bin</span>(0b1010 <span class="org-operator">&lt;&lt;</span> 1))  <span class="org-comment-delimiter"># </span><span class="org-comment">0b10100</span>
+</pre>
+</div>
+
+<pre class="example">
+0b101
+0b10
+0b10100
+</pre>
+
+
+<p>
+位移常用来从一个整数中提取某个区段的值。原文的终端着色库就是这么做的：一个 64 位整数，低 9 位存终端属性，中间 24 位存前景色，高位存背景色。要提取前景色的数值，先用 AND 掩码清除不相关的位，再右移把颜色值移到最低位。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5e919a8" class="outline-2">
+<h2 id="org5e919a8">打包一个辅助类</h2>
+<div class="outline-text-2" id="text-org5e919a8">
+<p>
+原文最后把位掩码操作封装成了几个通用方法。Python 版如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">class</span> <span class="org-type">Bitflag</span>:
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, value: <span class="org-builtin">int</span> <span class="org-operator">=</span> 0):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_value</span> <span class="org-operator">=</span> value
+
+    <span class="org-keyword">def</span> <span class="org-function-name">has</span>(<span class="org-keyword">self</span>, flag: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">bool</span>:
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>._value <span class="org-operator">&amp;</span> flag <span class="org-operator">!=</span> 0
+
+    <span class="org-keyword">def</span> <span class="org-function-name">set</span>(<span class="org-keyword">self</span>, flag: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_value</span> <span class="org-operator">|=</span> flag
+
+    <span class="org-keyword">def</span> <span class="org-function-name">clear</span>(<span class="org-keyword">self</span>, flag: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_value</span> <span class="org-operator">&amp;=</span> <span class="org-operator">~</span>flag
+
+    <span class="org-keyword">def</span> <span class="org-function-name">toggle</span>(<span class="org-keyword">self</span>, flag: <span class="org-builtin">int</span>) <span class="org-operator">-&gt;</span> <span class="org-constant">None</span>:
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_value</span> <span class="org-operator">^=</span> flag
+
+    <span class="org-keyword">def</span> <span class="org-function-name">__repr__</span>(<span class="org-keyword">self</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+        <span class="org-keyword">return</span> <span class="org-builtin">bin</span>(<span class="org-keyword">self</span>._value)
+
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20351;&#29992;
+</span><span class="org-variable-name">BOLD</span> <span class="org-operator">=</span> 0b00000001
+<span class="org-variable-name">ITALIC</span> <span class="org-operator">=</span> 0b00000010
+<span class="org-variable-name">UNDERLINE</span> <span class="org-operator">=</span> 0b00000100
+
+<span class="org-variable-name">f</span> <span class="org-operator">=</span> Bitflag()
+f.<span class="org-builtin">set</span>(BOLD)
+f.<span class="org-builtin">set</span>(ITALIC)
+<span class="org-builtin">print</span>(f)                <span class="org-comment-delimiter"># </span><span class="org-comment">0b11
+</span><span class="org-builtin">print</span>(f.has(BOLD))      <span class="org-comment-delimiter"># </span><span class="org-comment">True
+</span><span class="org-builtin">print</span>(f.has(UNDERLINE))  <span class="org-comment-delimiter"># </span><span class="org-comment">False
+</span>f.toggle(BOLD)
+<span class="org-builtin">print</span>(f.has(BOLD))      <span class="org-comment-delimiter"># </span><span class="org-comment">False
+</span>f.clear(ITALIC)
+<span class="org-builtin">print</span>(f)                <span class="org-comment-delimiter"># </span><span class="org-comment">0b0</span>
+</pre>
+</div>
+
+<pre class="example">
+0b11
+True
+False
+False
+0b0
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org320d846" class="outline-2">
+<h2 id="org320d846">什么时候该用位掩码</h2>
+<div class="outline-text-2" id="text-org320d846">
+<p>
+不是所有场景都适合用位掩码。原文提到两个主要动机：
+</p>
+
+<ol class="org-ol">
+<li><p>
+<b>API 更清晰</b> ：组合标志时， <code>RED | BOLD</code> 比 <code>use_red=True, use_bold=True</code> 可读性好得多。检查"是否包含某些标志"时， <code>attr &amp; (EXPORT | READ)</code> 比 <code>p.export and p.read</code> 简洁。回到文章开头那个权限问题——检查"只有 count 被开启"：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20301;&#25513;&#30721;&#20889;&#27861;&#65306;&#28165;&#38500; count &#20301;&#21518;&#65292;&#21097;&#20313;&#20301;&#20840;&#20026; 0 &#23601;&#26159;"&#21482;&#26377; count"
+</span><span class="org-keyword">if</span> (perm <span class="org-operator">&amp;</span> <span class="org-operator">~</span>COUNT) <span class="org-operator">==</span> 0:
+    ...
+</pre>
+</div>
+
+<p>
+对比原来的写法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">if</span> p.count <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.export <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_read <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_create <span class="org-keyword">and</span> <span class="org-keyword">not</span> p.site_update:
+    ...
+</pre>
+</div></li>
+
+<li><b>内存效率</b> ：一个整数能存几十个标志，而每个 bool 字段至少占一个字节。对大多数应用来说这不是关键因素，但在嵌入式或高频数据结构中会有实际意义。</li>
+</ol>
+
+<p>
+反过来，如果你只是存一两个标志，或者不需要组合检查，普通 bool 字段更直观，不必强行用位掩码。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-04</span>
+    <span class="post-info">2026-05-04</span>
+    <a href="../../../../../tags/位运算">位运算</a> : <a href="../../../../../tags/位掩码">位掩码</a> : <a href="../../../../../tags/编程基础">编程基础</a> : <a href="../../../../../tags/python">Python</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; nd2n2ml2x1yujloepixabnbq5g &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
