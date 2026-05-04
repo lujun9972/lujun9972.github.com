@@ -1,0 +1,349 @@
+#+TITLE: xscreensaver 密码验证失败的排查
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: 异闻录,Linux,xscreensaver,PAM,Arch Linux,认证,屏保
+#+DATE: [2026-05-04 一 13:30]
+#+DESCRIPTION: xscreensaver 6.13-1 升级后锁屏密码验证失败的完整排查记录。涵盖 PAM 配置链追溯、空 account 栈导致 pam_acct_mgmt 返回错误的根因定位。
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 背景
+
+某天我启动 xscreensaver 后，屏幕保护程序正常工作，但等到自动锁屏后输入密码，却无论如何也无法验证通过。确定密码是正确的——在终端中可以正常 =sudo= 。问题出在 xscreensaver 的认证环节。
+
+系统是 Arch Linux，窗口管理器是 awesome（通过 =startx= 启动），xscreensaver 版本 6.13-1。
+
+* 故障现象
+
+- xscreensaver 锁定后，输入密码提示验证失败
+- 同一个密码在终端中可以正常 =sudo= 和执行认证
+- 回到 tty 登录也能正常通过
+- 系统日志中没有任何明显的认证失败记录
+
+* 排查过程
+
+** 第一步：确认 xscreensaver 正常运行
+
+xscreensaver 确实在运行（不然也不会被锁屏），确认一下守护进程和认证辅助程序的权限状态：
+
+#+begin_src shell
+  pidof xscreensaver                # 守护进程 PID
+  ls -la /usr/lib/xscreensaver/xscreensaver-auth  # setuid 辅助程序
+#+end_src
+
+#+begin_example
+  129424
+  -rwsr-xr-x 1 root root 279320 12月15日 04:55 xscreensaver-auth
+#+end_example
+
+进程活着。注意 =xscreensaver-auth= 的权限位有 =s= （ =rwsr-xr-x= 中的 =s= ），这是 setuid 标志，表示该程序运行时以文件所有者（root）权限执行。作为一个需要读取 =/etc/shadow= 做密码验证的程序，这是正确的。至少进程层面没有发现问题。
+
+** 第二步：检查 PAM 配置
+
+xscreensaver 的密码认证通过 PAM（Pluggable Authentication Modules）进行。PAM 的配置文件位于 =/etc/pam.d/xscreensaver= ：
+
+#+begin_src shell
+  cat /etc/pam.d/xscreensaver
+#+end_src
+
+#+begin_example
+  #%PAM-1.0
+  auth       requisite    pam_nologin.so
+  auth       include      system-local-login
+#+end_example
+
+第一行 =#%PAM-1.0= 是 PAM 配置文件的文件头，表示这是一个 PAM 1.0 格式的配置文件。下面两行是具体的认证规则。这是 xscreensaver 6.13-1 包自带的默认配置。
+
+#+BEGIN_QUOTE
+*小知识：PAM 是什么？*
+
+PAM（Pluggable Authentication Modules）是 Linux 的插件式认证框架。应用程序（如 xscreensaver、sshd、login）通过 PAM 库进行用户认证，而具体的认证方式（密码、生物识别、LDAP 等）由配置文件决定。配置文件的每一行格式为：
+
+  =模块类型    控制标志    模块路径    参数=
+
+常见控制标志：
+- =required= ：必须成功，失败不立即返回（等所有模块跑完才返回失败）
+- =requisite= ：必须成功，失败立即返回
+- =sufficient= ：成功则立即返回成功（跳过后续模块）
+- =include= ：嵌入另一个配置文件的所有同类型规则
+#+END_QUOTE
+
+** 第三步：顺着 include 链追踪完整的认证堆栈
+
+=xscreensaver= 的配置只有两行，但通过 =include= 引用了多层配置：
+
+#+begin_src shell
+  cat /etc/pam.d/system-local-login   # → include system-login
+  cat /etc/pam.d/system-login         # → 包含 pam_shells、pam_nologin，最后 include system-auth
+  cat /etc/pam.d/system-auth          # → 核心认证：pam_unix.so 验证密码
+#+end_src
+
+把整个链条展开，完整的认证堆栈处理流程为：
+
+#+begin_example
+   行 | 来自            | 模块                    | 作用
+  ─────┼─────────────────┼─────────────────────────┼────────────────────
+    1  | xscreensaver    | pam_nologin.so requisite | 检查 /etc/nologin 是否存
+    2  | system-login    | pam_shells.so required   | 检查 shell 是否合法
+    3  | system-login    | pam_nologin.so requisite | 又检查一次 nologin
+    4  | system-auth     | pam_faillock.so preauth | 检查账户是否被锁定
+    5  | system-auth     | pam_unix.so              | ★ 验证密码（核心）
+    6  | system-auth     | pam_faillock.so authfail | 失败计数
+    7  | system-auth     | pam_permit.so            | 放行
+    8  | system-auth     | pam_env.so               | 设置环境变量
+    9  | system-auth     | pam_faillock.so authsucc | 成功时重置失败计数
+#+end_example
+
+顺着每行模块逐一排查可能的失败点。其中行 1-3（ =pam_nologin= 、 =pam_shells= ）是门槛检查，如果失败就直接拒绝了。行 4-9 里 =pam_unix= 是核心密码验证（需要 setuid 辅助程序），其余（faillock 计数、 =pam_permit= 放行、 =pam_env= 设环境变量）不太可能成为拦截原因。所以重点检查了这几个：
+
+- =ls -la /etc/nologin= → 不存在（ =pam_nologin= 不会拦截）
+- =grep /bin/bash /etc/shells= → 存在（ =pam_shells= 不会拦截）
+- =faillock --user lujun9972= → 无记录（账户未被锁定）
+- =/sbin/unix_chkpwd= → setuid 位正确（ =pam_unix= 底层用它读 =/etc/shadow= ）
+- =pam_unix.so= ：同个密码在 sudo 和 tty 登录都能用，说明密码验证功能正常
+
+全部通过，但问题依旧。
+
+** 第四步：搜索发现这是 6.13-1 的已知问题
+
+逐个模块排查走不通，换个思路——先确认这是不是已知问题。搜索后发现，xscreensaver 6.13-1 的 PAM 配置更改在 Arch Linux 社区确实是公认的回归问题（Arch Linux BBS #2278093，Arch Wiki - XScreenSaver）。
+
+| 版本 | PAM 配置 | 状况 |
+|------|----------|------|
+| 6.10.1-1 及之前 | =auth include system-auth= + =account include system-auth= | 正常 |
+| *6.13-1* | =auth requisite pam_nologin.so= + =auth include system-local-login= | *有问题* |
+| 社区修复方案 | =auth include system-auth= + =account include system-auth= | 正常 |
+
+对比正常和损坏的配置，有两处变化：一是引用目标从 =system-auth= 换成了 =system-local-login= ，二是去掉了 =account= 行。先说前者。
+
+#+BEGIN_QUOTE
+*小知识：system-auth 和 system-local-login 有什么区别？*
+
+- =system-auth= 是 Arch Linux 的 *核心认证配置* ，只包含最基础的密码验证模块（pam_unix.so、pam_faillock.so 等）。各种服务（sudo、sshd、login 等）都引用它。
+- =system-local-login= 是 *本地终端登录配置* ，它在 system-auth 外面包了一层，额外加了 =pam_shells.so= 、 =pam_nologin.so= 等检查。这些检查对 "在 tty1 上输入用户名密码登录" 的场景是合理的，但对 "屏幕保护程序解锁" 来说就是多余的——甚至是危险的。
+
+类比： =system-auth= ≈ "验身份证"， =system-local-login= ≈ "验身份证 + 查户口 + 问单位 + 打给家属确认"。锁屏解锁只需要验身份证就够了。
+#+END_QUOTE
+
+看到这里，你可能以为问题出在多出来的 =pam_shells.so= 或重复的 =pam_nologin.so= 上。但逐一排查后发现它们都正常运行。真正的问题隐藏在另一个方向——*损坏的配置缺少 =account= 指令*。
+
+把完整的 PAM 调用链拆开来看，xscreensaver-auth 的认证流程是：
+
+1. =pam_start()= — 初始化 PAM
+2. =pam_set_item(PAM_TTY)= — 设置 TTY
+3. =pam_authenticate()= — ★ 验证密码
+4. =pam_acct_mgmt()= — ★ 账户管理检查（密码过期、账户锁定等）
+5. =pam_setcred()= — 更新凭据
+6. =pam_end()= — 清理
+
+关键在于第 4 步 =pam_acct_mgmt()= 的返回值。从 Arch Linux Bug Tracker 可知，xscreensaver 自 6.07-2 起打包时启用了 =--enable-pam-check-account-type=yes= 编译选项（FS#79294）：
+
+> *xscreensaver in repos (6.06) is configured without =--enable-pam-check-account-type=yes=. This makes it warn, but not apply =account= configurations.*
+
+这个选项的意思就是：*=pam_acct_mgmt()= 的返回值被当作硬性要求*——它失败就等于认证失败，不像默认行为那样只是记个日志就放行。
+
+现在来看损坏的配置：
+
+#+begin_example
+  auth       requisite    pam_nologin.so
+  auth       include      system-local-login
+  ← 没有 account 指令！
+#+end_example
+
+这个配置里 *完全没有任何 =account= 规则*。为了排除干扰，创建两个临时的 PAM 配置单独测试—— =pamtest-broken= 复现损坏的配置（只有 auth 规则）， =pamtest-ok= 作为修复后的对照（auth + account）：
+
+#+begin_src shell :dir /sudo::
+  # /etc/pam.d/pamtest-broken — 只有 auth，无 account 规则
+  sudo tee /etc/pam.d/pamtest-broken << 'EOF'
+  #%PAM-1.0
+  auth      include   system-auth
+  EOF
+
+  # /etc/pam.d/pamtest-ok — auth + account，唯一区别多了一行 account
+  sudo tee /etc/pam.d/pamtest-ok << 'EOF'
+  #%PAM-1.0
+  auth      include   system-auth
+  account   include   system-auth
+  EOF
+#+end_src
+
+然后写一个 C 程序对比 =pam_acct_mgmt()= 的行为：
+
+#+begin_src C :tangle pamtest.c
+  #include <stdio.h>
+  #include <string.h>
+  #include <stdlib.h>
+  #include <security/pam_appl.h>
+
+  static char *g_password = NULL;
+
+  static int conv_func(int n, const struct pam_message **msg,
+                       struct pam_response **resp, void *data) {
+      *resp = calloc(n, sizeof(struct pam_response));
+      for (int i = 0; i < n; i++)
+          if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF)
+              (*resp)[i].resp = g_password ? strdup(g_password) : NULL;
+      return PAM_SUCCESS;
+  }
+
+  void test(const char *svc, const char *user) {
+      pam_handle_t *pamh;
+      struct pam_conv conv = { conv_func, NULL };
+      int r1, r2, r3;
+      pam_start(svc, user, &conv, &pamh);
+      pam_set_item(pamh, PAM_TTY, ":0.0");
+      r1 = pam_authenticate(pamh, 0);
+      r2 = pam_acct_mgmt(pamh, 0);
+      r3 = pam_end(pamh, r1);
+      printf("%-25s auth=%d acct=%d\n", svc, r1, r2);
+  }
+
+  int main(int argc, char **argv) {
+      const char *pass = argc > 1 ? argv[1] : "123456";
+      g_password = (char*)pass;
+      test("pamtest-broken",   "lujun9972");  // 损坏配置：无 account
+      test("pamtest-ok",       "lujun9972");  // 修复配置：有 account
+      return 0;
+  }
+#+end_src
+
+编译运行：
+
+#+begin_src shell
+  gcc -o pamtest pamtest.c -lpam
+  ./pamtest 123456
+  # 输出：
+  # pamtest-broken            auth=0 acct=7
+  # pamtest-ok                auth=0 acct=0
+#+end_src
+
+两个配置的 =auth=0= 表示密码验证都通过了（密码正确），区别出在 acct：
+- =acct=0= （ =PAM_SUCCESS= ）：account 栈有规则， =pam_acct_mgmt= 正常返回
+- =acct=7= （ =PAM_AUTH_ERR= ）：account 栈为空， =pam_acct_mgmt= 返回错误
+
+结果很清楚：
+
+| PAM 服务 | 有 account 规则？ | =pam_acct_mgmt= |
+|----------|:---:|:---:|
+| =pamtest-broken= （只有 auth，无 account） | ❌ 空栈 | *PAM_AUTH_ERR (7)* |
+| =pamtest-ok= （修复配置， =account include system-auth= ） | ✅ 有规则 | *Success (0)* |
+| =system-local-login= 直接测试 | ✅ 有规则 | *Success (0)* |
+| =runuser= （也无 account 指令） | ❌ 空栈 | *PAM_AUTH_ERR (7)* |
+
+所以结论很简单：*Linux-PAM 中如果某个管理组没有任何模块，对应的 PAM 函数返回的是错误 (=PAM_AUTH_ERR=)，而不是 Success*。损坏的 xscreensaver 配置没有 =account= 指令，account 栈为空， =pam_acct_mgmt()= 返回 7。
+
+把这个发现和前面的 PAM_CHECK_ACCOUNT_TYPE 编译选项串起来，完整链条就清晰了：
+
+1. 损坏的配置没有 =account= 指令 → account 模块堆栈为空
+2. =pam_acct_mgmt()= 在空栈上返回 =PAM_AUTH_ERR=
+3. Arch 编译了 =--enable-pam-check-account-type=yes= → 这个错误*覆盖*了 =pam_authenticate= 的成功结果
+4. xscreensaver-auth 认为认证失败
+
+这就是为什么把配置改成下面这样就能修复：
+
+#+begin_example
+  #%PAM-1.0
+  auth      include   system-auth
+  account   include   system-auth
+  ↑ 这行是关键
+#+end_example
+
+=account include system-auth= 引入了 system-auth 中的 account 规则链：
+
+#+begin_example
+  -account   [success=1 default=ignore]  pam_systemd_home.so
+  account    required                    pam_unix.so
+  account    optional                    pam_permit.so
+  account    required                    pam_time.so
+#+end_example
+
+这些模块正常运行时返回 =PAM_SUCCESS= ， =pam_acct_mgmt()= 成功， =PAM_CHECK_ACCOUNT_TYPE= 不会触发覆盖，认证通过。
+
+为了彻底排除 =auth include system-local-login= 中额外模块的干扰，又单独确认了两个模块的行为：
+
+1. *=pam_shells.so=*：查阅文档和源码确认，它的核心逻辑只是获取用户的 shell 后在 =/etc/shells= 中查找。 =grep /bin/bash /etc/shells= 通过了，所以该模块必返回 Success。
+2. *=pam_nologin.so=*：它的逻辑更简单——检查 =/etc/nologin= 是否存在。不存在就直接返回 Success，不需要密码。 =ls -la /etc/nologin= 确认文件不存在。
+
+两个模块均正常，进一步证明核心问题不是多出来的 auth 模块，而是缺失的 =account= 指令。
+
+#+BEGIN_QUOTE
+*小知识：xscreensaver-auth 的工作原理*
+
+自 xscreensaver 6.0 起，密码认证被分离到独立进程 =xscreensaver-auth= 中。这是一个 setuid-root 程序（ =rwsr-xr-x= ），位于 =/usr/lib/xscreensaver/xscreensaver-auth= 。它的工作流程：
+
+1. xscreensaver 守护进程 fork 出 xscreensaver-auth
+2. xscreensaver-auth 弹出密码输入对话框
+3. 用户输入密码后，它通过 PAM 进行认证
+4. 认证结果通过 X 属性（_XSCREENSAVER_AUTH_FAILURES）传回守护进程
+
+通过 =strings= 查看二进制文件确认了它调用的 PAM 函数：
+
+#+begin_src shell
+  strings /usr/lib/xscreensaver/xscreensaver-auth | grep -E 'pam_'
+  # 输出：
+  # pam_set_item
+  # pam_setcred
+  # pam_start
+  # pam_fail_delay
+  # pam_strerror
+  # pam_acct_mgmt
+  # pam_chauthtok
+  # pam_end
+  # pam_authenticate
+#+end_src
+#+END_QUOTE
+
+* 解决方案
+
+** 修改 PAM 配置
+
+将 =/etc/pam.d/xscreensaver= 修改为社区确认可用的配置：
+
+#+begin_src shell
+  # 备份原配置
+  sudo cp /etc/pam.d/xscreensaver /etc/pam.d/xscreensaver.backup.$(date +%Y%m%d-%H%M%S)
+
+  # 写入新配置
+  sudo tee /etc/pam.d/xscreensaver << 'EOF'
+  #%PAM-1.0
+  auth      include   system-auth
+  account   include   system-auth
+  EOF
+#+end_src
+
+** 重启 xscreensaver
+
+#+begin_src shell
+  xscreensaver-command -exit   # 停止守护进程
+  sleep 1                      # 等进程完全退出，避免端口冲突
+  xscreensaver -no-splash &    # 重新启动
+#+end_src
+
+** 验证修复
+
+#+begin_src shell
+  xscreensaver-command -lock   # 强制锁定
+  # 输入密码 → 应能正常解锁
+#+end_src
+
+* 复盘
+
+** 根因链条
+
+#+begin_example
+  xscreensaver 6.13-1 的 PAM 配置去掉了 account 指令
+    → account 模块堆栈为空
+    → pam_acct_mgmt() 在空栈上返回 PAM_AUTH_ERR（Linux-PAM 默认行为）
+    → Arch 的 xscreensaver 编译了 --enable-pam-check-account-type=yes
+    → pam_acct_mgmt 的失败覆盖了 pam_authenticate 的成功
+    → xscreensaver-auth 返回认证失败
+    → 用户无法解锁
+#+end_example
+
+** 关键经验
+
+1. *PAM 配置文件链式追溯* ：PAM 的 =include= 指令会嵌套引用其他配置文件，排查时需顺着链条检查每一层的配置
+2. *setuid 辅助程序* ：xscreensaver 6.0+ 的认证由独立的 setuid 程序（xscreensaver-auth）执行，不在守护进程内部。 =strings= 可以快速查看二进制调用的 PAM 函数
+3. *社区已知问题优先查询* ：遇到升级后出现的问题，先查一下该版本的已知回归问题（Arch BBS、Arch Wiki、GitHub Issues），往往比从头排查更快
+4. *直接测试 PAM 堆栈* ：编写简单的 C 程序直接调用 PAM API，可以隔离 xscreensaver 的 UI 层干扰，精确定位认证环节的问题
+5. *空 account 栈返回错误* ：Linux-PAM 中，如果某个管理组（auth/account/password/session）没有任何模块，对应的 PAM 函数返回的是错误而非 Success。这是排查类似问题的重要知识点
+6. *PAM_CHECK_ACCOUNT_TYPE 编译选项* ：Arch Linux 的 xscreensaver 从 6.07-2 开始启用了 =--enable-pam-check-account-type=yes= ，这使得 =pam_acct_mgmt()= 的返回值决定认证成败。这个配置变更记录在 Arch Bug Tracker FS#79294 中
