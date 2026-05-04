@@ -1,0 +1,265 @@
+#+TITLE: 读：位掩码——用位运算打包多个标志位
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: 位运算, 位掩码, 编程基础, Python
+#+DATE: [2026-05-04 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+最近读到 Martin Tournoij 的一篇文章 ([[https://www.arp242.net/bitmask.html][Bitmasks explained]])，位掩码本身不难：用 0 和 1 开关某些标志位。但在代码里自如地运用 AND、OR、XOR 这些位运算，往往需要一个"突然开窍"的时刻。原文用一个终端着色库做案例，从需求出发讲到位运算原理，节奏很好。本文按原文思路整理，示例改用 Python。
+
+* 问题：一堆 bool 字段的尴尬
+
+假设你在设计一个 API token 的权限系统：
+
+#+begin_src python
+class TokenPermissions:
+    count: bool
+    export: bool
+    site_read: bool
+    site_create: bool
+    site_update: bool
+#+end_src
+
+看着挺清爽。但想检查"只有 count 权限被开启"，代码就变丑了：
+
+#+begin_src python
+if p.count and not p.export and not p.site_read and not p.site_create and not p.site_update:
+    ...
+#+end_src
+
+检查"是否有任意一个权限被开启"也不好看。函数参数也一样，连续几个 bool 传进去，调用方根本分不清哪个是哪个：
+
+#+begin_src python
+do_something(False, False, True)  # 第三个参数是什么？
+#+end_src
+
+位掩码就是解决这类问题的：把多个标志压缩到一个整数里，用位运算来检查和组合。
+
+* 位运算基础：AND、OR、XOR
+
+先快速过一遍三种核心位运算。它们跟逻辑运算（ =and= 、 =or= ）原理相同，只不过不是一个真假值，而是对整数的每一位分别做判断，拼出新的整数。
+
+*AND（&）*：两个位都是 1，结果才是 1。
+
+#+begin_src python
+# 0b0011 & 0b0101 的逐位过程：
+# 第3位: 0 AND 0 = 0
+# 第2位: 0 AND 1 = 0
+# 第1位: 1 AND 0 = 0
+# 第0位: 1 AND 1 = 1
+# 结果: 0b0001
+print(bin(0b0011 & 0b0101))
+#+end_src
+
+AND 的核心用途是 *检查某个标志是否被设置* 。做法是用一个"掩码"去 AND，只保留你关心的那一位，其余位全部清零。结果不为 0，说明那一位是 1。
+
+#+begin_src python :results output
+BOLD = 0b00000001  # 第 0 位
+ITALIC = 0b00000100  # 第 2 位
+
+# 只设置了 BOLD
+attr = BOLD
+print(f"BOLD 设置了吗？ {attr & BOLD != 0}")   # True
+print(f"ITALIC 设置了吗？ {attr & ITALIC != 0}")  # False
+
+# 同时设置 BOLD 和 ITALIC
+attr = BOLD | ITALIC  # 稍后会讲 OR
+print(f"BOLD 设置了吗？ {attr & BOLD != 0}")   # True
+print(f"ITALIC 设置了吗？ {attr & ITALIC != 0}")  # True
+#+end_src
+
+#+RESULTS:
+: BOLD 设置了吗？ True
+: ITALIC 设置了吗？ False
+: BOLD 设置了吗？ True
+: ITALIC 设置了吗？ True
+
+注意 =attr & BOLD != 0= 也可以写成 ~attr & BOLD == BOLD~ ，两种写法等价。
+
+**OR（ =|= ）**：任意一个位是 1，结果就是 1。
+
+#+begin_src python :results output
+# 0b0011 | 0b0101
+# 第3位: 0 OR 0 = 0
+# 第2位: 0 OR 1 = 1
+# 第1位: 1 OR 0 = 1
+# 第0位: 1 OR 1 = 1
+# 结果: 0b0111
+print(bin(0b0011 | 0b0101))
+#+end_src
+
+#+RESULTS:
+: 0b111
+
+OR 用来 *组合多个标志* 。这正是文章开头那个终端着色库的用法：
+
+#+begin_src python :results output
+RED = 0b00000001
+BOLD = 0b00000010
+UNDERLINE = 0b00000100
+
+# "红色加粗" = RED | BOLD
+style = RED | BOLD
+print(f"组合值: {bin(style)}")  # 0b11
+#+end_src
+
+#+RESULTS:
+: 组合值: 0b11
+
+对比一下，不用位掩码的写法：
+
+#+begin_src python
+def apply_color(use_red=False, use_bold=False, use_underline=False):
+    ...
+
+# 调用方：这三个参数哪个是哪个？
+apply_color(True, True, False)
+#+end_src
+
+用了位掩码之后：
+
+#+begin_src python
+apply_color(RED | BOLD)  # 一目了然
+#+end_src
+
+**XOR（^）**：两个位不同时结果为 1，相同时结果为 0。
+
+#+begin_src python
+# 0b0011 ^ 0b0101
+# 第3位: 0 XOR 0 = 0
+# 第2位: 0 XOR 1 = 1
+# 第1位: 1 XOR 0 = 1
+# 第0位: 1 XOR 1 = 0
+# 结果: 0b0110
+print(bin(0b0011 ^ 0b0101))
+#+end_src
+
+XOR 的用途是 *翻转标志* ：把 1 变 0、把 0 变 1。
+
+#+begin_src python :results output
+BOLD = 0b00000010
+
+attr = BOLD
+print(f"初始: BOLD={attr & BOLD != 0}")  # True
+
+attr = attr ^ BOLD  # 翻转 BOLD
+print(f"翻转后: BOLD={attr & BOLD != 0}")  # False
+
+attr = attr ^ BOLD  # 再翻转
+print(f"再翻转: BOLD={attr & BOLD != 0}")  # True
+#+end_src
+
+#+RESULTS:
+: 初始: BOLD=True
+: 翻转后: BOLD=False
+: 再翻转: BOLD=True
+
+* 清除标志和位移
+
+**AND NOT**：清除某个标志位。Python 没有单独的 =AND NOT= 运算符，但可以用 =AND + 取反= 实现：
+
+#+begin_src python :results output
+BOLD = 0b00000010
+
+attr = BOLD | 0b00000001  # 设置了 BOLD 和最低位
+print(f"清除前: {bin(attr)}")  # 0b11
+
+attr = attr & ~BOLD  # 清除 BOLD 位
+print(f"清除后: {bin(attr)}")  # 0b1，BOLD 位已清零
+#+end_src
+
+#+RESULTS:
+: 清除前: 0b11
+: 清除后: 0b1
+
+=~= 是取反运算符（NOT），把所有位翻转。 =~BOLD= 就是"除了 BOLD 那一位，其余全是 1"的掩码。用它去 AND，等于只清除 BOLD 位，其他位原样保留。
+
+**位移（>>、<<）**：把所有位往右或往左移动若干位。
+
+#+begin_src python :results output
+# 右移：所有位向右挪，右边溢出的位丢弃
+print(bin(0b1010 >> 1))  # 0b101（右移1位）
+print(bin(0b1010 >> 2))  # 0b10（右移2位，末尾的 0 丢了）
+
+# 左移：所有位向左挪，右边补 0
+print(bin(0b1010 << 1))  # 0b10100
+#+end_src
+
+#+RESULTS:
+: 0b101
+: 0b10
+: 0b10100
+
+位移常用来从一个整数中提取某个区段的值。原文的终端着色库就是这么做的：一个 64 位整数，低 9 位存终端属性，中间 24 位存前景色，高位存背景色。要提取前景色的数值，先用 AND 掩码清除不相关的位，再右移把颜色值移到最低位。
+
+* 打包一个辅助类
+
+原文最后把位掩码操作封装成了几个通用方法。Python 版如下：
+
+#+begin_src python :results output
+class Bitflag:
+    def __init__(self, value: int = 0):
+        self._value = value
+
+    def has(self, flag: int) -> bool:
+        return self._value & flag != 0
+
+    def set(self, flag: int) -> None:
+        self._value |= flag
+
+    def clear(self, flag: int) -> None:
+        self._value &= ~flag
+
+    def toggle(self, flag: int) -> None:
+        self._value ^= flag
+
+    def __repr__(self) -> str:
+        return bin(self._value)
+
+
+# 使用
+BOLD = 0b00000001
+ITALIC = 0b00000010
+UNDERLINE = 0b00000100
+
+f = Bitflag()
+f.set(BOLD)
+f.set(ITALIC)
+print(f)                # 0b11
+print(f.has(BOLD))      # True
+print(f.has(UNDERLINE))  # False
+f.toggle(BOLD)
+print(f.has(BOLD))      # False
+f.clear(ITALIC)
+print(f)                # 0b0
+#+end_src
+
+#+RESULTS:
+: 0b11
+: True
+: False
+: False
+: 0b0
+
+* 什么时候该用位掩码
+
+不是所有场景都适合用位掩码。原文提到两个主要动机：
+
+1. *API 更清晰* ：组合标志时， =RED | BOLD= 比 =use_red=True, use_bold=True= 可读性好得多。检查"是否包含某些标志"时， =attr & (EXPORT | READ)= 比 =p.export and p.read= 简洁。回到文章开头那个权限问题——检查"只有 count 被开启"：
+
+   #+begin_src python
+   # 位掩码写法：清除 count 位后，剩余位全为 0 就是"只有 count"
+   if (perm & ~COUNT) == 0:
+       ...
+   #+end_src
+
+   对比原来的写法：
+
+   #+begin_src python
+   if p.count and not p.export and not p.site_read and not p.site_create and not p.site_update:
+       ...
+   #+end_src
+
+2. *内存效率* ：一个整数能存几十个标志，而每个 bool 字段至少占一个字节。对大多数应用来说这不是关键因素，但在嵌入式或高频数据结构中会有实际意义。
+
+反过来，如果你只是存一两个标志，或者不需要组合检查，普通 bool 字段更直观，不必强行用位掩码。
