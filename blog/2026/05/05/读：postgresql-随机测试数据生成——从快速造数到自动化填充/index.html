@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：PostgreSQL 随机测试数据生成——从快速造数到自动化填充 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="PostgreSQL 造随机测试数据有两条路：一条 SELECT 搞定还是上百行 PL/pgSQL 动态构造。本文从几个内置函数讲起，再到读取 information_schema 自动填充多表的完整方案，说明各自适合什么场景。" />
+  <meta name="keywords" content="PostgreSQL, SQL, 测试" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：PostgreSQL 随机测试数据生成——从快速造数到自动化填充</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org453e132">开篇</a></li>
+<li><a href="#org9154d31">随机数的几个基本函数</a></li>
+<li><a href="#org4964d66">合体技：一条 INSERT 搞定</a></li>
+<li><a href="#org430c950">重现：固定随机种子</a></li>
+<li><a href="#org500e658">PL/pgSQL 动态方案：自动适配任意表结构</a>
+<ul>
+<li><a href="#orgbbaa5e4">先准备一张表</a></li>
+<li><a href="#orgdaafc3f">完整 DO 块</a></li>
+<li><a href="#orge7bda5d">代码做了什么</a>
+<ul>
+<li><a href="#org98811b3">收集列名</a></li>
+<li><a href="#org7c88c31">按类型分发</a></li>
+<li><a href="#org5ac1711">动态执行</a></li>
+</ul>
+</li>
+<li><a href="#orgecbe28f">执行结果</a></li>
+</ul>
+</li>
+<li><a href="#orgaba6e9f">两条路怎么选</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org453e132" class="outline-2">
+<h2 id="org453e132">开篇</h2>
+<div class="outline-text-2" id="text-org453e132">
+<p>
+PostgreSQL 里造随机测试数据，有两条路。
+</p>
+
+<p>
+一条轻量：几个内置函数拼一条 INSERT &#x2026; SELECT，几分钟搞定一张表。适合开发阶段快速验证。
+</p>
+
+<p>
+另一条完整：用 PL/pgSQL 写一个 DO 块（匿名块），动态读取 information_schema 里的列定义，根据每列的数据类型自动生成对应值——不管表结构怎么变，代码都能自动适配。适合需要反复填充多张表的场景。
+</p>
+
+<p>
+<a href="https://dzone.com/articles/postgresql-random-test-data">DZone 上有一篇教程</a>讲的是后一种方案。这篇把两条路都过一遍。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9154d31" class="outline-2">
+<h2 id="org9154d31">随机数的几个基本函数</h2>
+<div class="outline-text-2" id="text-org9154d31">
+<p>
+PostgreSQL 的 <code>random()</code> 返回 0 到 1 之间的浮点数。配合 <code>floor()</code> 就能生成整数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-comment-delimiter">-- </span><span class="org-comment">&#29983;&#25104; 1 &#21040; 100 &#20043;&#38388;&#30340;&#38543;&#26426;&#25972;&#25968;
+</span><span class="org-keyword">SELECT</span> floor(random() * 100 + 1)::<span class="org-type">int</span> <span class="org-keyword">AS</span> num;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org292ebdb">
+ num
+-----
+  88
+</pre>
+
+<p>
+<code>generate_series()</code> 用来生成连续的行，是批量造数据的核心工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-comment-delimiter">-- </span><span class="org-comment">&#29983;&#25104; 1 &#21040; 10 &#30340;&#24207;&#21015;
+</span><span class="org-keyword">SELECT</span> generate_series(1, 10) <span class="org-keyword">AS</span> i;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="orge731f20">
+ i
+----
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 10
+</pre>
+
+<p>
+从数组中随机取一个值，用来造枚举型字段（如姓名、状态）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> (<span class="org-type">ARRAY</span>[<span class="org-string">'&#24352;&#19977;'</span>, <span class="org-string">'&#26446;&#22235;'</span>, <span class="org-string">'&#29579;&#20116;'</span>, <span class="org-string">'&#36213;&#20845;'</span>])[floor(random() * 4 + 1)] <span class="org-keyword">AS</span> <span class="org-keyword">name</span>;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org1cc8a00">
+ name
+------
+ 王五
+</pre>
+
+<p>
+随机日期，用日期加上随机天数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> <span class="org-string">'2020-01-01'</span>::<span class="org-type">date</span> + floor(random() * 365 * 5)::<span class="org-type">int</span> <span class="org-keyword">AS</span> rand_date;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org59d4ad1">
+ rand_date
+------------
+ 2024-01-22
+</pre>
+
+<p>
+UUID 用 <code>gen_random_uuid()</code> （PostgreSQL 13+ 内置，老版本需要安装 <code>pgcrypto</code> 扩展）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> gen_random_uuid() <span class="org-keyword">AS</span> uid;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org43d25fe">
+ uid
+--------------------------------------
+ 7126489b-a7ae-4a1c-a02c-fea47513560a
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org4964d66" class="outline-2">
+<h2 id="org4964d66">合体技：一条 INSERT 搞定</h2>
+<div class="outline-text-2" id="text-org4964d66">
+<p>
+把上面的函数组合起来，用 <code>INSERT INTO ... SELECT</code> 一次性插入 100 条随机数据：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> IF <span class="org-keyword">NOT</span> <span class="org-keyword">EXISTS</span> <span class="org-function-name">test_users</span> (
+    id BIGINT <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span>,
+    <span class="org-keyword">name</span> <span class="org-type">VARCHAR</span>(50),
+    amount <span class="org-type">NUMERIC</span>(10,2),
+    status <span class="org-type">BOOLEAN</span>,
+    created_at <span class="org-type">DATE</span>
+);
+
+<span class="org-keyword">INSERT</span> <span class="org-keyword">INTO</span> test_users (id, <span class="org-keyword">name</span>, amount, status, created_at)
+<span class="org-keyword">SELECT</span>
+    i,
+    (<span class="org-type">ARRAY</span>[<span class="org-string">'&#24352;&#19977;'</span>, <span class="org-string">'&#26446;&#22235;'</span>, <span class="org-string">'&#29579;&#20116;'</span>, <span class="org-string">'&#36213;&#20845;'</span>])[floor(random() * 4 + 1)],
+    round((random() * 10000)::<span class="org-type">numeric</span>, 2),
+    random() &gt; 0.5,
+    <span class="org-string">'2020-01-01'</span>::<span class="org-type">date</span> + floor(random() * 365 * 5)::<span class="org-type">int</span>
+<span class="org-keyword">FROM</span> generate_series(1, 100) <span class="org-keyword">AS</span> i;
+</pre>
+</div>
+
+<p>
+查询验证：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> <span class="org-builtin">count</span>(*), <span class="org-builtin">count</span>(<span class="org-keyword">DISTINCT</span> <span class="org-keyword">name</span>), <span class="org-builtin">min</span>(created_at), <span class="org-builtin">max</span>(created_at) <span class="org-keyword">FROM</span> test_users;
+</pre>
+</div>
+
+<p>
+执行结果：
+</p>
+
+<pre class="example" id="org6b6d23e">
+ count | count |    min    |    max
+-------+-------+-----------+-----------
+   100 |     4 | 2020-01-16 | 2024-12-27
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org430c950" class="outline-2">
+<h2 id="org430c950">重现：固定随机种子</h2>
+<div class="outline-text-2" id="text-org430c950">
+<p>
+上面每次执行得到的数据都不同。如果需要在回归测试中重现相同数据，用 <code>setseed()</code> 固定随机种子：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> setseed(0.5);
+</pre>
+</div>
+
+<p>
+<code>setseed()</code> 接受 [-1, 1] 范围内的参数，调用后当前会话的 <code>random()</code> 会生成确定序列。把 <code>SELECT setseed()</code> 放在 INSERT 之前，相同种子每次产生相同结果。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org500e658" class="outline-2">
+<h2 id="org500e658">PL/pgSQL 动态方案：自动适配任意表结构</h2>
+<div class="outline-text-2" id="text-org500e658">
+<p>
+前面那种写法，每张表都得手写 INSERT 和随机值表达式。表一多就烦了。
+</p>
+
+<p>
+原文的方案是写一段 PL/pgSQL 匿名块（DO 块），执行完就丢弃，不保存为函数或过程。它会动态读取表的列定义，根据列类型自动构造 INSERT 语句，不管表结构怎么变都能填。
+</p>
+</div>
+
+<div id="outline-container-orgbbaa5e4" class="outline-3">
+<h3 id="orgbbaa5e4">先准备一张表</h3>
+<div class="outline-text-3" id="text-orgbbaa5e4">
+<p>
+假设有这样一张表：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> IF <span class="org-keyword">NOT</span> <span class="org-keyword">EXISTS</span> <span class="org-function-name">test_schema.test_tab2</span> (
+    id BIGINT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span>,
+    fname <span class="org-type">VARCHAR</span>(50),
+    lname <span class="org-type">VARCHAR</span>(50),
+    create_date <span class="org-type">DATE</span>,
+    status <span class="org-type">BOOLEAN</span>,
+    <span class="org-keyword">CONSTRAINT</span> test_tab1_pkey <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span> (id)
+);
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdaafc3f" class="outline-3">
+<h3 id="orgdaafc3f">完整 DO 块</h3>
+<div class="outline-text-3" id="text-orgdaafc3f">
+<p>
+下面这个 DO 块，指定模式名和表名后，自动从 information_schema 读出列定义，根据每列的数据类型生成对应的随机值，插入指定行数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql">DO $$
+<span class="org-keyword">DECLARE</span>
+    rec_count <span class="org-type">INTEGER</span> := 10;
+    col RECORD;
+    col_list TEXT := <span class="org-string">''</span>;
+    val_list TEXT := <span class="org-string">''</span>;
+    sql_stmt TEXT;
+    i <span class="org-type">INTEGER</span>;
+    tbl_schema TEXT := <span class="org-string">'test_schema'</span>;
+    tbl_name TEXT := <span class="org-string">'test_tab2'</span>;
+    random_date <span class="org-type">DATE</span>;
+    random_status <span class="org-type">BOOLEAN</span>;
+<span class="org-keyword">BEGIN</span>
+    <span class="org-comment-delimiter">-- </span><span class="org-comment">&#31532;&#19968;&#27493;&#65306;&#25910;&#38598;&#21015;&#21517;
+</span>    <span class="org-keyword">FOR</span> col <span class="org-keyword">IN</span>
+        <span class="org-keyword">SELECT</span> <span class="org-keyword">column_name</span>, data_type
+        <span class="org-keyword">FROM</span> information_schema.columns
+        <span class="org-keyword">WHERE</span> table_schema = tbl_schema
+          <span class="org-keyword">AND</span> <span class="org-keyword">table_name</span> = tbl_name
+        <span class="org-keyword">ORDER</span> <span class="org-keyword">BY</span> ordinal_position
+    LOOP
+        col_list := col_list || col.<span class="org-keyword">column_name</span> || <span class="org-string">', '</span>;
+    <span class="org-keyword">END</span> LOOP;
+    col_list := <span class="org-keyword">left</span>(col_list, <span class="org-keyword">length</span>(col_list) - 2);
+
+    <span class="org-comment-delimiter">-- </span><span class="org-comment">&#31532;&#20108;&#27493;&#65306;&#36880;&#34892;&#29983;&#25104;&#25968;&#25454;
+</span>    <span class="org-keyword">FOR</span> i <span class="org-keyword">IN</span> 1..rec_count LOOP
+        val_list := <span class="org-string">''</span>;
+
+        <span class="org-keyword">FOR</span> col <span class="org-keyword">IN</span>
+            <span class="org-keyword">SELECT</span> <span class="org-keyword">column_name</span>, data_type
+            <span class="org-keyword">FROM</span> information_schema.columns
+            <span class="org-keyword">WHERE</span> table_schema = tbl_schema
+              <span class="org-keyword">AND</span> <span class="org-keyword">table_name</span> = tbl_name
+            <span class="org-keyword">ORDER</span> <span class="org-keyword">BY</span> ordinal_position
+        LOOP
+            <span class="org-keyword">CASE</span> col.data_type
+                <span class="org-keyword">WHEN</span> <span class="org-string">'bigint'</span> <span class="org-keyword">THEN</span>
+                    val_list := val_list || i || <span class="org-string">', '</span>;
+                <span class="org-keyword">WHEN</span> <span class="org-string">'character varying'</span> <span class="org-keyword">THEN</span>
+                    val_list := val_list || quote_literal(col.<span class="org-keyword">column_name</span> || <span class="org-string">'_'</span> || i) || <span class="org-string">', '</span>;
+                <span class="org-keyword">WHEN</span> <span class="org-string">'text'</span> <span class="org-keyword">THEN</span>
+                    val_list := val_list || quote_literal(col.<span class="org-keyword">column_name</span> || <span class="org-string">'_'</span> || i) || <span class="org-string">', '</span>;
+                <span class="org-keyword">WHEN</span> <span class="org-string">'date'</span> <span class="org-keyword">THEN</span>
+                    random_date := <span class="org-string">'2000-01-01'</span>::<span class="org-type">date</span>
+                                   + trunc(random() * 366 * 10)::<span class="org-type">int</span>;
+                    val_list := val_list || quote_literal(random_date) || <span class="org-string">', '</span>;
+                <span class="org-keyword">WHEN</span> <span class="org-string">'boolean'</span> <span class="org-keyword">THEN</span>
+                    random_status := (i % 2 = 0);
+                    val_list := val_list || random_status || <span class="org-string">', '</span>;
+                <span class="org-keyword">WHEN</span> <span class="org-string">'uuid'</span> <span class="org-keyword">THEN</span>
+                    val_list := val_list || <span class="org-string">'gen_random_uuid(), '</span>;
+                <span class="org-keyword">ELSE</span>
+                    val_list := val_list || <span class="org-string">'NULL, '</span>;
+            <span class="org-keyword">END</span> <span class="org-keyword">CASE</span>;
+        <span class="org-keyword">END</span> LOOP;
+
+        val_list := <span class="org-keyword">left</span>(val_list, <span class="org-keyword">length</span>(val_list) - 2);
+
+        sql_stmt := format(
+            <span class="org-string">'INSERT INTO %I.%I (%s) VALUES (%s);'</span>,
+            tbl_schema, tbl_name,
+            col_list, val_list
+        );
+
+        RAISE NOTICE <span class="org-string">'Executing: %'</span>, sql_stmt;
+        <span class="org-keyword">EXECUTE</span> sql_stmt;
+    <span class="org-keyword">END</span> LOOP;
+<span class="org-keyword">END</span> $$;
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge7bda5d" class="outline-3">
+<h3 id="orge7bda5d">代码做了什么</h3>
+<div class="outline-text-3" id="text-orge7bda5d">
+<p>
+这个 DO 块的核心逻辑分三层：
+</p>
+</div>
+
+<div id="outline-container-org98811b3" class="outline-4">
+<h4 id="org98811b3">收集列名</h4>
+<div class="outline-text-4" id="text-org98811b3">
+<p>
+第一次遍历 information_schema 把所有列名拼成 <code>col_list</code> ，形如 <code>id, fname, lname, create_date, status</code> 。这部分跟具体数据类型无关，只取列名。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7c88c31" class="outline-4">
+<h4 id="org7c88c31">按类型分发</h4>
+<div class="outline-text-4" id="text-org7c88c31">
+<p>
+第二次遍历对每一列用 <code>CASE col.data_type</code> 判断数据类型，生成对应的随机值：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">数据类型</th>
+<th scope="col" class="org-left">生成方式</th>
+<th scope="col" class="org-left">示例结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">bigint</td>
+<td class="org-left">用循环变量 <code>i</code> 直接赋值</td>
+<td class="org-left">1, 2, 3&#x2026;</td>
+</tr>
+
+<tr>
+<td class="org-left">character varying / text</td>
+<td class="org-left">列名加行号， <code>quote_literal()</code> 自动加引号</td>
+<td class="org-left">'fname_1', 'fname_2'</td>
+</tr>
+
+<tr>
+<td class="org-left">date</td>
+<td class="org-left">基准日期加随机天数</td>
+<td class="org-left">'2003-07-15'</td>
+</tr>
+
+<tr>
+<td class="org-left">boolean</td>
+<td class="org-left">偶数行 TRUE，奇数行 FALSE</td>
+<td class="org-left">TRUE / FALSE</td>
+</tr>
+
+<tr>
+<td class="org-left">uuid</td>
+<td class="org-left">调用 <code>gen_random_uuid()</code></td>
+<td class="org-left">3e7c8e1a-&#x2026;</td>
+</tr>
+
+<tr>
+<td class="org-left">未识别的类型</td>
+<td class="org-left">NULL</td>
+<td class="org-left">NULL</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<code>quote_literal()</code> 是一个实用函数，给字符串值自动加上单引号并转义特殊字符，避免拼 SQL 时出现引号错误。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5ac1711" class="outline-4">
+<h4 id="org5ac1711">动态执行</h4>
+<div class="outline-text-4" id="text-org5ac1711">
+<p>
+每次内层循环结束后，用 <code>format()</code> 把列名和值拼成完整的 <code>INSERT</code> 语句， <code>%I</code> 占位符会自动给标识符加双引号（防止 SQL 注入）。然后用 <code>EXECUTE</code> 执行这条动态 SQL。同时用 <code>RAISE NOTICE</code> 打印生成的 SQL，方便调试。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgecbe28f" class="outline-3">
+<h3 id="orgecbe28f">执行结果</h3>
+<div class="outline-text-3" id="text-orgecbe28f">
+<p>
+执行后查询：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> * <span class="org-keyword">FROM</span> test_schema.test_tab2;
+</pre>
+</div>
+
+<p>
+验证结果：
+</p>
+
+<pre class="example" id="orgac706d7">
+ id |  fname   |  lname   | create_date | status
+----+----------+----------+-------------+--------
+  1 | fname_1  | lname_1  | 2009-07-12  | f
+  2 | fname_2  | lname_2  | 2005-08-08  | t
+  3 | fname_3  | lname_3  | 2005-02-22  | f
+  4 | fname_4  | lname_4  | 2004-05-25  | t
+  5 | fname_5  | lname_5  | 2008-03-23  | f
+  6 | fname_6  | lname_6  | 2005-03-17  | t
+  7 | fname_7  | lname_7  | 2008-01-05  | f
+  8 | fname_8  | lname_8  | 2005-11-17  | t
+  9 | fname_9  | lname_9  | 2005-01-04  | f
+ 10 | fname_10 | lname_10 | 2006-05-23  | t
+(10 rows)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgaba6e9f" class="outline-2">
+<h2 id="orgaba6e9f">两条路怎么选</h2>
+<div class="outline-text-2" id="text-orgaba6e9f">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">维度</th>
+<th scope="col" class="org-left">内置函数（轻量方案）</th>
+<th scope="col" class="org-left">PL/pgSQL（自动方案）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">上手成本</td>
+<td class="org-left">低，几个函数组合就行</td>
+<td class="org-left">高，需要理解 DO 块和 PL/pgSQL</td>
+</tr>
+
+<tr>
+<td class="org-left">每张表的工作量</td>
+<td class="org-left">手写 INSERT，每张表几分钟</td>
+<td class="org-left">改 DO 块前两行的表名和模式名就行</td>
+</tr>
+
+<tr>
+<td class="org-left">灵活度</td>
+<td class="org-left">每列可以自由定制</td>
+<td class="org-left">值生成逻辑由 data_type 决定，定制需改 CASE</td>
+</tr>
+
+<tr>
+<td class="org-left">适合场景</td>
+<td class="org-left">一两张表，临时造数据</td>
+<td class="org-left">多张表，反复需要填充测试数据</td>
+</tr>
+
+<tr>
+<td class="org-left">依赖</td>
+<td class="org-left">不需要额外扩展</td>
+<td class="org-left">需要 <code>pgcrypto</code> 扩展（9.x 老版本才需要）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+选哪条路取决于你有几张表。一两张表， <code>generate_series()</code> 加几个函数几分钟就写完了。五张十张表，或者需要反复重建测试数据，PL/pgSQL 方案值得投资。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-05</span>
+    <span class="post-info">2026-05-05</span>
+    <a href="../../../../../tags/postgresql">PostgreSQL</a> : <a href="../../../../../tags/sql">SQL</a> : <a href="../../../../../tags/测试">测试</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 4kqc5qddvvaudodmeuvkhwl1qd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
