@@ -1,0 +1,176 @@
+#+TITLE: 读：Emacs 连接数据库时密码放哪里
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,sql-mode,auth-source,Org-mode,密码管理
+#+DATE: [2026-05-05 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs sql-mode 连接数据库时，密码明文写在配置里不安全，每次手动输入又麻烦。两种做法：用 pgpass 文件存储连接信息并解析成 sql-connection-alist，或用 authinfo.gpg 加密存储配合 auth-source 按需查找。本文对比两种方案的实现细节和适用场景。
+
+* 引子
+
+用 Emacs 的 sql-mode 连数据库写查询，密码放哪里是个问题。写在配置里是明文暴露，每次手动输入又打断工作流。Magnus Therning 在 [[https://magnus.therning.org/2026-05-02-secrets-when-connecting-to-dbs.html][博客]] 上整理了两种做法，Stefano Rodighiero 也写了 [[https://stefanorodighiero.net/blog/how-i-use-dbconnection-in-org.html][自己的方案]]。两种思路不同，但最后都能在 Org Babel 里通过 =:dbconnection= 参数引用连接，Org 文件里不写密码。
+
+* 方案一：pgpass 文件 + 解析函数
+
+Stefano Rodighiero 的做法：把连接信息放在 =~/.pgpass= 文件里（PostgreSQL 客户端库 libpq 默认读取的密码文件），用解析函数把它转成 =sql-connection-alist= （sql-mode 存储连接配置的变量）。
+
+** 文件格式
+
+Stefano 在标准 pgpass 格式（ =hostname:port:database:username:password= ）前面加了一行注释作为连接名：
+
+#+begin_src text
+# mydb
+db.example.com:5432:mydb:myuser:mypassword
+# analytics
+analytics.example.com:5432:analytics:analyst:secretpass
+#+end_src
+
+标准 pgpass 本身支持 =#= 开头的注释行，所以这个文件同时兼容 PostgreSQL 客户端工具和 Stefano 的解析函数。
+
+** 解析函数
+
+#+begin_src emacs-lisp
+(defun get-connection-alist (filename)
+  "从 FILENAME (pgpass 格式) 解析出 sql-connection-alist."
+  (with-current-buffer (find-file-noselect filename)
+    (let ((lines (split-string (buffer-string) "\n" t)))
+      (when lines
+        (cl-loop for (k v) in (seq-partition lines 2)
+          collect (cl-destructuring-bind (host port db user password)
+                      (split-string v ":" nil)
+                    `(,(replace-regexp-in-string "^#\s+" "" k)
+                      (sql-product 'postgres)
+                      (sql-port ,(string-to-number port))
+                      (sql-server ,host)
+                      (sql-user ,user)
+                      (sql-database ,db)
+                      (sql-password ,password))))))))
+#+end_src
+
+函数做的事：打开文件，按行分割，每两行为一组（注释行是名称，数据行是连接信息），解析数据行的冒号分隔字段，组装成 =sql-connection-alist= 需要的格式。
+
+** 设置和自动重载
+
+#+begin_src emacs-lisp
+(setq sql-connection-alist (get-connection-alist "~/.pgpass"))
+#+end_src
+
+Stefano 用 Emacs daemon 模式（Emacs 后台常驻，客户端连上去用），Emacs 一跑可能就是几周。期间 pgpass 文件可能改了（比如换了密码、加了新库），他用 =file-notify= （Emacs 内置的文件变更监控）自动重载：
+
+#+begin_src emacs-lisp
+(file-notify-add-watch
+ "~/.pgpass" '(change)
+ (lambda (evt)
+   (setq sql-connection-alist
+         (get-connection-alist "~/.pgpass"))))
+#+end_src
+
+pgpass 文件一改， =sql-connection-alist= 自动更新，不用重启 Emacs。
+
+** 特点
+
+- 连接信息和密码都在一个文件里，格式简单
+- 密码在内存中是明文（存在 =sql-connection-alist= 里）
+- pgpass 文件本身也是明文，需要注意文件权限（建议 =chmod 600= ）
+- 主要适合 PostgreSQL 系数据库
+
+* 方案二：authinfo.gpg + auth-source
+
+Harald J 的做法：密码存在 =~/.authinfo.gpg= 里（GPG 加密的 authinfo 文件），sql-mode 需要密码时通过 auth-source 查找。auth-source 是 Emacs 内置的统一密码存储接口，支持 netrc 文件、GPG 加密文件、系统密钥环等后端。连接定义里不出现密码。
+
+** authinfo 文件格式
+
+#+begin_src text
+machine db.example.com/mydb login myuser password mypassword port 5432
+machine analytics.example.com/analytics login analyst password secretpass port 5432
+#+end_src
+
+=machine= 字段用 =host/dbname= 格式（主机名和数据库名用斜杠拼接），用来区分同一主机上的不同数据库。这个文件用 GPG 加密后存为 =~/.authinfo.gpg= 。
+
+** 自定义密码查找函数
+
+#+begin_src emacs-lisp
+(defun my/sql-auth-source-search-wallet (wallet product user server database port)
+  "从 auth-source WALLET 中查找 USER 的密码。
+DATABASE 和 SERVER 用斜杠拼接作为 host 查找键。"
+  (when-let (results (auth-source-search :host (concat server "/" database)
+                                         :user user
+                                         :port (number-to-string port)))
+    (when (and (= (length results) 1)
+               (plist-member (car results) :secret))
+      (let ((secret (plist-get (car results) :secret)))
+        ;; Emacs 26+ 的 auth-source 返回 :secret 为函数，需要 funcall
+        (if (functionp secret) (funcall secret) secret))))))
+#+end_src
+
+函数做的事：接收连接参数（主机、数据库、用户、端口），把主机名和数据库名拼成 =host/dbname= 作为查找键，从 authinfo 文件里找到对应条目。 =auth-source-search= 是 auth-source 提供的查找函数。
+
+** 配置 sql-mode
+
+#+begin_src emacs-lisp
+(setq sql-password-search-wallet-function #'my/sql-auth-source-search-wallet)
+(setq sql-password-wallet "~/.authinfo.gpg")
+#+end_src
+
+=sql-password-search-wallet-function= 告诉 sql-mode "需要密码时调这个函数"， =sql-password-wallet= 指定密码存储文件的位置。
+
+** 连接定义里不写密码
+
+#+begin_src emacs-lisp
+(setq sql-connection-alist
+  '((mydb (sql-product 'postgres)
+          (sql-port 5432)
+          (sql-server "db.example.com")
+          (sql-user "myuser")
+          (sql-database "mydb"))
+    (analytics (sql-product 'postgres)
+               (sql-port 5432)
+               (sql-server "analytics.example.com")
+               (sql-user "analyst")
+               (sql-database "analytics"))))
+#+end_src
+
+连接定义里只有服务器、端口、用户名，没有密码。sql-mode 实际连接数据库时才从 authinfo.gpg 里查找。
+
+** 特点
+
+- 密码存在 GPG 加密文件里，安全性好
+- 复用 Emacs 内置的 auth-source，和 TRAMP、ERC 等其他需要密码的场景共享同一套存储
+- 连接定义和密码存储分离， =sql-connection-alist= 里不出现明文密码
+- 需要配置 GPG 环境（gpg-agent）
+- 不限于 PostgreSQL，适合所有数据库类型
+
+* 在 Org Babel 里使用
+
+配好 =sql-connection-alist= 之后，在 Org Babel 的 SQL 代码块里通过 =:dbconnection= 参数引用连接名：
+
+#+begin_src org
+,#+begin_src sql :product postgres :dbconnection mydb :results raw
+SELECT current_database(), current_user;
+,#+end_src
+#+end_src
+
+=:dbconnection mydb= 让 Org Babel 用 =sql-connection-alist= 里名为 =mydb= 的连接去执行 SQL。Org 文件里不出现密码。
+
+**方案二在 Org Babel 里有个限制。** ob-sql （Org Babel 的 SQL 执行模块）直接从 =sql-connection-alist= 读取密码，不走 =sql-password-search-wallet-function= 。方案二的连接定义里没有密码，所以 ob-sql 执行时会因为缺少密码而认证失败。
+
+解决办法有两种：
+
+1. 在初始化时从 authinfo 读取密码填入 =sql-connection-alist= （但这会把密码放进内存，削弱了方案二的分离优势）
+2. 同时配置 =~/.pgpass= 文件，让 psql 自己找密码（psql 原生支持读取 =~/.pgpass= ）
+
+方案一没有这个问题，因为密码本来就在 =sql-connection-alist= 里。
+
+* 对比
+
+| 维度 | pgpass 方案 | authinfo.gpg 方案 |
+|------|------------|------------------|
+| 密码存储 | 明文文件（需注意文件权限） | GPG 加密文件 |
+| 配置复杂度 | 低（一个文件 + 一个解析函数） | 中（需要 GPG 环境 + 自定义查找函数） |
+| 密码在内存中 | 明文存在 sql-connection-alist 里 | 按需从 authinfo.gpg 读取 |
+| 数据库类型 | 主要适合 PostgreSQL 系 | 适合所有类型 |
+| Org Babel 支持 | 直接可用 | 需要额外处理（ob-sql 不走 wallet 函数） |
+| 与 Emacs 生态集成 | 独立方案 | 复用 auth-source，可与其他包共享密码 |
+| 自动重载 | file-notify 监控文件变更 | auth-source 自行管理缓存 |
+
+只用 PostgreSQL 且对安全性要求不高，pgpass 方案简单直接，Org Babel 也开箱即用。用多种数据库或已经在用 authinfo.gpg 管理其他密码，authinfo 方案更统一，但用在 Org Babel 里需要额外配置。
