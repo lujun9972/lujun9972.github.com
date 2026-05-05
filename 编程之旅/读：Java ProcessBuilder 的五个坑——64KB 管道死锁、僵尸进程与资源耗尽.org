@@ -1,0 +1,333 @@
+#+TITLE: 读：Java ProcessBuilder 的五个坑——64KB 管道死锁、僵尸进程与资源耗尽
+#+AUTHOR: lujun9972
+#+TAGS: Java, Linux, 进程管理, 子进程
+#+DATE: [2026-05-05 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Java 的 ProcessBuilder 是调用外部命令的标准 API，但 pb.start() 不是普通的方法调用——它是一条通往 OS 层的隧道。进去之后 JVM 就管不了你了。本文讲五个典型的坑：64KB 管道死锁、僵尸进程、FD 泄漏、exitValue 竞态和环境变量污染，以及六种对应的修复方案。
+
+* 开篇
+
+[[https://levelup.gitconnected.com/java-processbuilder-deadlocks-zombies-and-the-64-kb-wall-bb7aa7190036][Haider Kagalwala 在 Level Up Coding 上写了一篇很好的文章]]，梳理 Java ~ProcessBuilder~ 调用外部命令时的底层 OS 机制。这篇是读后笔记。
+
+~ProcessBuilder~ 的 API 本身很简单：
+
+#+begin_src java
+ProcessBuilder pb = new ProcessBuilder("ls", "-la");
+Process process = pb.start();
+// 读输出
+try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+// 等结束，拿退出码
+int exitCode = process.waitFor();
+System.out.println("Exited with: " + exitCode);
+#+end_src
+
+但 ~pb.start()~ 这一行做的事远比看起来多。它把控制权交给了 OS,从此 JVM 与你是路人。
+
+要理解原因，得先知道 OS 在这一行背后做了什么。
+
+* 背景知识：pb.start() 内部发生了什么
+
+** Fork 和 Exec
+
+~pb.start()~ 内部是两个系统调用的组合：
+
+1. *Fork* ：OS 创建当前 Java 进程的一个精确副本。一瞬间内存里有两个一模一样的 Java 进程（用了 Copy-on-Write，不会真的翻倍内存）
+2. *Exec* ：副本把自己完全替换掉：清空内存、丢弃 Java 字节码、加载你要执行的命令（比如 ~ls~ ）
+
+~pb.start()~ 感觉快的原因就在这里：先克隆当前进程，再替换成目标——省了从头建进程这一步。
+
+** /proc：内核的实时窗口
+
+Linux 的 ~/proc~ 是一个虚拟文件系统。每个数字目录对应一个正在运行的进程，里面的文件是该进程的实时状态：内存映射、打开的文件句柄、启动命令，随时可以读。
+
+如果 Java 进程的 PID 是 1234，那么它的全部信息就在 ~/proc/1234/~ 里。
+
+** 文件描述符（FD）
+
+Linux 把一切当文件——磁盘文件、网络 socket、进程间管道，统统归为"文件"，给一个编号引用。这个编号就是文件描述符（File Descriptor）。
+
+每个进程启动时就有一组默认的 FD：
+
+| FD | 名称 | 作用 |
+|----|------|------|
+| 0 | STDIN | 进程听输入的地方 |
+| 1 | STDOUT | 普通输出 |
+| 2 | STDERR | 错误输出 |
+
+当你用 ~ProcessBuilder~ 时，OS 把这三个口子用管道连到 Java 父进程。 ~ls -la~ 的输出不会直接写到屏幕上，而是写到管道里，等 Java 来读。
+
+下面五个坑，按出现频率排。
+
+* 坑一：管道死锁（最常见）
+
+** 症状
+
+代码写好了，本地怎么测都没问题。一上生产，应用程序突然卡死，没异常、没堆栈、没警告。就是不动了。
+
+** 根因
+
+~ProcessBuilder~ 的 ~pb.start()~ 调用后，OS 在父进程和子进程之间创建了管道。每个管道是内核里的一个缓冲区，这个缓冲区在现代 Linux 上大约是 64KB。
+
+正常的流程是这样的：子进程往 STDOUT 写输出，父进程在另一端不断读取，缓冲区一直不满，两边都没事。
+
+但父进程如果不读输出，直接调 ~waitFor()~ 等子进程结束，就会出事：
+
+#+begin_src java
+// 死锁演示——别在生产环境这么写
+ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+    "for i in {1..100000}; do echo \"Line $i\"; done");
+pb.redirectErrorStream(true);
+Process process = pb.start();
+
+// 故意不读输出，直接等退出——管道会满
+int exitCode = process.waitFor();  // 永远等不到
+System.out.println("Child exited with code: " + exitCode);
+#+end_src
+
+这段代码会卡死在 ~waitFor()~ 上。原因是一环扣一环：
+
+1. 子进程写输出 → 管道没满 → 正常运行
+2. 子进程继续写 → 管道满了
+3. Linux 内核 *冻结子进程* ——"缓冲区没清空之前，你一个字都不准再写"
+4. 父进程在 ~waitFor()~ 里等着子进程退出
+5. 两边都睡着了。父进程在等子进程退出，子进程在等父进程读管道。谁也不动。
+
+** 诊断
+
+卡住的时候打开另一个终端，看 ~/proc~ ：
+
+#+begin_src shell
+ls -l /proc/<子进程PID>/fd
+ls -l /proc/<父进程PID>/fd
+#+end_src
+
+能看到子进程的 FD 1 指向一个管道，比如 ~pipe:[1840573]~ （写端），父进程有一个 FD 指向同一个管道 ~pipe:[1840573]~ （读端）。同一个管道号，两端都卡着。
+
+** 解法：让输出有个去处
+
+核心原则： *在 ~waitFor()~ 之前，管道必须有地方去。*
+
+最简单的方法是用 ~BufferedReader~ 先读完缓存再等退出：
+
+#+begin_src java
+ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+    "for i in {1..100000}; do echo \"Line $i\"; done");
+pb.redirectErrorStream(true);
+Process process = pb.start();
+
+// 先读完输出，管道永远不会满
+try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(process.getInputStream()))) {
+    reader.lines().forEach(line -> System.out.println("Output: " + line));
+}
+
+// 到这进程基本已经跑完了，waitFor 只是拿个退出码
+int exitCode = process.waitFor();
+System.out.println("Child exited with code: " + exitCode);
+#+end_src
+
+~redirectErrorStream(true)~ 让 STDERR 合并到 STDOUT，只需要读一个管道就够了。
+
+* 坑二：僵尸进程
+
+** 症状
+
+子进程执行完了， ~ps~ 一看还有一条：
+
+#+begin_src shell
+ps aux | grep defunct
+#+end_src
+
+状态栏是 ~Z~ ，命令后面跟着 ~<defunct>~ 。
+
+** 根因
+
+子进程调用 ~exit()~ 时，内核做了绝大部分清理工作（释放内存、关闭 FD），但故意保留了一丁点信息：进程表里一条记录，包含退出码和 PID。
+
+内核这么设计是有道理的——它觉得父进程可能需要知道子进程是怎么死的：成功退出还是崩溃了？退出码是多少？它等着父进程来 ~waitpid()~ 取走这个答案。在父进程来取之前，子进程就是僵尸。
+
+不消耗 CPU，不消耗内存，但占着一个 PID。
+
+JVM 确实有一个后台 reaper 线程自动清理子进程的 ~waitpid()~ ，正常情况不会出僵尸。但如果每秒产生几千个短命子进程，reaper 可能跟不上。
+
+** 解法：必须收集退出状态
+
+#+begin_src java
+// 子进程退出后，内核拿着退出码不走
+ProcessBuilder pb = new ProcessBuilder("bash", "-c",
+    "echo 'done'; exit 0");
+pb.redirectErrorStream(true);
+Process process = pb.start();
+try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+
+// 这行告诉内核：退出码我收到了
+int exitCode = process.waitFor();
+System.out.println("Exited with: " + exitCode);
+#+end_src
+
+如果不想阻塞（Java 9+），用 ~onExit()~ ：
+
+#+begin_src java
+process.onExit().thenAccept(p -> {
+    System.out.println("Exited with: " + p.exitValue());
+});
+#+end_src
+
+两个写法底层都在调 ~waitpid()~ 。内核拿到确认后，立马删掉进程表记录。僵尸消失。
+
+规则： *每 spawn 一个进程，必须有 waitFor() 或 onExit()。没有例外。*
+
+* 坑三：FD 泄漏
+
+** 症状
+
+日志里出现：
+
+#+begin_src java
+java.io.IOException: Too many open files
+#+end_src
+
+** 根因（两种模式）
+
+第一种是代码没有进行资源回收：JDBC 连接不关、文件流不关、进程管道不关。每次 ~pb.start()~ 创建三个 FD，读完了不关，FD 慢慢泄漏。JVM 的 GC 最终会回收它们，但 GC 时间不确定，生产环境扛不到 GC 来就跪了。
+
+防御：try-with-resources 用上。
+
+#+begin_src java
+try (BufferedReader reader = new BufferedReader(
+        new InputStreamReader(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+#+end_src
+
+第二种是资源回收速度跟不上：
+
+#+begin_src java
+ProcessBuilder pb = new ProcessBuilder("sleep", "100");
+pb.redirectErrorStream(true);
+pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+List<Process> processList = new ArrayList<>();
+try {
+    for (int i = 0; i < 1000; i++) {
+        var process = pb.start();
+        processList.add(process);
+        process.onExit().thenAccept(p ->
+            System.out.println("EXIT CODE: " + p.exitValue()));
+    }
+} catch (Exception e) {
+    System.out.println("FD LIMIT HIT");
+    System.out.println(e.getMessage());
+    for (Process p : processList) {
+        p.destroyForcibly();
+    }
+}
+#+end_src
+
+这段代码没有流泄漏，该 close 的都用 ~Redirect.DISCARD~ 处理了。但每个子进程活 100 秒， ~for~ 循环一口气生 1000 个，进程只增不减。如果 ~ulimit~ 设得低（比如 ~ulimit -n 64~ ），二十几个进程就撞天花板了。日志里的错误不是"流没关"，而是"spawn helper 无法 fork"——因为 fork 操作本身也需要 FD。
+
+** 诊断：看两个 limit
+
+#+begin_src shell
+ulimit -n    # 软限制
+ulimit -Hn   # 硬限制
+cat /proc/sys/kernel/pid_max  # 系统最大 PID 数
+#+end_src
+
+** 解法
+
+好习惯有两个：
+1. try-with-resources 关流，每次必做
+2. 心里时刻清楚"我现在有多少个子进程活着"
+
+* 坑四：exitValue() 竞态条件
+
+** 症状
+
+#+begin_src java
+java.lang.IllegalThreadStateException: process has not exited
+#+end_src
+
+** 根因
+
+~exitValue()~ 用来取进程退出码，但它有一个隐形的前提条件：进程必须已经结束。如果进程还在跑，它不阻塞、不等、不重试，直接抛异常。
+
+最典型的翻车模式：
+
+#+begin_src java
+// 这样做可能本地没问题，上了生产就崩
+Process process = pb.start();
+int code = process.exitValue();  // 进程可能还没退出
+#+end_src
+
+本地机器快、CPU 空闲、scheduler 给力——命令瞬间跑完，代码过了 release review。生产环境负载高、CPU 抢不到——进程没退出，异常飞出来。而且它 *时好时坏* ，是最难排查的那种 bug。
+
+** 解法
+
+~exitValue()~ 只能在两个地方调用：
+
+- ~waitFor()~ 之后——阻塞等到进程结束再拿退出码
+- ~onExit()~ 回调内部——回调触发时进程已经死了，拿退出码安全
+
+其他地方调 ~exitValue()~ ，说明代码结构有问题。没有例外，不需要这个 API 裸用。
+
+* 坑五：环境变量污染
+
+** 症状
+
+子进程意外地拿到了数据库密码、API key 或 AWS 凭证。问题出在 *子进程默认会继承父进程的全部环境变量* 。这是 ProcessBuilder 的默认行为，不是 bug。
+
+** 根因
+
+~ProcessBuilder~ 默认把 Java 进程（JVM）的所有环境变量原封不动地传给每个子进程。你的 JVM 启动时带了一堆配置—— ~DATABASE_URL~ 、 ~SECRET_KEY~ 、 ~AWS_ACCESS_KEY_ID~ ——所有这些都会出现在 ~ls~ 命令的环境里。
+
+** 解法
+
+~pb.environment()~ 返回一个 ~Map~ ，可以随意操作。最佳实践是清空再注入：
+
+#+begin_src java
+ProcessBuilder pb = new ProcessBuilder("bash", "-c", "echo $MY_VAR");
+// environment() 返回 pb 内部环境变量的引用，改了它就改了子进程的启动环境
+Map<String, String> env = pb.environment();
+env.clear();                                  // 擦掉所有继承来的变量
+env.put("MY_VAR", "only_what_is_needed");     // 只给子进程需要的
+Process process = pb.start();
+#+end_src
+
+一个干净的隔离环境比"不小心把密码传给 ~ls~"安全得多。
+
+* 六种 Fix 怎么选
+
+汇总一下：
+
+| 场景 | 推荐做法 |
+|------|---------|
+| 短命令，输出要在 Java 里处理 | ~BufferedReader~ 逐行读 |
+| 长命令，主线程不能卡 | ~CompletableFuture~ 异步 drain |
+| 需要顺序拿 exit code | drain + ~join()~ + ~waitFor()~ |
+| 不需要区分 STDOUT 和 STDERR | ~redirectErrorStream(true)~ 合并管道 |
+| 开发调试，输出直接看 | ~inheritIO()~ 让子进程输出直通终端 |
+| 生产日志，Java 不用处理 | ~Redirect.to(file)~ 管道直写文件 |
+| 输出完全不关心 | ~Redirect.DISCARD~ 根本别建管道 |
+
+贯穿所有 Fix 的只有一条原则： *管道必须有去处，exit 必须被收集，资源必须被关闭。* 做到这三点， ~ProcessBuilder~ 就不会成为麻烦之源。
+
+* 总结
+
+这五个坑的共同根源是同一件事：把 ~pb.start()~ 当成普通 API 调用来用，没意识到它在 OS 层做了什么。
+
+** 一张图记住五个坑
+
+| 坑 | OS 层根因 | 一句话解法 |
+|----|----------|-----------|
+| 管道死锁 | pipe buffer 64KB 满了冻住子进程 | 先 drain 再 waitFor |
+| 僵尸进程 | exit status 等着被 waitpid 收集 | waitFor/onExit 二选一 |
+| FD 泄漏 | 流不关或进程数超 ulimit | try-with-resources + 控制并发 |
+| 竞态条件 | exitValue 不肯等 | 只在 waitFor/onExit 后调 |
+| 环境污染 | 子进程默认继承一切环境变量 | clear + inject |
