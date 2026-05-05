@@ -1,0 +1,184 @@
+#+TITLE: 读：双写问题——@Transactional 给不了的跨系统一致性
+#+AUTHOR: lujun9972
+#+TAGS: 分布式系统, 事务, 一致性, 微服务
+#+DATE: [2026-05-05 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:f nil f:t *:t <:nil
+#+DESCRIPTION: 分布式系统中，服务需要同时写入数据库和消息队列的场景很常见。但 @Transactional 只能保证数据库原子性，管不到消息队列。这种"双写"在特定时机崩溃时会静默地产生数据不一致：要么下游处理了数据库里不存在的订单，要么订单卡在数据库里没人处理。本文解读双写问题的本质、XA 分布式事务为什么不适用，以及四种解决模式（Transactional Outbox、CDC、Event Sourcing、Listen to Yourself）的核心思路和选型权衡。
+
+* 开篇：一段看着安全的代码
+
+有个下单服务：保存订单到数据库，然后向消息队列发一个事件。下游的库存服务、通知服务都等着这个消息。
+
+#+begin_src pseudocode
+function placeOrder(order):
+    db.save(order)
+    queue.send("order.placed", order)
+#+end_src
+
+如果 db.save 成功但 queue.send 失败，或者反过来，会怎样？这就是双写问题（Dual Write Problem），分布式系统中最常见的陷阱之一。作者 Vineet Bhatkoti 在 DZone 上的文章讲得很清楚，这篇记下核心思路。
+
+* 问题本质：两个系统，一个事务？
+
+很多人的第一反应是"加个事务不就行了"。在 Java/Spring 里会写成 ~@Transactional~ ，在 Python 里可能用 ~with db.transaction()~ 。但这种事务只能保证数据库操作在一个事务中，消息队列不在其中。
+
+这不是某个框架的缺陷，而是物理约束：数据库和消息队列是两台独立的机器，没有共享的事务协调器。代码在一个事务里既做数据库操作又发送消息，但 ~@Transactional~  只能知道数据库做了什么，对消息队列一无所知。
+
+考虑一下下面两个场景：
+
+*场景一：消息发出去了，数据库回滚了*
+
+#+begin_src pseudocode
+function placeOrder(order):
+    db.startTransaction()
+    db.save(order)             # 数据库写入成功
+    queue.send("placed", order) # 消息队列确认收到
+    # 假设 JVM/进程在这里崩溃
+    # 数据库事务尚未提交，恢复后回滚
+    # 但消息队列已经发出去了
+    db.commit()                # 永远不会执行到
+#+end_src
+
+下游消费者收到了订单事件，去查数据库发现订单不存在。两边都不知道对方的情况。
+
+*场景二：数据库提交了，事件丢了*
+
+#+begin_src pseudocode
+function placeOrder(order):
+    db.startTransaction()
+    db.save(order)             # 数据库写入成功
+    db.commit()                # 事务提交成功
+    queue.send("placed", order) # 消息队列节点崩溃，发送失败
+#+end_src
+
+订单存在数据库里，但库存没扣、通知没发、仓库没拣货。
+
+* 那么 XA 分布式事务可以解决问题吗？
+
+XA（两阶段提交）的思路是引入一个协调者，分两个阶段来协调多个资源（数据库、消息队列等）：
+
+- *Prepare 阶段* ：协调者问每个参与者"能不能提交？"。参与者做完整套操作、锁住资源，然后回复"准备好了"（或者"失败了"）
+- *Commit 阶段* ：如果所有人都说"准备好了"，协调者宣布"提交"；只要有一人说"失败"，就宣布"回滚"
+
+听起来可行，但三个问题让它不适合现代架构：
+
+- *慢* ：prepare + commit 两个阶段每个都要来回确认，延迟显著增加
+- *脆弱* ：参与者"准备好"之后锁着资源等协调者的最终决定。如果协调者在 prepare 和 commit 之间崩溃，所有参与者都卡住了——它们不知道应该提交还是回滚，也不敢释放锁，只能等着人工来一个个检查状态并清理
+- *不兼容 Kafka* ：Kafka 的事务模型是内部使用的，不参与 XA 协调
+
+这三个限制让 XA 在事件驱动架构里基本被排除。
+
+* 四种解决模式
+
+有四种模式可以选。核心思路都一样：把"双写"变成"单写 + 异步分发"。
+
+** 模式一：Transactional Outbox（事务性发件箱）
+
+最常见的模式。不直接写消息队列，而是在同一数据库事务里写一个 outbox 表。后台进程定期扫描 outbox，把未发送的事件发出去。
+
+#+begin_src pseudocode
+function placeOrder(order):
+    db.startTransaction()
+    db.save(order)
+    db.save("outbox", { topic: "order.placed", payload: order })
+    db.commit()
+    # 只写了一处——数据库
+    # 消息队列的事交给后台
+
+# 后台进程
+function publishOutbox():
+    while true:
+        events = db.findUnpublished()
+        for event in events:
+            queue.send(event.topic, event.payload)
+            db.markPublished(event)
+        sleep(100ms)
+#+end_src
+
+可能存在多次投递的情况，下游消费者需要做幂等处理来应对可能的重复消息。
+
+** 模式二：CDC（变更数据捕获）
+
+Transaction Outbox 需要手动维护 outbox 表，CDC 更彻底：直接用数据库的事务日志。应用只管写业务表，一个 CDC 管道（如 Debezium）监控事务日志，把变更自动推给消息队列。
+
+#+begin_src pseudocode
+function placeOrder(order):
+    # 必须在一个数据库事务内执行，CDC 依赖事务日志
+    db.save(order)
+    # 应用完全不知道消息队列的存在
+    # CDC 管道从事务日志中读到变更，推给消息队列
+#+end_src
+
+应用代码完全不知道消息队列的存在，没有耦合。代价是多了一个 CDC 管道需要维护。
+
+** 模式三：Event Sourcing（事件溯源）
+
+这一种思路更彻底：取消业务数据库，不保存"当前状态"，只追加事件。当前状态由回放事件历史得出。
+
+#+begin_src pseudocode
+function placeOrder(order):
+    event = { type: "OrderPlaced", data: order }
+    eventStore.append(event)
+    # 只有一次写入，写入目标只有一个
+    # 消息队列的事由后台进程处理
+#+end_src
+
+注意一个常见的误区：不要在 append 之后直接 publish，那样又回到了双写问题。
+
+#+begin_src pseudocode
+# 错误做法——双写问题重现
+function placeOrder(order):
+    eventStore.append(event)     # 成功
+    eventBus.publish(event)      # 失败——事件丢了
+
+# 正确做法——只写一处
+function placeOrder(order):
+    eventStore.append(event)
+
+# 后台进程负责分发
+function publishEvents():
+    events = eventStore.findUnpublished()
+    for event in events:
+        eventBus.publish(event)
+        eventStore.markPublished(event)
+#+end_src
+
+Event Sourcing 的代价是架构复杂得多，不熟悉这种模式的团队上手需要时间。
+
+Event Sourcing 和 Transactional Outbox 很类似，都是"写一次 + 后台进程分发"的模式。区别在于数据的组织方式不同
+
+** 模式四：Listen to Yourself（自己监听自己）
+
+这一种反过来：应用程序只写消息队列，然后监听自己的消息来更新数据库。
+
+#+begin_src pseudocode
+function placeOrder(order):
+    queue.send("order.placed", order)
+    # 注意：这里没有数据库操作
+    # 数据库的更新由下面的消费者异步完成
+
+@onMessage("order.placed")
+function handleOrderPlaced(order):
+    db.save(order)
+#+end_src
+
+调用 ~placeOrder~ 时只写了一个地方（消息队列），不存在双写问题。消息被 Kafka 确认持久化后，就算服务立即崩溃也不会丢。重启后会从 Kafka 消费到这条消息，正常更新数据库。
+
+代价是写入后立即查询可能读不到最新状态——数据库还没更新。另外消费者必须做幂等。Kafka 会给每条消息一个编号（偏移量），消费者每处理完一条消息需要告诉 Kafka"这条我处理完了"。如果处理完之后、汇报之前崩溃了，Kafka 就会以为这条还没处理过，重启后又会再发一次。不做幂等就会产生重复订单。
+
+* 选型思路
+
+原文作者给出了一个对比表：
+
+| 模式 | 复杂度 | 最适合的场景 |
+|------|--------|-------------|
+| Transactional Outbox | 低 | 通用微服务 |
+| CDC | 中 | 高吞吐系统 |
+| Event Sourcing | 高 | 合规审计驱动 |
+| Listen to Yourself | 低 | 简单事件流 |
+
+大部分场景从 Transactional Outbox 开始就够了。如果 downstream 已经有 CDC 基础设施，CDC 是更干净的选择。
+
+* 总结
+
+双写问题的根因是一个逻辑操作跨了两个物理系统。数据库和消息队列是两台独立的机器，数据库事务只管得到数据库那一端，管不了消息队列。每种解决模式本质都是在做同一件事：把"同时写两个系统"变成"只写一个系统，另一个由后台异步处理"。
