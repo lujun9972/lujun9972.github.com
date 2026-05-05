@@ -1,0 +1,90 @@
+#+TITLE: TIL：Python 3.15 的 sentinel() 内置函数
+#+AUTHOR: lujun9972
+#+TAGS: Python, 编程, 函数式
+#+DATE: [2026-05-05 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Python 3.15 新增了 sentinel() 内置函数，用来创建哨兵值。之前大家一直用 object() 凑合，但有三个隐藏的坑：repr 难看得没法看、pickle 后 identity 断裂、没法做类型标注。这篇 TIL 记录新旧两种写法。
+
+写 Python 时偶尔会遇到一个需求：函数的某个参数有个默认值，但你得区分"调用者没传这个参数"和"调用者传了 None"。典型的一个应用场景是做配置查询时，若没传 key 则抛异常，传的是 None 则返回默认值。
+
+这种场景需要的是一个"哨兵值"（sentinel）：一个独一无二的占位符，保证参数的默认值跟其他任何值都不相等。
+
+* 老写法： =object()=
+
+Python 里最常用的做法是用 =object()= 做哨兵：
+
+#+begin_src python
+MISSING = object()
+
+def get_config(key, default=MISSING):
+    if default is MISSING:
+        return f"fetching {key}, no default"
+    return f"fetching {key}, fallback to {default}"
+
+print(get_config("timeout"))       # → fetching timeout, no default
+print(get_config("timeout", None)) # → fetching timeout, fallback to None
+print(get_config("timeout", 30))   # → fetching timeout, fallback to 30
+#+end_src
+
+这个模式能工作，但有几个问题。
+
+* 三个问题
+
+** repr 不友好
+
+=MISSING= 的 repr 长这样：
+
+#+begin_example
+<object object at 0x7f1ed6980210>
+#+end_example
+
+调试时打印出来毫无意义，你根本看不出这是个哨兵值。
+
+** pickle 后 identity 断裂
+
+哨兵模式靠的是 =is= 比较身份。pickle 序列化再反序列化后， =object()= 变成了一个新对象， =is= 比较就失效了：
+
+#+begin_src python
+import pickle
+
+MISSING = object()
+MISSING_loaded = pickle.loads(pickle.dumps(MISSING))
+
+print(MISSING is MISSING_loaded)  # → False
+#+end_src
+
+如果你的代码涉及多进程通信或缓存序列化，这个坑迟早踩到。
+
+** 没法做类型标注
+
+=object()= 的类型就是 =object= ，没法区分"这是一个哨兵类型"。你写 =Optional[object]= 的时候，类型检查器分不清这个地方是要一个哨兵还是一个 object 对象。
+
+* Python 3.15 的 =sentinel()=
+
+3.15 新增的 =sentinel()= 内置函数解决了上面所有问题：
+
+#+begin_src python
+# Python 3.15+
+MISSING = sentinel("MISSING")
+print(MISSING)  # → MISSING
+#+end_src
+
+它返回的哨兵值带了名字，类型也是专用的 =sentinel= 。具体来说：
+
+- repr 就是你自己起的名字，调试时一目了然
+- pickle 后再 unpickle 仍然保持同一 identity
+- 可直接用作类型标注
+
+=PEP 661= 对这个提案有详细的讨论，解释了为什么之前的各种方案（ =object()= 、私用 =_MISSING= 、自定义类）都不够好。
+
+* 小结
+
+| 维度 | =object()= | =sentinel()= |
+|------|-----------|-------------|
+| repr | <object at 0x...> | 你起的名字 |
+| pickle 后 identity | 断裂 | 保持 |
+| 类型标注 | =object= ，无区分度 | =sentinel= ，精确 |
+| 最低版本 | 任意版本 | Python 3.15 |
+
+如果你还在用 3.14 及以下， =object()= 凑合着用；升到 3.15 后，把 ~MISSING = object()~ 换成 ~MISSING = sentinel("MISSING")~ 就行。
