@@ -1,0 +1,309 @@
+#+TITLE: 读：PostgreSQL 随机测试数据生成——从快速造数到自动化填充
+#+AUTHOR: lujun9972
+#+TAGS: PostgreSQL, SQL, 测试
+#+DATE: [2026-05-05 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:f nil f:t *:t <:nil
+#+DESCRIPTION: PostgreSQL 造随机测试数据有两条路：一条 SELECT 搞定还是上百行 PL/pgSQL 动态构造。本文从几个内置函数讲起，再到读取 information_schema 自动填充多表的完整方案，说明各自适合什么场景。
+
+* 开篇
+
+PostgreSQL 里造随机测试数据，有两条路。
+
+一条轻量：几个内置函数拼一条 INSERT ... SELECT，几分钟搞定一张表。适合开发阶段快速验证。
+
+另一条完整：用 PL/pgSQL 写一个 DO 块（匿名块），动态读取 information_schema 里的列定义，根据每列的数据类型自动生成对应值——不管表结构怎么变，代码都能自动适配。适合需要反复填充多张表的场景。
+
+[[https://dzone.com/articles/postgresql-random-test-data][DZone 上有一篇教程]]讲的是后一种方案。这篇把两条路都过一遍。
+
+* 随机数的几个基本函数
+
+PostgreSQL 的 ~random()~ 返回 0 到 1 之间的浮点数。配合 ~floor()~ 就能生成整数：
+
+#+begin_src sql
+-- 生成 1 到 100 之间的随机整数
+SELECT floor(random() * 100 + 1)::int AS num;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ num
+-----
+  88
+#+end_example
+
+~generate_series()~ 用来生成连续的行，是批量造数据的核心工具：
+
+#+begin_src sql
+-- 生成 1 到 10 的序列
+SELECT generate_series(1, 10) AS i;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ i
+----
+  1
+  2
+  3
+  4
+  5
+  6
+  7
+  8
+  9
+ 10
+#+end_example
+
+从数组中随机取一个值，用来造枚举型字段（如姓名、状态）：
+
+#+begin_src sql
+SELECT (ARRAY['张三', '李四', '王五', '赵六'])[floor(random() * 4 + 1)] AS name;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ name
+------
+ 王五
+#+end_example
+
+随机日期，用日期加上随机天数：
+
+#+begin_src sql
+SELECT '2020-01-01'::date + floor(random() * 365 * 5)::int AS rand_date;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ rand_date
+------------
+ 2024-01-22
+#+end_example
+
+UUID 用 ~gen_random_uuid()~ （PostgreSQL 13+ 内置，老版本需要安装 ~pgcrypto~ 扩展）：
+
+#+begin_src sql
+SELECT gen_random_uuid() AS uid;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ uid
+--------------------------------------
+ 7126489b-a7ae-4a1c-a02c-fea47513560a
+#+end_example
+
+* 合体技：一条 INSERT 搞定
+
+把上面的函数组合起来，用 ~INSERT INTO ... SELECT~ 一次性插入 100 条随机数据：
+
+#+begin_src sql
+CREATE TABLE IF NOT EXISTS test_users (
+    id BIGINT PRIMARY KEY,
+    name VARCHAR(50),
+    amount NUMERIC(10,2),
+    status BOOLEAN,
+    created_at DATE
+);
+
+INSERT INTO test_users (id, name, amount, status, created_at)
+SELECT
+    i,
+    (ARRAY['张三', '李四', '王五', '赵六'])[floor(random() * 4 + 1)],
+    round((random() * 10000)::numeric, 2),
+    random() > 0.5,
+    '2020-01-01'::date + floor(random() * 365 * 5)::int
+FROM generate_series(1, 100) AS i;
+#+end_src
+
+查询验证：
+
+#+begin_src sql
+SELECT count(*), count(DISTINCT name), min(created_at), max(created_at) FROM test_users;
+#+end_src
+
+执行结果：
+
+#+begin_example
+ count | count |    min    |    max
+-------+-------+-----------+-----------
+   100 |     4 | 2020-01-16 | 2024-12-27
+#+end_example
+
+* 重现：固定随机种子
+
+上面每次执行得到的数据都不同。如果需要在回归测试中重现相同数据，用 ~setseed()~ 固定随机种子：
+
+#+begin_src sql
+SELECT setseed(0.5);
+#+end_src
+
+~setseed()~ 接受 [-1, 1] 范围内的参数，调用后当前会话的 ~random()~ 会生成确定序列。把 ~SELECT setseed()~ 放在 INSERT 之前，相同种子每次产生相同结果。
+
+* PL/pgSQL 动态方案：自动适配任意表结构
+
+前面那种写法，每张表都得手写 INSERT 和随机值表达式。表一多就烦了。
+
+原文的方案是写一段 PL/pgSQL 匿名块（DO 块），执行完就丢弃，不保存为函数或过程。它会动态读取表的列定义，根据列类型自动构造 INSERT 语句，不管表结构怎么变都能填。
+
+** 先准备一张表
+
+假设有这样一张表：
+
+#+begin_src sql
+CREATE TABLE IF NOT EXISTS test_schema.test_tab2 (
+    id BIGINT NOT NULL,
+    fname VARCHAR(50),
+    lname VARCHAR(50),
+    create_date DATE,
+    status BOOLEAN,
+    CONSTRAINT test_tab1_pkey PRIMARY KEY (id)
+);
+#+end_src
+
+** 完整 DO 块
+
+下面这个 DO 块，指定模式名和表名后，自动从 information_schema 读出列定义，根据每列的数据类型生成对应的随机值，插入指定行数：
+
+#+begin_src sql
+DO $$
+DECLARE
+    rec_count INTEGER := 10;
+    col RECORD;
+    col_list TEXT := '';
+    val_list TEXT := '';
+    sql_stmt TEXT;
+    i INTEGER;
+    tbl_schema TEXT := 'test_schema';
+    tbl_name TEXT := 'test_tab2';
+    random_date DATE;
+    random_status BOOLEAN;
+BEGIN
+    -- 第一步：收集列名
+    FOR col IN
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = tbl_schema
+          AND table_name = tbl_name
+        ORDER BY ordinal_position
+    LOOP
+        col_list := col_list || col.column_name || ', ';
+    END LOOP;
+    col_list := left(col_list, length(col_list) - 2);
+
+    -- 第二步：逐行生成数据
+    FOR i IN 1..rec_count LOOP
+        val_list := '';
+
+        FOR col IN
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = tbl_schema
+              AND table_name = tbl_name
+            ORDER BY ordinal_position
+        LOOP
+            CASE col.data_type
+                WHEN 'bigint' THEN
+                    val_list := val_list || i || ', ';
+                WHEN 'character varying' THEN
+                    val_list := val_list || quote_literal(col.column_name || '_' || i) || ', ';
+                WHEN 'text' THEN
+                    val_list := val_list || quote_literal(col.column_name || '_' || i) || ', ';
+                WHEN 'date' THEN
+                    random_date := '2000-01-01'::date
+                                   + trunc(random() * 366 * 10)::int;
+                    val_list := val_list || quote_literal(random_date) || ', ';
+                WHEN 'boolean' THEN
+                    random_status := (i % 2 = 0);
+                    val_list := val_list || random_status || ', ';
+                WHEN 'uuid' THEN
+                    val_list := val_list || 'gen_random_uuid(), ';
+                ELSE
+                    val_list := val_list || 'NULL, ';
+            END CASE;
+        END LOOP;
+
+        val_list := left(val_list, length(val_list) - 2);
+
+        sql_stmt := format(
+            'INSERT INTO %I.%I (%s) VALUES (%s);',
+            tbl_schema, tbl_name,
+            col_list, val_list
+        );
+
+        RAISE NOTICE 'Executing: %', sql_stmt;
+        EXECUTE sql_stmt;
+    END LOOP;
+END $$;
+#+end_src
+
+** 代码做了什么
+
+这个 DO 块的核心逻辑分三层：
+
+*** 收集列名
+
+第一次遍历 information_schema 把所有列名拼成 ~col_list~ ，形如 ~id, fname, lname, create_date, status~ 。这部分跟具体数据类型无关，只取列名。
+
+*** 按类型分发
+
+第二次遍历对每一列用 ~CASE col.data_type~ 判断数据类型，生成对应的随机值：
+
+| 数据类型 | 生成方式 | 示例结果 |
+|----------|----------|----------|
+| bigint | 用循环变量 ~i~ 直接赋值 | 1, 2, 3... |
+| character varying / text | 列名加行号， ~quote_literal()~ 自动加引号 | 'fname_1', 'fname_2' |
+| date | 基准日期加随机天数 | '2003-07-15' |
+| boolean | 偶数行 TRUE，奇数行 FALSE | TRUE / FALSE |
+| uuid | 调用 ~gen_random_uuid()~ | 3e7c8e1a-... |
+| 未识别的类型 | NULL | NULL |
+
+~quote_literal()~ 是一个实用函数，给字符串值自动加上单引号并转义特殊字符，避免拼 SQL 时出现引号错误。
+
+*** 动态执行
+
+每次内层循环结束后，用 ~format()~ 把列名和值拼成完整的 ~INSERT~ 语句， ~%I~ 占位符会自动给标识符加双引号（防止 SQL 注入）。然后用 ~EXECUTE~ 执行这条动态 SQL。同时用 ~RAISE NOTICE~ 打印生成的 SQL，方便调试。
+
+** 执行结果
+
+执行后查询：
+
+#+begin_src sql
+SELECT * FROM test_schema.test_tab2;
+#+end_src
+
+验证结果：
+
+#+begin_example
+ id |  fname   |  lname   | create_date | status
+----+----------+----------+-------------+--------
+  1 | fname_1  | lname_1  | 2009-07-12  | f
+  2 | fname_2  | lname_2  | 2005-08-08  | t
+  3 | fname_3  | lname_3  | 2005-02-22  | f
+  4 | fname_4  | lname_4  | 2004-05-25  | t
+  5 | fname_5  | lname_5  | 2008-03-23  | f
+  6 | fname_6  | lname_6  | 2005-03-17  | t
+  7 | fname_7  | lname_7  | 2008-01-05  | f
+  8 | fname_8  | lname_8  | 2005-11-17  | t
+  9 | fname_9  | lname_9  | 2005-01-04  | f
+ 10 | fname_10 | lname_10 | 2006-05-23  | t
+(10 rows)
+#+end_example
+
+* 两条路怎么选
+
+| 维度 | 内置函数（轻量方案） | PL/pgSQL（自动方案） |
+|------|--------------------|--------------------|
+| 上手成本 | 低，几个函数组合就行 | 高，需要理解 DO 块和 PL/pgSQL |
+| 每张表的工作量 | 手写 INSERT，每张表几分钟 | 改 DO 块前两行的表名和模式名就行 |
+| 灵活度 | 每列可以自由定制 | 值生成逻辑由 data_type 决定，定制需改 CASE |
+| 适合场景 | 一两张表，临时造数据 | 多张表，反复需要填充测试数据 |
+| 依赖 | 不需要额外扩展 | 需要 ~pgcrypto~ 扩展（9.x 老版本才需要） |
+
+选哪条路取决于你有几张表。一两张表， ~generate_series()~ 加几个函数几分钟就写完了。五张十张表，或者需要反复重建测试数据，PL/pgSQL 方案值得投资。
