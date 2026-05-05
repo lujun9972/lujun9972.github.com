@@ -1,0 +1,193 @@
+#+TITLE: 读：理解 MCP 架构——LLM 直接调 API 与 MCP 协议的对比
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: MCP,LLM,AI架构,工具调用,Agent
+#+DATE: [2026-05-05 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 同一个需求（比如让 AI 读 PDF），有两种架构来实现：直接调 LLM API 自己管工具循环，或者用 MCP 协议把工具暴露成独立服务。本文对比两种路线的架构差异、代码实现和选型依据，解释 MCP 的工具发现、复用和标准化到底解决了什么问题。
+
+* 引子：同一个需求，两种架构
+
+假设你要做一个能读 PDF 的聊天机器人：提取文本、搜索文档、总结段落。功能不复杂，但你面临一个架构选择。
+
+你可以直接调 LLM API（Claude、GPT 等），自己管工具调用循环。也可以把 PDF 工具包成 MCP（Model Context Protocol，模型上下文协议）服务，让客户端通过协议来发现和调用工具。
+
+用户看到的体验一样。区别在于工具是怎么暴露给 AI 的。
+
+* Route 1：直接调 LLM API
+
+这种做法很简单：你的应用直接调 LLM API，把工具定义塞进每次请求里，自己跑 agent 循环。
+
+#+begin_src text
+┌─────────────────────────-─────────────────────────┐
+│  你的应用（单进程）                               │
+│                                                   │
+│  ┌──────────────┐  tools 定义+messages ┌────────┐ │
+│  │ Agent 循环    │ ─────────────────►  │ LLM API│ │
+│  │              │  ◄─────────────────  │        │ │
+│  └──────┬───────┘   tool_use / 文本    └────────┘ │
+│         │ 调用本地函数                            │
+│         ▼                                         │
+│  ┌──────────────┐                                 │
+│  │ executeTool()│ ──► read_pdf, search_pdf        │
+│  └──────────────┘   （和你的代码跑在同一进程里）  │
+└─────────────────────────────────-─────────────────┘
+#+end_src
+
+你在代码里写好每个工具的名字、描述和参数格式（这叫「工具定义」），每次请求 LLM 时把工具定义和用户消息一起发过去。LLM 看到工具定义后，如果判断需要调工具，就返回一个 =tool_use= 响应（告诉你调哪个工具、传什么参数）。你的代码拿到 =tool_use= 后，调对应的函数执行，再把执行结果喂回 LLM。LLM 可能继续返回 =tool_use=（调更多工具），也可能直接返回最终回答（=end_turn=）。这个「发消息 → 收 =tool_use= → 执行工具 → 喂回结果 → 再发消息」的来回过程就是「工具调用循环」，在 Route 1 里你需要自己写代码管这个循环。
+
+工具定义长这样（以 Node.js 为例）：
+
+#+begin_src js
+const tools = [
+  {
+    name: "read_pdf",
+    description: "提取 PDF 文件的全部文本",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "PDF 文件路径" }
+      },
+      required: ["path"]
+    }
+  },
+  // ... search_pdf, list_pdfs 类似
+];
+
+// 你自己写分派逻辑
+async function executeTool(name, input) {
+  if (name === "read_pdf")   return await extractTextFromPdf(input.path);
+  if (name === "search_pdf") return await searchPdfs(input.directory, input.keyword);
+  if (name === "list_pdfs")  return await listPdfFiles(input.path);
+  throw new Error(`Unknown tool: ${name}`);
+}
+#+end_src
+
+这种做法的特点是Agent 循环、工具分派、PDF 解析全跑在一个程序的内存空间里，不需要跨进程通信，也不需要额外部署。你只需要 LLM SDK 和一个 PDF 解析库。但这意味着工具和你的应用紧耦合： =executeTool()= 里硬编码了每个工具的分派逻辑，只有这个应用能用这些 PDF 工具。
+
+* Route 2：MCP 协议
+
+这种做法把 PDF 工具做成一个独立的 MCP 服务。你的聊天机器人（或者 Cursor、Claude Desktop 等任何 MCP 客户端）连上去，运行时发现工具，通过协议调用。
+
+#+begin_src text
+┌────────────────────────────────────────────────────────────┐
+│  客户端（聊天机器人、Cursor、Claude Desktop 等）           │
+│                                                            │
+│  ┌──────────────┐  tools/list, tools/call  ┌─────────────┐ │
+│  │ MCP 客户端    │ ◄──────────────────────►│ PDF MCP 服务│ │
+│  └──────┬───────┘  （JSON-RPC over stdio） │ （独立进程）│ │
+│         ▲                                  └──────┬──────┘ │
+└─────────┼─────────────────────────────────────────┼────────┘
+          │                                         │
+messages  │                                         │
+          │ tool_use                               │
+          │                                         │
+          ▼                                         ▼
+┌───────────────────┐                    ┌──────────────────┐
+│  LLM API          │                    │  PDF 文件系统     │
+└───────────────────┘                    └──────────────────┘
+#+end_src
+
+MCP 服务是一个独立进程，通过 JSON-RPC 通信。客户端连上后调 =tools/list= 发现工具，调 =tools/call= 执行工具。
+
+MCP 服务端代码长这样：
+
+#+begin_src js
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+
+const server = new McpServer({ name: "pdf-server", version: "1.0.0" });
+
+server.tool(
+  "read_pdf",
+  { path: z.string().describe("PDF 文件路径") },
+  async ({ path }) => {
+    const text = await extractTextFromPdf(path);
+    return { content: [{ type: "text", text }] };
+  }
+);
+
+// ... search_pdf, list_pdfs 类似
+
+await server.connect(new StdioServerTransport());
+#+end_src
+
+客户端不需要定义这些工具，运行时发现就行：
+
+#+begin_src js
+const mcp = new Client({ name: "chatbot", version: "1.0.0" });
+await mcp.connect(new StdioClientTransport({
+  command: "node", args: ["pdf-mcp-server.js"]
+}));
+
+const { tools } = await mcp.listTools();  // 运行时发现，不用硬编码
+
+// LLM 返回 tool_use 时：
+const result = await mcp.callTool({
+  name: block.name,
+  arguments: block.input
+});
+#+end_src
+
+* MCP 到底多了什么
+
+| 维度 | 直接调 LLM API | MCP |
+|------|---------------|-----|
+| 工具定义 | 硬编码在你的应用里 | 在服务端声明，客户端运行时发现 |
+| 工具执行 | 你自己写 =executeTool()= | 服务端跑，客户端发 =tools/call= |
+| 谁能用这些工具 | 只有你的应用 | 任何 MCP 客户端（Cursor、Claude Desktop、你自己的聊天机器人） |
+| 通信协议 | 自己管（随意） | JSON-RPC（ =tools/list= 、 =tools/call= ） |
+| 进程边界 | 全在同一个进程 | 客户端管对话，服务端管工具 |
+
+MCP 在 AI 客户端和工具提供者之间加了一层协议。客户端不需要知道 PDF 怎么读，它只需要调 =tools/call= 传个名字和参数。服务端负责实现逻辑。给服务端加一个新工具（比如 =summarize_pdf= ），所有连上来的客户端自动就有了，客户端代码一行不用改。
+
+1. *关注分离。* 直接调 API 时你的应用什么都管：对话、工具分派、PDF 处理。一个代码库，一个部署单元。MCP 把 PDF 服务拆成独立服务，可以单独开发、测试、版本管理。
+
+2. *发现取代配置。* 直接调 API 时你手动把每个工具加到 tools 数组和 executeTool 里，新工具意味着改客户端代码。MCP 客户端调 =tools/list= 拿到当前所有工具，服务端加了新工具客户端自动感知。
+
+3. *跨客户端复用。* 直接调 API 时想让 Cursor 或 Claude Desktop 用你的 PDF 工具，得分别集成（如果它们支持的话）。MCP 模式下同一个 PDF 服务同时给 Cursor、Claude Desktop、VS Code Copilot 和你自己的聊天机器人用，一套代码多个消费者。
+
+4. *传输灵活。* MCP 支持 stdio（子进程）和 HTTP。PDF 服务可以跑在本地当子进程，也可以部署成 HTTP 服务。协议不变，传输层随便换。
+
+* 什么时候选哪个
+
+*** 直接调 LLM API 适合
+
+- 单一应用（内部工具、定制聊天机器人）
+- 追求最小化配置：一个进程，一个部署
+- 只有这个应用需要这些能力
+- 你想掌控整个流程
+
+*** MCP 适合
+
+- 多个客户端要共用同一套工具
+- 你想要一个可复用的工具服务，别人可以即插即用
+- 你在乎工具提供者和聊天客户端之间的清晰边界
+- 你在构建一个可组合的 AI 工具生态
+
+* MCP 对外部工具的意义
+
+把工具通过 MCP 暴露出去之后，任何支持 MCP 的 LLM 应用都能直接用。
+
+完整流程是这样的：
+
+1. 用户用自然语言提问："report.pdf 里写了什么？"
+2. 客户端把问题发给 LLM
+3. LLM 判断需要调 =read_pdf(path: "report.pdf")=
+4. 客户端向 MCP 服务端发 =tools/call=
+5. MCP 服务端执行 =read_pdf= ，提取文本
+6. 服务端把结果返回给客户端
+7. 客户端把结果传给 LLM
+8. LLM 用自然语言回答用户
+
+客户端完全不碰 PDF 逻辑，它只负责说 MCP 协议：接收工具调用请求、转发给服务端、返回结果。
+
+这意味着：
+- *零集成。* Cursor、Claude Desktop、Copilot 已经支持 MCP，不需要为你的 PDF 服务写专门插件。
+- *厂商无关。* 你的 MCP 服务跟任何 MCP 客户端都能配合，不绑定某个厂商的 SDK。
+- *装了就能用。* 用户在你的 MCP 配置文件里加一行指向服务地址或可执行文件，工具就到位了。
+
+* 选择依据
+
+说到底就是一个判断：你的工具是给一个应用用的，还是给多个消费者用的？前者选直接调 API，简单直接。后者选 MCP，多一层抽象，好处是复用和标准化。
