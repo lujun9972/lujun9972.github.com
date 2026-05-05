@@ -1,0 +1,70 @@
+#+TITLE: TIL：watch 命令的几个遗漏技巧
+#+AUTHOR: lujun9972
+#+TAGS: Linux, CLI, watch
+#+DATE: [2026-05-05 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 几年前写过一篇 watch 的入门教程，这些年陆续发现几个当时漏掉的实用选项：管道引用、累积高亮、精确间隔之类。合在一起记一笔，算补遗。
+
+之前写过一篇[[file:使用watch帮你重复执行命令.org][使用watch帮你重复执行命令]]，把基本用法和常用选项都讲了。这几年陆续发现几个当时漏掉的技巧，不大不小，单独成篇不够，不记又可惜。合在一起当补遗。
+
+* 管道命令：不加引号会翻车
+
+=watch= 把后面的命令原封不动传给 shell 执行。管道符号 =|= 在 shell 里有特殊含义，不加引号会被当前 shell 截胡：
+
+#+begin_src shell
+# 错的——当前 shell 先解释管道，watch 只看到 ps aux
+watch ps aux | grep nginx
+
+# 对的——整个命令带管道一起传给 shell
+watch "ps aux | grep nginx"
+#+end_src
+
+不加引号时，只有 =ps aux= 在 =watch= 下跑， =| grep nginx= 是当前 shell 对 watch 输出的过滤，效果完全不同。
+
+* 累积高亮： =-d= 的升级版
+
+=-d= 高亮两次执行之间变化的部分，但只高亮最近一次的变化。 ~-d=cumulative~ 保留所有历史变化的高亮，一眼看出哪些字段一直在抖：
+
+#+begin_src shell
+watch -d=cumulative -n 1 cat /proc/loadavg
+#+end_src
+
+普通 =-d= 像粉笔在黑板上写字，新写的盖住旧的。 =-d=cumulative= 像记号笔，画过的地方都留着印。
+
+* 精确间隔： =-p=
+
+默认情况下， =watch= 的计时周期是"命令执行一次 + 等待间隔"。假如命令跑了 0.3s，间隔设 1s，那实际每 1.3s 才跑一次。误差累积下来不小。
+
+=-p= 让 =watch= 精确卡间隔，不计命令执行时间。适合需要固定时间间隔采样的场景：
+
+#+begin_src shell
+watch -p -n 1 date
+#+end_src
+
+注意：只有 procps-ng 版本的 =watch= 才支持 =-p= （大多数 Linux 发行版默认就是这个版本）。但如果命令执行时间本身就超过了间隔，那 =watch= 也无能为力。
+
+* 小数间隔
+
+=-n= 支持小数，想更快刷新就用 =0.5= ：
+
+#+begin_src shell
+watch -n 0.5 "ss -tn | wc -l"
+#+end_src
+
+不过间隔太短要考虑两个问题：一是终端刷新率跟不上，二是命令本身跑不完。如果命令执行时间超过间隔，输出就乱了。
+
+* 什么时候别用 watch
+
+=watch= 的设计场景是人盯着屏幕看。如果需要把数据记下来、加条件判断、或者发告警，它就不太合适了：
+
+| 你在干什么 | 该用什么 | 理由 |
+|-----------|----------|------|
+| 人盯着看变化 | =watch= | 全屏刷新+高亮变化，最适合肉眼追踪 |
+| 把输出存到文件 | =while sleep= 重定向 | =watch= 的输出没法持久化 |
+| 输出还要再处理 | =while sleep= + 管道 | =watch= 全屏刷新不适合链式处理 |
+| 条件触发就执行 | =while sleep= + if | =watch= 只有 =-g= 变化退出，不够灵活 |
+| 固定时间点跑 | =cron= | 无人值守，适合"到点就干" |
+| 等一个事件发生 | =watch -g= | 自动退出，比 while sleep 优雅 |
+
+一句话总结： =watch= 是你的眼睛，不是你的秘书。盯着看用 watch，干活用脚本。
