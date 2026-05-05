@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：双写问题——@Transactional 给不了的跨系统一致性 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="分布式系统中，服务需要同时写入数据库和消息队列的场景很常见。但 @Transactional 只能保证数据库原子性，管不到消息队列。这种&quot;双写&quot;在特定时机崩溃时会静默地产生数据不一致：要么下游处理了数据库里不存在的订单，要么订单卡在数据库里没人处理。本文解读双写问题的本质、XA 分布式事务为什么不适用，以及四种解决模式（Transactional Outbox、CDC、Event Sourcing、Listen to Yourself）的核心思路和选型权衡。" />
+  <meta name="keywords" content="分布式系统, 事务, 一致性, 微服务" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：双写问题——@Transactional 给不了的跨系统一致性</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org45c8631">开篇：一段看着安全的代码</a></li>
+<li><a href="#orgb2fe38e">问题本质：两个系统，一个事务？</a></li>
+<li><a href="#orgb1d7762">那么 XA 分布式事务可以解决问题吗？</a></li>
+<li><a href="#orgce7e6f1">四种解决模式</a>
+<ul>
+<li><a href="#orgff7979a">模式一：Transactional Outbox（事务性发件箱）</a></li>
+<li><a href="#org30afb9c">模式二：CDC（变更数据捕获）</a></li>
+<li><a href="#orgff8e4a2">模式三：Event Sourcing（事件溯源）</a></li>
+<li><a href="#org20cb77a">模式四：Listen to Yourself（自己监听自己）</a></li>
+</ul>
+</li>
+<li><a href="#org51355f0">选型思路</a></li>
+<li><a href="#orgfce6e56">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org45c8631" class="outline-2">
+<h2 id="org45c8631">开篇：一段看着安全的代码</h2>
+<div class="outline-text-2" id="text-org45c8631">
+<p>
+有个下单服务：保存订单到数据库，然后向消息队列发一个事件。下游的库存服务、通知服务都等着这个消息。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    db.save(order)
+    queue.send("order.placed", order)
+</pre>
+</div>
+
+<p>
+如果 db.save 成功但 queue.send 失败，或者反过来，会怎样？这就是双写问题（Dual Write Problem），分布式系统中最常见的陷阱之一。作者 Vineet Bhatkoti 在 DZone 上的文章讲得很清楚，这篇记下核心思路。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb2fe38e" class="outline-2">
+<h2 id="orgb2fe38e">问题本质：两个系统，一个事务？</h2>
+<div class="outline-text-2" id="text-orgb2fe38e">
+<p>
+很多人的第一反应是"加个事务不就行了"。在 Java/Spring 里会写成 <code>@Transactional</code> ，在 Python 里可能用 <code>with db.transaction()</code> 。但这种事务只能保证数据库操作在一个事务中，消息队列不在其中。
+</p>
+
+<p>
+这不是某个框架的缺陷，而是物理约束：数据库和消息队列是两台独立的机器，没有共享的事务协调器。代码在一个事务里既做数据库操作又发送消息，但 <code>@Transactional</code>  只能知道数据库做了什么，对消息队列一无所知。
+</p>
+
+<p>
+考虑一下下面两个场景：
+</p>
+
+<p>
+<b>场景一：消息发出去了，数据库回滚了</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    db.startTransaction()
+    db.save(order)             # 数据库写入成功
+    queue.send("placed", order) # 消息队列确认收到
+    # 假设 JVM/进程在这里崩溃
+    # 数据库事务尚未提交，恢复后回滚
+    # 但消息队列已经发出去了
+    db.commit()                # 永远不会执行到
+</pre>
+</div>
+
+<p>
+下游消费者收到了订单事件，去查数据库发现订单不存在。两边都不知道对方的情况。
+</p>
+
+<p>
+<b>场景二：数据库提交了，事件丢了</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    db.startTransaction()
+    db.save(order)             # 数据库写入成功
+    db.commit()                # 事务提交成功
+    queue.send("placed", order) # 消息队列节点崩溃，发送失败
+</pre>
+</div>
+
+<p>
+订单存在数据库里，但库存没扣、通知没发、仓库没拣货。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb1d7762" class="outline-2">
+<h2 id="orgb1d7762">那么 XA 分布式事务可以解决问题吗？</h2>
+<div class="outline-text-2" id="text-orgb1d7762">
+<p>
+XA（两阶段提交）的思路是引入一个协调者，分两个阶段来协调多个资源（数据库、消息队列等）：
+</p>
+
+<ul class="org-ul">
+<li><b>Prepare 阶段</b> ：协调者问每个参与者"能不能提交？"。参与者做完整套操作、锁住资源，然后回复"准备好了"（或者"失败了"）</li>
+<li><b>Commit 阶段</b> ：如果所有人都说"准备好了"，协调者宣布"提交"；只要有一人说"失败"，就宣布"回滚"</li>
+</ul>
+
+<p>
+听起来可行，但三个问题让它不适合现代架构：
+</p>
+
+<ul class="org-ul">
+<li><b>慢</b> ：prepare + commit 两个阶段每个都要来回确认，延迟显著增加</li>
+<li><b>脆弱</b> ：参与者"准备好"之后锁着资源等协调者的最终决定。如果协调者在 prepare 和 commit 之间崩溃，所有参与者都卡住了——它们不知道应该提交还是回滚，也不敢释放锁，只能等着人工来一个个检查状态并清理</li>
+<li><b>不兼容 Kafka</b> ：Kafka 的事务模型是内部使用的，不参与 XA 协调</li>
+</ul>
+
+<p>
+这三个限制让 XA 在事件驱动架构里基本被排除。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgce7e6f1" class="outline-2">
+<h2 id="orgce7e6f1">四种解决模式</h2>
+<div class="outline-text-2" id="text-orgce7e6f1">
+<p>
+有四种模式可以选。核心思路都一样：把"双写"变成"单写 + 异步分发"。
+</p>
+</div>
+
+<div id="outline-container-orgff7979a" class="outline-3">
+<h3 id="orgff7979a">模式一：Transactional Outbox（事务性发件箱）</h3>
+<div class="outline-text-3" id="text-orgff7979a">
+<p>
+最常见的模式。不直接写消息队列，而是在同一数据库事务里写一个 outbox 表。后台进程定期扫描 outbox，把未发送的事件发出去。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    db.startTransaction()
+    db.save(order)
+    db.save("outbox", { topic: "order.placed", payload: order })
+    db.commit()
+    # 只写了一处——数据库
+    # 消息队列的事交给后台
+
+# 后台进程
+function publishOutbox():
+    while true:
+        events = db.findUnpublished()
+        for event in events:
+            queue.send(event.topic, event.payload)
+            db.markPublished(event)
+        sleep(100ms)
+</pre>
+</div>
+
+<p>
+可能存在多次投递的情况，下游消费者需要做幂等处理来应对可能的重复消息。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org30afb9c" class="outline-3">
+<h3 id="org30afb9c">模式二：CDC（变更数据捕获）</h3>
+<div class="outline-text-3" id="text-org30afb9c">
+<p>
+Transaction Outbox 需要手动维护 outbox 表，CDC 更彻底：直接用数据库的事务日志。应用只管写业务表，一个 CDC 管道（如 Debezium）监控事务日志，把变更自动推给消息队列。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    # 必须在一个数据库事务内执行，CDC 依赖事务日志
+    db.save(order)
+    # 应用完全不知道消息队列的存在
+    # CDC 管道从事务日志中读到变更，推给消息队列
+</pre>
+</div>
+
+<p>
+应用代码完全不知道消息队列的存在，没有耦合。代价是多了一个 CDC 管道需要维护。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgff8e4a2" class="outline-3">
+<h3 id="orgff8e4a2">模式三：Event Sourcing（事件溯源）</h3>
+<div class="outline-text-3" id="text-orgff8e4a2">
+<p>
+这一种思路更彻底：取消业务数据库，不保存"当前状态"，只追加事件。当前状态由回放事件历史得出。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    event = { type: "OrderPlaced", data: order }
+    eventStore.append(event)
+    # 只有一次写入，写入目标只有一个
+    # 消息队列的事由后台进程处理
+</pre>
+</div>
+
+<p>
+注意一个常见的误区：不要在 append 之后直接 publish，那样又回到了双写问题。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode"># 错误做法——双写问题重现
+function placeOrder(order):
+    eventStore.append(event)     # 成功
+    eventBus.publish(event)      # 失败——事件丢了
+
+# 正确做法——只写一处
+function placeOrder(order):
+    eventStore.append(event)
+
+# 后台进程负责分发
+function publishEvents():
+    events = eventStore.findUnpublished()
+    for event in events:
+        eventBus.publish(event)
+        eventStore.markPublished(event)
+</pre>
+</div>
+
+<p>
+Event Sourcing 的代价是架构复杂得多，不熟悉这种模式的团队上手需要时间。
+</p>
+
+<p>
+Event Sourcing 和 Transactional Outbox 很类似，都是"写一次 + 后台进程分发"的模式。区别在于数据的组织方式不同
+</p>
+</div>
+</div>
+
+<div id="outline-container-org20cb77a" class="outline-3">
+<h3 id="org20cb77a">模式四：Listen to Yourself（自己监听自己）</h3>
+<div class="outline-text-3" id="text-org20cb77a">
+<p>
+这一种反过来：应用程序只写消息队列，然后监听自己的消息来更新数据库。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-pseudocode">function placeOrder(order):
+    queue.send("order.placed", order)
+    # 注意：这里没有数据库操作
+    # 数据库的更新由下面的消费者异步完成
+
+@onMessage("order.placed")
+function handleOrderPlaced(order):
+    db.save(order)
+</pre>
+</div>
+
+<p>
+调用 <code>placeOrder</code> 时只写了一个地方（消息队列），不存在双写问题。消息被 Kafka 确认持久化后，就算服务立即崩溃也不会丢。重启后会从 Kafka 消费到这条消息，正常更新数据库。
+</p>
+
+<p>
+代价是写入后立即查询可能读不到最新状态——数据库还没更新。另外消费者必须做幂等。Kafka 会给每条消息一个编号（偏移量），消费者每处理完一条消息需要告诉 Kafka"这条我处理完了"。如果处理完之后、汇报之前崩溃了，Kafka 就会以为这条还没处理过，重启后又会再发一次。不做幂等就会产生重复订单。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org51355f0" class="outline-2">
+<h2 id="org51355f0">选型思路</h2>
+<div class="outline-text-2" id="text-org51355f0">
+<p>
+原文作者给出了一个对比表：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">模式</th>
+<th scope="col" class="org-left">复杂度</th>
+<th scope="col" class="org-left">最适合的场景</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Transactional Outbox</td>
+<td class="org-left">低</td>
+<td class="org-left">通用微服务</td>
+</tr>
+
+<tr>
+<td class="org-left">CDC</td>
+<td class="org-left">中</td>
+<td class="org-left">高吞吐系统</td>
+</tr>
+
+<tr>
+<td class="org-left">Event Sourcing</td>
+<td class="org-left">高</td>
+<td class="org-left">合规审计驱动</td>
+</tr>
+
+<tr>
+<td class="org-left">Listen to Yourself</td>
+<td class="org-left">低</td>
+<td class="org-left">简单事件流</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+大部分场景从 Transactional Outbox 开始就够了。如果 downstream 已经有 CDC 基础设施，CDC 是更干净的选择。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfce6e56" class="outline-2">
+<h2 id="orgfce6e56">总结</h2>
+<div class="outline-text-2" id="text-orgfce6e56">
+<p>
+双写问题的根因是一个逻辑操作跨了两个物理系统。数据库和消息队列是两台独立的机器，数据库事务只管得到数据库那一端，管不了消息队列。每种解决模式本质都是在做同一件事：把"同时写两个系统"变成"只写一个系统，另一个由后台异步处理"。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-05</span>
+    <span class="post-info">2026-05-05</span>
+    <a href="../../../../../tags/分布式系统">分布式系统</a> : <a href="../../../../../tags/事务">事务</a> : <a href="../../../../../tags/一致性">一致性</a> : <a href="../../../../../tags/微服务">微服务</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; kmusrrbtkyxulm0zfhyauikn0a &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
