@@ -1,0 +1,238 @@
+#+TITLE: 读：sysstat 诊断链——从 sar 到 pidstat 的排查路径
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux,sysstat,性能诊断,mpstat,pidstat,sar,iostat
+#+DATE: [2026-05-06 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 系统变慢了，top 只能告诉你"现在慢"，说不清为什么慢、什么时候开始慢的。sysstat 套件（mpstat、pidstat、sar、iostat）提供了一条从历史回放到进程定责的完整诊断链。本文用一条排查路径串联这四个工具的核心用法。
+
+* 引子
+
+系统变慢的时候，大多数人的第一反应是敲 =top= 。这没问题。 =top= 给你一个即时快照：谁在用 CPU、内存还剩多少、load average 大概什么水平。
+
+但 =top= 有两个盲区。第一，它只看当下。凌晨 3 点发生的性能问题，你早上 9 点坐到工位时 =top= 已经什么都看不到了。第二， =top= 能看到每个进程用了多少 CPU，但很难同时看清三件事：哪个核在忙、忙的是哪个线程、当时有多少进程在排队等 CPU。这三个信息分散在不同的视图里，手工拼凑太慢。
+
+sysstat 套件补上了这两个盲区。它包含四个核心工具： =mpstat= 、 =pidstat= 、 =sar= 、 =iostat= 。TecMint 上有篇 [[https://www.tecmint.com/sysstat-commands-linux-mpstat-pidstat-iostat-sar/][文章]] 系统介绍了它们的用法。本文不逐条翻译那 20 个示例，改用一条真实的排查链路把它们串起来，从发现异常到定位根因。
+
+* 安装和启用
+
+sysstat 大部分发行版默认不装：
+
+#+begin_src shell
+# Debian/Ubuntu
+sudo apt install sysstat
+# RHEL/Fedora
+sudo dnf install sysstat
+# Arch Linux
+sudo pacman -S sysstat
+#+end_src
+
+装完确认版本：
+
+#+begin_src shell
+mpstat -V
+#+end_src
+
+#+begin_example
+sysstat 版本 12.7.9
+(C) Sebastien Godard (sysstat <at> orange.fr)
+#+end_example
+
+*Ubuntu 用户特别注意* ：安装后数据收集默认是关闭的。需要编辑 =/etc/default/sysstat= ，把 ~ENABLED="false"~ 改成 ~ENABLED="true"~ 。否则 sar 不会自动记录历史数据，而这是整篇文章最有价值的功能，漏掉等于白装。
+
+* 诊断第一环：sar -u 回看历史
+
+场景：早上到工位，同事说昨晚系统很卡。你可以通过 sar 回顾当时的系统指标。
+
+sar 通过 cron 定时采集系统指标，存成二进制日志。你可以指定任意时间段回放。
+
+配好 cron 自动收集（这一步是整篇文章最重要的事）：
+
+#+begin_src shell
+# 每 10 分钟采集一次
+*/10 * * * * /usr/lib/sysstat/sa1 1 1   # Debian/Ubuntu
+# 每天 23:53 生成可读报告
+53 23 * * * /usr/lib/sysstat/sa2 -A
+#+end_src
+
+=sa1= / =sa2= 的路径因发行版不同：
+- Debian/Ubuntu： =/usr/lib/sysstat/sa1=
+- RHEL/Rocky： =/usr/lib64/sa/sa1=
+- Arch Linux： =/usr/lib/sa/sa1=
+
+Debian/Ubuntu 下 =which sa1= 能找到，Arch 下 =sa1= 在 =/usr/lib/sa/= 而不在 =PATH= 里，用 =ls /usr/lib/sa/sa1= 确认。确认路径后替换 cron 条目中的对应位置。
+
+确认数据在积累：
+
+#+begin_src shell
+ls -lh /var/log/sysstat/
+#+end_src
+
+回放历史 CPU 数据：
+
+#+begin_src shell
+sar -u -f /var/log/sysstat/sa$(date +%d)
+#+end_src
+
+=sar -u= 的输出项跟 =mpstat= 类似（ =%=user= 、 =%=system= 、 =%=iowait= 等），关键在于它能告诉你问题发生的具体时段。知道时间点之后，后面的工具才有用武之地。
+
+如果你不需要回放历史、只想看当前的连续采样，让 sar 交互式跑几轮：
+
+#+begin_src shell
+sar -u 2 5
+#+end_src
+
+=2 5= 的意思是每 2 秒采一次，采 5 次。最后会有一行 =Average:= 汇总。
+
+* 诊断第二环：mpstat -P ALL 定位热核
+
+sar 告诉你"昨晚 10 点到 11 点 CPU 偏高"，接下来要回答"是所有核都忙，还是单核被打满"。
+
+=mpstat= 报告逐核 CPU 使用率。不加参数时只给一个全局汇总：
+
+#+begin_src shell
+mpstat
+#+end_src
+
+加了 =-P ALL= 之后，每个 CPU 核心一行：
+
+#+begin_src shell
+mpstat -P ALL 2 5
+#+end_src
+
+这时候你可能看到类似这样的输出：
+
+#+begin_example
+CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+all   19.87    0.01    3.02    0.88    0.00    0.08    0.00    0.00    0.00   76.14
+  0   72.14    0.00    5.22    0.00    0.00    0.00    0.00    0.00    0.00   22.64
+  1   14.32    0.03    2.88    0.52    0.00    0.08    0.00    0.00    0.00   82.17
+  2   10.44    0.02    2.71    1.98    0.00    0.12    0.00    0.00    0.00   84.73
+  3    8.11    0.01    1.75    3.52    0.00    0.09    0.00    0.00    0.00   86.52
+#+end_example
+
+CPU 0 的用户态使用率 72%，其他三个核几乎空闲。这是经典的单线程进程打满单核的特征。
+
+几个值得注意的列：
+
+- =%iowait= ：持续超过 10-15% 意味着系统在等磁盘读写。这时候加 CPU 没用，问题在磁盘。
+- =%soft= ：软件中断占比。网络数据包到达后，内核需要软中断来处理协议栈（TCP/IP 拆包、路由等）。 =%=soft= 高通常意味着网络流量打满了，CPU 在忙于收发包而非跑你的应用程序。
+
+如果怀疑中断不均衡（比如网卡中断全压在 CPU 0 上），用 =-I ALL= 看中断分布：
+
+#+begin_src shell
+mpstat -I ALL
+#+end_src
+
+=NET_RX/s= 集中在某个核上、同时该核 =%soft= 偏高，说明网卡中断亲和性（网卡硬中断固定发给某个 CPU 处理）需要调整。要么用 =irqbalance= 服务自动分配中断到多个核，要么手动写 =/proc/irq/<编号>/smp_affinity= 把特定中断号绑到其他 CPU 上。
+
+* 诊断第三环：pidstat 找到凶手进程
+
+mpstat 告诉你"CPU 0 被打满了"，下一个问题自然是"谁打的"。
+
+=pidstat= 报告进程级别的 CPU、内存、I/O 使用率。不加参数列出所有活跃进程：
+
+#+begin_src shell
+pidstat
+#+end_src
+
+#+begin_example
+UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+1000     2841   18.44    0.88    0.00    0.00   19.32     0  python3
+1000     3102    0.12    0.04    0.00    0.00    0.16     2  nginx
+#+end_example
+
+=CPU= 列显示该进程最后跑在哪个核上，和 mpstat 的热核直接对应。
+
+=%=wait= 是一个容易被忽略但非常重要的列（sysstat 11.5 引入）：它表示进程就绪后在运行队列里等待 CPU 调度的时间。这项持续非零，意味着 CPU 不够用，就绪队列里堆了太多工作，不是进程本身慢。
+
+有了可疑的 PID，用 =-t= 展开线程看细节：
+
+#+begin_src shell
+pidstat -t -p 2841 2 3
+#+end_src
+
+#+begin_example
+TGID       TID    %usr %system  %guest   %wait    %CPU   CPU  Command
+2841         -   18.00    0.88    0.00    0.00   18.88     0  python3
+   -      2841   17.50    0.50    0.00    0.00   18.00     0  |__python3
+   -      2844    0.50    0.38    0.00    0.00    0.88     1  |__ThreadPool-1
+#+end_example
+
+输出里主线程（ =python3= ）占 18.00% CPU，线程池（ =ThreadPool-1= ）仅 0.88%。而且两行都是 =%wait= 为零、 =%=usr= 占大头，说明线程没有在等 CPU，也没有在等 I/O，就是在做纯用户态计算。这样可以定位：CPU 消耗集中在这个进程的主线程上，检查主线程的执行路径就能找到耗 CPU 的代码。
+
+如果进程名已知，用 =-G= 直接过滤，不用在进程列表里找：
+
+#+begin_src shell
+pidstat -G nginx 2
+#+end_src
+
+* 诊断第四环（条件）：追 I/O 和内存
+
+*如果 mpstat 发现 =%iowait= 偏高*
+
+=pidstat -d= 报告每个进程的磁盘读写量：
+
+#+begin_src shell
+pidstat -d 2
+#+end_src
+
+#+begin_example
+PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+2841    412.00     88.00      4.00      12  python3
+#+end_example
+
+=iodelay= 列是非零值时，该进程就是在等 I/O。和 mpstat 里高 =%iowait= 互相印证，凶手就确认了。
+
+=sar -d= 则从块设备层面看延迟：
+
+#+begin_src shell
+sar -d 1 3
+#+end_src
+
+- =await= ：请求从排队到完成的总时间
+- =aqu-sz= ：平均队列深度
+
+=await= 持续高但 =aqu-sz= 接近零，说明磁盘本身就慢（比如机械盘随机读写）。 =await= 高且 =aqu-sz= 也在 1 以上，则是排队已形成，磁盘处理不过来。
+
+注意：旧文档常提的 =svctm= 字段在新内核中已废弃，sar 输出里该列不再可靠，不要依赖它做判断。
+
+*如果怀疑内存压力*
+
+=sar -r= 报告内存使用情况。重点看 =%=commit= 列：
+
+#+begin_src shell
+sar -r 1 3
+#+end_src
+
+=%=commit= 是内核承诺给进程的虚拟内存总量相对于物理内存 + swap 的比例。超过 100%，意味着所有进程同时要求兑现承诺的话，OOM killer 就会出动。
+
+=pidstat -r= 则从进程视角看内存：
+
+#+begin_src shell
+pidstat -r -p 2841 2 3
+#+end_src
+
+=VSZ= 是虚拟内存， =RSS= 是物理内存。重点看 =majflt/s= （主缺页）列：主缺页意味着内核必须从磁盘捞回被换出的页面，持续非零说明系统在颠簸（thrashing），进程响应速度会明显下降。次缺页（ =minflt/s= ）不贵，只是内核在物理内存里映射页面而已。
+
+* 贯穿始终：sar 历史 + sadf 导出
+
+sar 真正的价值不是交互式采样（这个 mpstat 和 pidstat 也能做），而是自动收集的历史数据。配好 cron 后，任何发生过的性能问题你都可以事后回放。
+
+回放历史数据时，用 =sadf -d= 导出为 CSV 格式，可以在表格里画图、和同事分享：
+
+#+begin_src shell
+sadf -d /var/log/sysstat/sa$(date +%d) -- -n DEV | grep -v lo
+#+end_src
+
+
+* 排查链总结
+
+整个过程是一条线：
+
+1. =sar -u= 回看历史，确定问题时段
+2. =mpstat -P ALL= 定位热核，看是均匀分布还是单核瓶颈
+3. =pidstat= 找到具体进程， =-t= 展开线程定位
+4. 如果 =%iowait= 高， =pidstat -d= + =sar -d= 追磁盘；如果怀疑内存， =sar -r= + =pidstat -r= 查换页
+
+最值得现在做的事：把 sar 的 cron 采集配好，攒一周基线数据。有问题发生时，有历史数据和没有历史数据，排查时间是分钟级和小时级的差别。
