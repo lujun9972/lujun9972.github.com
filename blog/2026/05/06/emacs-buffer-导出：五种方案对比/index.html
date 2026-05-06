@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Emacs buffer 导出：五种方案对比 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs之怒" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Emacs buffer 导出：五种方案对比</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgbc9f859">方案一：buffer-to-pdf（所见即所得的 PDF）</a></li>
+<li><a href="#org6f17c4a">方案二：htmlize（代码片段变网页）</a></li>
+<li><a href="#orgfe6a5ed">方案三：ps-print（Emacs 内置的打印方案）</a></li>
+<li><a href="#orge74fec0">方案四：org-export（Org 文档的专业导出）</a></li>
+<li><a href="#orga177f5b">方案五：系统截图工具</a></li>
+<li><a href="#org09e4a4d">怎么选</a></li>
+</ul>
+</div>
+</div>
+<p>
+想从 Emacs 里导出一段代码或者文档分享出去，有好几种路子。这篇文章从实际使用出发，比较五种常见做法。
+</p>
+
+<div id="outline-container-orgbc9f859" class="outline-2">
+<h2 id="orgbc9f859">方案一：buffer-to-pdf（所见即所得的 PDF）</h2>
+<div class="outline-text-2" id="text-orgbc9f859">
+<p>
+这是 Protesilaos 在 2026 年 5 月新发布的包。思路很直接：你在 Emacs 里看到什么样，导出的 PDF 就是什么样，字体大小、主题配色、语法高亮原样保留。
+</p>
+
+<p>
+<b>安装配置：</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">use-package</span> buffer-to-pdf
+  <span class="org-builtin">:ensure</span> nil
+  <span class="org-builtin">:init</span>
+  (<span class="org-keyword">unless</span> (package-installed-p 'buffer-to-pdf)
+    (package-vc-install <span class="org-string">"https://github.com/protesilaos/buffer-to-pdf.git"</span>))
+  <span class="org-builtin">:config</span>
+  (<span class="org-keyword">setq</span> buffer-to-pdf-directory (expand-file-name <span class="org-string">"~/"</span>)))
+</pre>
+</div>
+
+<p>
+<b>使用方法：</b>
+</p>
+
+<p>
+在任意 buffer 中执行 =M-x buffer-to-pdf=，会提示选择纸张方向（portrait 或 landscape），然后自动生成 PDF。
+</p>
+
+<p>
+<b>原理和限制：</b>
+</p>
+
+<p>
+buffer-to-pdf 的底层用的是 Emacs 内置的 <code>x-export-frames</code> 函数。这个函数需要 Emacs 编译时带 Cairo 支持（在 Linux 上通常是 <code>--with-cairo</code> 编译选项）。如果你的 Emacs 没有 Cairo 支持，这个包就没法用。
+</p>
+
+<p>
+它的做法是：临时创建一个干净的 frame（去掉菜单栏、工具栏、滚动条），把当前 buffer 放进去，用 <code>x-export-frames</code> 导出为 PDF，最后删掉临时 frame。源码里还处理了一些细节，比如隐藏光标、关闭行号和拼写检查。
+</p>
+
+<p>
+<b>适用场景：</b> 需要保留完整视觉效果的文档分享，比如学术演示、带配色的代码截图。
+</p>
+
+<p>
+<b>局限：</b> 必须有 Cairo 构建的 Emacs，而且只能在图形界面下使用（需要实际的 frame），终端模式下不行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6f17c4a" class="outline-2">
+<h2 id="org6f17c4a">方案二：htmlize（代码片段变网页）</h2>
+<div class="outline-text-2" id="text-org6f17c4a">
+<p>
+htmlize 是个老牌包，功能就一个：把 buffer 的语法高亮转成 HTML。font-lock 颜色、字体样式都会照搬到 HTML 里。
+</p>
+
+<p>
+<b>安装：</b>
+</p>
+
+<p>
+htmlize 在 MELPA 上，直接 <code>M-x package-install RET htmlize RET</code> 即可。
+</p>
+
+<p>
+<b>使用方法：</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">M-x htmlize-buffer      ;; &#23548;&#20986;&#25972;&#20010; buffer
+M-x htmlize-region      ;; &#23548;&#20986;&#36873;&#20013;&#21306;&#22495;
+M-x htmlize-file        ;; &#23548;&#20986;&#25991;&#20214;
+</pre>
+</div>
+
+<p>
+生成的 HTML 自带内联 CSS，浏览器打开就能看到和 Emacs 里一样的配色。
+</p>
+
+<p>
+<b>优势：</b> 不需要 Cairo，不需要图形界面，终端模式下也能用。输出是 HTML，通用性强，直接粘贴到博客、邮件、网页里都行。
+</p>
+
+<p>
+<b>局限：</b> 输出是 HTML 不是 PDF，一定要 PDF 的话得额外转换（浏览器的打印功能就行）。另外 htmlize 只转文本内容和语法高亮，不会包含 mode line 之类的界面元素。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfe6a5ed" class="outline-2">
+<h2 id="orgfe6a5ed">方案三：ps-print（Emacs 内置的打印方案）</h2>
+<div class="outline-text-2" id="text-orgfe6a5ed">
+<p>
+ps-print 是 Emacs 自带的功能，不需要装任何包。它把 buffer 内容转为 PostScript，保留字体、颜色和下划线。
+</p>
+
+<p>
+<b>使用方法：</b>
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">M-x ps-print-buffer-with-faces    ;; &#23548;&#20986;&#25972;&#20010; buffer&#65288;&#20445;&#30041;&#26679;&#24335;&#65289;
+M-x ps-print-region-with-faces    ;; &#23548;&#20986;&#36873;&#20013;&#21306;&#22495;&#65288;&#20445;&#30041;&#26679;&#24335;&#65289;
+</pre>
+</div>
+
+<p>
+带 <code>-with-faces</code> 后缀的命令会保留语法高亮颜色，不带后缀的版本只输出纯黑白。
+</p>
+
+<p>
+ps-print 输出的是 PostScript 文件，可以用 <code>ps2pdf</code> 转成 PDF。这个工具随 ghostscript 一起安装（Debian/Ubuntu 上 =sudo apt install ghostscript=）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ps2pdf output.ps output.pdf
+</pre>
+</div>
+
+<p>
+<b>优势：</b> Emacs 内置，零依赖，终端和图形界面都能用。输出是矢量格式，打印效果好。
+</p>
+
+<p>
+<b>局限：</b> PostScript 不常见，得额外转换一步。另外 ps-print 的中文支持需要额外配置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> ps-multibyte-buffer 'non-latin-printer)
+</pre>
+</div>
+
+<p>
+设完这个变量 ps-print 才能正确处理中文字符，但实际效果取决于系统字体和 ghostscript 版本，中文可能仍然乱码或缺字。如果中文输出有问题，建议直接换 htmlize 或 buffer-to-pdf。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge74fec0" class="outline-2">
+<h2 id="orge74fec0">方案四：org-export（Org 文档的专业导出）</h2>
+<div class="outline-text-2" id="text-orge74fec0">
+<p>
+如果你的内容本身就是 Org 格式的，org-export 可以直接导出为 PDF（通过 LaTeX）、HTML、ODT 等格式。
+</p>
+
+<p>
+<b>使用方法：</b>
+</p>
+
+<p>
+在 Org 文件中按 <code>C-c C-e</code> 打开导出菜单，然后选择：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">C-c C-e l p    ;; &#23548;&#20986;&#20026; LaTeX &#20877;&#36716; PDF
+C-c C-e h h    ;; &#23548;&#20986;&#20026; HTML
+</pre>
+</div>
+
+<p>
+PDF 导出需要系统装 LaTeX 工具链（texlive 等）。
+</p>
+
+<p>
+<b>优势：</b> 支持目录、交叉引用、脚注、数学公式等复杂文档结构，适合正式文档和报告。
+</p>
+
+<p>
+<b>局限：</b> 只适用于 Org 文件，不是"所见即所得"。导出的 PDF 样式取决于 LaTeX 模板，和你在 Emacs 里看到的样子可能差很远。而且依赖 LaTeX 工具链，安装体积不小。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga177f5b" class="outline-2">
+<h2 id="orga177f5b">方案五：系统截图工具</h2>
+<div class="outline-text-2" id="text-orga177f5b">
+<p>
+最简单粗暴：直接用系统截图工具截 Emacs 窗口。Linux 上常用的有 flameshot、scrot、grim（Wayland）等。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">## </span><span class="org-comment">flameshot&#65288;&#20132;&#20114;&#24335;&#25130;&#22270;&#65289;
+</span>flameshot gui
+
+<span class="org-comment-delimiter">## </span><span class="org-comment">scrot&#65288;&#21629;&#20196;&#34892;&#25130;&#22270;&#65289;
+</span>scrot -s screenshot.png
+</pre>
+</div>
+
+<p>
+<b>优势：</b> 零配置，不需要任何 Emacs 包，截什么是什么。
+</p>
+
+<p>
+<b>局限：</b> 输出是位图，分辨率固定，放大就糊。内容太长的话得截多张再拼接，而且截图会带上 Emacs 的窗口装饰和桌面背景，不够干净。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org09e4a4d" class="outline-2">
+<h2 id="org09e4a4d">怎么选</h2>
+<div class="outline-text-2" id="text-org09e4a4d">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">场景</th>
+<th scope="col" class="org-left">推荐方案</th>
+<th scope="col" class="org-left">理由</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">分享一小段带语法高亮的代码</td>
+<td class="org-left">htmlize</td>
+<td class="org-left">输出 HTML，通用性强，不依赖图形界面</td>
+</tr>
+
+<tr>
+<td class="org-left">生成漂亮的代码截图用于演示</td>
+<td class="org-left">buffer-to-pdf</td>
+<td class="org-left">所见即所得，保留主题配色，输出矢量格式</td>
+</tr>
+
+<tr>
+<td class="org-left">打印正式文档</td>
+<td class="org-left">org-export</td>
+<td class="org-left">支持目录、脚注、数学公式等专业排版</td>
+</tr>
+
+<tr>
+<td class="org-left">快速截个图发群里</td>
+<td class="org-left">系统截图</td>
+<td class="org-left">最快最直接</td>
+</tr>
+
+<tr>
+<td class="org-left">没有 Cairo 的环境需要 PDF</td>
+<td class="org-left">ps-print + ps2pdf</td>
+<td class="org-left">内置功能，不挑环境</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+有 Cairo 支持的 Emacs，buffer-to-pdf 是最方便的一键导出方案。经常分享代码片段的话，htmlize 更实用。Org 重度用户用 org-export 就够了，大部分需求都能覆盖。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-06</span>
+    <span class="post-info">2026-05-06</span>
+    <a href="../../../../../tags/emacs之怒">Emacs之怒</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; g3dx20kwmozedc3yekv5ocimjb &lt;dot&gt; gx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
