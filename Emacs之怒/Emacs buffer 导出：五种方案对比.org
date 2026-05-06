@@ -1,0 +1,136 @@
+#+TITLE: Emacs buffer 导出：五种方案对比
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs之怒
+#+DATE: [2026-05-06 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+想从 Emacs 里导出一段代码或者文档分享出去，有好几种路子。这篇文章从实际使用出发，比较五种常见做法。
+
+* 方案一：buffer-to-pdf（所见即所得的 PDF）
+
+这是 Protesilaos 在 2026 年 5 月新发布的包。思路很直接：你在 Emacs 里看到什么样，导出的 PDF 就是什么样，字体大小、主题配色、语法高亮原样保留。
+
+*安装配置：*
+
+#+begin_src elisp
+(use-package buffer-to-pdf
+  :ensure nil
+  :init
+  (unless (package-installed-p 'buffer-to-pdf)
+    (package-vc-install "https://github.com/protesilaos/buffer-to-pdf.git"))
+  :config
+  (setq buffer-to-pdf-directory (expand-file-name "~/")))
+#+end_src
+
+*使用方法：*
+
+在任意 buffer 中执行 =M-x buffer-to-pdf=，会提示选择纸张方向（portrait 或 landscape），然后自动生成 PDF。
+
+*原理和限制：*
+
+buffer-to-pdf 的底层用的是 Emacs 内置的 =x-export-frames= 函数。这个函数需要 Emacs 编译时带 Cairo 支持（在 Linux 上通常是 =--with-cairo= 编译选项）。如果你的 Emacs 没有 Cairo 支持，这个包就没法用。
+
+它的做法是：临时创建一个干净的 frame（去掉菜单栏、工具栏、滚动条），把当前 buffer 放进去，用 =x-export-frames= 导出为 PDF，最后删掉临时 frame。源码里还处理了一些细节，比如隐藏光标、关闭行号和拼写检查。
+
+*适用场景：* 需要保留完整视觉效果的文档分享，比如学术演示、带配色的代码截图。
+
+*局限：* 必须有 Cairo 构建的 Emacs，而且只能在图形界面下使用（需要实际的 frame），终端模式下不行。
+
+* 方案二：htmlize（代码片段变网页）
+
+htmlize 是个老牌包，功能就一个：把 buffer 的语法高亮转成 HTML。font-lock 颜色、字体样式都会照搬到 HTML 里。
+
+*安装：*
+
+htmlize 在 MELPA 上，直接 =M-x package-install RET htmlize RET= 即可。
+
+*使用方法：*
+
+#+begin_src text
+M-x htmlize-buffer      ;; 导出整个 buffer
+M-x htmlize-region      ;; 导出选中区域
+M-x htmlize-file        ;; 导出文件
+#+end_src
+
+生成的 HTML 自带内联 CSS，浏览器打开就能看到和 Emacs 里一样的配色。
+
+*优势：* 不需要 Cairo，不需要图形界面，终端模式下也能用。输出是 HTML，通用性强，直接粘贴到博客、邮件、网页里都行。
+
+*局限：* 输出是 HTML 不是 PDF，一定要 PDF 的话得额外转换（浏览器的打印功能就行）。另外 htmlize 只转文本内容和语法高亮，不会包含 mode line 之类的界面元素。
+
+* 方案三：ps-print（Emacs 内置的打印方案）
+
+ps-print 是 Emacs 自带的功能，不需要装任何包。它把 buffer 内容转为 PostScript，保留字体、颜色和下划线。
+
+*使用方法：*
+
+#+begin_src text
+M-x ps-print-buffer-with-faces    ;; 导出整个 buffer（保留样式）
+M-x ps-print-region-with-faces    ;; 导出选中区域（保留样式）
+#+end_src
+
+带 =-with-faces= 后缀的命令会保留语法高亮颜色，不带后缀的版本只输出纯黑白。
+
+ps-print 输出的是 PostScript 文件，可以用 =ps2pdf= 转成 PDF。这个工具随 ghostscript 一起安装（Debian/Ubuntu 上 =sudo apt install ghostscript=）：
+
+#+begin_src shell
+ps2pdf output.ps output.pdf
+#+end_src
+
+*优势：* Emacs 内置，零依赖，终端和图形界面都能用。输出是矢量格式，打印效果好。
+
+*局限：* PostScript 不常见，得额外转换一步。另外 ps-print 的中文支持需要额外配置：
+
+#+begin_src elisp
+(setq ps-multibyte-buffer 'non-latin-printer)
+#+end_src
+
+设完这个变量 ps-print 才能正确处理中文字符，但实际效果取决于系统字体和 ghostscript 版本，中文可能仍然乱码或缺字。如果中文输出有问题，建议直接换 htmlize 或 buffer-to-pdf。
+
+* 方案四：org-export（Org 文档的专业导出）
+
+如果你的内容本身就是 Org 格式的，org-export 可以直接导出为 PDF（通过 LaTeX）、HTML、ODT 等格式。
+
+*使用方法：*
+
+在 Org 文件中按 =C-c C-e= 打开导出菜单，然后选择：
+
+#+begin_src text
+C-c C-e l p    ;; 导出为 LaTeX 再转 PDF
+C-c C-e h h    ;; 导出为 HTML
+#+end_src
+
+PDF 导出需要系统装 LaTeX 工具链（texlive 等）。
+
+*优势：* 支持目录、交叉引用、脚注、数学公式等复杂文档结构，适合正式文档和报告。
+
+*局限：* 只适用于 Org 文件，不是"所见即所得"。导出的 PDF 样式取决于 LaTeX 模板，和你在 Emacs 里看到的样子可能差很远。而且依赖 LaTeX 工具链，安装体积不小。
+
+* 方案五：系统截图工具
+
+最简单粗暴：直接用系统截图工具截 Emacs 窗口。Linux 上常用的有 flameshot、scrot、grim（Wayland）等。
+
+#+begin_src shell
+## flameshot（交互式截图）
+flameshot gui
+
+## scrot（命令行截图）
+scrot -s screenshot.png
+#+end_src
+
+*优势：* 零配置，不需要任何 Emacs 包，截什么是什么。
+
+*局限：* 输出是位图，分辨率固定，放大就糊。内容太长的话得截多张再拼接，而且截图会带上 Emacs 的窗口装饰和桌面背景，不够干净。
+
+* 怎么选
+
+| 场景 | 推荐方案 | 理由 |
+|------|----------|------|
+| 分享一小段带语法高亮的代码 | htmlize | 输出 HTML，通用性强，不依赖图形界面 |
+| 生成漂亮的代码截图用于演示 | buffer-to-pdf | 所见即所得，保留主题配色，输出矢量格式 |
+| 打印正式文档 | org-export | 支持目录、脚注、数学公式等专业排版 |
+| 快速截个图发群里 | 系统截图 | 最快最直接 |
+| 没有 Cairo 的环境需要 PDF | ps-print + ps2pdf | 内置功能，不挑环境 |
+
+有 Cairo 支持的 Emacs，buffer-to-pdf 是最方便的一键导出方案。经常分享代码片段的话，htmlize 更实用。Org 重度用户用 org-export 就够了，大部分需求都能覆盖。
