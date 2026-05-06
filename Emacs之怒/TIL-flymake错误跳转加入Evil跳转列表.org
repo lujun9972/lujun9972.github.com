@@ -1,0 +1,37 @@
+#+TITLE: TIL: flymake 错误跳转加入 Evil 跳转列表
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, Evil, flymake, 跳转列表, TIL
+#+DATE: [2026-05-06 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: flymake 的错误跳转默认不记录到 Evil 跳转列表，跳完错误后 C-o 回不去。用 evil-define-motion 包装 flymake 的跳转函数，加上 :jump t 标志就能解决。
+
+Magnus Therning 在 [[https://magnus.therning.org/2026-05-04-jumping-to-errors-in-evil.html][博客]] 上提到一个技巧：用 flymake 跳到下一个错误，改完想按 =C-o= 跳回去，发现回不去。因为 =flymake-goto-next-error= 和 =flymake-goto-prev-error= 是普通函数调用，Evil 不认为它是"跳转"，不会把当前位置记到跳转列表里。
+
+Evil 的跳转列表只记录带 =:jump t= 标志的 motion（比如 =G= 跳到指定行、 =gg= 跳到文件开头）。所以我们用 =evil-define-motion= 包装一下就行：
+
+#+begin_src emacs-lisp
+(evil-define-motion mes/evil-goto-next-error (count)
+  :jump t
+  (unless (bound-and-true-p flymake-mode)
+    (signal 'search-failed nil))
+  (flymake-goto-next-error count))
+
+(evil-define-motion mes/evil-goto-prev-error (count)
+  :jump t
+  (unless (bound-and-true-p flymake-mode)
+    (signal 'search-failed nil))
+  (flymake-goto-prev-error count))
+#+end_src
+
+=:jump t= 让 Evil 在执行这个 motion 之前先把当前位置存进跳转列表。 =(unless (bound-and-true-p flymake-mode) (signal 'search-failed nil))= 保证在 flymake 没开的 buffer 里调用会报错。
+
+绑定到按键上（用 Evil 内置的 =evil-define-key= ，选 C-j/C-k 是因为 evil-collection 的 flymake 模块也是这么绑的）：
+
+#+begin_src emacs-lisp
+(evil-define-key 'normal flymake-mode-map
+  "C-j" 'mes/evil-goto-next-error
+  "C-k" 'mes/evil-goto-prev-error)
+#+end_src
+
+这样就能 =C-j= 跳到错误 → 修复 → =C-o= 跳回编辑位置。
