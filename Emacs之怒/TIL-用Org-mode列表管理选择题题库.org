@@ -1,0 +1,79 @@
+#+TITLE: TIL: 用 Org-mode 列表管理选择题题库
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,Org-mode,选择题,org-list,TIL
+#+DATE: [2026-05-06 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 用 Org-mode 有序列表存选择题，* 标记正确答案，配合 Elisp 函数实现复制、删除和重编号。org-list-repair 自动修复编号，M-up/M-down 调整题目顺序。
+
+Randy Ridenour 在 [[https://randyridenour.net/posts/2026-05-03-managing-multiplechoice-questions-with-org-mode.html][博客]] 上介绍了一种用 Org-mode 有序列表管理选择题的方法：数字编号是题目，字母编号是选项，正确答案后面加 =*= 。
+
+#+begin_src org
+  1. 下面哪个是 Emacs 的默认编辑器？
+     a) Vim
+     b) nano
+     c) Emacs*
+     d) ed
+  2. Elisp 中哪个函数用于向前搜索正则表达式？
+     a) string-match
+     b) re-search-forward*
+     c) looking-at
+     d) search-forward
+  3. 下面哪个是 Vim 的默认编辑器？
+     a) Vim*
+     b) nano
+     c) Emacs
+     d) ed
+#+end_src
+
+这种格式的好处是 Org-mode 自带列表操作： =M-up= / =M-down= 移动题目（连子项一起拖）， =org-list-repair= 重编号。
+
+下面函数可以从题库选题到*scratch*，首先找到题目边界：
+
+#+begin_src emacs-lisp
+  (defun my/copy-mcq-to-scratch ()
+    "Copy the multiple choice question at point to the *scratch* buffer."
+    (interactive)
+    (save-excursion
+      (let* ((question-start
+              (progn
+                (end-of-line)
+                (if (re-search-backward "^[0-9]+\\." nil t)
+                    (point)
+                  (error "No question found at point"))))
+             (question-end
+              (progn
+                (goto-char question-start)
+                (forward-line 1)
+                (if (re-search-forward "^[0-9]+\\." nil t)
+                    (match-beginning 0)
+                  (point-max))))
+             (text (buffer-substring-no-properties question-start question-end)))
+        (with-current-buffer (get-buffer-create "*scratch*")
+          (goto-char (point-max))
+          (insert text)))))
+#+end_src
+
+向上搜 =^[0-9]+\\.= 定位题目开头，向下搜下一个同模式匹配作为题目结尾，中间就是一道完整题目。
+
+删除题目也用同样的边界定位，删完后调 =org-list-repair= 重编号：
+
+#+begin_src emacs-lisp
+(defun my/delete-mcq-at-point ()
+  "Delete the multiple choice question at point."
+  (interactive)
+  (save-excursion
+    (beginning-of-line)
+    (unless (looking-at "[[:space:]]*[0-9]+\\.")
+      (re-search-backward "^[[:space:]]*[0-9]+\\." nil t))
+    (let ((start (line-beginning-position))
+          (end (progn
+                 (forward-line 1)
+                 (if (re-search-forward "^[0-9]+\\." nil t)
+                     (match-beginning 0)
+                   (point-max)))))
+      (kill-region start end)))
+  (org-list-repair))
+#+end_src
+
+这里用 =kill-region= 而不是 =delete-region= ，是因为这样删掉的题进 kill ring，还能捞回来。
