@@ -1,0 +1,176 @@
+#+TITLE: TIL: 用进程树展开定位被脚本包装的 JVM 进程
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: JVM,jstack,pgrep,进程树,TIL
+#+DATE: [2026-05-06 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 用 pgrep 递归展开进程树，配合 jps 过滤 JVM 进程，从而快速对被脚本包装的 JVM 进程执行 jstack 操作。
+
+用 =jstack= 调试被脚本包装的 JVM 进程（比如 =lein test= 启动的 Java 进程）时， =jps= 经常显示不出有用的信息：你看到的是一串主类名（ =main= 、 =GradleDaemon= ），但没法把这些名字和你的启动命令对应起来。 =jps= 只告诉你"现在有哪些 JVM 进程在跑"，不告诉你"它们分别是谁启动的"。Kyle Kingsbury 在 [[https://aphyr.com/posts/421-jstack-by-command-string][博客]] 上分享了解法：用 =pgrep= 递归展开进程树，再和 =jps= 取交集定位目标进程。
+
+** 是什么
+
+运行 =lein run= 时程序卡住了，想用 =jstack= 看线程栈，但 =jps= 的输出是这样的：
+
+#+begin_example
+  136086 Jps
+  2777 NutstoreGUI
+  136062 main
+  121004 GradleDaemon
+#+end_example
+
+=main= 是 Leiningen 启动 Java 时用 =-m= 指定的主类名。你从这两个字完全看不出"这是 =lein run= 启动的那个"。 =jps= 能列出所有 Java 进程，但没法把进程和你的启动命令关联起来。
+
+** 为什么值得关注
+
+传统做法是在 =jps= 输出里猜，或者用 =ps aux | grep java= 人工辨认。但当进程链很长（脚本 → Java → Java）时，这些方法都不可靠。
+
+Kyle 的思路：从匹配命令行的根进程开始，用 =pgrep -P <pid>= 递归展开整棵进程树，再和 =jps= 列出的 JVM 进程取交集，取最大 PID（通常是最后启动的）执行 =jstack= 。
+
+** 怎么用
+
+Kyle 写的是 Ruby 脚本，这里翻译成 Shell：
+
+#+begin_src shell :tangle ~/bin/jstack+.sh
+  #!/bin/bash
+  # jstack+ - 对匹配命令的进程树中的 JVM 执行 jstack
+  # 用法: jstack+ lein test
+
+  expand() {
+      local pid=$1
+      echo "$pid"
+      for child in $(pgrep -P "$pid" 2>/dev/null); do
+          expand "$child"
+      done
+  }
+
+  roots=$(pgrep -f "$*")
+  [ -z "$roots" ] && { echo "No process matching: $*"; exit 1; }
+
+  all_pids=""
+  for root in $roots; do
+      all_pids="$all_pids $(expand "$root")"
+  done
+
+  jvm_pids=$(jps -q 2>/dev/null)
+  fav=""
+  for pid in $all_pids; do
+      [ -z "$pid" ] && continue
+      for jpid in $jvm_pids; do
+          [ "$pid" = "$jpid" ] && { [ -z "$fav" ] || [ "$pid" -gt "$fav" ]; } && fav=$pid
+      done
+  done
+
+  [ -z "$fav" ] && { echo "No JVMs with that command line in their ancestry"; exit 1; }
+
+  echo "jstack $fav ($(tr '\0' ' ' < /proc/$fav/cmdline))"
+  echo
+  exec jstack "$fav"
+#+end_src
+
+pattern 是 =pgrep -f= 的参数，匹配进程的完整命令行。用项目目录名或启动命令中的关键词都行，关键是这个词要出现在进程的命令行里。
+
+使用效果：
+
+#+begin_example
+  $ jstack+ "jstack-test"
+  jstack 141649 (java -classpath /tmp/jstack-test/test:/tmp/jstack-test/src:... clojure.main ...)
+
+  2026-05-06 23:20:42
+  Full thread dump OpenJDK 64-Bit Server VM (25.492-b09 mixed mode):
+
+  "Attach Listener" #9 daemon prio=9 os_prio=0 ...
+     java.lang.Thread.State: RUNNABLE
+
+  "Service Thread" #8 daemon prio=9 os_prio=0 ...
+     java.lang.Thread.State: RUNNABLE
+  ...
+#+end_example
+
+这里有个坑：PID 回绕的时候（系统 PID 用完了，重新从低编号分配），最大的 PID 不一定是最后启动的。这种情况可以改成按启动时间选： =/proc/<pid>/stat= 的第 22 字段是进程启动时的 clock ticks，值越大越晚。
+
+#+begin_src shell  :tangle ~/bin/jstack++.sh
+#!/bin/bash
+  # jstack++ - 按 starttime 选进程的版本
+  # 用法: jstack+ lein test
+
+  expand() {
+      local pid=$1
+      echo "$pid"
+      for child in $(pgrep -P "$pid" 2>/dev/null); do
+          expand "$child"
+      done
+  }
+
+  roots=$(pgrep -f "$*")
+  [ -z "$roots" ] && { echo "No process matching: $*"; exit 1; }
+
+  all_pids=""
+  for root in $roots; do
+      all_pids="$all_pids $(expand "$root")"
+  done
+
+  jvm_pids=$(jps -q 2>/dev/null)
+  fav="" fav_st=0
+  for pid in $all_pids; do
+      [ -z "$pid" ] && continue
+      for jpid in $jvm_pids; do
+          if [ "$pid" = "$jpid" ]; then
+              st=$(awk '{print $22}' /proc/$pid/stat)
+              [ "$st" -gt "$fav_st" ] && fav=$pid fav_st=$st
+          fi
+      done
+  done
+
+  [ -z "$fav" ] && { echo "No JVMs with that command line in their ancestry"; exit 1; }
+
+  echo "jstack $fav ($(tr '\0' ' ' < /proc/$fav/cmdline))"
+  echo
+  exec jstack "$fav"
+#+end_src
+
+** 验证：搭一个 Clojure 测试实例
+
+要验证 =jstack+= 能不能找到被脚本包装的 JVM 进程，可以搭一个简单的测试用例：让 =lein run= 启动后挂住，然后用 =jstack+= 定位它。
+
+创建一个 Leiningen 项目：
+
+#+begin_src shell
+mkdir -p /tmp/jstack-test/src/jstack_demo
+cd /tmp/jstack-test
+
+cat > project.clj <<'CLJ'
+(defproject jstack-demo "0.1.0-SNAPSHOT"
+  :description "jstack+ 测试项目"
+  :main jstack-demo.core
+  :dependencies [[org.clojure/clojure "1.11.1"]])
+CLJ
+
+cat > src/jstack_demo/core.clj <<'CLJ'
+(ns jstack-demo.core)
+
+(defn -main [& args]
+  (println "挂住 300 秒，另开终端跑 jstack+ ...")
+  (Thread/sleep (* 300 1000)))
+CLJ
+#+end_src
+
+然后在终端 1 启动：
+
+#+begin_src shell
+cd /tmp/jstack-test && lein run
+#+end_src
+
+#+begin_example
+挂住 300 秒，另开终端跑 jstack+ ...
+#+end_example
+
+终端 2 运行 =jstack+= ：
+
+#+begin_src shell
+bash jstack+.sh "jstack-test"
+#+end_src
+
+#+RESULTS:
+
+应该能看到 =jstack= 的线程 dump 输出，说明脚本在进程树中找到了被 =lein run= 启动的 JVM 进程。
