@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: 用 Org-mode 列表管理选择题题库 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="用 Org-mode 有序列表存选择题，* 标记正确答案，配合 Elisp 函数实现复制、删除和重编号。org-list-repair 自动修复编号，M-up/M-down 调整题目顺序。" />
+  <meta name="keywords" content="Emacs,Org-mode,选择题,org-list,TIL" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: 用 Org-mode 列表管理选择题题库</h1>
+<p>
+Randy Ridenour 在 <a href="https://randyridenour.net/posts/2026-05-03-managing-multiplechoice-questions-with-org-mode.html">博客</a> 上介绍了一种用 Org-mode 有序列表管理选择题的方法：数字编号是题目，字母编号是选项，正确答案后面加 <code>*</code> 。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org">1. &#19979;&#38754;&#21738;&#20010;&#26159; Emacs &#30340;&#40664;&#35748;&#32534;&#36753;&#22120;&#65311;
+   a) Vim
+   b) nano
+   c) Emacs*
+   d) ed
+2. Elisp &#20013;&#21738;&#20010;&#20989;&#25968;&#29992;&#20110;&#21521;&#21069;&#25628;&#32034;&#27491;&#21017;&#34920;&#36798;&#24335;&#65311;
+   a) string-match
+   b) re-search-forward*
+   c) looking-at
+   d) search-forward
+3. &#19979;&#38754;&#21738;&#20010;&#26159; Vim &#30340;&#40664;&#35748;&#32534;&#36753;&#22120;&#65311;
+   a) Vim*
+   b) nano
+   c) Emacs
+   d) ed
+</pre>
+</div>
+
+<p>
+这种格式的好处是 Org-mode 自带列表操作： <code>M-up</code> / <code>M-down</code> 移动题目（连子项一起拖）， <code>org-list-repair</code> 重编号。
+</p>
+
+<p>
+下面函数可以从题库选题到*scratch*，首先找到题目边界：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my/copy-mcq-to-scratch</span> ()
+  <span class="org-doc">"Copy the multiple choice question at point to the *scratch* buffer."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">save-excursion</span>
+    (<span class="org-keyword">let*</span> ((question-start
+            (<span class="org-keyword">progn</span>
+              (end-of-line)
+              (<span class="org-keyword">if</span> (re-search-backward <span class="org-string">"^[0-9]+\\."</span> nil t)
+                  (point)
+                (<span class="org-warning">error</span> <span class="org-string">"No question found at point"</span>))))
+           (question-end
+            (<span class="org-keyword">progn</span>
+              (goto-char question-start)
+              (forward-line 1)
+              (<span class="org-keyword">if</span> (re-search-forward <span class="org-string">"^[0-9]+\\."</span> nil t)
+                  (match-beginning 0)
+                (point-max))))
+           (text (buffer-substring-no-properties question-start question-end)))
+      (<span class="org-keyword">with-current-buffer</span> (get-buffer-create <span class="org-string">"*scratch*"</span>)
+        (goto-char (point-max))
+        (insert text)))))
+</pre>
+</div>
+
+<p>
+向上搜 <code>^[0-9]+\\.</code> 定位题目开头，向下搜下一个同模式匹配作为题目结尾，中间就是一道完整题目。
+</p>
+
+<p>
+删除题目也用同样的边界定位，删完后调 <code>org-list-repair</code> 重编号：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my/delete-mcq-at-point</span> ()
+  <span class="org-doc">"Delete the multiple choice question at point."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">save-excursion</span>
+    (beginning-of-line)
+    (<span class="org-keyword">unless</span> (looking-at <span class="org-string">"[[:space:]]*[0-9]+\\."</span>)
+      (re-search-backward <span class="org-string">"^[[:space:]]*[0-9]+\\."</span> nil t))
+    (<span class="org-keyword">let</span> ((start (line-beginning-position))
+          (end (<span class="org-keyword">progn</span>
+                 (forward-line 1)
+                 (<span class="org-keyword">if</span> (re-search-forward <span class="org-string">"^[0-9]+\\."</span> nil t)
+                     (match-beginning 0)
+                   (point-max)))))
+      (kill-region start end)))
+  (org-list-repair))
+</pre>
+</div>
+
+<p>
+这里用 <code>kill-region</code> 而不是 <code>delete-region</code> ，是因为这样删掉的题进 kill ring，还能捞回来。
+</p>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-06</span>
+    <span class="post-info">2026-05-06</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/org-mode">Org-mode</a> : <a href="../../../../../tags/选择题">选择题</a> : <a href="../../../../../tags/org-list">org-list</a> : <a href="../../../../../tags/til">TIL</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5ghra5x4ztfulfezz0jwlsppfe &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

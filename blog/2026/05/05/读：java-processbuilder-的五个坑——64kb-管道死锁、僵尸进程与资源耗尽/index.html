@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Java ProcessBuilder 的五个坑——64KB 管道死锁、僵尸进程与资源耗尽 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="Java 的 ProcessBuilder 是调用外部命令的标准 API，但 pb.start() 不是普通的方法调用——它是一条通往 OS 层的隧道。进去之后 JVM 就管不了你了。本文讲五个典型的坑：64KB 管道死锁、僵尸进程、FD 泄漏、exitValue 竞态和环境变量污染，以及六种对应的修复方案。" />
+  <meta name="keywords" content="Java, Linux, 进程管理, 子进程" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Java ProcessBuilder 的五个坑——64KB 管道死锁、僵尸进程与资源耗尽</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgbb7a8b9">开篇</a></li>
+<li><a href="#org68bec3c">背景知识：pb.start() 内部发生了什么</a>
+<ul>
+<li><a href="#org55c4c36">Fork 和 Exec</a></li>
+<li><a href="#org2b3a4c8">/proc：内核的实时窗口</a></li>
+<li><a href="#org4a7dd95">文件描述符（FD）</a></li>
+</ul>
+</li>
+<li><a href="#org027fc78">坑一：管道死锁（最常见）</a>
+<ul>
+<li><a href="#org3aacaca">症状</a></li>
+<li><a href="#org543a1c3">根因</a></li>
+<li><a href="#orgcf8edfa">诊断</a></li>
+<li><a href="#orgcbc3c2d">解法：让输出有个去处</a></li>
+</ul>
+</li>
+<li><a href="#org542ef12">坑二：僵尸进程</a>
+<ul>
+<li><a href="#orgdc1ff85">症状</a></li>
+<li><a href="#orgef663ec">根因</a></li>
+<li><a href="#orgf0611d1">解法：必须收集退出状态</a></li>
+</ul>
+</li>
+<li><a href="#orga194e36">坑三：FD 泄漏</a>
+<ul>
+<li><a href="#orga55d543">症状</a></li>
+<li><a href="#orgb18063c">根因（两种模式）</a></li>
+<li><a href="#org55689af">诊断：看两个 limit</a></li>
+<li><a href="#orgcfebf13">解法</a></li>
+</ul>
+</li>
+<li><a href="#org550e9c7">坑四：exitValue() 竞态条件</a>
+<ul>
+<li><a href="#org3e42a1b">症状</a></li>
+<li><a href="#org3920331">根因</a></li>
+<li><a href="#org2dacd01">解法</a></li>
+</ul>
+</li>
+<li><a href="#org69cdba7">坑五：环境变量污染</a>
+<ul>
+<li><a href="#org822ae57">症状</a></li>
+<li><a href="#org0dff300">根因</a></li>
+<li><a href="#orga91175e">解法</a></li>
+</ul>
+</li>
+<li><a href="#org9f06836">六种 Fix 怎么选</a></li>
+<li><a href="#orge28d15e">总结</a>
+<ul>
+<li><a href="#org084199b">一张图记住五个坑</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgbb7a8b9" class="outline-2">
+<h2 id="orgbb7a8b9">开篇</h2>
+<div class="outline-text-2" id="text-orgbb7a8b9">
+<p>
+<a href="https://levelup.gitconnected.com/java-processbuilder-deadlocks-zombies-and-the-64-kb-wall-bb7aa7190036">Haider Kagalwala 在 Level Up Coding 上写了一篇很好的文章</a>，梳理 Java <code>ProcessBuilder</code> 调用外部命令时的底层 OS 机制。这篇是读后笔记。
+</p>
+
+<p>
+<code>ProcessBuilder</code> 的 API 本身很简单：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"ls"</span>, <span class="org-string">"-la"</span>);
+<span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#35835;&#36755;&#20986;
+</span><span class="org-keyword">try</span> (<span class="org-type">BufferedReader</span> <span class="org-variable-name">reader</span> = <span class="org-keyword">new</span> <span class="org-type">BufferedReader</span>(
+        <span class="org-keyword">new</span> <span class="org-type">InputStreamReader</span>(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#31561;&#32467;&#26463;&#65292;&#25343;&#36864;&#20986;&#30721;
+</span><span class="org-type">int</span> <span class="org-variable-name">exitCode</span> = process.waitFor();
+System.out.println(<span class="org-string">"Exited with: "</span> + exitCode);
+</pre>
+</div>
+
+<p>
+但 <code>pb.start()</code> 这一行做的事远比看起来多。它把控制权交给了 OS,从此 JVM 与你是路人。
+</p>
+
+<p>
+要理解原因，得先知道 OS 在这一行背后做了什么。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org68bec3c" class="outline-2">
+<h2 id="org68bec3c">背景知识：pb.start() 内部发生了什么</h2>
+<div class="outline-text-2" id="text-org68bec3c">
+</div>
+<div id="outline-container-org55c4c36" class="outline-3">
+<h3 id="org55c4c36">Fork 和 Exec</h3>
+<div class="outline-text-3" id="text-org55c4c36">
+<p>
+<code>pb.start()</code> 内部是两个系统调用的组合：
+</p>
+
+<ol class="org-ol">
+<li><b>Fork</b> ：OS 创建当前 Java 进程的一个精确副本。一瞬间内存里有两个一模一样的 Java 进程（用了 Copy-on-Write，不会真的翻倍内存）</li>
+<li><b>Exec</b> ：副本把自己完全替换掉：清空内存、丢弃 Java 字节码、加载你要执行的命令（比如 <code>ls</code> ）</li>
+</ol>
+
+<p>
+<code>pb.start()</code> 感觉快的原因就在这里：先克隆当前进程，再替换成目标——省了从头建进程这一步。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2b3a4c8" class="outline-3">
+<h3 id="org2b3a4c8">/proc：内核的实时窗口</h3>
+<div class="outline-text-3" id="text-org2b3a4c8">
+<p>
+Linux 的 <code>/proc</code> 是一个虚拟文件系统。每个数字目录对应一个正在运行的进程，里面的文件是该进程的实时状态：内存映射、打开的文件句柄、启动命令，随时可以读。
+</p>
+
+<p>
+如果 Java 进程的 PID 是 1234，那么它的全部信息就在 <code>/proc/1234/</code> 里。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4a7dd95" class="outline-3">
+<h3 id="org4a7dd95">文件描述符（FD）</h3>
+<div class="outline-text-3" id="text-org4a7dd95">
+<p>
+Linux 把一切当文件——磁盘文件、网络 socket、进程间管道，统统归为"文件"，给一个编号引用。这个编号就是文件描述符（File Descriptor）。
+</p>
+
+<p>
+每个进程启动时就有一组默认的 FD：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">FD</th>
+<th scope="col" class="org-left">名称</th>
+<th scope="col" class="org-left">作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">0</td>
+<td class="org-left">STDIN</td>
+<td class="org-left">进程听输入的地方</td>
+</tr>
+
+<tr>
+<td class="org-right">1</td>
+<td class="org-left">STDOUT</td>
+<td class="org-left">普通输出</td>
+</tr>
+
+<tr>
+<td class="org-right">2</td>
+<td class="org-left">STDERR</td>
+<td class="org-left">错误输出</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+当你用 <code>ProcessBuilder</code> 时，OS 把这三个口子用管道连到 Java 父进程。 <code>ls -la</code> 的输出不会直接写到屏幕上，而是写到管道里，等 Java 来读。
+</p>
+
+<p>
+下面五个坑，按出现频率排。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org027fc78" class="outline-2">
+<h2 id="org027fc78">坑一：管道死锁（最常见）</h2>
+<div class="outline-text-2" id="text-org027fc78">
+</div>
+<div id="outline-container-org3aacaca" class="outline-3">
+<h3 id="org3aacaca">症状</h3>
+<div class="outline-text-3" id="text-org3aacaca">
+<p>
+代码写好了，本地怎么测都没问题。一上生产，应用程序突然卡死，没异常、没堆栈、没警告。就是不动了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org543a1c3" class="outline-3">
+<h3 id="org543a1c3">根因</h3>
+<div class="outline-text-3" id="text-org543a1c3">
+<p>
+<code>ProcessBuilder</code> 的 <code>pb.start()</code> 调用后，OS 在父进程和子进程之间创建了管道。每个管道是内核里的一个缓冲区，这个缓冲区在现代 Linux 上大约是 64KB。
+</p>
+
+<p>
+正常的流程是这样的：子进程往 STDOUT 写输出，父进程在另一端不断读取，缓冲区一直不满，两边都没事。
+</p>
+
+<p>
+但父进程如果不读输出，直接调 <code>waitFor()</code> 等子进程结束，就会出事：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-comment-delimiter">// </span><span class="org-comment">&#27515;&#38145;&#28436;&#31034;&#8212;&#8212;&#21035;&#22312;&#29983;&#20135;&#29615;&#22659;&#36825;&#20040;&#20889;
+</span><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"bash"</span>, <span class="org-string">"-c"</span>,
+    <span class="org-string">"for i in {1..100000}; do echo \"Line $i\"; done"</span>);
+pb.redirectErrorStream(<span class="org-constant">true</span>);
+<span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#25925;&#24847;&#19981;&#35835;&#36755;&#20986;&#65292;&#30452;&#25509;&#31561;&#36864;&#20986;&#8212;&#8212;&#31649;&#36947;&#20250;&#28385;
+</span><span class="org-type">int</span> <span class="org-variable-name">exitCode</span> = process.waitFor();  <span class="org-comment-delimiter">// </span><span class="org-comment">&#27704;&#36828;&#31561;&#19981;&#21040;
+</span>System.out.println(<span class="org-string">"Child exited with code: "</span> + exitCode);
+</pre>
+</div>
+
+<p>
+这段代码会卡死在 <code>waitFor()</code> 上。原因是一环扣一环：
+</p>
+
+<ol class="org-ol">
+<li>子进程写输出 → 管道没满 → 正常运行</li>
+<li>子进程继续写 → 管道满了</li>
+<li>Linux 内核 <b>冻结子进程</b> ——"缓冲区没清空之前，你一个字都不准再写"</li>
+<li>父进程在 <code>waitFor()</code> 里等着子进程退出</li>
+<li>两边都睡着了。父进程在等子进程退出，子进程在等父进程读管道。谁也不动。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgcf8edfa" class="outline-3">
+<h3 id="orgcf8edfa">诊断</h3>
+<div class="outline-text-3" id="text-orgcf8edfa">
+<p>
+卡住的时候打开另一个终端，看 <code>/proc</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls -l /proc/&lt;&#23376;&#36827;&#31243;PID&gt;/fd
+ls -l /proc/&lt;&#29238;&#36827;&#31243;PID&gt;/fd
+</pre>
+</div>
+
+<p>
+能看到子进程的 FD 1 指向一个管道，比如 <code>pipe:[1840573]</code> （写端），父进程有一个 FD 指向同一个管道 <code>pipe:[1840573]</code> （读端）。同一个管道号，两端都卡着。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcbc3c2d" class="outline-3">
+<h3 id="orgcbc3c2d">解法：让输出有个去处</h3>
+<div class="outline-text-3" id="text-orgcbc3c2d">
+<p>
+核心原则： <b>在 <code>waitFor()</code> 之前，管道必须有地方去。</b>
+</p>
+
+<p>
+最简单的方法是用 <code>BufferedReader</code> 先读完缓存再等退出：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"bash"</span>, <span class="org-string">"-c"</span>,
+    <span class="org-string">"for i in {1..100000}; do echo \"Line $i\"; done"</span>);
+pb.redirectErrorStream(<span class="org-constant">true</span>);
+<span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#20808;&#35835;&#23436;&#36755;&#20986;&#65292;&#31649;&#36947;&#27704;&#36828;&#19981;&#20250;&#28385;
+</span><span class="org-keyword">try</span> (<span class="org-type">BufferedReader</span> <span class="org-variable-name">reader</span> = <span class="org-keyword">new</span> <span class="org-type">BufferedReader</span>(
+        <span class="org-keyword">new</span> <span class="org-type">InputStreamReader</span>(process.getInputStream()))) {
+    reader.lines().forEach(line -&gt; System.out.println(<span class="org-string">"Output: "</span> + line));
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#21040;&#36825;&#36827;&#31243;&#22522;&#26412;&#24050;&#32463;&#36305;&#23436;&#20102;&#65292;waitFor &#21482;&#26159;&#25343;&#20010;&#36864;&#20986;&#30721;
+</span><span class="org-type">int</span> <span class="org-variable-name">exitCode</span> = process.waitFor();
+System.out.println(<span class="org-string">"Child exited with code: "</span> + exitCode);
+</pre>
+</div>
+
+<p>
+<code>redirectErrorStream(true)</code> 让 STDERR 合并到 STDOUT，只需要读一个管道就够了。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org542ef12" class="outline-2">
+<h2 id="org542ef12">坑二：僵尸进程</h2>
+<div class="outline-text-2" id="text-org542ef12">
+</div>
+<div id="outline-container-orgdc1ff85" class="outline-3">
+<h3 id="orgdc1ff85">症状</h3>
+<div class="outline-text-3" id="text-orgdc1ff85">
+<p>
+子进程执行完了， <code>ps</code> 一看还有一条：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ps aux | grep defunct
+</pre>
+</div>
+
+<p>
+状态栏是 <code>Z</code> ，命令后面跟着 <code>&lt;defunct&gt;</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgef663ec" class="outline-3">
+<h3 id="orgef663ec">根因</h3>
+<div class="outline-text-3" id="text-orgef663ec">
+<p>
+子进程调用 <code>exit()</code> 时，内核做了绝大部分清理工作（释放内存、关闭 FD），但故意保留了一丁点信息：进程表里一条记录，包含退出码和 PID。
+</p>
+
+<p>
+内核这么设计是有道理的——它觉得父进程可能需要知道子进程是怎么死的：成功退出还是崩溃了？退出码是多少？它等着父进程来 <code>waitpid()</code> 取走这个答案。在父进程来取之前，子进程就是僵尸。
+</p>
+
+<p>
+不消耗 CPU，不消耗内存，但占着一个 PID。
+</p>
+
+<p>
+JVM 确实有一个后台 reaper 线程自动清理子进程的 <code>waitpid()</code> ，正常情况不会出僵尸。但如果每秒产生几千个短命子进程，reaper 可能跟不上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf0611d1" class="outline-3">
+<h3 id="orgf0611d1">解法：必须收集退出状态</h3>
+<div class="outline-text-3" id="text-orgf0611d1">
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-comment-delimiter">// </span><span class="org-comment">&#23376;&#36827;&#31243;&#36864;&#20986;&#21518;&#65292;&#20869;&#26680;&#25343;&#30528;&#36864;&#20986;&#30721;&#19981;&#36208;
+</span><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"bash"</span>, <span class="org-string">"-c"</span>,
+    <span class="org-string">"echo 'done'; exit 0"</span>);
+pb.redirectErrorStream(<span class="org-constant">true</span>);
+<span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+<span class="org-keyword">try</span> (<span class="org-type">BufferedReader</span> <span class="org-variable-name">reader</span> = <span class="org-keyword">new</span> <span class="org-type">BufferedReader</span>(
+        <span class="org-keyword">new</span> <span class="org-type">InputStreamReader</span>(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#34892;&#21578;&#35785;&#20869;&#26680;&#65306;&#36864;&#20986;&#30721;&#25105;&#25910;&#21040;&#20102;
+</span><span class="org-type">int</span> <span class="org-variable-name">exitCode</span> = process.waitFor();
+System.out.println(<span class="org-string">"Exited with: "</span> + exitCode);
+</pre>
+</div>
+
+<p>
+如果不想阻塞（Java 9+），用 <code>onExit()</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java">process.onExit().thenAccept(p -&gt; {
+    System.out.println(<span class="org-string">"Exited with: "</span> + p.exitValue());
+});
+</pre>
+</div>
+
+<p>
+两个写法底层都在调 <code>waitpid()</code> 。内核拿到确认后，立马删掉进程表记录。僵尸消失。
+</p>
+
+<p>
+规则： <b>每 spawn 一个进程，必须有 waitFor() 或 onExit()。没有例外。</b>
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga194e36" class="outline-2">
+<h2 id="orga194e36">坑三：FD 泄漏</h2>
+<div class="outline-text-2" id="text-orga194e36">
+</div>
+<div id="outline-container-orga55d543" class="outline-3">
+<h3 id="orga55d543">症状</h3>
+<div class="outline-text-3" id="text-orga55d543">
+<p>
+日志里出现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-constant">java</span>.<span class="org-constant">io</span>.<span class="org-constant">IOException</span>: Too many open files
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb18063c" class="outline-3">
+<h3 id="orgb18063c">根因（两种模式）</h3>
+<div class="outline-text-3" id="text-orgb18063c">
+<p>
+第一种是代码没有进行资源回收：JDBC 连接不关、文件流不关、进程管道不关。每次 <code>pb.start()</code> 创建三个 FD，读完了不关，FD 慢慢泄漏。JVM 的 GC 最终会回收它们，但 GC 时间不确定，生产环境扛不到 GC 来就跪了。
+</p>
+
+<p>
+防御：try-with-resources 用上。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-keyword">try</span> (<span class="org-type">BufferedReader</span> <span class="org-variable-name">reader</span> = <span class="org-keyword">new</span> <span class="org-type">BufferedReader</span>(
+        <span class="org-keyword">new</span> <span class="org-type">InputStreamReader</span>(process.getInputStream()))) {
+    reader.lines().forEach(System.out::println);
+}
+</pre>
+</div>
+
+<p>
+第二种是资源回收速度跟不上：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"sleep"</span>, <span class="org-string">"100"</span>);
+pb.redirectErrorStream(<span class="org-constant">true</span>);
+pb.redirectOutput(<span class="org-constant">ProcessBuilder</span>.<span class="org-constant">Redirect</span>.DISCARD);
+<span class="org-type">List</span>&lt;<span class="org-type">Process</span>&gt; <span class="org-variable-name">processList</span> = <span class="org-keyword">new</span> <span class="org-type">ArrayList</span>&lt;&gt;();
+<span class="org-keyword">try</span> {
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 1000; i++) {
+        <span class="org-type">var</span> <span class="org-variable-name">process</span> = pb.start();
+        processList.add(process);
+        process.onExit().thenAccept(p -&gt;
+            System.out.println(<span class="org-string">"EXIT CODE: "</span> + p.exitValue()));
+    }
+} <span class="org-keyword">catch</span> (Exception e) {
+    System.out.println(<span class="org-string">"FD LIMIT HIT"</span>);
+    System.out.println(e.getMessage());
+    <span class="org-keyword">for</span> (<span class="org-type">Process</span> <span class="org-variable-name">p</span> : processList) {
+        p.destroyForcibly();
+    }
+}
+</pre>
+</div>
+
+<p>
+这段代码没有流泄漏，该 close 的都用 <code>Redirect.DISCARD</code> 处理了。但每个子进程活 100 秒， <code>for</code> 循环一口气生 1000 个，进程只增不减。如果 <code>ulimit</code> 设得低（比如 <code>ulimit -n 64</code> ），二十几个进程就撞天花板了。日志里的错误不是"流没关"，而是"spawn helper 无法 fork"——因为 fork 操作本身也需要 FD。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org55689af" class="outline-3">
+<h3 id="org55689af">诊断：看两个 limit</h3>
+<div class="outline-text-3" id="text-org55689af">
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">ulimit</span> -n    <span class="org-comment-delimiter"># </span><span class="org-comment">&#36719;&#38480;&#21046;
+</span><span class="org-builtin">ulimit</span> -Hn   <span class="org-comment-delimiter"># </span><span class="org-comment">&#30828;&#38480;&#21046;
+</span>cat /proc/sys/kernel/pid_max  <span class="org-comment-delimiter"># </span><span class="org-comment">&#31995;&#32479;&#26368;&#22823; PID &#25968;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcfebf13" class="outline-3">
+<h3 id="orgcfebf13">解法</h3>
+<div class="outline-text-3" id="text-orgcfebf13">
+<p>
+好习惯有两个：
+</p>
+<ol class="org-ol">
+<li>try-with-resources 关流，每次必做</li>
+<li>心里时刻清楚"我现在有多少个子进程活着"</li>
+</ol>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org550e9c7" class="outline-2">
+<h2 id="org550e9c7">坑四：exitValue() 竞态条件</h2>
+<div class="outline-text-2" id="text-org550e9c7">
+</div>
+<div id="outline-container-org3e42a1b" class="outline-3">
+<h3 id="org3e42a1b">症状</h3>
+<div class="outline-text-3" id="text-org3e42a1b">
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-constant">java</span>.<span class="org-constant">lang</span>.<span class="org-constant">IllegalThreadStateException</span>: process has not exited
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3920331" class="outline-3">
+<h3 id="org3920331">根因</h3>
+<div class="outline-text-3" id="text-org3920331">
+<p>
+<code>exitValue()</code> 用来取进程退出码，但它有一个隐形的前提条件：进程必须已经结束。如果进程还在跑，它不阻塞、不等、不重试，直接抛异常。
+</p>
+
+<p>
+最典型的翻车模式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#26679;&#20570;&#21487;&#33021;&#26412;&#22320;&#27809;&#38382;&#39064;&#65292;&#19978;&#20102;&#29983;&#20135;&#23601;&#23849;
+</span><span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+<span class="org-type">int</span> <span class="org-variable-name">code</span> = process.exitValue();  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36827;&#31243;&#21487;&#33021;&#36824;&#27809;&#36864;&#20986;</span>
+</pre>
+</div>
+
+<p>
+本地机器快、CPU 空闲、scheduler 给力——命令瞬间跑完，代码过了 release review。生产环境负载高、CPU 抢不到——进程没退出，异常飞出来。而且它 <b>时好时坏</b> ，是最难排查的那种 bug。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2dacd01" class="outline-3">
+<h3 id="org2dacd01">解法</h3>
+<div class="outline-text-3" id="text-org2dacd01">
+<p>
+<code>exitValue()</code> 只能在两个地方调用：
+</p>
+
+<ul class="org-ul">
+<li><code>waitFor()</code> 之后——阻塞等到进程结束再拿退出码</li>
+<li><code>onExit()</code> 回调内部——回调触发时进程已经死了，拿退出码安全</li>
+</ul>
+
+<p>
+其他地方调 <code>exitValue()</code> ，说明代码结构有问题。没有例外，不需要这个 API 裸用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org69cdba7" class="outline-2">
+<h2 id="org69cdba7">坑五：环境变量污染</h2>
+<div class="outline-text-2" id="text-org69cdba7">
+</div>
+<div id="outline-container-org822ae57" class="outline-3">
+<h3 id="org822ae57">症状</h3>
+<div class="outline-text-3" id="text-org822ae57">
+<p>
+子进程意外地拿到了数据库密码、API key 或 AWS 凭证。问题出在 <b>子进程默认会继承父进程的全部环境变量</b> 。这是 ProcessBuilder 的默认行为，不是 bug。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0dff300" class="outline-3">
+<h3 id="org0dff300">根因</h3>
+<div class="outline-text-3" id="text-org0dff300">
+<p>
+<code>ProcessBuilder</code> 默认把 Java 进程（JVM）的所有环境变量原封不动地传给每个子进程。你的 JVM 启动时带了一堆配置—— <code>DATABASE_URL</code> 、 <code>SECRET_KEY</code> 、 <code>AWS_ACCESS_KEY_ID</code> ——所有这些都会出现在 <code>ls</code> 命令的环境里。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga91175e" class="outline-3">
+<h3 id="orga91175e">解法</h3>
+<div class="outline-text-3" id="text-orga91175e">
+<p>
+<code>pb.environment()</code> 返回一个 <code>Map</code> ，可以随意操作。最佳实践是清空再注入：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-type">ProcessBuilder</span> <span class="org-variable-name">pb</span> = <span class="org-keyword">new</span> <span class="org-type">ProcessBuilder</span>(<span class="org-string">"bash"</span>, <span class="org-string">"-c"</span>, <span class="org-string">"echo $MY_VAR"</span>);
+<span class="org-comment-delimiter">// </span><span class="org-comment">environment() &#36820;&#22238; pb &#20869;&#37096;&#29615;&#22659;&#21464;&#37327;&#30340;&#24341;&#29992;&#65292;&#25913;&#20102;&#23427;&#23601;&#25913;&#20102;&#23376;&#36827;&#31243;&#30340;&#21551;&#21160;&#29615;&#22659;
+</span><span class="org-type">Map</span>&lt;<span class="org-type">String</span>, <span class="org-type">String</span>&gt; <span class="org-variable-name">env</span> = pb.environment();
+env.clear();                                  <span class="org-comment-delimiter">// </span><span class="org-comment">&#25830;&#25481;&#25152;&#26377;&#32487;&#25215;&#26469;&#30340;&#21464;&#37327;
+</span>env.put(<span class="org-string">"MY_VAR"</span>, <span class="org-string">"only_what_is_needed"</span>);     <span class="org-comment-delimiter">// </span><span class="org-comment">&#21482;&#32473;&#23376;&#36827;&#31243;&#38656;&#35201;&#30340;
+</span><span class="org-type">Process</span> <span class="org-variable-name">process</span> = pb.start();
+</pre>
+</div>
+
+<p>
+一个干净的隔离环境比"不小心把密码传给 <code>ls</code>"安全得多。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9f06836" class="outline-2">
+<h2 id="org9f06836">六种 Fix 怎么选</h2>
+<div class="outline-text-2" id="text-org9f06836">
+<p>
+汇总一下：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">场景</th>
+<th scope="col" class="org-left">推荐做法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">短命令，输出要在 Java 里处理</td>
+<td class="org-left"><code>BufferedReader</code> 逐行读</td>
+</tr>
+
+<tr>
+<td class="org-left">长命令，主线程不能卡</td>
+<td class="org-left"><code>CompletableFuture</code> 异步 drain</td>
+</tr>
+
+<tr>
+<td class="org-left">需要顺序拿 exit code</td>
+<td class="org-left">drain + <code>join()</code> + <code>waitFor()</code></td>
+</tr>
+
+<tr>
+<td class="org-left">不需要区分 STDOUT 和 STDERR</td>
+<td class="org-left"><code>redirectErrorStream(true)</code> 合并管道</td>
+</tr>
+
+<tr>
+<td class="org-left">开发调试，输出直接看</td>
+<td class="org-left"><code>inheritIO()</code> 让子进程输出直通终端</td>
+</tr>
+
+<tr>
+<td class="org-left">生产日志，Java 不用处理</td>
+<td class="org-left"><code>Redirect.to(file)</code> 管道直写文件</td>
+</tr>
+
+<tr>
+<td class="org-left">输出完全不关心</td>
+<td class="org-left"><code>Redirect.DISCARD</code> 根本别建管道</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+贯穿所有 Fix 的只有一条原则： <b>管道必须有去处，exit 必须被收集，资源必须被关闭。</b> 做到这三点， <code>ProcessBuilder</code> 就不会成为麻烦之源。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge28d15e" class="outline-2">
+<h2 id="orge28d15e">总结</h2>
+<div class="outline-text-2" id="text-orge28d15e">
+<p>
+这五个坑的共同根源是同一件事：把 <code>pb.start()</code> 当成普通 API 调用来用，没意识到它在 OS 层做了什么。
+</p>
+</div>
+
+<div id="outline-container-org084199b" class="outline-3">
+<h3 id="org084199b">一张图记住五个坑</h3>
+<div class="outline-text-3" id="text-org084199b">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">坑</th>
+<th scope="col" class="org-left">OS 层根因</th>
+<th scope="col" class="org-left">一句话解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">管道死锁</td>
+<td class="org-left">pipe buffer 64KB 满了冻住子进程</td>
+<td class="org-left">先 drain 再 waitFor</td>
+</tr>
+
+<tr>
+<td class="org-left">僵尸进程</td>
+<td class="org-left">exit status 等着被 waitpid 收集</td>
+<td class="org-left">waitFor/onExit 二选一</td>
+</tr>
+
+<tr>
+<td class="org-left">FD 泄漏</td>
+<td class="org-left">流不关或进程数超 ulimit</td>
+<td class="org-left">try-with-resources + 控制并发</td>
+</tr>
+
+<tr>
+<td class="org-left">竞态条件</td>
+<td class="org-left">exitValue 不肯等</td>
+<td class="org-left">只在 waitFor/onExit 后调</td>
+</tr>
+
+<tr>
+<td class="org-left">环境污染</td>
+<td class="org-left">子进程默认继承一切环境变量</td>
+<td class="org-left">clear + inject</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-05</span>
+    <span class="post-info">2026-05-05</span>
+    <a href="../../../../../tags/java">Java</a> : <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/进程管理">进程管理</a> : <a href="../../../../../tags/子进程">子进程</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5ghra5x4ztfulfezz0jwlsppfe &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

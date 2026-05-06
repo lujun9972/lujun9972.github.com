@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：理解 MCP 架构——LLM 直接调 API 与 MCP 协议的对比 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="同一个需求（比如让 AI 读 PDF），有两种架构来实现：直接调 LLM API 自己管工具循环，或者用 MCP 协议把工具暴露成独立服务。本文对比两种路线的架构差异、代码实现和选型依据，解释 MCP 的工具发现、复用和标准化到底解决了什么问题。" />
+  <meta name="keywords" content="MCP,LLM,AI架构,工具调用,Agent" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：理解 MCP 架构——LLM 直接调 API 与 MCP 协议的对比</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org0fde99d">引子：同一个需求，两种架构</a></li>
+<li><a href="#org2134580">Route 1：直接调 LLM API</a></li>
+<li><a href="#orgb6fd73c">Route 2：MCP 协议</a></li>
+<li><a href="#org6c4f03a">MCP 到底多了什么</a></li>
+<li><a href="#org079c9a5">什么时候选哪个</a>
+<ul>
+<li>
+<ul>
+<li><a href="#org95a7bbf">直接调 LLM API 适合</a></li>
+<li><a href="#orgea8b8b5">MCP 适合</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#orgd1eeea8">MCP 对外部工具的意义</a></li>
+<li><a href="#org633de16">选择依据</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0fde99d" class="outline-2">
+<h2 id="org0fde99d">引子：同一个需求，两种架构</h2>
+<div class="outline-text-2" id="text-org0fde99d">
+<p>
+假设你要做一个能读 PDF 的聊天机器人：提取文本、搜索文档、总结段落。功能不复杂，但你面临一个架构选择。
+</p>
+
+<p>
+你可以直接调 LLM API（Claude、GPT 等），自己管工具调用循环。也可以把 PDF 工具包成 MCP（Model Context Protocol，模型上下文协议）服务，让客户端通过协议来发现和调用工具。
+</p>
+
+<p>
+用户看到的体验一样。区别在于工具是怎么暴露给 AI 的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2134580" class="outline-2">
+<h2 id="org2134580">Route 1：直接调 LLM API</h2>
+<div class="outline-text-2" id="text-org2134580">
+<p>
+这种做法很简单：你的应用直接调 LLM API，把工具定义塞进每次请求里，自己跑 agent 循环。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;-&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;  &#20320;&#30340;&#24212;&#29992;&#65288;&#21333;&#36827;&#31243;&#65289;                               &#9474;
+&#9474;                                                   &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;  tools &#23450;&#20041;+messages &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488; &#9474;
+&#9474;  &#9474; Agent &#24490;&#29615;    &#9474; &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9658;  &#9474; LLM API&#9474; &#9474;
+&#9474;  &#9474;              &#9474;  &#9668;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;  &#9474;        &#9474; &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;   tool_use / &#25991;&#26412;    &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496; &#9474;
+&#9474;         &#9474; &#35843;&#29992;&#26412;&#22320;&#20989;&#25968;                            &#9474;
+&#9474;         &#9660;                                         &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;                                 &#9474;
+&#9474;  &#9474; executeTool()&#9474; &#9472;&#9472;&#9658; read_pdf, search_pdf        &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;   &#65288;&#21644;&#20320;&#30340;&#20195;&#30721;&#36305;&#22312;&#21516;&#19968;&#36827;&#31243;&#37324;&#65289;  &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;-&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+</div>
+
+<p>
+你在代码里写好每个工具的名字、描述和参数格式（这叫「工具定义」），每次请求 LLM 时把工具定义和用户消息一起发过去。LLM 看到工具定义后，如果判断需要调工具，就返回一个 <code>tool_use</code> 响应（告诉你调哪个工具、传什么参数）。你的代码拿到 <code>tool_use</code> 后，调对应的函数执行，再把执行结果喂回 LLM。LLM 可能继续返回 <code>tool_use=（调更多工具），也可能直接返回最终回答（=end_turn=）。这个「发消息 → 收 =tool_use</code> → 执行工具 → 喂回结果 → 再发消息」的来回过程就是「工具调用循环」，在 Route 1 里你需要自己写代码管这个循环。
+</p>
+
+<p>
+工具定义长这样（以 Node.js 为例）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">const</span> <span class="org-variable-name">tools</span> = [
+  {
+    name: <span class="org-string">"read_pdf"</span>,
+    description: <span class="org-string">"&#25552;&#21462; PDF &#25991;&#20214;&#30340;&#20840;&#37096;&#25991;&#26412;"</span>,
+    input_schema: {
+      type: <span class="org-string">"object"</span>,
+      properties: {
+        path: { type: <span class="org-string">"string"</span>, description: <span class="org-string">"PDF &#25991;&#20214;&#36335;&#24452;"</span> }
+      },
+      required: [<span class="org-string">"path"</span>]
+    }
+  },
+  <span class="org-comment-delimiter">// </span><span class="org-comment">... search_pdf, list_pdfs &#31867;&#20284;
+</span>];
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#20320;&#33258;&#24049;&#20889;&#20998;&#27966;&#36923;&#36753;
+</span><span class="org-keyword">async</span> <span class="org-keyword">function</span> executeTool(<span class="org-variable-name">name</span>, <span class="org-variable-name">input</span>) {
+  <span class="org-keyword">if</span> (name === <span class="org-string">"read_pdf"</span>)   <span class="org-keyword">return</span> <span class="org-keyword">await</span> extractTextFromPdf(input.path);
+  <span class="org-keyword">if</span> (name === <span class="org-string">"search_pdf"</span>) <span class="org-keyword">return</span> <span class="org-keyword">await</span> searchPdfs(input.directory, input.keyword);
+  <span class="org-keyword">if</span> (name === <span class="org-string">"list_pdfs"</span>)  <span class="org-keyword">return</span> <span class="org-keyword">await</span> listPdfFiles(input.path);
+  <span class="org-keyword">throw</span> <span class="org-keyword">new</span> <span class="org-type">Error</span>(<span class="org-string">`Unknown tool: ${name}`</span>);
+}
+</pre>
+</div>
+
+<p>
+这种做法的特点是Agent 循环、工具分派、PDF 解析全跑在一个程序的内存空间里，不需要跨进程通信，也不需要额外部署。你只需要 LLM SDK 和一个 PDF 解析库。但这意味着工具和你的应用紧耦合： <code>executeTool()</code> 里硬编码了每个工具的分派逻辑，只有这个应用能用这些 PDF 工具。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb6fd73c" class="outline-2">
+<h2 id="orgb6fd73c">Route 2：MCP 协议</h2>
+<div class="outline-text-2" id="text-orgb6fd73c">
+<p>
+这种做法把 PDF 工具做成一个独立的 MCP 服务。你的聊天机器人（或者 Cursor、Claude Desktop 等任何 MCP 客户端）连上去，运行时发现工具，通过协议调用。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;  &#23458;&#25143;&#31471;&#65288;&#32842;&#22825;&#26426;&#22120;&#20154;&#12289;Cursor&#12289;Claude Desktop &#31561;&#65289;           &#9474;
+&#9474;                                                            &#9474;
+&#9474;  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;  tools/list, tools/call  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488; &#9474;
+&#9474;  &#9474; MCP &#23458;&#25143;&#31471;    &#9474; &#9668;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9658;&#9474; PDF MCP &#26381;&#21153;&#9474; &#9474;
+&#9474;  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;  &#65288;JSON-RPC over stdio&#65289; &#9474; &#65288;&#29420;&#31435;&#36827;&#31243;&#65289;&#9474; &#9474;
+&#9474;         &#9650;                                  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496; &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9532;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9532;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+          &#9474;                                         &#9474;
+messages  &#9474;                                         &#9474;
+          &#9474; tool_use                               &#9474;
+          &#9474;                                         &#9474;
+          &#9660;                                         &#9660;
+&#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;                    &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+&#9474;  LLM API          &#9474;                    &#9474;  PDF &#25991;&#20214;&#31995;&#32479;     &#9474;
+&#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;                    &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</pre>
+</div>
+
+<p>
+MCP 服务是一个独立进程，通过 JSON-RPC 通信。客户端连上后调 <code>tools/list</code> 发现工具，调 <code>tools/call</code> 执行工具。
+</p>
+
+<p>
+MCP 服务端代码长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">import</span> { McpServer } from <span class="org-string">"@modelcontextprotocol/sdk/server/mcp.js"</span>;
+<span class="org-keyword">import</span> { StdioServerTransport } from <span class="org-string">"@modelcontextprotocol/sdk/server/stdio.js"</span>;
+<span class="org-keyword">import</span> { z } from <span class="org-string">"zod"</span>;
+
+<span class="org-keyword">const</span> <span class="org-variable-name">server</span> = <span class="org-keyword">new</span> <span class="org-type">McpServer</span>({ name: <span class="org-string">"pdf-server"</span>, version: <span class="org-string">"1.0.0"</span> });
+
+server.tool(
+  <span class="org-string">"read_pdf"</span>,
+  { path: z.string().describe(<span class="org-string">"PDF &#25991;&#20214;&#36335;&#24452;"</span>) },
+  <span class="org-keyword">async</span> ({ path }) =&gt; {
+    <span class="org-keyword">const</span> <span class="org-variable-name">text</span> = <span class="org-keyword">await</span> extractTextFromPdf(path);
+    <span class="org-keyword">return</span> { content: [{ type: <span class="org-string">"text"</span>, text }] };
+  }
+);
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">... search_pdf, list_pdfs &#31867;&#20284;
+</span>
+<span class="org-keyword">await</span> server.connect(<span class="org-keyword">new</span> <span class="org-type">StdioServerTransport</span>());
+</pre>
+</div>
+
+<p>
+客户端不需要定义这些工具，运行时发现就行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">const</span> <span class="org-variable-name">mcp</span> = <span class="org-keyword">new</span> <span class="org-type">Client</span>({ name: <span class="org-string">"chatbot"</span>, version: <span class="org-string">"1.0.0"</span> });
+<span class="org-keyword">await</span> mcp.connect(<span class="org-keyword">new</span> <span class="org-type">StdioClientTransport</span>({
+  command: <span class="org-string">"node"</span>, args: [<span class="org-string">"pdf-mcp-server.js"</span>]
+}));
+
+<span class="org-keyword">const</span> { tools } = <span class="org-keyword">await</span> mcp.listTools();  <span class="org-comment-delimiter">// </span><span class="org-comment">&#36816;&#34892;&#26102;&#21457;&#29616;&#65292;&#19981;&#29992;&#30828;&#32534;&#30721;
+</span>
+<span class="org-comment-delimiter">// </span><span class="org-comment">LLM &#36820;&#22238; tool_use &#26102;&#65306;
+</span><span class="org-keyword">const</span> <span class="org-variable-name">result</span> = <span class="org-keyword">await</span> mcp.callTool({
+  name: block.name,
+  <span class="org-constant">arguments</span>: block.input
+});
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6c4f03a" class="outline-2">
+<h2 id="org6c4f03a">MCP 到底多了什么</h2>
+<div class="outline-text-2" id="text-org6c4f03a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">维度</th>
+<th scope="col" class="org-left">直接调 LLM API</th>
+<th scope="col" class="org-left">MCP</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">工具定义</td>
+<td class="org-left">硬编码在你的应用里</td>
+<td class="org-left">在服务端声明，客户端运行时发现</td>
+</tr>
+
+<tr>
+<td class="org-left">工具执行</td>
+<td class="org-left">你自己写 <code>executeTool()</code></td>
+<td class="org-left">服务端跑，客户端发 <code>tools/call</code></td>
+</tr>
+
+<tr>
+<td class="org-left">谁能用这些工具</td>
+<td class="org-left">只有你的应用</td>
+<td class="org-left">任何 MCP 客户端（Cursor、Claude Desktop、你自己的聊天机器人）</td>
+</tr>
+
+<tr>
+<td class="org-left">通信协议</td>
+<td class="org-left">自己管（随意）</td>
+<td class="org-left">JSON-RPC（ <code>tools/list</code> 、 <code>tools/call</code> ）</td>
+</tr>
+
+<tr>
+<td class="org-left">进程边界</td>
+<td class="org-left">全在同一个进程</td>
+<td class="org-left">客户端管对话，服务端管工具</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+MCP 在 AI 客户端和工具提供者之间加了一层协议。客户端不需要知道 PDF 怎么读，它只需要调 <code>tools/call</code> 传个名字和参数。服务端负责实现逻辑。给服务端加一个新工具（比如 <code>summarize_pdf</code> ），所有连上来的客户端自动就有了，客户端代码一行不用改。
+</p>
+
+<ol class="org-ol">
+<li><b>关注分离。</b> 直接调 API 时你的应用什么都管：对话、工具分派、PDF 处理。一个代码库，一个部署单元。MCP 把 PDF 服务拆成独立服务，可以单独开发、测试、版本管理。</li>
+
+<li><b>发现取代配置。</b> 直接调 API 时你手动把每个工具加到 tools 数组和 executeTool 里，新工具意味着改客户端代码。MCP 客户端调 <code>tools/list</code> 拿到当前所有工具，服务端加了新工具客户端自动感知。</li>
+
+<li><b>跨客户端复用。</b> 直接调 API 时想让 Cursor 或 Claude Desktop 用你的 PDF 工具，得分别集成（如果它们支持的话）。MCP 模式下同一个 PDF 服务同时给 Cursor、Claude Desktop、VS Code Copilot 和你自己的聊天机器人用，一套代码多个消费者。</li>
+
+<li><b>传输灵活。</b> MCP 支持 stdio（子进程）和 HTTP。PDF 服务可以跑在本地当子进程，也可以部署成 HTTP 服务。协议不变，传输层随便换。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org079c9a5" class="outline-2">
+<h2 id="org079c9a5">什么时候选哪个</h2>
+<div class="outline-text-2" id="text-org079c9a5">
+</div>
+<div id="outline-container-org95a7bbf" class="outline-4">
+<h4 id="org95a7bbf">直接调 LLM API 适合</h4>
+<div class="outline-text-4" id="text-org95a7bbf">
+<ul class="org-ul">
+<li>单一应用（内部工具、定制聊天机器人）</li>
+<li>追求最小化配置：一个进程，一个部署</li>
+<li>只有这个应用需要这些能力</li>
+<li>你想掌控整个流程</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgea8b8b5" class="outline-4">
+<h4 id="orgea8b8b5">MCP 适合</h4>
+<div class="outline-text-4" id="text-orgea8b8b5">
+<ul class="org-ul">
+<li>多个客户端要共用同一套工具</li>
+<li>你想要一个可复用的工具服务，别人可以即插即用</li>
+<li>你在乎工具提供者和聊天客户端之间的清晰边界</li>
+<li>你在构建一个可组合的 AI 工具生态</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd1eeea8" class="outline-2">
+<h2 id="orgd1eeea8">MCP 对外部工具的意义</h2>
+<div class="outline-text-2" id="text-orgd1eeea8">
+<p>
+把工具通过 MCP 暴露出去之后，任何支持 MCP 的 LLM 应用都能直接用。
+</p>
+
+<p>
+完整流程是这样的：
+</p>
+
+<ol class="org-ol">
+<li>用户用自然语言提问："report.pdf 里写了什么？"</li>
+<li>客户端把问题发给 LLM</li>
+<li>LLM 判断需要调 <code>read_pdf(path: "report.pdf")</code></li>
+<li>客户端向 MCP 服务端发 <code>tools/call</code></li>
+<li>MCP 服务端执行 <code>read_pdf</code> ，提取文本</li>
+<li>服务端把结果返回给客户端</li>
+<li>客户端把结果传给 LLM</li>
+<li>LLM 用自然语言回答用户</li>
+</ol>
+
+<p>
+客户端完全不碰 PDF 逻辑，它只负责说 MCP 协议：接收工具调用请求、转发给服务端、返回结果。
+</p>
+
+<p>
+这意味着：
+</p>
+<ul class="org-ul">
+<li><b>零集成。</b> Cursor、Claude Desktop、Copilot 已经支持 MCP，不需要为你的 PDF 服务写专门插件。</li>
+<li><b>厂商无关。</b> 你的 MCP 服务跟任何 MCP 客户端都能配合，不绑定某个厂商的 SDK。</li>
+<li><b>装了就能用。</b> 用户在你的 MCP 配置文件里加一行指向服务地址或可执行文件，工具就到位了。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org633de16" class="outline-2">
+<h2 id="org633de16">选择依据</h2>
+<div class="outline-text-2" id="text-org633de16">
+<p>
+说到底就是一个判断：你的工具是给一个应用用的，还是给多个消费者用的？前者选直接调 API，简单直接。后者选 MCP，多一层抽象，好处是复用和标准化。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-05</span>
+    <span class="post-info">2026-05-05</span>
+    <a href="../../../../../tags/mcp">MCP</a> : <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/ai架构">AI架构</a> : <a href="../../../../../tags/工具调用">工具调用</a> : <a href="../../../../../tags/agent">Agent</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5ghra5x4ztfulfezz0jwlsppfe &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

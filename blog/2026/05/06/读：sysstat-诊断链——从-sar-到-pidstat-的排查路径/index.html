@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：sysstat 诊断链——从 sar 到 pidstat 的排查路径 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="系统变慢了，top 只能告诉你&quot;现在慢&quot;，说不清为什么慢、什么时候开始慢的。sysstat 套件（mpstat、pidstat、sar、iostat）提供了一条从历史回放到进程定责的完整诊断链。本文用一条排查路径串联这四个工具的核心用法。" />
+  <meta name="keywords" content="Linux,sysstat,性能诊断,mpstat,pidstat,sar,iostat" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：sysstat 诊断链——从 sar 到 pidstat 的排查路径</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgeef3be9">引子</a></li>
+<li><a href="#org72b5bdb">安装和启用</a></li>
+<li><a href="#org170bbee">诊断第一环：sar -u 回看历史</a></li>
+<li><a href="#orgffbf476">诊断第二环：mpstat -P ALL 定位热核</a></li>
+<li><a href="#org6ebc89c">诊断第三环：pidstat 找到凶手进程</a></li>
+<li><a href="#orgdcb8b76">诊断第四环（条件）：追 I/O 和内存</a></li>
+<li><a href="#org6efe693">贯穿始终：sar 历史 + sadf 导出</a></li>
+<li><a href="#org5e68953">排查链总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgeef3be9" class="outline-2">
+<h2 id="orgeef3be9">引子</h2>
+<div class="outline-text-2" id="text-orgeef3be9">
+<p>
+系统变慢的时候，大多数人的第一反应是敲 <code>top</code> 。这没问题。 <code>top</code> 给你一个即时快照：谁在用 CPU、内存还剩多少、load average 大概什么水平。
+</p>
+
+<p>
+但 <code>top</code> 有两个盲区。第一，它只看当下。凌晨 3 点发生的性能问题，你早上 9 点坐到工位时 <code>top</code> 已经什么都看不到了。第二， <code>top</code> 能看到每个进程用了多少 CPU，但很难同时看清三件事：哪个核在忙、忙的是哪个线程、当时有多少进程在排队等 CPU。这三个信息分散在不同的视图里，手工拼凑太慢。
+</p>
+
+<p>
+sysstat 套件补上了这两个盲区。它包含四个核心工具： <code>mpstat</code> 、 <code>pidstat</code> 、 <code>sar</code> 、 <code>iostat</code> 。TecMint 上有篇 <a href="https://www.tecmint.com/sysstat-commands-linux-mpstat-pidstat-iostat-sar/">文章</a> 系统介绍了它们的用法。本文不逐条翻译那 20 个示例，改用一条真实的排查链路把它们串起来，从发现异常到定位根因。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org72b5bdb" class="outline-2">
+<h2 id="org72b5bdb">安装和启用</h2>
+<div class="outline-text-2" id="text-org72b5bdb">
+<p>
+sysstat 大部分发行版默认不装：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">Debian/Ubuntu
+</span>sudo apt install sysstat
+<span class="org-comment-delimiter"># </span><span class="org-comment">RHEL/Fedora
+</span>sudo dnf install sysstat
+<span class="org-comment-delimiter"># </span><span class="org-comment">Arch Linux
+</span>sudo pacman -S sysstat
+</pre>
+</div>
+
+<p>
+装完确认版本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mpstat -V
+</pre>
+</div>
+
+<pre class="example" id="orgc44a8fc">
+sysstat 版本 12.7.9
+(C) Sebastien Godard (sysstat &lt;at&gt; orange.fr)
+</pre>
+
+<p>
+<b>Ubuntu 用户特别注意</b> ：安装后数据收集默认是关闭的。需要编辑 <code>/etc/default/sysstat</code> ，把 <code>ENABLED="false"</code> 改成 <code>ENABLED="true"</code> 。否则 sar 不会自动记录历史数据，而这是整篇文章最有价值的功能，漏掉等于白装。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org170bbee" class="outline-2">
+<h2 id="org170bbee">诊断第一环：sar -u 回看历史</h2>
+<div class="outline-text-2" id="text-org170bbee">
+<p>
+场景：早上到工位，同事说昨晚系统很卡。你可以通过 sar 回顾当时的系统指标。
+</p>
+
+<p>
+sar 通过 cron 定时采集系统指标，存成二进制日志。你可以指定任意时间段回放。
+</p>
+
+<p>
+配好 cron 自动收集（这一步是整篇文章最重要的事）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#27599; 10 &#20998;&#38047;&#37319;&#38598;&#19968;&#27425;
+</span>*/10 * * * * /usr/lib/sysstat/sa1 1 1   <span class="org-comment-delimiter"># </span><span class="org-comment">Debian/Ubuntu
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#27599;&#22825; 23:53 &#29983;&#25104;&#21487;&#35835;&#25253;&#21578;
+</span>53 23 * * * /usr/lib/sysstat/sa2 -A
+</pre>
+</div>
+
+<p>
+<code>sa1</code> / <code>sa2</code> 的路径因发行版不同：
+</p>
+<ul class="org-ul">
+<li>Debian/Ubuntu： <code>/usr/lib/sysstat/sa1</code></li>
+<li>RHEL/Rocky： <code>/usr/lib64/sa/sa1</code></li>
+<li>Arch Linux： <code>/usr/lib/sa/sa1</code></li>
+</ul>
+
+<p>
+Debian/Ubuntu 下 <code>which sa1</code> 能找到，Arch 下 <code>sa1</code> 在 <code>/usr/lib/sa/</code> 而不在 <code>PATH</code> 里，用 <code>ls /usr/lib/sa/sa1</code> 确认。确认路径后替换 cron 条目中的对应位置。
+</p>
+
+<p>
+确认数据在积累：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls -lh /var/log/sysstat/
+</pre>
+</div>
+
+<p>
+回放历史 CPU 数据：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sar -u -f /var/log/sysstat/sa$(<span class="org-sh-quoted-exec">date +%d</span>)
+</pre>
+</div>
+
+<p>
+<code>sar -u</code> 的输出项跟 <code>mpstat</code> 类似（ <code>%=user</code> 、 <code>%=system</code> 、 <code>%=iowait</code> 等），关键在于它能告诉你问题发生的具体时段。知道时间点之后，后面的工具才有用武之地。
+</p>
+
+<p>
+如果你不需要回放历史、只想看当前的连续采样，让 sar 交互式跑几轮：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sar -u 2 5
+</pre>
+</div>
+
+<p>
+<code>2 5</code> 的意思是每 2 秒采一次，采 5 次。最后会有一行 <code>Average:</code> 汇总。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgffbf476" class="outline-2">
+<h2 id="orgffbf476">诊断第二环：mpstat -P ALL 定位热核</h2>
+<div class="outline-text-2" id="text-orgffbf476">
+<p>
+sar 告诉你"昨晚 10 点到 11 点 CPU 偏高"，接下来要回答"是所有核都忙，还是单核被打满"。
+</p>
+
+<p>
+<code>mpstat</code> 报告逐核 CPU 使用率。不加参数时只给一个全局汇总：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mpstat
+</pre>
+</div>
+
+<p>
+加了 <code>-P ALL</code> 之后，每个 CPU 核心一行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mpstat -P ALL 2 5
+</pre>
+</div>
+
+<p>
+这时候你可能看到类似这样的输出：
+</p>
+
+<pre class="example" id="orgded589e">
+CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
+all   19.87    0.01    3.02    0.88    0.00    0.08    0.00    0.00    0.00   76.14
+  0   72.14    0.00    5.22    0.00    0.00    0.00    0.00    0.00    0.00   22.64
+  1   14.32    0.03    2.88    0.52    0.00    0.08    0.00    0.00    0.00   82.17
+  2   10.44    0.02    2.71    1.98    0.00    0.12    0.00    0.00    0.00   84.73
+  3    8.11    0.01    1.75    3.52    0.00    0.09    0.00    0.00    0.00   86.52
+</pre>
+
+<p>
+CPU 0 的用户态使用率 72%，其他三个核几乎空闲。这是经典的单线程进程打满单核的特征。
+</p>
+
+<p>
+几个值得注意的列：
+</p>
+
+<ul class="org-ul">
+<li><code>%iowait</code> ：持续超过 10-15% 意味着系统在等磁盘读写。这时候加 CPU 没用，问题在磁盘。</li>
+<li><code>%soft</code> ：软件中断占比。网络数据包到达后，内核需要软中断来处理协议栈（TCP/IP 拆包、路由等）。 <code>%=soft</code> 高通常意味着网络流量打满了，CPU 在忙于收发包而非跑你的应用程序。</li>
+</ul>
+
+<p>
+如果怀疑中断不均衡（比如网卡中断全压在 CPU 0 上），用 <code>-I ALL</code> 看中断分布：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mpstat -I ALL
+</pre>
+</div>
+
+<p>
+<code>NET_RX/s</code> 集中在某个核上、同时该核 <code>%soft</code> 偏高，说明网卡中断亲和性（网卡硬中断固定发给某个 CPU 处理）需要调整。要么用 <code>irqbalance</code> 服务自动分配中断到多个核，要么手动写 <code>/proc/irq/&lt;编号&gt;/smp_affinity</code> 把特定中断号绑到其他 CPU 上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6ebc89c" class="outline-2">
+<h2 id="org6ebc89c">诊断第三环：pidstat 找到凶手进程</h2>
+<div class="outline-text-2" id="text-org6ebc89c">
+<p>
+mpstat 告诉你"CPU 0 被打满了"，下一个问题自然是"谁打的"。
+</p>
+
+<p>
+<code>pidstat</code> 报告进程级别的 CPU、内存、I/O 使用率。不加参数列出所有活跃进程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pidstat
+</pre>
+</div>
+
+<pre class="example" id="orga574b5d">
+UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+1000     2841   18.44    0.88    0.00    0.00   19.32     0  python3
+1000     3102    0.12    0.04    0.00    0.00    0.16     2  nginx
+</pre>
+
+<p>
+<code>CPU</code> 列显示该进程最后跑在哪个核上，和 mpstat 的热核直接对应。
+</p>
+
+<p>
+<code>%=wait</code> 是一个容易被忽略但非常重要的列（sysstat 11.5 引入）：它表示进程就绪后在运行队列里等待 CPU 调度的时间。这项持续非零，意味着 CPU 不够用，就绪队列里堆了太多工作，不是进程本身慢。
+</p>
+
+<p>
+有了可疑的 PID，用 <code>-t</code> 展开线程看细节：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pidstat -t -p 2841 2 3
+</pre>
+</div>
+
+<pre class="example" id="orgd26cf1e">
+TGID       TID    %usr %system  %guest   %wait    %CPU   CPU  Command
+2841         -   18.00    0.88    0.00    0.00   18.88     0  python3
+   -      2841   17.50    0.50    0.00    0.00   18.00     0  |__python3
+   -      2844    0.50    0.38    0.00    0.00    0.88     1  |__ThreadPool-1
+</pre>
+
+<p>
+输出里主线程（ <code>python3</code> ）占 18.00% CPU，线程池（ <code>ThreadPool-1</code> ）仅 0.88%。而且两行都是 <code>%wait</code> 为零、 <code>%=usr</code> 占大头，说明线程没有在等 CPU，也没有在等 I/O，就是在做纯用户态计算。这样可以定位：CPU 消耗集中在这个进程的主线程上，检查主线程的执行路径就能找到耗 CPU 的代码。
+</p>
+
+<p>
+如果进程名已知，用 <code>-G</code> 直接过滤，不用在进程列表里找：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pidstat -G nginx 2
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdcb8b76" class="outline-2">
+<h2 id="orgdcb8b76">诊断第四环（条件）：追 I/O 和内存</h2>
+<div class="outline-text-2" id="text-orgdcb8b76">
+<p>
+<b>如果 mpstat 发现 <code>%iowait</code> 偏高</b>
+</p>
+
+<p>
+<code>pidstat -d</code> 报告每个进程的磁盘读写量：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pidstat -d 2
+</pre>
+</div>
+
+<pre class="example" id="orge2efd3f">
+PID   kB_rd/s   kB_wr/s kB_ccwr/s iodelay  Command
+2841    412.00     88.00      4.00      12  python3
+</pre>
+
+<p>
+<code>iodelay</code> 列是非零值时，该进程就是在等 I/O。和 mpstat 里高 <code>%iowait</code> 互相印证，凶手就确认了。
+</p>
+
+<p>
+<code>sar -d</code> 则从块设备层面看延迟：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sar -d 1 3
+</pre>
+</div>
+
+<ul class="org-ul">
+<li><code>await</code> ：请求从排队到完成的总时间</li>
+<li><code>aqu-sz</code> ：平均队列深度</li>
+</ul>
+
+<p>
+<code>await</code> 持续高但 <code>aqu-sz</code> 接近零，说明磁盘本身就慢（比如机械盘随机读写）。 <code>await</code> 高且 <code>aqu-sz</code> 也在 1 以上，则是排队已形成，磁盘处理不过来。
+</p>
+
+<p>
+注意：旧文档常提的 <code>svctm</code> 字段在新内核中已废弃，sar 输出里该列不再可靠，不要依赖它做判断。
+</p>
+
+<p>
+<b>如果怀疑内存压力</b>
+</p>
+
+<p>
+<code>sar -r</code> 报告内存使用情况。重点看 <code>%=commit</code> 列：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sar -r 1 3
+</pre>
+</div>
+
+<p>
+<code>%=commit</code> 是内核承诺给进程的虚拟内存总量相对于物理内存 + swap 的比例。超过 100%，意味着所有进程同时要求兑现承诺的话，OOM killer 就会出动。
+</p>
+
+<p>
+<code>pidstat -r</code> 则从进程视角看内存：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pidstat -r -p 2841 2 3
+</pre>
+</div>
+
+<p>
+<code>VSZ</code> 是虚拟内存， <code>RSS</code> 是物理内存。重点看 <code>majflt/s</code> （主缺页）列：主缺页意味着内核必须从磁盘捞回被换出的页面，持续非零说明系统在颠簸（thrashing），进程响应速度会明显下降。次缺页（ <code>minflt/s</code> ）不贵，只是内核在物理内存里映射页面而已。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6efe693" class="outline-2">
+<h2 id="org6efe693">贯穿始终：sar 历史 + sadf 导出</h2>
+<div class="outline-text-2" id="text-org6efe693">
+<p>
+sar 真正的价值不是交互式采样（这个 mpstat 和 pidstat 也能做），而是自动收集的历史数据。配好 cron 后，任何发生过的性能问题你都可以事后回放。
+</p>
+
+<p>
+回放历史数据时，用 <code>sadf -d</code> 导出为 CSV 格式，可以在表格里画图、和同事分享：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sadf -d /var/log/sysstat/sa$(<span class="org-sh-quoted-exec">date +%d</span>) -- -n DEV | grep -v lo
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org5e68953" class="outline-2">
+<h2 id="org5e68953">排查链总结</h2>
+<div class="outline-text-2" id="text-org5e68953">
+<p>
+整个过程是一条线：
+</p>
+
+<ol class="org-ol">
+<li><code>sar -u</code> 回看历史，确定问题时段</li>
+<li><code>mpstat -P ALL</code> 定位热核，看是均匀分布还是单核瓶颈</li>
+<li><code>pidstat</code> 找到具体进程， <code>-t</code> 展开线程定位</li>
+<li>如果 <code>%iowait</code> 高， <code>pidstat -d</code> + <code>sar -d</code> 追磁盘；如果怀疑内存， <code>sar -r</code> + <code>pidstat -r</code> 查换页</li>
+</ol>
+
+<p>
+最值得现在做的事：把 sar 的 cron 采集配好，攒一周基线数据。有问题发生时，有历史数据和没有历史数据，排查时间是分钟级和小时级的差别。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-06</span>
+    <span class="post-info">2026-05-06</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/sysstat">sysstat</a> : <a href="../../../../../tags/性能诊断">性能诊断</a> : <a href="../../../../../tags/mpstat">mpstat</a> : <a href="../../../../../tags/pidstat">pidstat</a> : <a href="../../../../../tags/sar">sar</a> : <a href="../../../../../tags/iostat">iostat</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5ghra5x4ztfulfezz0jwlsppfe &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
