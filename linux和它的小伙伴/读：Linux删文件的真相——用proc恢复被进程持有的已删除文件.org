@@ -1,0 +1,191 @@
+#+TITLE: 读：Linux 删文件的真相——用 /proc 恢复被进程持有的已删除文件
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux,lsof,/proc,文件恢复,运维,inode
+#+DATE: [2026-05-07 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: rm 删掉的只是目录条目，不是数据。只要进程还持有文件，kernel 就留着 inode 和磁盘块。本文从 link count 讲起，用 lsof + /proc 恢复被进程持有的已删除文件，附带改进行脚本和预防方案。
+
+生产环境上删日志文件是常规操作。删完 =access.log= ，nginx 还在往里写。写到哪里去了？写到了你刚删掉的那个文件里。TecMint 上有篇[[https://www.tecmint.com/recover-deleted-file-linux/][文章]]讲了这个机制的原理和恢复方法。核心就一句： =rm= 删的是文件名，数据还在磁盘上。只要进程抓着文件不放，kernel 就留着 inode，还给留了一扇后门把数据捞回来。
+
+* rm 到底删了什么
+
+Linux 文件系统里，文件名和数据是分开存的。文件名只是目录里的一个条目，指向一个叫 inode 的结构。inode 里记着数据在磁盘的哪个位置、大小、权限，还有一个关键数字 *link count* （链接数），表示有多少个目录条目指向这个 inode。
+
+=rm= 做的事很简单：把文件名从目录里拿掉，把 inode 的 link count 减 1。
+
+link count 降到 0，且没有进程在使用这个文件时，kernel 才真正回收磁盘块。但如果有个进程打开了文件（比如 nginx 正在写 =access.log= ），kernel 会额外给 inode 加一个引用计数。这时候你 rm 了文件，link count 归零， =ls= 也看不到了，但引用计数没归零。进程还抓着文件描述符不放，磁盘块完好无损。
+
+恢复窗口就在这里：从敲 =rm= 到进程退出或关闭文件描述符，数据一直都在。
+
+* 找到持有文件的进程
+
+工具是 =lsof= （list open files），列出系统里所有进程打开的文件描述符。关键选项是 =+L1= ：列出 link count 小于 1 的文件，也就是目录条目已经没了但进程还抓着的那些。
+
+#+begin_src shell
+sudo lsof +L1
+#+end_src
+
+#+begin_example
+COMMAND   PID     USER   FD   TYPE DEVICE SIZE/OFF NLINKS     NODE NAME
+nginx    1423 www-data    4w   REG  253,1   204800      0   131074 /var/log/nginx/access.log (deleted)
+rsyslogd  1201      root   7w   REG  253,1   819200      0   131075 /var/log/syslog (deleted)
+#+end_example
+
+关注四列：
+
+- =PID= ：持有文件的进程 ID
+- =FD= ：文件描述符编号（ =4w= 表示 fd 4，写模式； =7w= 同理）
+- =NLINKS= ：0 表示目录里已经没有这个名字了
+- =NAME= ：末尾的 =(deleted)= 确认文件已被 rm
+
+如果只想找特定文件，用 =grep= 过滤：
+
+#+begin_src shell
+sudo lsof +L1 | grep access.log
+#+end_src
+
+* 从 /proc 把数据拷出来
+
+kernel 把每个进程打开的文件描述符暴露在 =/proc/<PID>/fd/= 下。每个 fd 是一个符号链接，指向原始文件路径。就算文件已被 rm，链接仍然有效，数据照读不误。
+
+从上面的输出拿到 PID=1423，FD=4，恢复操作就是一行 =cp= ：
+
+#+begin_src shell
+sudo cp /proc/1423/fd/4 /var/log/nginx/access.log.recovered
+#+end_src
+
+验证恢复的内容：
+
+#+begin_src shell
+ls -lh /var/log/nginx/access.log.recovered
+#+end_src
+
+#+begin_example
+-rw-r--r-- 1 root root 200K May  6 03:14 /var/log/nginx/access.log.recovered
+#+end_example
+
+文件大小符合预期，数据就回来了。
+
+几个注意点：
+
+- =cp= 拷的是那一刻的快照。进程后续写入的内容不会进到恢复文件里。
+- 恢复完之后，进程还在往已删除的 fd 写，所以新写的日志在你拷出来的文件里看不到。需要重启进程（比如 =systemctl reload nginx= ），让它重新打开一个正常的链接文件，后续日志才能正常落盘。
+- 如果遇到 =Permission denied= ，用 =sudo= 。如果 PID 已经不存在（进程退出了），/proc 路径自然也消失，参考下一节的兜底方案。
+
+* 包装成一行命令
+
+半夜三点遇到这个问题，一步步敲 =lsof= 、找 PID、拼 =/proc= 路径容易出错。把查找和恢复封成一个函数：
+
+#+begin_src shell
+recover_deleted() {
+  local filename="$1"
+  local output="${2:-/tmp/recovered_file}"
+
+  local matches
+  matches=$(sudo lsof +L1 2>/dev/null | grep "$filename")
+
+  if [[ -z "$matches" ]]; then
+    echo "No process holds $filename open. Data may already be gone."
+    return 1
+  fi
+
+  # 多个进程持有同名文件时，取文件大小最大的那个
+  local pid fd max_size=0
+  while IFS= read -r line; do
+    local _pid _fd _size
+    _pid=$(echo "$line" | awk '{print $2}')
+    _fd=$(echo "$line" | awk '{print $4}' | tr -d 'rwu')
+    _size=$(sudo stat -c%s /proc/"$_pid"/fd/"$_fd" 2>/dev/null || echo 0)
+    if [[ "$_size" -gt "$max_size" ]]; then
+      max_size=$_size
+      pid=$_pid
+      fd=$_fd
+    fi
+  done <<< "$matches"
+
+  echo "Found: PID=$pid FD=$fd (size: $max_size bytes)"
+  sudo cp /proc/"$pid"/fd/"$fd" "$output" && echo "Recovered to $output"
+}
+#+end_src
+
+放到 =~/.bashrc= 里，用时一行调用：
+
+#+begin_src shell
+recover_deleted /var/log/nginx/access.log /var/log/nginx/access.log.recovered
+#+end_src
+
+#+begin_example
+Found: PID=1423 FD=4 (size: 204800 bytes)
+Recovered to /var/log/nginx/access.log.recovered
+#+end_example
+
+和原文的函数比，这里多做了一件事：多个进程持有同名文件时，遍历所有匹配取文件最大的，而不是直接拿第一个。
+
+* 进程已经退出了怎么办
+
+持有文件的进程全退出了（或关闭了 fd），inode 引用计数归零，kernel 回收磁盘块。 =lsof +L1= 什么都看不到， =/proc= 后门也关了。
+
+这时候只能从裸磁盘块上碰运气。工具选型：
+
+- *extundelete* ：ext3/ext4 文件系统专用，利用文件系统的 journal 来找回已删除的 inode
+- *testdisk / photorec* ：跨文件系统，photorec 按文件签名（magic bytes）扫描磁盘块，不依赖文件系统元数据
+
+警告：这些工具绝不能在有读写挂载的分区上跑。恢复数据时写入的每一个新字节都可能覆盖掉你要恢复的数据。要么先 =umount= 分区，要么用 live USB 启动后在只读环境下操作。
+
+这几种工具的成功率取决于删除后磁盘写了多少新数据。写操作越多，残留越少。和 =/proc= 方案不同，forensic 工具不保证结果。
+
+* 预防：hard link
+
+=rm= 删的是目录条目。给同一个 inode 建两个目录条目（hard link）， =rm= 一个只是 link count 减 1，另一个照样指向原数据。等所有硬链接都被删掉、而且没有进程打开文件时，数据才真正消失。
+
+给关键日志文件建 hard link：
+
+#+begin_src shell
+ln /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+#+end_src
+
+用 =ls -li= 确认两个条目指向同一个 inode（第一列是 inode 号，第三列是 link count）：
+
+#+begin_src shell
+ls -li /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+#+end_src
+
+#+begin_example
+131074 -rw-r--r-- 2 www-data www-data 204800 May  6 03:14 /var/log/nginx/access.log
+131074 -rw-r--r-- 2 www-data www-data 204800 May  6 03:14 /var/log/nginx/access.log.hardlink
+#+end_example
+
+两个条目 inode 号相同，link count 为 2。这时候就算有人误删了 =access.log= ，link count 降到 1，inode 和磁盘块依然在，数据从 hardlink 路径正常读取。
+
+Hard link 不能跨文件系统。如果需要跨分区保护，用 bind mount：
+
+#+begin_src shell
+mount --bind /var/log/nginx/access.log /backup/access.log
+#+end_src
+
+Bind mount 和 hard link 的思路不同。hard link 是给同一个 inode 多加一个目录条目，bind mount 是让同一个目录（或文件）在另一个路径下也能访问,它跟 inode 无关，是文件系统层面的操作。正因为不依赖 inode，它可以跨文件系统。删掉原路径的文件，bind mount 路径依然在。
+
+* 总结
+
+=rm= 删的是文件名，数据靠 link count 和引用计数保护。只要进程还在跑，数据就还在。/proc 那扇门一直开着。
+
+现在就可以试一次：
+
+1. 终端 1： =echo hello > /tmp/test.log && sleep 9999 >> /tmp/test.log &=
+2. 终端 2： =rm /tmp/test.log && sudo lsof +L1 | grep test=
+3. 输出里有 =(deleted)= 的那行，记下 PID 和 FD
+4. =sudo cp /proc/<PID>/fd/<FD> /tmp/recovered.log=
+5. =cat /tmp/recovered.log= ，确认内容没丢
+
+实际输出大概是这样：
+
+#+begin_example
+$ lsof +L1 | grep test
+sleep     168262 lujun9972   1w   REG   0,47       12     0  2795 /tmp/test.log (deleted)
+
+$ cp /proc/168262/fd/1 /tmp/recovered.log
+
+$ cat /tmp/recovered.log
+hello world
+#+end_example
