@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Linux 删文件的真相——用 /proc 恢复被进程持有的已删除文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="rm 删掉的只是目录条目，不是数据。只要进程还持有文件，kernel 就留着 inode 和磁盘块。本文从 link count 讲起，用 lsof + /proc 恢复被进程持有的已删除文件，附带改进行脚本和预防方案。" />
+  <meta name="keywords" content="Linux,lsof,/proc,文件恢复,运维,inode" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Linux 删文件的真相——用 /proc 恢复被进程持有的已删除文件</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgfcaadee">rm 到底删了什么</a></li>
+<li><a href="#orgb04a14c">找到持有文件的进程</a></li>
+<li><a href="#orgcab29ff">从 /proc 把数据拷出来</a></li>
+<li><a href="#org253832c">包装成一行命令</a></li>
+<li><a href="#org3ec7f2e">进程已经退出了怎么办</a></li>
+<li><a href="#orgb34830b">预防：hard link</a></li>
+<li><a href="#orgcb7ac22">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+生产环境上删日志文件是常规操作。删完 <code>access.log</code> ，nginx 还在往里写。写到哪里去了？写到了你刚删掉的那个文件里。TecMint 上有篇<a href="https://www.tecmint.com/recover-deleted-file-linux/">文章</a>讲了这个机制的原理和恢复方法。核心就一句： <code>rm</code> 删的是文件名，数据还在磁盘上。只要进程抓着文件不放，kernel 就留着 inode，还给留了一扇后门把数据捞回来。
+</p>
+
+<div id="outline-container-orgfcaadee" class="outline-2">
+<h2 id="orgfcaadee">rm 到底删了什么</h2>
+<div class="outline-text-2" id="text-orgfcaadee">
+<p>
+Linux 文件系统里，文件名和数据是分开存的。文件名只是目录里的一个条目，指向一个叫 inode 的结构。inode 里记着数据在磁盘的哪个位置、大小、权限，还有一个关键数字 <b>link count</b> （链接数），表示有多少个目录条目指向这个 inode。
+</p>
+
+<p>
+<code>rm</code> 做的事很简单：把文件名从目录里拿掉，把 inode 的 link count 减 1。
+</p>
+
+<p>
+link count 降到 0，且没有进程在使用这个文件时，kernel 才真正回收磁盘块。但如果有个进程打开了文件（比如 nginx 正在写 <code>access.log</code> ），kernel 会额外给 inode 加一个引用计数。这时候你 rm 了文件，link count 归零， <code>ls</code> 也看不到了，但引用计数没归零。进程还抓着文件描述符不放，磁盘块完好无损。
+</p>
+
+<p>
+恢复窗口就在这里：从敲 <code>rm</code> 到进程退出或关闭文件描述符，数据一直都在。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb04a14c" class="outline-2">
+<h2 id="orgb04a14c">找到持有文件的进程</h2>
+<div class="outline-text-2" id="text-orgb04a14c">
+<p>
+工具是 <code>lsof</code> （list open files），列出系统里所有进程打开的文件描述符。关键选项是 <code>+L1</code> ：列出 link count 小于 1 的文件，也就是目录条目已经没了但进程还抓着的那些。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo lsof +L1
+</pre>
+</div>
+
+<pre class="example" id="org1a2c774">
+COMMAND   PID     USER   FD   TYPE DEVICE SIZE/OFF NLINKS     NODE NAME
+nginx    1423 www-data    4w   REG  253,1   204800      0   131074 /var/log/nginx/access.log (deleted)
+rsyslogd  1201      root   7w   REG  253,1   819200      0   131075 /var/log/syslog (deleted)
+</pre>
+
+<p>
+关注四列：
+</p>
+
+<ul class="org-ul">
+<li><code>PID</code> ：持有文件的进程 ID</li>
+<li><code>FD</code> ：文件描述符编号（ <code>4w</code> 表示 fd 4，写模式； <code>7w</code> 同理）</li>
+<li><code>NLINKS</code> ：0 表示目录里已经没有这个名字了</li>
+<li><code>NAME</code> ：末尾的 <code>(deleted)</code> 确认文件已被 rm</li>
+</ul>
+
+<p>
+如果只想找特定文件，用 <code>grep</code> 过滤：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo lsof +L1 | grep access.log
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcab29ff" class="outline-2">
+<h2 id="orgcab29ff">从 /proc 把数据拷出来</h2>
+<div class="outline-text-2" id="text-orgcab29ff">
+<p>
+kernel 把每个进程打开的文件描述符暴露在 <code>/proc/&lt;PID&gt;/fd/</code> 下。每个 fd 是一个符号链接，指向原始文件路径。就算文件已被 rm，链接仍然有效，数据照读不误。
+</p>
+
+<p>
+从上面的输出拿到 PID=1423，FD=4，恢复操作就是一行 <code>cp</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo cp /proc/1423/fd/4 /var/log/nginx/access.log.recovered
+</pre>
+</div>
+
+<p>
+验证恢复的内容：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls -lh /var/log/nginx/access.log.recovered
+</pre>
+</div>
+
+<pre class="example" id="org76459a8">
+-rw-r--r-- 1 root root 200K May  6 03:14 /var/log/nginx/access.log.recovered
+</pre>
+
+<p>
+文件大小符合预期，数据就回来了。
+</p>
+
+<p>
+几个注意点：
+</p>
+
+<ul class="org-ul">
+<li><code>cp</code> 拷的是那一刻的快照。进程后续写入的内容不会进到恢复文件里。</li>
+<li>恢复完之后，进程还在往已删除的 fd 写，所以新写的日志在你拷出来的文件里看不到。需要重启进程（比如 <code>systemctl reload nginx</code> ），让它重新打开一个正常的链接文件，后续日志才能正常落盘。</li>
+<li>如果遇到 <code>Permission denied</code> ，用 <code>sudo</code> 。如果 PID 已经不存在（进程退出了），/proc 路径自然也消失，参考下一节的兜底方案。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org253832c" class="outline-2">
+<h2 id="org253832c">包装成一行命令</h2>
+<div class="outline-text-2" id="text-org253832c">
+<p>
+半夜三点遇到这个问题，一步步敲 <code>lsof</code> 、找 PID、拼 <code>/proc</code> 路径容易出错。把查找和恢复封成一个函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">recover_deleted</span>() {
+  <span class="org-builtin">local</span> <span class="org-variable-name">filename</span>=<span class="org-string">"$1"</span>
+  <span class="org-builtin">local</span> <span class="org-variable-name">output</span>=<span class="org-string">"${2:-/tmp/recovered_file}"</span>
+
+  <span class="org-builtin">local</span> matches
+  <span class="org-variable-name">matches</span>=$(<span class="org-sh-quoted-exec">sudo lsof +L1 2&gt;/dev/null | grep "$filename"</span>)
+
+  <span class="org-keyword">if</span> [[ -z <span class="org-string">"$matches"</span> ]]; <span class="org-keyword">then</span>
+    <span class="org-builtin">echo</span> <span class="org-string">"No process holds $filename open. Data may already be gone."</span>
+    <span class="org-keyword">return</span> 1
+  <span class="org-keyword">fi</span>
+
+  <span class="org-comment-delimiter"># </span><span class="org-comment">&#22810;&#20010;&#36827;&#31243;&#25345;&#26377;&#21516;&#21517;&#25991;&#20214;&#26102;&#65292;&#21462;&#25991;&#20214;&#22823;&#23567;&#26368;&#22823;&#30340;&#37027;&#20010;
+</span>  <span class="org-builtin">local</span> pid fd <span class="org-variable-name">max_size</span>=0
+  <span class="org-keyword">while</span> <span class="org-variable-name">IFS</span>= read -r line; <span class="org-keyword">do</span>
+    <span class="org-builtin">local</span> _pid _fd _size
+    <span class="org-variable-name">_pid</span>=$(<span class="org-sh-quoted-exec">echo "$line" | awk '{print $2}'</span>)
+    <span class="org-variable-name">_fd</span>=$(<span class="org-sh-quoted-exec">echo "$line" | awk '{print $4}' | tr -d 'rwu'</span>)
+    <span class="org-variable-name">_size</span>=$(<span class="org-sh-quoted-exec">sudo stat -c%s /proc/"$_pid"/fd/"$_fd" 2&gt;/dev/null || echo 0</span>)
+    <span class="org-keyword">if</span> [[ <span class="org-string">"$_size"</span> -gt <span class="org-string">"$max_size"</span> ]]; <span class="org-keyword">then</span>
+      <span class="org-variable-name">max_size</span>=$<span class="org-variable-name">_size</span>
+      <span class="org-variable-name">pid</span>=$<span class="org-variable-name">_pid</span>
+      <span class="org-variable-name">fd</span>=$<span class="org-variable-name">_fd</span>
+    <span class="org-keyword">fi</span>
+  <span class="org-keyword">done</span> &lt;&lt;&lt; <span class="org-string">"$matches"</span>
+
+  <span class="org-builtin">echo</span> <span class="org-string">"Found: PID=$pid FD=$fd (size: $max_size bytes)"</span>
+  sudo cp /proc/<span class="org-string">"$pid"</span>/fd/<span class="org-string">"$fd"</span> <span class="org-string">"$output"</span> &amp;&amp; <span class="org-builtin">echo</span> <span class="org-string">"Recovered to $output"</span>
+}
+</pre>
+</div>
+
+<p>
+放到 <code>~/.bashrc</code> 里，用时一行调用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">recover_deleted /var/log/nginx/access.log /var/log/nginx/access.log.recovered
+</pre>
+</div>
+
+<pre class="example" id="org87f3387">
+Found: PID=1423 FD=4 (size: 204800 bytes)
+Recovered to /var/log/nginx/access.log.recovered
+</pre>
+
+<p>
+和原文的函数比，这里多做了一件事：多个进程持有同名文件时，遍历所有匹配取文件最大的，而不是直接拿第一个。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3ec7f2e" class="outline-2">
+<h2 id="org3ec7f2e">进程已经退出了怎么办</h2>
+<div class="outline-text-2" id="text-org3ec7f2e">
+<p>
+持有文件的进程全退出了（或关闭了 fd），inode 引用计数归零，kernel 回收磁盘块。 <code>lsof +L1</code> 什么都看不到， <code>/proc</code> 后门也关了。
+</p>
+
+<p>
+这时候只能从裸磁盘块上碰运气。工具选型：
+</p>
+
+<ul class="org-ul">
+<li><b>extundelete</b> ：ext3/ext4 文件系统专用，利用文件系统的 journal 来找回已删除的 inode</li>
+<li><b>testdisk / photorec</b> ：跨文件系统，photorec 按文件签名（magic bytes）扫描磁盘块，不依赖文件系统元数据</li>
+</ul>
+
+<p>
+警告：这些工具绝不能在有读写挂载的分区上跑。恢复数据时写入的每一个新字节都可能覆盖掉你要恢复的数据。要么先 <code>umount</code> 分区，要么用 live USB 启动后在只读环境下操作。
+</p>
+
+<p>
+这几种工具的成功率取决于删除后磁盘写了多少新数据。写操作越多，残留越少。和 <code>/proc</code> 方案不同，forensic 工具不保证结果。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb34830b" class="outline-2">
+<h2 id="orgb34830b">预防：hard link</h2>
+<div class="outline-text-2" id="text-orgb34830b">
+<p>
+<code>rm</code> 删的是目录条目。给同一个 inode 建两个目录条目（hard link）， <code>rm</code> 一个只是 link count 减 1，另一个照样指向原数据。等所有硬链接都被删掉、而且没有进程打开文件时，数据才真正消失。
+</p>
+
+<p>
+给关键日志文件建 hard link：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ln /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+</pre>
+</div>
+
+<p>
+用 <code>ls -li</code> 确认两个条目指向同一个 inode（第一列是 inode 号，第三列是 link count）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">ls -li /var/log/nginx/access.log /var/log/nginx/access.log.hardlink
+</pre>
+</div>
+
+<pre class="example" id="org5a253c9">
+131074 -rw-r--r-- 2 www-data www-data 204800 May  6 03:14 /var/log/nginx/access.log
+131074 -rw-r--r-- 2 www-data www-data 204800 May  6 03:14 /var/log/nginx/access.log.hardlink
+</pre>
+
+<p>
+两个条目 inode 号相同，link count 为 2。这时候就算有人误删了 <code>access.log</code> ，link count 降到 1，inode 和磁盘块依然在，数据从 hardlink 路径正常读取。
+</p>
+
+<p>
+Hard link 不能跨文件系统。如果需要跨分区保护，用 bind mount：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mount --bind /var/log/nginx/access.log /backup/access.log
+</pre>
+</div>
+
+<p>
+Bind mount 和 hard link 的思路不同。hard link 是给同一个 inode 多加一个目录条目，bind mount 是让同一个目录（或文件）在另一个路径下也能访问,它跟 inode 无关，是文件系统层面的操作。正因为不依赖 inode，它可以跨文件系统。删掉原路径的文件，bind mount 路径依然在。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcb7ac22" class="outline-2">
+<h2 id="orgcb7ac22">总结</h2>
+<div class="outline-text-2" id="text-orgcb7ac22">
+<p>
+<code>rm</code> 删的是文件名，数据靠 link count 和引用计数保护。只要进程还在跑，数据就还在。/proc 那扇门一直开着。
+</p>
+
+<p>
+现在就可以试一次：
+</p>
+
+<ol class="org-ol">
+<li>终端 1： <code>echo hello &gt; /tmp/test.log &amp;&amp; sleep 9999 &gt;&gt; /tmp/test.log &amp;</code></li>
+<li>终端 2： <code>rm /tmp/test.log &amp;&amp; sudo lsof +L1 | grep test</code></li>
+<li>输出里有 <code>(deleted)</code> 的那行，记下 PID 和 FD</li>
+<li><code>sudo cp /proc/&lt;PID&gt;/fd/&lt;FD&gt; /tmp/recovered.log</code></li>
+<li><code>cat /tmp/recovered.log</code> ，确认内容没丢</li>
+</ol>
+
+<p>
+实际输出大概是这样：
+</p>
+
+<pre class="example" id="org2c794ee">
+$ lsof +L1 | grep test
+sleep     168262 lujun9972   1w   REG   0,47       12     0  2795 /tmp/test.log (deleted)
+
+$ cp /proc/168262/fd/1 /tmp/recovered.log
+
+$ cat /tmp/recovered.log
+hello world
+</pre>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-07</span>
+    <span class="post-info">2026-05-07</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/lsof">lsof</a> : <a href="../../../../../tags/-proc">/proc</a> : <a href="../../../../../tags/文件恢复">文件恢复</a> : <a href="../../../../../tags/运维">运维</a> : <a href="../../../../../tags/inode">inode</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 5inxg31t2f0uhmarc0hgx0y3ce &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
