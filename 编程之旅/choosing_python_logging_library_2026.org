@@ -1,0 +1,398 @@
+#+TITLE: 读：Choosing a Python Logging Library in 2026
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: python,logging,structlog,loguru,日志
+#+DATE: [2026-05-07 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 基于 Dash0 的 2026 年 Python 日志库选型指南，梳理标准库 logging、structlog、Loguru 等五个库的定位、优缺点和性能数据，并从中提炼跨语言通用的日志设计原则——processor chain 模式、上下文传播机制、API 设计取舍等。
+
+Python 的日志生态和大多数语言不太一样。别的语言通常让开发者在几个互相竞争的第三方库之间挑，Python 直接在标准库里塞了一个功能完整的 =logging= 模块。
+
+但标准库的 =logging= 确实有痛点：配置啰嗦，结构化输出要自己拼，API 带着 2000 年代初的设计痕迹。这就是其他库存在并持续生长的理由。
+
+Dash0 的这篇文章覆盖了 2026 年值得关注的五个 Python 日志库，包括性能基准和框架集成建议。本文是读后笔记，同时尝试从这些库的设计差异中提炼出跨语言适用的日志设计原则。
+
+* 标准库 logging：生态的基石
+
+标准库的 =logging= 是几乎所有 Python 应用的起点。它随 Python 发行，所有第三方框架和库都通过它输出日志，整个 handler、formatter、filter 生态（包括 OpenTelemetry）都围绕它的接口构建。
+
+即使你最终在应用层选了别的库，底层依赖还是在用 =logging= ，这件事躲不掉。
+
+最常用的生产配置方式是通过 =logging.config.dictConfig= 声明式配置。
+
+#+begin_notes
+=dictConfig= 是什么？标准库 =logging= 提供了三种配置方式：1) 代码里逐个创建 logger/handler/formatter 的编程式 API；2) INI 文件风格的 =fileConfig= ；3) 用 Python 字典一次性声明所有配置的 =dictConfig= 。第三种最灵活——字典本身是 Python 对象，可以继承、合并、按环境覆盖，不用写死在一个配置文件里。
+#+end_notes
+
+用过 Django 的人对这个模式不会陌生：在 settings 里写一个 =LOGGING= 字典，集中声明 formatter、handler 和 logger 路由。
+
+下面是一个输出 JSON 到 stdout 的最小配置（需要先 =pip install python-json-logger= ）：
+
+#+begin_src python :tangle /tmp/test_stdlib_config.py
+import logging.config
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.json.JsonFormatter",
+            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
+        },
+    },
+    "handlers": {
+        "stdout": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stdout",
+        },
+    },
+    "root": {
+        "level": "INFO",
+        "handlers": ["stdout"],
+    },
+}
+
+logging.config.dictConfig(LOGGING)
+logging.info("hello world")
+#+end_src
+
+#+begin_example
+{"asctime": "2026-05-07 09:54:55,012", "name": "root", "levelname": "INFO", "message": "hello world"}
+#+end_example
+
+这个方案的要点： =dictConfig= 把日志配置和业务代码拆开了，声明式、集中管理、按环境覆盖都很方便。
+
+除了基本的 format + handler 组合，标准库的 handler 生态还有一些值得知道的玩法：
+
+- =QueueHandler= + =QueueListener= ：把日志写入推到后台线程，适合延迟敏感路径。
+- =MemoryHandler= ：环形缓冲区行为：平时只在内存里攒日志，只有遇到 ERROR 以上级别时才把缓冲区全部刷出来。这样你能看到出错前的调试上下文，又不付出每条日志都写盘的 I/O 代价。
+- =Filter= 接口：在日志到达 handler 之前选择性放行、修改或路由。这个机制是实现"按请求自动注入字段"的基础。
+
+标准库到 OpenTelemetry 的集成也是最直接的。OpenTelemetry 的 Python SDK 把日志出口设计成了标准的 =logging.Handler= 这样一来，你只要把 OTel 的 =LoggingHandler= 挂到 root logger 上，所有通过 =logging= 发出的日志就自动纳入 OTel 管道，不需要任何适配层。=opentelemetry-instrumentation-logging= 包进一步自动给每条日志注入 trace ID 和 span ID（需要 =pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp opentelemetry-instrumentation-logging= ）：
+
+#+begin_src python :tangle /tmp/test_otel.py
+import logging
+from opentelemetry.instrumentation.logging import LoggingInstrumentor
+
+LoggingInstrumentor().instrument(set_logging_format=True)
+
+from opentelemetry.sdk._logs import LoggingHandler, LoggerProvider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+
+logger_provider = LoggerProvider()
+logger_provider.add_log_record_processor(
+    BatchLogRecordProcessor(OTLPLogExporter())
+)
+handler = LoggingHandler(logger_provider=logger_provider)
+logging.getLogger().addHandler(handler)
+
+logging.info("hello with OTel context")
+#+end_src
+
+#+begin_example
+2026-05-07 10:47:28,849 INFO [root] [...] [trace_id=0 span_id=0 resource.service.name= trace_sampled=False] - hello with OTel context
+#+end_example
+
+trace_id/span_id 为 0 是因为没有活跃 span
+
+#+begin_notes
+什么是 span？在 OpenTelemetry 的分布式追踪模型里，一次请求穿过多个服务时会生成一条 trace（链路），trace 由多个 span（跨度）组成——每个 span 代表这个请求在某个服务内部的一段工作。当代码处在某个 span 的上下文中时（比如一个 HTTP 请求正在处理），这个 span 就是"活跃"的，它携带了 trace ID 和自身的 span ID。=LoggingInstrumentor= 做的事就是把当前活跃 span 的 trace ID 和 span ID 自动注入到每一条日志里，这样可观测性后端就能把日志和调用链路串起来看。
+#+end_notes
+
+当你配合活跃的 span 使用时，产生的 OTel 日志记录会带着匹配的 trace ID 和 span ID，可观测性后端就能自动把日志和链路关联起来。
+
+标准库的主要问题是认知负担。 =dictConfig= 帮你解决了配置管理的问题，但你仍然得理解 logger、handler、formatter、filter 之间的关系才能做复杂一些的配置。小错误（比如忘了 =disable_existing_loggers: False= ，或者把 handler 挂到了错误的 logger 名上）会导致日志莫名消失，很难排查。
+
+还有一个不在标准库能力范围内、但生产环境高频需要的需求：逐请求注入上下文。举个例子：一个 Web 应用收到用户请求时生成一个 =request_id=，所有处理这个请求的代码打出来的日志都应该自动带上这个 =request_id=，出问题时才能按 ID 搜出完整链路。标准库可以通过 =contextvars= + 自定义 =Filter= 来实现，但需要自己动手写代码很麻烦。而接下来要说的 structlog 和 Loguru 则内置了这项能力。
+
+* structlog：每一条日志都是一个字典
+
+structlog 的核心概念很清晰：每条日志是一个字典，按顺序穿过一串 processor，最后到达输出端。
+
+#+begin_src python :tangle /tmp/test_structlog_config.py
+import logging
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
+    context_class=dict,
+    logger_factory=structlog.PrintLoggerFactory(),
+)
+
+log = structlog.get_logger()
+log.info("order_created", order_id="ord-789")
+#+end_src
+
+#+begin_example
+{"order_id": "ord-789", "event": "order_created", "level": "info", "timestamp": "2026-05-07T01:54:55Z"}
+#+end_example
+
+每个 processor 是一个可调用对象，接收 logger、方法名和事件字典，返回修改后的事件字典（或者抛出 =DropEvent= 来丢弃这条日志）。这样一来，你可以很自然地写出脱敏、采样、增强、条件路由等自定义逻辑：
+
+#+begin_src python :tangle /tmp/test_structlog_redact.py
+import logging
+import structlog
+
+def redact_sensitive_fields(logger, method, event_dict):
+    for key in ("password", "token", "api_key"):
+        if key in event_dict:
+            event_dict[key] = "[REDACTED]"
+    return event_dict
+
+structlog.configure(
+    processors=[
+        redact_sensitive_fields,
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.PrintLoggerFactory(),
+)
+
+log = structlog.get_logger()
+log.info("user_login", username="alice", password="secret123")
+#+end_src
+
+#+begin_example
+{"username": "alice", "password": "[REDACTED]", "event": "user_login"}
+#+end_example
+
+上下文管理方面，structlog 基于 Python 的 =contextvars= 模块。=contextvars= 是 Python 3.7 引入的标准库模块，能够解决在异步/多线程环境下，让一个变量"属于当前执行上下文"、并且自动跟着上下文传播。举个例子——你不用在每个函数调用时把 =request_id= 作为参数传进去，只要在请求入口处 =bind_contextvars= 一次，同一个请求链路里的所有 async 任务和子线程都能自动看到这个值。
+
+#+begin_src python :tangle /tmp/test_structlog_context.py
+import structlog
+
+log = structlog.get_logger()
+structlog.contextvars.bind_contextvars(request_id="abc-123", user_id="user-456")
+log.info("order_created", order_id="ord-789")
+structlog.contextvars.unbind_contextvars("request_id", "user_id")
+#+end_src
+
+#+begin_example
+2026-05-07 09:54:56 [info     ] order_created                  order_id=ord-789 request_id=abc-123 user_id=user-456
+#+end_example
+
+structlog 最值得说的特性是双模式运行。你可以用标准库的 =logging= 作为输出后端，也就是说， =logging= 的整个 handler 生态（文件轮转、syslog、队列、OpenTelemetry handler）都直接对 structlog 可用：
+
+#+begin_src python :tangle /tmp/test_structlog_stdlib.py
+import logging
+import structlog
+
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ],
+    # 关键：这一行让 structlog 底层创建的是 stdlib Logger 对象
+    # 而不是 PrintLogger——输出走到 logging 模块的 handler 体系
+    logger_factory=structlog.stdlib.LoggerFactory(),
+)
+
+# basicConfig 配置了 stdlib 的 handler（默认 StreamHandler → stderr）
+# 这就是双模式下"使用 logging handler 体系"的体现
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+log = structlog.get_logger("myapp")
+# 写法是 structlog 的 API，但实际输出走的是 logging.basicConfig 配好的 handler
+log.info("hello from structlog via stdlib")
+#+end_src
+
+#+begin_example
+{"event": "hello from structlog via stdlib", "logger": "myapp", "level": "info", "timestamp": "2026-05-07T01:55:48Z"}
+#+end_example
+
+这个双模式是 structlog 在生产系统中最大的卖点：应用代码享受 structlog 的 API 体验和 processor 管道，输出端继承标准库成熟的 handler 基础设施。OpenTelemetry 支持也因此"免费"获得，因为走的是标准库的集成路径。
+
+主要的代价是学习曲线。structlog 的文档很全，但概念（bound logger、processor chain、wrapper class、logger factory）确实需要时间消化。初次看到配置代码块时容易觉得"怎么要写这么多"，相比之下 Loguru 一个 =logger.add()= 就搞定了。
+
+* Loguru：把配置降到最低
+
+Loguru 是 GitHub 上最受欢迎的 Python 第三方日志库（21000+ star）。它的卖点就一句话：把标准库要求的那堆配置样板几乎全干掉了。
+
+只需导入一个预配置好的 logger 对象就能开始写日志：
+
+#+begin_src python :tangle /tmp/test_loguru_basic.py
+from loguru import logger
+
+logger.info("Request processed", method="GET", status=200, latency_ms=47)
+#+end_src
+
+#+begin_example
+2026-05-07 09:54:58.566 | INFO     | __main__:<module>:3 - Request processed
+#+end_example
+
+没有 handler 设置，没有 formatter 配置，没有 =getLogger(__name__)= 模式。
+
+#+begin_notes
+=getLogger(__name__)= 模式是标准库 =logging= 的惯例：每个模块顶部写 ~logger = logging.getLogger(__name__)~ ，以模块路径（比如 ="a.b.c"= ）为名创建一个具名 logger。这套体系中 logger 名形成层级——父 logger 的配置（级别、handler）会自动传给子 logger，例如 ="a.b"= 继承 ="a"= 的配置。Loguru 抛弃了这个设计，直接给你一个全局能用的 =logger= 对象，导入就能写日志。
+#+end_notes
+
+默认输出是带颜色的、人类可读的 stderr，在开发阶段这正好是你想要的行为。需要改输出目标、格式或过滤行为时，只需要调用 =add()= 方法：
+
+#+begin_src python :tangle /tmp/test_loguru_json.py
+from loguru import logger
+import sys
+
+logger.remove()
+logger.add(sys.stdout, serialize=True, level="INFO")
+logger.info("structured output")
+#+end_src
+
+#+begin_example
+{"text": "2026-05-07 09:54:59.429 | INFO     | __main__:<module>:6 - structured output\n", "record": {"elapsed": {"repr": "0:00:00.015865", "seconds": 0.015865}, ...}}
+#+end_example
+
+=serialize=True= 一行就把每条日志转成 JSON 输出，不用写自定义 formatter，不用装额外包。
+
+异常处理是 Loguru 的另一个亮点。 =@logger.catch= 装饰器包裹一个函数后，异常发生时自动记录完整 traceback 和局部变量值：
+
+#+begin_src python :tangle /tmp/test_loguru_catch.py
+from loguru import logger
+
+@logger.catch
+def process_order(order_id: str):
+    raise ValueError(f"invalid order: {order_id}")
+
+process_order("bad-123")
+#+end_src
+
+#+begin_example
+2026-05-07 09:55:00.314 | ERROR    | __main__:<module>:7 - An error has been caught in function '<module>', process 'MainProcess'
+Traceback (most recent call last):
+  File "/tmp/test_loguru_catch.py", line 7, in <module>
+    process_order("bad-123")
+  File "/tmp/test_loguru_catch.py", line 5, in process_order
+    raise ValueError(f"invalid order: {order_id}")
+ValueError: invalid order: bad-123
+#+end_example
+
+上下文管理方面，Loguru 用 =bind()= 给 logger 实例绑定字段，用 =contextualize()= 上下文管理器做作用域限定的、自动清理的上下文：
+
+#+begin_src python :tangle /tmp/test_loguru_context.py
+from loguru import logger
+
+with logger.contextualize(request_id="abc-123"):
+    logger.info("Processing started")
+    logger.info("Processing complete")
+#+end_src
+
+对于已经在用标准库 =logging= 的项目，Loguru 内置了 =InterceptHandler= 模式，把所有标准库日志路由到 Loguru 的管道，可以渐进式迁移，不用重写已有代码：
+
+#+begin_src python :tangle /tmp/test_loguru_intercept.py
+import logging
+from loguru import logger
+
+class InterceptHandler(logging.Handler):
+    def emit(self, record):
+        level = logger.level(record.levelname).name
+        logger.opt(depth=6, exception=record.exc_info).log(level, record.getMessage())
+
+logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+logging.getLogger("some_lib").warning("routed through loguru")
+#+end_src
+
+#+begin_example
+2026-05-07 09:55:02.024 | WARNING  | __main__:<module>:10 - routed through loguru
+#+end_example
+
+Loguru 的主要取舍是它使用单一的全局 logger 对象，配置是进程级别的。如果不同组件需要不同的日志行为（比如想让数据库模块的日志级别设成 DEBUG、其他模块保持 INFO），就得换一种机制来实现。标准库的具名 logger 层级天然支持这件事—— =getLogger("app.db")= 继承 =getLogger("app")= 的配置，同时可以单独覆盖——而 Loguru 缺失了这个能力。
+
+OpenTelemetry 方面，Loguru 没有原生的 OTel 集成。如果只需要在日志里带上 trace ID 和 span ID 做关联，官方 recipe 提供了通过 patcher 函数注入的方式。但如果要通过 OTLP 协议把日志作为 OTel 原生信号导出，就需要通过 =InterceptHandler= 路由到标准库，再经过 OTel 的 =LoggingHandler= ，多了一层中转，而标准库和 structlog（通过 stdlib 后端）不需要。
+
+* Logbook 和 picologging：有趣但不适合新项目
+
+Logbook 由 Flask 作者 Armin Ronacher 和 Georg Brandl 创建，定位是从底层替换标准库的 logging 模块。它的标志性设计是 =context-sensitive handler stack= ：不是把 handler 挂在某个具名 logger 上，而是用 =with= 块来 push/pop handler，作用域限定到线程或上下文：
+
+#+begin_src python :tangle /tmp/test_logbook.py
+from logbook import Logger, StreamHandler, NullHandler
+import sys
+
+log = Logger("my-app")
+
+# 没有 handler 时，日志输出到 NullHandler（静默丢弃）
+log.info("这条不会显示")
+
+# 用 with 块临时 push 一个 handler，离开 with 块后自动 pop
+with StreamHandler(sys.stdout):
+    log.info("Hello from with-block!")
+#+end_src
+
+#+begin_example
+[2026-05-07 11:03:10.567703] INFO: my-app: Hello from with-block!
+#+end_example
+
+但 Logbook 的局限让它对新项目缺乏吸引力：没有内置的结构化 JSON 输出，没有 OpenTelemetry 集成。相比之下，structlog 的 =contextvars= 方案后来用更标准的方式解决了同样的"逐请求作用域"问题，并且原生支持 asyncio。如果你现在还在用 Logbook，应该规划迁移到 structlog 或标准库。
+
+=picologging= 是微软支持的项目，用 C 重写了标准库 =logging= 模块，目标是 4-17 倍的性能提升，且作为 drop-in 替换无需改代码。但项目已停滞：最后一个 PyPI 发布（v0.9.3）在 2023 年 9 月，之后几乎没有仓库活动，从未离开 beta，不支持 Python 3.13+。2026 年不建议用于生产。
+
+* 框架集成：不同框架的最佳搭档
+
+不同 Python Web 框架与日志库的适配关系各不相同：
+
+- =Django= 与标准库集成最深。 =settings.py= 里的 =LOGGING= 字典直接映射到 =dictConfig= ，ORM 查询、请求处理、模板渲染都通过 =logging= 输出。选标准库阻力最小。如果要上 structlog， =django-structlog= 包提供了自动绑定 =request_id= 和 =user_id= 的中间件，支持 DRF、django-ninja 和 Celery。Loguru 没有专门的 Django 包，需要通过 InterceptHandler 来捕获 Django 的日志。
+- =FastAPI/Starlette= 是 structlog 的 =contextvars= 集成最直接受益的场景。写一个 ASGI 中间件在请求开始时 =clear_contextvars()= 并绑定 request ID、path、method，之后所有端点 handler 的日志自动带上这些上下文。有一个坑：Starlette 的 =BaseHTTPMiddleware= 把中间件和路由 handler 跑在不同的 async context 里，所以依赖注入里绑定的上下文在中间件响应日志阶段不可见。绕过方式是直接用纯 ASGI 中间件（ =async def __call__(self, scope, receive, send)= 模式），而不是继承 =BaseHTTPMiddleware= 。Loguru 的 =contextualize()= 类似但无法融入 FastAPI 的依赖注入体系。
+- =Flask= 跟三个库都能配合，因为 Flask 自己的日志很轻量，库的选择影响最小。
+- =Celery= 任务日志方面，structlog 可以用 =structlog.wrap_logger()= 包装 Celery 的 task logger，通过 =task_prerun= 信号绑定任务元数据。Django 项目中 =django-structlog= 自动处理了这件事。
+
+* 性能基准：真正的瓶颈不在库
+
+原文对三个主要库做了 benchmark（Python 3.14， =pytest-benchmark= ，null sink + 完整 JSON 序列化），三种场景：简单日志、10 个上下文字段、异常日志。以下数据反映的是日志记录创建、字段处理和序列化开销，不含 I/O。
+
+| 库         | 简单消息 | +10 字段 | 异常日志 | 吞吐量(10字段) |
+|------------|----------|----------|----------|----------------|
+| structlog  | 2.79 µs  | 4.05 µs  | 23.70 µs | 242k ops/s     |
+| stdlib+json| 5.03 µs  | 7.04 µs  | 29.94 µs | 139k ops/s     |
+| Loguru     | 5.55 µs  | 6.76 µs  | 37.97 µs | 147k ops/s     |
+
+structlog 比标准库快约 2 倍，因为它构建的是普通字典而不是完整的 =LogRecord= 对象，跳过了标准库每次 handler 分发时的线程锁，且 processor chain 在首次调用后会缓存。
+
+多字段场景下顺序变了：Loguru 的 kwarg 直接落入 record 的 extra dict，而标准库每次都要把 extra 合并到 =LogRecord.__dict__= ，所以字段越多 Loguru 越占优。
+
+但最重要的发现是：标准库很大一部分开销来自 Python 默认的 =json= 模块，而不是 logging 本身。换一个更快的序列化器就能缩小差距：
+
+| 场景          | stdlib(json) | stdlib+orjson | stdlib+msgspec |
+|---------------|-------------|---------------|----------------|
+| 简单消息      | 5.26 µs     | 3.52 µs       | 3.42 µs        |
+| +10 字段      | 7.72 µs     | 5.42 µs       | 5.05 µs        |
+| 异常日志      | 31.91 µs    | 28.09 µs      | 27.62 µs       |
+| 吞吐量(10字段)| 130k ops/s   | 185k ops/s    | 198k ops/s     |
+
+换成 =msgspec= 后，标准库的吞吐量从 130k 跳到 198k ops/s，在上下文字段场景下已经接近 structlog。
+
+从实用角度看，最慢的配置（标准库 + 默认 json）也有 130k+ ops/s，大多数应用远远达不到这个日志量。如果性能分析显示 logging 是瓶颈，首先要检查的是"是不是在日志里放了太多太频繁的东西"，而不是换库。
+
+* 提炼：跨语言通用的日志设计原则
+
+这篇文章虽然讲的是 Python，但几个核心设计取舍在别的语言生态里同样存在。以下是值得抽象出来的 4 个通用原则：
+
+*1. Processor chain / 中间件管道模式。* structlog 的 processor chain 本质上就是 Unix 管道的日志版：每条日志穿过一串可组合的处理单元，每个单元只做一件事。这个模式在 Clojure 里对应 ring middleware，在 JS 里对应 Express/Koa 中间件，在 Elisp 里对应 =add-hook= + =run-hooks= 。它的核心价值在于：每个处理步骤独立可测、可组合、可复用。你要加脱敏？挂一个 processor。要加采样？再挂一个。不需要改动任何现有代码。
+
+*2. 上下文传播：动态作用域的实际应用。* structlog 基于 =contextvars= 、Loguru 基于 =contextualize()= ，本质上都是在解决同一个问题：如何让深层调用栈自动获得请求时的上下文（request ID、user ID 等），而不需要在每个函数签名里显式传递。这和动态作用域（dynamic scoping）的语义一致。Emacs Lisp 默认就是动态作用域，所以这件事天然成立；而词法作用域为主的 Python 需要用 =contextvars= 来模拟。理解了这一点，就知道为什么 asyncio 兼容性对这个模式至关重要：async/await 和线程一样会切换执行上下文。
+
+*3. 单全局 vs 命名层级：两种 API 设计哲学的取舍。* Loguru 的单全局 logger 和标准库的 =getLogger(__name__)= 层级体系代表了两种 API 设计思路。前者追求最低配置成本：导入即用，一个 =add()= 解决所有配置。后者追求精细控制：不同模块的 logger 可以有不同级别、不同 handler。这不是谁对谁错的问题，而是在"开箱即用"和"灵活控制"之间的 tradeoff。选择取决于项目的复杂度和团队对日志的定制需求。
+
+*4. 序列化开销 >> 库本身的开销。* benchmark 中最有价值的一个洞见：标准库用默认 =json= 和用 =msgspec= 之间的性能差距，比标准库和 structlog 之间的差距还大。这对应的通用原则是：当你觉得某个基础组件"慢"的时候，先看看它的下游依赖。同样的道理适用于任何需要格式化输出的场景，瓶颈往往在序列化 /格式化层，而不是在调度/ 路由层。
+
+* 选型建议
+
+回到原文的结论：大多数应用从标准库 + JSON formatter 开始就够用了。它哪都能跑，所有框架和第三方库都通过它输出，OTel 的 =LoggingHandler= 直接挂 root logger，不用额外接线。
+
+如果标准库的配置样板让你烦了，或者需要更高性能，structlog 是推荐的升级方向，三个库里最快，processor chain 提供了清晰的脱敏、增强、采样模型， =contextvars= 上下文传播在 asyncio 下正确工作不需要额外设置。可以配置标准库作为输出后端，这样你既保留了整个 handler 生态，又享受了 structlog 的 API。
+
+Loguru 适合"最简配置高于一切"的团队。两三行就能拿到结构化 JSON 输出，文件轮转、压缩、异常格式化都内置了。主要的权衡是单全局 logger 不能做逐组件控制，以及 OTel 集成需要多一层中转。
+
+库没有实践重要。结构化输出、一致的上下文传播、合理的日志级别、好的字段习惯，把这些做好，单子上的哪个库都能胜任。
