@@ -1,0 +1,115 @@
+#+TITLE: 读：AI 辅助编程的三种错误用法
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI, 编程, 软件工程, 技术债
+#+DATE: [2026-05-08 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: AI 能加速开发也能加速技术债。Otavio Santana 在 DZone 上通过一个 Java Hackathon 的案例，总结了 AI 辅助编程的三种典型错误：盲信生成代码、缺少架构上下文、加速过度工程。本文精炼三种模式及其对策。
+
+AI 写代码越来越快，但快不等于好。Otavio Santana 在 DZone 上记录了他在一次 Hackathon 中的观察：参与者用 AI 辅助写代码，交付很快，但代码里藏着三种反复出现的错误模式。这三种模式不是 Java 特有的，任何人用 AI 写代码都可能踩。
+
+* 错误一：AI 生成什么就信什么
+
+AI 模型是用海量公开代码训练出来的。"公开代码"的平均质量并不高。AI 生成的是统计上最常见的写法，不是最好的写法。
+
+文章举了一个例子。题目是搭一个 Recipe（食谱）管理系统的基本增删查。参与者让 AI 写，AI 给出了这样的代码（使用 Jakarta Persistence，Java 的一套传统数据库操作规范）：
+
+#+begin_src java
+@ApplicationScoped
+public class RecipeRepository {
+
+    public List<Recipe> findAll() {
+        EntityManager em = createEntityManager();
+        try {
+            return em.createQuery(
+                "SELECT r FROM Recipe r ORDER BY r.recipeName",
+                Recipe.class
+            ).getResultList();
+        } finally {
+            em.close();
+        }
+    }
+
+    public Recipe findById(Long id) {
+        EntityManager em = createEntityManager();
+        try {
+            return em.find(Recipe.class, id);
+        } finally {
+            em.close();
+        }
+    }
+
+    public List<Recipe> findByName(String term) {
+        if (term == null || term.isBlank()) return findAll();
+        String t = "%" + term.trim().toLowerCase() + "%";
+        EntityManager em = createEntityManager();
+        try {
+            return em.createQuery(
+                "SELECT r FROM Recipe r WHERE LOWER(COALESCE(r.recipeName,''))"
+                + " LIKE :t ORDER BY r.recipeName",
+                Recipe.class
+            )
+            .setParameter("t", t)
+            .getResultList();
+        } finally {
+            em.close();
+        }
+    }
+
+    private EntityManager createEntityManager() {
+        EntityManagerFactory emf = JpaUtil.getEntityManagerFactory();
+        return emf.createEntityManager();
+    }
+}
+#+end_src
+
+这段代码能跑，没 bug。但每个方法都在手动管理数据库连接（ =createEntityManager= 、 =em.close()= ），三个方法里这段样板代码重复了三次。SQL 查询用字符串拼接，有注入风险，维护起来也费劲。
+
+这个写法就是 AI 从训练数据里学到的最常见的 Java 数据库操作写法。它能用，但不简洁。
+
+同样的功能，如果改成 Jakarta Data（Java 的声明式数据访问规范），只需要一个接口：
+
+#+begin_src java
+@Repository
+public interface RecipeRepository extends BasicRepository<Recipe, Long> {
+
+    List<Recipe> findByName(String name);
+
+}
+#+end_src
+
+四十几行变成五行。这不只是语法糖。前者暴露了基础设施细节（连接管理、查询拼装），后者只表达业务意图（按名字找食谱）。是抽象层次的不同。
+
+AI 不是故意挑了一个差的方案。它挑了一个最常见的方案。这就是问题所在：不加约束地让 AI 写代码，得到的是整个生态系统的平均水准。但我们要的从来不止是平均水准。
+
+对策不难，难在执行：审查 AI 生成的代码、在 prompt 里说清楚你要什么（比如"用声明式 API，不要手动管理连接"）、要求它给出多个方案对比。不做这三步，AI 加速的不是开发，是技术债。
+
+* 错误二：不给 AI 上下文
+
+软件工程里每个决策都是在权衡。方案没有绝对的好坏，选什么取决于你的架构目标、团队约定和你愿意接受的代价。正常人写代码的顺序是先想清楚"为什么这么设计"，再动手实现。
+
+AI 默认的做事顺序正好反过来。你不给约束，它上来就写代码。你问"怎么查用户"，它给你 SQL；你问"怎么存数据"，它给你连接管理。它不关心你别的模块是什么风格，也不关心你对抽象层次的偏好。它只答你问了的问题，不会主动问"你的上下文是什么"。
+
+结果是架构漂移（architectural drift）。同一个项目里，A 模块干净声明式，B 模块啰嗦命令式，C 模块又是一种风格。运行起来没问题，读起来像三个人写的。
+
+在 Hackathon 里，这种症状很明显。不同的 prompt 产出了不同风格的代码，因为没有共享的约束、没有统一的方向、没有明确的设计边界。
+
+所以写 prompt 的时候，不只说功能，还要把架构意图带进去：用什么抽象层次、遵循什么约定、你愿意接受什么权衡。不给这些，AI 就会随意发挥。
+
+* 错误三：AI 让过度工程更危险
+
+Knuth 有句流传很广的话："过早优化是万恶之源。"在软件工程里，就是别为还不存在的需求建基础设施。"以后也许用得上"是一句很贵的自我安慰。
+
+AI 改变了这个错误的成本结构。过度工程以前也存在，但写代码要时间，成本摆在那，想清楚才会动手。现在 AI 几秒钟就能生成一个抽象层、一个配置模块、一个"未来的扩展点"。写代码的成本几乎为零，"以后也许用得上"变得极其容易合理化。
+
+后果不是多写了几行代码，是多建了一层不必要的结构。这层结构一旦存在，后续的代码就会依赖它、基于它来写，拆都拆不了。
+
+对策还是那条老原则：从最简单的能用的方案开始。理解领域，交付价值，真实需求来了再迭代。AI 可以帮你快速迭代，但不能替你判断哪些复杂度是必要的。保持简单这件事，在代码生成成本趋近于零的时代反而更难了，也更值钱了。
+
+* 总结
+
+AI 是放大器。它放大你的工程判断：判断好的时候加速好代码，判断差的时候加速技术债。
+
+不管你用 Java 还是别的语言，理解现代范式、了解最佳实践，这些知识决定了你是引导 AI 还是被 AI 引导。没有这个基础，prompt 就是瞎猜，生成的代码就是负债。
+
+生成代码越容易，保持简单越值钱。
