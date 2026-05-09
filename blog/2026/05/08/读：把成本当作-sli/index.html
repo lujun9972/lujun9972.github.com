@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：把成本当作 SLI - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="系统一切指标正常但云账单翻倍。David Iyanu Jonathan 提出&quot;把成本当作 SLI 来监控&quot;，用 cost-per-request 指标解决云成本反馈延迟不对称的问题，本文给出行之有效的排查清单。" />
+  <meta name="keywords" content="可观测性,成本优化,云原生,SLA,运维" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：把成本当作 SLI</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org7ec3c4e">为什么成本问题不容易发现</a></li>
+<li><a href="#org17e8f24">钱具体漏在哪些地方</a></li>
+<li><a href="#orge6f279c">解法：把成本当成监控指标</a></li>
+<li><a href="#org5b88492">可以立刻做的三件事</a></li>
+<li><a href="#orgc16c5d2">收尾</a></li>
+</ul>
+</div>
+</div>
+<p>
+有一类故障很特殊：所有监控指标都是绿的，但钱在不停地流走。
+</p>
+
+<p>
+生产事故有即时反馈——告警响了、错误率飙了、客户邮件来了。但成本问题是另一回事：你月底才看到账单，盯着一个数字琢磨这钱到底是三周前的哪个操作花的。因果链太长，追都追不回来。
+</p>
+
+<p>
+David Iyanu Jonathan 最近在 DZone 上写了篇文章讨论这个问题。他的核心主张很简单：把 <code>cost-per-request</code> （每个请求的平均成本）当成 SLI（服务水平指标，Service Level Indicator），跟延迟、错误率一样接入监控告警体系。本文提炼原文的核心观点，加上国内云环境的对应工具和一份可以立刻动手的清单。
+</p>
+
+<div id="outline-container-org7ec3c4e" class="outline-2">
+<h2 id="org7ec3c4e">为什么成本问题不容易发现</h2>
+<div class="outline-text-2" id="text-org7ec3c4e">
+<p>
+两种故障的反馈延迟不同，这是根因。
+</p>
+
+<p>
+可用性出问题，当场就知道。成本出问题，月底看账单才知道。而且账单是汇总数字，你得倒推：哪个服务？什么时候开始的？那次部署改了什么东西？是不是有人误删了索引导致全表扫描？因果链又长又模糊，查起来像是做财务审计，不是做故障排查。
+</p>
+
+<p>
+原文举了一个例子。假设你的服务跑在 AWS Lambda（一种按调用次数和运行时长计费的无服务器计算服务）上，下游依赖开始返回 HTTP 429（表示"请求太频繁，我被限流了"）。Lambda 函数捕获了这个错误，按指数退避重试。听着很正常。
+</p>
+
+<p>
+问题出在参数上。退避参数是照着"依赖偶尔短暂抽风"配的，实际遇到的是"依赖在大规模限流"。这时候 jitter（退避时间的随机扰动，避免所有实例扎堆重试）不够大，多个实例退避到了相近的时间窗口，同时重试、同时被拒、再同时重试，形成了 retry storm（重试风暴）。
+</p>
+
+<p>
+单次调用很便宜——几分之一美分，执行时间几十毫秒。但你现在同时跑着几千个实例，每个实例在退避等待期间仍然占用着内存，按 GB-秒（1 GB-秒就是分配了 1 GB 内存跑了 1 秒）计费。而且 Lambda 是无状态的，各实例之间没法共享"下游已经扛不住了"这个信息，AWS 看到的是需求旺盛、容量充足，继续全并发调用。
+</p>
+
+<p>
+整个过程没有任何告警。错误率不算高，大部分请求后来都成功了，p99 延迟虽然上升但还在 SLO 范围内。问题在于这三小时的 Lambda 账单顶平时一周。
+</p>
+
+<p>
+结论很简单：系统可以跑得正确，但跑得很贵。缺陷不以毫秒计，以人民币计。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org17e8f24" class="outline-2">
+<h2 id="org17e8f24">钱具体漏在哪些地方</h2>
+<div class="outline-text-2" id="text-org17e8f24">
+<p>
+<b>僵尸资源。</b> 云环境里被遗忘的东西比你以为的多得多：
+</p>
+
+<ul class="org-ul">
+<li>EBS 卷——实例销毁了，没勾"随实例删除"，卷还在那挂着，继续计费</li>
+<li>弹性 IP——不关联实例的话每小时几分钱，单个不起眼。100 个闲置弹性 IP 跑一年就是四千多美元</li>
+<li>NAT 网关——VPC 里的业务早就迁走了，网关没拆，因为 Terraform 配置没清理，而没人愿意碰 Terraform 的状态文件</li>
+<li>RDS 快照——自动备份策略设得很勤快，但没人写清理脚本，快照只增不减</li>
+<li>空载负载均衡——后端没有健康实例了，ELB 还在那运行着，对着空气做健康检查</li>
+</ul>
+
+<p>
+单个不致命，但月月叠加，每次做预算都发现基数比上回高一点，没人说得清为什么。
+</p>
+
+<p>
+<b>出口流量。</b> 原文讲了个例子：一张 $240 万的云账单，80% 是数据出口费。架构师设计系统的时候想的是 CPU、内存、IOPS，没人把网络出站流量当计费项。但云厂商的收费模式一直是入口免费、出口收费。
+</p>
+
+<p>
+<b>弹性伸缩只扩不缩。</b> 弹性伸缩的本意是跟着负载走，高负载扩、低负载缩。但实际配置经常是扩得猛、缩得保守。因为扩慢了影响可用性，会出事；缩快了也可能影响可用性，也会出事。工程师自然更怕出事——可用性故障立刻告警，成本故障月底才寄发票。
+</p>
+
+<p>
+结果就是"棘轮效应"：集群扩上去了，不缩回来。原文算了笔账：一个节点 $0.20/小时，跑 30 个节点实际只用到 12 个的容量，一年就多花近 $25,000。一个中型平台几十个服务加起来，浪费的钱够招好几个工程师。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge6f279c" class="outline-2">
+<h2 id="orge6f279c">解法：把成本当成监控指标</h2>
+<div class="outline-text-2" id="text-orge6f279c">
+<p>
+做法不复杂：像盯延迟一样盯成本。把 <code>cost-per-request</code> 拉出来，设基线，设告警，让它也能触发值班。
+</p>
+
+<p>
+成本的数据原料其实都有：请求数有、执行时长有、内存配置有、出口字节有。大多数团队缺的不是数据，是把这些数据拼起来持续计算、然后接入告警管道的习惯。
+</p>
+
+<p>
+原文给了一条 Prometheus 告警规则，就是最直接的做法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml">- <span class="org-variable-name">alert</span>: CostPerRequestAnomaly
+  <span class="org-variable-name">expr</span>: |
+    <span class="org-string">(</span>
+<span class="org-string">      increase(cloud_spend_dollars_total{service="payment-processor"}[30m])
+      /
+      increase(http_requests_total{service="payment-processor"}[30m])
+    ) &gt; 0.02
+</span>  <span class="org-variable-name">for</span>: 15m
+  <span class="org-variable-name">labels</span>:
+    <span class="org-variable-name">severity</span>: warning
+  <span class="org-variable-name">annotations</span>:
+    <span class="org-variable-name">summary</span>: <span class="org-string">"Payment processor cost/request exceeding $0.02 threshold"</span>
+    <span class="org-variable-name">runbook</span>: <span class="org-string">"https://wiki.internal/runbooks/cost-anomaly"</span>
+</pre>
+</div>
+
+<p>
+这条规则的意思是：过去 30 分钟内，支付服务的每请求成本超过 $0.02 并且持续 15 分钟，就触发告警。实际落地需要处理几个边界：请求量降到零时分母为零怎么办、固定成本（跟请求量无关的部分）怎么单独核算、每个服务的阈值需要各自调。原则没有问题。
+</p>
+
+<p>
+国内平台可以用阿里云的 <code>cloud-exporter</code> 把费用数据接入 Prometheus，或者直接用费用中心 API 拉数据写入自建监控。
+</p>
+
+<p>
+在接好完整的 Prometheus 流水线之前，最基本的计算逻辑用一段 Shell 就能说明白：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">cost-per-request-demo.sh &#8212;&#8212; &#29992;&#27169;&#25311;&#25968;&#25454;&#28436;&#31034;&#27599;&#35831;&#27714;&#25104;&#26412;&#30340;&#35745;&#31639;&#21644;&#24322;&#24120;&#26816;&#27979;
+</span><span class="org-builtin">set</span> -euo pipefail
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27169;&#25311;&#25968;&#25454;&#65306;&#27599; 5 &#20998;&#38047;&#19968;&#20010;&#37319;&#26679;&#28857;&#65288;&#36890;&#24120;&#26469;&#33258;&#20113;&#21378;&#21830;&#36153;&#29992;&#20013;&#24515;&#23548;&#20986;&#30340; CSV&#65289;
+</span>cat &gt; /tmp/cost_data.csv &lt;&lt;<span class="org-string">'CSVEOF'</span><span class="org-sh-heredoc">
+timestamp,requests,cost
+08:00,1000,12.50
+08:05,1100,13.00
+08:10,1050,12.80
+08:15,1200,13.50
+08:20,1150,13.20
+08:25,1000,12.50
+08:30,1300,35.00
+08:35,1250,33.00
+08:40,1350,36.50
+08:45,1400,38.00
+08:50,1200,32.00
+08:55,1100,30.00
+CSVEOF
+</span>
+<span class="org-variable-name">BASELINE</span>=0.012  <span class="org-comment-delimiter"># </span><span class="org-comment">&#21382;&#21490;&#22522;&#32447;&#65306;$0.012/request
+</span><span class="org-variable-name">THRESHOLD</span>=$(<span class="org-sh-quoted-exec">awk "BEGIN {print $BASELINE * 2}"</span>)
+
+<span class="org-builtin">echo</span> <span class="org-string">"=== cost-per-request &#30417;&#25511;&#28436;&#31034; ==="</span>
+<span class="org-builtin">echo</span> <span class="org-string">"&#22522;&#32447;: \$${BASELINE}/request&#65292;&#21578;&#35686;&#38408;&#20540;: \$${THRESHOLD}/request&#65288;&#22522;&#32447; &#215; 2&#65289;"</span>
+<span class="org-builtin">echo</span> <span class="org-string">""</span>
+
+tail -n +2 /tmp/cost_data.csv | <span class="org-keyword">while</span> <span class="org-variable-name">IFS</span>=, read -r ts req cost; <span class="org-keyword">do</span>
+  <span class="org-variable-name">cpr</span>=$(<span class="org-sh-quoted-exec">awk "BEGIN {printf \"%.4f\", $cost / $req}"</span>)
+  <span class="org-keyword">if</span> awk -v <span class="org-variable-name">cpr</span>=<span class="org-string">"$cpr"</span> -v <span class="org-variable-name">thresh</span>=<span class="org-string">"$THRESHOLD"</span> <span class="org-string">'BEGIN {exit !(cpr &gt; thresh)}'</span>; <span class="org-keyword">then</span>
+    <span class="org-builtin">printf</span> <span class="org-string">"  %s  req=%s  cost=\$%-6s  cpr=\$%s  &#8592; &#36229;&#36807;&#38408;&#20540;&#65281;\n"</span> <span class="org-string">"$ts"</span> <span class="org-string">"$req"</span> <span class="org-string">"$cost"</span> <span class="org-string">"$cpr"</span>
+  <span class="org-keyword">else</span>
+    <span class="org-builtin">printf</span> <span class="org-string">"  %s  req=%s  cost=\$%-6s  cpr=\$%s\n"</span> <span class="org-string">"$ts"</span> <span class="org-string">"$req"</span> <span class="org-string">"$cost"</span> <span class="org-string">"$cpr"</span>
+  <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+
+<span class="org-builtin">echo</span> <span class="org-string">""</span>
+<span class="org-builtin">echo</span> <span class="org-string">"08:30 &#24320;&#22987; cpr &#32763;&#20493;&#12290;&#25490;&#26597;&#26041;&#21521;&#65306;"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"  1. &#26032;&#37096;&#32626;&#26159;&#21542;&#24341;&#20837;&#20102; N+1 &#26597;&#35810;"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"  2. &#32034;&#24341;&#34987;&#35823;&#21024;&#23548;&#33268;&#20840;&#34920;&#25195;&#25551;"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"  3. Serverless &#20989;&#25968;&#26159;&#21542;&#26377; retry storm"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"  4. &#26159;&#21542;&#26377;&#20154;&#22312;&#36328; region &#25289;&#25968;&#25454;"</span>
+</pre>
+</div>
+
+<pre class="example" id="orgf65a5d5">
+=== cost-per-request 监控演示 ===
+基线: $0.012/request，告警阈值: $0.024/request（基线 × 2）
+
+  08:00  req=1000  cost=$12.50   cpr=$0.0125
+  08:05  req=1100  cost=$13.00   cpr=$0.0118
+  08:10  req=1050  cost=$12.80   cpr=$0.0122
+  08:15  req=1200  cost=$13.50   cpr=$0.0112
+  08:20  req=1150  cost=$13.20   cpr=$0.0115
+  08:25  req=1000  cost=$12.50   cpr=$0.0125
+  08:30  req=1300  cost=$35.00   cpr=$0.0269  ← 超过阈值！
+  08:35  req=1250  cost=$33.00   cpr=$0.0264  ← 超过阈值！
+  08:40  req=1350  cost=$36.50   cpr=$0.0270  ← 超过阈值！
+  08:45  req=1400  cost=$38.00   cpr=$0.0271  ← 超过阈值！
+  08:50  req=1200  cost=$32.00   cpr=$0.0267  ← 超过阈值！
+  08:55  req=1100  cost=$30.00   cpr=$0.0273  ← 超过阈值！
+
+08:30 开始 cpr 翻倍。排查方向：
+  1. 新部署是否引入了 N+1 查询
+  2. 索引被误删导致全表扫描
+  3. Serverless 函数是否有 retry storm
+  4. 是否有人在跨 region 拉数据
+</pre>
+
+<p>
+实际使用时，把模拟数据换成云厂商账单 API 的返回值，加到 cron 里每 5 分钟跑一次。成本异常就能在第一个 30 分钟窗口内收到告警，不用等到月底对账。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5b88492" class="outline-2">
+<h2 id="org5b88492">可以立刻做的三件事</h2>
+<div class="outline-text-2" id="text-org5b88492">
+<p>
+完整的 FinOps 转型要花几个季度，涉及跨部门协作，工程师团队推不动很正常。但下面三件本周就能做。
+</p>
+
+<ol class="org-ol">
+<li><b>找出花钱最多的 3 个服务。</b> 用 AWS Cost Explorer 按服务类型排序，或者阿里云费用中心按产品维度排。然后问自己：你知道每个服务的正常 <code>cost-per-request</code> 是多少吗？不知道的话，缺的不是"成本优化"，是"成本可观测性"。先把指标加上、基线算出来、告警设在基线两倍。有数据才有调优。</li>
+
+<li><b>跑一次闲置资源报告。</b> 不光是清理，更要搞清楚这些资源是怎么产生的。谁建的？谁忘了？有没有项目下线的标准流程？资源标签是不是强制要求？闲置资源是表面，流程缺失是根。对应的修法：资源创建必须打标签（团队 / 环境 / 项目缺一个不许建）、超期未打标签的自动回收——不是发提醒，是直接停掉、推行 chargeback（让每个团队看到自己花了多少钱，不只是看到一份不痛不痒的统计报表）。</li>
+
+<li><b>把账单异常当事故处理。</b> 这件事需要跟管预算的人谈。不追责，不当财务审计做。就跟生产故障一样：写复盘、画时间线、找根因、定改进措施。账单飙升就是生产事故，只不过影响的是钱，不是用户。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgc16c5d2" class="outline-2">
+<h2 id="orgc16c5d2">收尾</h2>
+<div class="outline-text-2" id="text-orgc16c5d2">
+<p>
+原文结尾说得很直白：系统已经是分布式的，成本数据就在那里，差的就是成本可观测性这一块。现在去补。
+</p>
+
+<p>
+请求数、执行时间、出口流量——这些数据本来就有。把它接进告警管道，让它跟延迟和错误率一样能触发值班。等到 CFO 来问的时候，你已经不用手忙脚乱翻账单了。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-08</span>
+    <span class="post-info">2026-05-08</span>
+    <a href="../../../../../tags/可观测性">可观测性</a> : <a href="../../../../../tags/成本优化">成本优化</a> : <a href="../../../../../tags/云原生">云原生</a> : <a href="../../../../../tags/sla">SLA</a> : <a href="../../../../../tags/运维">运维</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; lr4makjpv3fujjm3xj0gr41ufh &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

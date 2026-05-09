@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：AI 辅助编程的三种错误用法 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="AI 能加速开发也能加速技术债。Otavio Santana 在 DZone 上通过一个 Java Hackathon 的案例，总结了 AI 辅助编程的三种典型错误：盲信生成代码、缺少架构上下文、加速过度工程。本文精炼三种模式及其对策。" />
+  <meta name="keywords" content="AI, 编程, 软件工程, 技术债" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：AI 辅助编程的三种错误用法</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc3ec920">错误一：AI 生成什么就信什么</a></li>
+<li><a href="#org984d992">错误二：不给 AI 上下文</a></li>
+<li><a href="#org5e1b004">错误三：AI 让过度工程更危险</a></li>
+<li><a href="#org5b6c594">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+AI 写代码越来越快，但快不等于好。Otavio Santana 在 DZone 上记录了他在一次 Hackathon 中的观察：参与者用 AI 辅助写代码，交付很快，但代码里藏着三种反复出现的错误模式。这三种模式不是 Java 特有的，任何人用 AI 写代码都可能踩。
+</p>
+
+<div id="outline-container-orgc3ec920" class="outline-2">
+<h2 id="orgc3ec920">错误一：AI 生成什么就信什么</h2>
+<div class="outline-text-2" id="text-orgc3ec920">
+<p>
+AI 模型是用海量公开代码训练出来的。"公开代码"的平均质量并不高。AI 生成的是统计上最常见的写法，不是最好的写法。
+</p>
+
+<p>
+文章举了一个例子。题目是搭一个 Recipe（食谱）管理系统的基本增删查。参与者让 AI 写，AI 给出了这样的代码（使用 Jakarta Persistence，Java 的一套传统数据库操作规范）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-c-annotation">@ApplicationScoped</span>
+<span class="org-keyword">public</span> <span class="org-keyword">class</span> <span class="org-type">RecipeRepository</span> {
+
+    <span class="org-keyword">public</span> <span class="org-type">List</span>&lt;<span class="org-type">Recipe</span>&gt; <span class="org-function-name">findAll</span>() {
+        <span class="org-type">EntityManager</span> <span class="org-variable-name">em</span> = createEntityManager();
+        <span class="org-keyword">try</span> {
+            <span class="org-keyword">return</span> em.createQuery(
+                <span class="org-string">"SELECT r FROM Recipe r ORDER BY r.recipeName"</span>,
+                Recipe.<span class="org-keyword">class</span>
+            ).getResultList();
+        } <span class="org-keyword">finally</span> {
+            em.close();
+        }
+    }
+
+    <span class="org-keyword">public</span> <span class="org-type">Recipe</span> <span class="org-function-name">findById</span>(<span class="org-type">Long</span> <span class="org-variable-name">id</span>) {
+        <span class="org-type">EntityManager</span> <span class="org-variable-name">em</span> = createEntityManager();
+        <span class="org-keyword">try</span> {
+            <span class="org-keyword">return</span> em.find(Recipe.<span class="org-keyword">class</span>, id);
+        } <span class="org-keyword">finally</span> {
+            em.close();
+        }
+    }
+
+    <span class="org-keyword">public</span> <span class="org-type">List</span>&lt;<span class="org-type">Recipe</span>&gt; <span class="org-function-name">findByName</span>(<span class="org-type">String</span> <span class="org-variable-name">term</span>) {
+        <span class="org-keyword">if</span> (term == <span class="org-constant">null</span> || term.isBlank()) <span class="org-keyword">return</span> findAll();
+        <span class="org-type">String</span> <span class="org-variable-name">t</span> = <span class="org-string">"%"</span> + term.trim().toLowerCase() + <span class="org-string">"%"</span>;
+        <span class="org-type">EntityManager</span> <span class="org-variable-name">em</span> = createEntityManager();
+        <span class="org-keyword">try</span> {
+            <span class="org-keyword">return</span> em.createQuery(
+                <span class="org-string">"SELECT r FROM Recipe r WHERE LOWER(COALESCE(r.recipeName,''))"</span>
+                + <span class="org-string">" LIKE :t ORDER BY r.recipeName"</span>,
+                Recipe.<span class="org-keyword">class</span>
+            )
+            .setParameter(<span class="org-string">"t"</span>, t)
+            .getResultList();
+        } <span class="org-keyword">finally</span> {
+            em.close();
+        }
+    }
+
+    <span class="org-keyword">private</span> <span class="org-type">EntityManager</span> <span class="org-function-name">createEntityManager</span>() {
+        <span class="org-type">EntityManagerFactory</span> <span class="org-variable-name">emf</span> = JpaUtil.getEntityManagerFactory();
+        <span class="org-keyword">return</span> emf.createEntityManager();
+    }
+}
+</pre>
+</div>
+
+<p>
+这段代码能跑，没 bug。但每个方法都在手动管理数据库连接（ <code>createEntityManager</code> 、 <code>em.close()</code> ），三个方法里这段样板代码重复了三次。SQL 查询用字符串拼接，有注入风险，维护起来也费劲。
+</p>
+
+<p>
+这个写法就是 AI 从训练数据里学到的最常见的 Java 数据库操作写法。它能用，但不简洁。
+</p>
+
+<p>
+同样的功能，如果改成 Jakarta Data（Java 的声明式数据访问规范），只需要一个接口：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-c-annotation">@Repository</span>
+<span class="org-keyword">public</span> <span class="org-keyword">interface</span> <span class="org-type">RecipeRepository</span> <span class="org-keyword">extends</span> <span class="org-type">BasicRepository</span>&lt;<span class="org-type">Recipe</span>, <span class="org-type">Long</span>&gt; {
+
+    <span class="org-type">List</span>&lt;<span class="org-type">Recipe</span>&gt; <span class="org-function-name">findByName</span>(<span class="org-type">String</span> <span class="org-variable-name">name</span>);
+
+}
+</pre>
+</div>
+
+<p>
+四十几行变成五行。这不只是语法糖。前者暴露了基础设施细节（连接管理、查询拼装），后者只表达业务意图（按名字找食谱）。是抽象层次的不同。
+</p>
+
+<p>
+AI 不是故意挑了一个差的方案。它挑了一个最常见的方案。这就是问题所在：不加约束地让 AI 写代码，得到的是整个生态系统的平均水准。但我们要的从来不止是平均水准。
+</p>
+
+<p>
+对策不难，难在执行：审查 AI 生成的代码、在 prompt 里说清楚你要什么（比如"用声明式 API，不要手动管理连接"）、要求它给出多个方案对比。不做这三步，AI 加速的不是开发，是技术债。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org984d992" class="outline-2">
+<h2 id="org984d992">错误二：不给 AI 上下文</h2>
+<div class="outline-text-2" id="text-org984d992">
+<p>
+软件工程里每个决策都是在权衡。方案没有绝对的好坏，选什么取决于你的架构目标、团队约定和你愿意接受的代价。正常人写代码的顺序是先想清楚"为什么这么设计"，再动手实现。
+</p>
+
+<p>
+AI 默认的做事顺序正好反过来。你不给约束，它上来就写代码。你问"怎么查用户"，它给你 SQL；你问"怎么存数据"，它给你连接管理。它不关心你别的模块是什么风格，也不关心你对抽象层次的偏好。它只答你问了的问题，不会主动问"你的上下文是什么"。
+</p>
+
+<p>
+结果是架构漂移（architectural drift）。同一个项目里，A 模块干净声明式，B 模块啰嗦命令式，C 模块又是一种风格。运行起来没问题，读起来像三个人写的。
+</p>
+
+<p>
+在 Hackathon 里，这种症状很明显。不同的 prompt 产出了不同风格的代码，因为没有共享的约束、没有统一的方向、没有明确的设计边界。
+</p>
+
+<p>
+所以写 prompt 的时候，不只说功能，还要把架构意图带进去：用什么抽象层次、遵循什么约定、你愿意接受什么权衡。不给这些，AI 就会随意发挥。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5e1b004" class="outline-2">
+<h2 id="org5e1b004">错误三：AI 让过度工程更危险</h2>
+<div class="outline-text-2" id="text-org5e1b004">
+<p>
+Knuth 有句流传很广的话："过早优化是万恶之源。"在软件工程里，就是别为还不存在的需求建基础设施。"以后也许用得上"是一句很贵的自我安慰。
+</p>
+
+<p>
+AI 改变了这个错误的成本结构。过度工程以前也存在，但写代码要时间，成本摆在那，想清楚才会动手。现在 AI 几秒钟就能生成一个抽象层、一个配置模块、一个"未来的扩展点"。写代码的成本几乎为零，"以后也许用得上"变得极其容易合理化。
+</p>
+
+<p>
+后果不是多写了几行代码，是多建了一层不必要的结构。这层结构一旦存在，后续的代码就会依赖它、基于它来写，拆都拆不了。
+</p>
+
+<p>
+对策还是那条老原则：从最简单的能用的方案开始。理解领域，交付价值，真实需求来了再迭代。AI 可以帮你快速迭代，但不能替你判断哪些复杂度是必要的。保持简单这件事，在代码生成成本趋近于零的时代反而更难了，也更值钱了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5b6c594" class="outline-2">
+<h2 id="org5b6c594">总结</h2>
+<div class="outline-text-2" id="text-org5b6c594">
+<p>
+AI 是放大器。它放大你的工程判断：判断好的时候加速好代码，判断差的时候加速技术债。
+</p>
+
+<p>
+不管你用 Java 还是别的语言，理解现代范式、了解最佳实践，这些知识决定了你是引导 AI 还是被 AI 引导。没有这个基础，prompt 就是瞎猜，生成的代码就是负债。
+</p>
+
+<p>
+生成代码越容易，保持简单越值钱。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-08</span>
+    <span class="post-info">2026-05-09</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/编程">编程</a> : <a href="../../../../../tags/软件工程">软件工程</a> : <a href="../../../../../tags/技术债">技术债</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; lr4makjpv3fujjm3xj0gr41ufh &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

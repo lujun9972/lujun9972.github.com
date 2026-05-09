@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Yazi——在终端里管理文件的新选择 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="Yazi 是一个用 Rust 写的终端文件管理器，支持异步并发、图片预览、代码高亮、批量重命名和多种搜索方式。本文基于 It&#39;s FOSS 的上手体验，梳理安装配置步骤和核心功能，看看它能不能替代图形界面下对文件管理器的依赖。" />
+  <meta name="keywords" content="yazi,terminal,file-manager,tui,tool" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Yazi——在终端里管理文件的新选择</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org6e6817a">安装</a></li>
+<li><a href="#org1df3652">启动脚本：退出时自动 cd 到当前目录</a></li>
+<li><a href="#org6d20f98">功能亮点</a>
+<ul>
+<li><a href="#orgb683fc4">图片和文件预览</a></li>
+<li><a href="#org63cefa1">目录快速跳转</a></li>
+<li><a href="#org8c9dd39">文件搜索</a></li>
+<li><a href="#orga931aca">批量重命名</a></li>
+<li><a href="#org5d3f754">模糊搜索和 zoxide 集成</a></li>
+<li><a href="#orgfe2e47d">多标签</a></li>
+<li><a href="#org50b1d49">更多功能</a></li>
+</ul>
+</li>
+<li><a href="#org1c8f7dc">是否值得用</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://itsfoss.com/yazi/">原文（It's FOSS）</a> 的作者分享了自己试用 Yazi 的体验。Yazi 是一个终端下的文件管理器，用 Rust 写的。我第一次听说它时心里想的是：终端文件管理器又不是什么新鲜东西，ranger、nnn、lf 都在那儿摆着，Yazi 能有什么不一样？读完发现它的差异化做得相当到位，值得写一篇上手参考。
+</p>
+
+<div id="outline-container-org6e6817a" class="outline-2">
+<h2 id="org6e6817a">安装</h2>
+<div class="outline-text-2" id="text-org6e6817a">
+<p>
+Yazi 在 Arch Linux、Void Linux、OpenSUSE Tumbleweed 等的官方仓库里都有。Arch 上安装时需要把依赖也带上，很多高级功能（图片预览、压缩包预览、语法高亮）都靠这些外部工具支撑：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S yazi ffmpeg 7zip jq poppler fd ripgrep fzf zoxide resvg imagemagick
+</pre>
+</div>
+
+<p>
+每个依赖的作用：
+</p>
+
+<ul class="org-ul">
+<li><code>ffmpeg</code> ：视频缩略图</li>
+<li><code>7zip</code> ：压缩包预览和解压</li>
+<li><code>jq</code> ：JSON 语法高亮</li>
+<li><code>poppler</code> ：PDF 预览</li>
+<li><code>fd</code> ：文件名搜索（ <code>find</code> 的现代替代）</li>
+<li><code>ripgrep</code> ：文件内容搜索（ <code>grep</code> 的现代替代）</li>
+<li><code>fzf</code> ：模糊搜索</li>
+<li><code>zoxide</code> ：智能目录跳转（自动记录你常去的目录）</li>
+<li><code>resvg</code> ：SVG 图片预览</li>
+<li><code>imagemagick</code> ：通用图片处理</li>
+</ul>
+
+<p>
+Ubuntu 可以用 snap 安装：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo snap install yazi --classic
+</pre>
+</div>
+
+<p>
+再安装依赖包：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt install ffmpeg 7zip jq poppler-utils fd-find ripgrep fzf zoxide imagemagick
+</pre>
+</div>
+
+<p>
+如果你的发行版仓库里没有 Yazi，直接去 <a href="https://github.com/sxyazi/yazi/releases">GitHub Releases</a> 下载二进制文件，给执行权限就能跑。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1df3652" class="outline-2">
+<h2 id="org1df3652">启动脚本：退出时自动 cd 到当前目录</h2>
+<div class="outline-text-2" id="text-org1df3652">
+<p>
+Yazi 本身只是一个文件管理器，退出后你的终端不会自动进入你最后浏览的目录。要解决这个问题，原文推荐在 shell 配置文件中加一个 wrapper 函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-keyword">function</span> <span class="org-function-name">y</span>() {
+        <span class="org-builtin">local</span> <span class="org-variable-name">tmp</span>=<span class="org-string">"$(</span><span class="org-sh-quoted-exec">mktemp -t "yazi-cwd.XXXXXX"</span><span class="org-string">)"</span> cwd
+        <span class="org-builtin">command</span> yazi <span class="org-string">"$@"</span> --cwd-file=<span class="org-string">"$tmp"</span>
+        <span class="org-variable-name">IFS</span>= read -r -d <span class="org-string">''</span> cwd &lt; <span class="org-string">"$tmp"</span>
+        [ <span class="org-string">"$cwd"</span> != <span class="org-string">"$PWD"</span> ] &amp;&amp; [ -d <span class="org-string">"$cwd"</span> ] &amp;&amp; <span class="org-builtin">builtin</span> cd -- <span class="org-string">"$cwd"</span>
+        rm -f -- <span class="org-string">"$tmp"</span>
+}
+</pre>
+</div>
+
+<p>
+这个 wrapper 做了四件事：
+</p>
+
+<ol class="org-ol">
+<li>用 <code>mktemp</code> 创建一个临时文件，用来存放 Yazi 退出时的目录路径</li>
+<li>启动 Yazi 时传 <code>--cwd-file</code> 参数，Yazi 退出时会把最后所在的目录路径写入这个临时文件</li>
+<li>读取临时文件中的路径，如果路径有效且不等于当前目录，就 <code>cd</code> 过去</li>
+<li>删除临时文件</li>
+</ol>
+
+<p>
+把这个函数加到 <code>~/.bashrc</code> 或 <code>~/.zshrc</code> 里，重启 shell 后输入 <code>y</code> 就能启动 Yazi。
+</p>
+
+<p>
+有两点注意：小写 <code>q</code> 退出会 cd 到新目录，大写 <code>Q</code> 退出会留在原目录。另外 <code>command yazi</code> 的 <code>command</code> 前缀是防御性的，防止 shell 递归调用。虽然函数名已经是 <code>y</code> 而不是 <code>yazi</code> ，但如果有人把函数名改成 <code>yazi</code> ，不加 <code>command</code> 就会死循环。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6d20f98" class="outline-2">
+<h2 id="org6d20f98">功能亮点</h2>
+<div class="outline-text-2" id="text-org6d20f98">
+</div>
+<div id="outline-container-orgb683fc4" class="outline-3">
+<h3 id="orgb683fc4">图片和文件预览</h3>
+<div class="outline-text-3" id="text-orgb683fc4">
+<p>
+Yazi 的预览功能依赖前面安装的那一坨外部工具。只要依赖齐全，它能在右侧分栏预览大部分文件类型：
+</p>
+
+<ul class="org-ul">
+<li>图片（需要终端支持图片协议，如 Kitty、Ghostty）</li>
+<li>代码文件（语法高亮）</li>
+<li>压缩包内容（不解压直接看里面有什么）</li>
+<li>PDF 文档</li>
+</ul>
+
+<p>
+预览时按 <code>Shift+J</code> 向下滚动、 <code>Shift+K</code> 向上滚动。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org63cefa1" class="outline-3">
+<h3 id="org63cefa1">目录快速跳转</h3>
+<div class="outline-text-3" id="text-org63cefa1">
+<p>
+按 <code>g</code> 再按空格，弹出路径输入框。输入绝对路径或相对路径，Yazi 会自动补全匹配的目录名。平常我们 <code>cd</code> 敲路径、 <code>ls</code> 看一眼、再 <code>cd</code> ……反复折腾。Yazi 的自动补全把中间步骤全省了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8c9dd39" class="outline-3">
+<h3 id="org8c9dd39">文件搜索</h3>
+<div class="outline-text-3" id="text-org8c9dd39">
+<p>
+Yazi 有两种搜索方式：
+</p>
+
+<ul class="org-ul">
+<li><code>s</code> ：按文件名搜索。背后调 <code>fd</code> ，比传统的 <code>find</code> 快得多，因为 <code>fd</code> 默认跳过 <code>.gitignore</code> 中的文件和隐藏目录</li>
+<li><code>S</code> ：按文件内容搜索。背后调 <code>ripgrep</code> ，比 <code>grep</code> 快，默认会忽略 <code>.git</code> 、二进制文件和无用的系统文件</li>
+<li><code>Ctrl+s</code> ：取消当前搜索</li>
+</ul>
+
+<p>
+两种搜索都支持正则表达式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga931aca" class="outline-3">
+<h3 id="orga931aca">批量重命名</h3>
+<div class="outline-text-3" id="text-orga931aca">
+<p>
+Yazi 的批量重命名思路务实：直接打开你的终端编辑器，把文件名列表交给你编辑，保存退出就完事。操作步骤：
+</p>
+
+<ol class="org-ol">
+<li>按空格选中要重命名的文件（选中状态跨目录保持，你可以从不同目录挑选文件）</li>
+<li>按 <code>r</code> ，Yazi 会在 <code>$EDITOR</code> 中打开一个文件名列表</li>
+<li>在编辑器中修改文件名，保存退出（Vim 里就是 <code>:wq</code> ）</li>
+</ol>
+
+<p>
+省去了传统做法里写循环、调 <code>rename</code> 命令的步骤。唯一的注意点：如果你从不同目录选了文件，文件名前会带路径，改的时候别动路径部分就行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d3f754" class="outline-3">
+<h3 id="org5d3f754">模糊搜索和 zoxide 集成</h3>
+<div class="outline-text-3" id="text-org5d3f754">
+<ul class="org-ul">
+<li><code>z</code> ：在当前目录中模糊搜索文件，背后调 <code>fzf</code> 。文件名记不全的时候用</li>
+<li><code>Z</code> ：跳转到 <code>zoxide</code> 追踪的目录。 <code>zoxide</code> 是一个智能 <code>cd</code> 替代，它会自动记录你去过的目录并分析访问频率，你输入几个字母就能跳到你最常去的匹配目录</li>
+</ul>
+
+<p>
+这两者解决的是不同层面的"找东西"问题： <code>z</code> 在当前目录找文件， <code>Z</code> 在整个文件系统中找你常去的目录。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfe2e47d" class="outline-3">
+<h3 id="orgfe2e47d">多标签</h3>
+<div class="outline-text-3" id="text-orgfe2e47d">
+<p>
+按 <code>t</code> 打开新标签，每个标签有独立的浏览位置。用数字键在标签之间切换（ <code>1</code> 、 <code>2</code> 、 <code>3</code>...）， <code>Ctrl+C</code> 关闭当前标签。这跟浏览器的标签逻辑完全一样，上手零成本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org50b1d49" class="outline-3">
+<h3 id="org50b1d49">更多功能</h3>
+<div class="outline-text-3" id="text-org50b1d49">
+<p>
+Yazi 还支持标准的文件操作（复制、粘贴、剪切）、可视模式选中、按键帮助（ <code>F1</code> 弹出完整按键列表， <code>ESC</code> 返回）。如果记不住快捷键，随时按 <code>F1</code> 查看就行。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1c8f7dc" class="outline-2">
+<h2 id="org1c8f7dc">是否值得用</h2>
+<div class="outline-text-2" id="text-org1c8f7dc">
+<p>
+本文作者正在构建一个全 TUI 工作流：Helix 写代码、Glow 预览 Markdown、Yazi 管理文件。如果你的日常也大量待在终端里，Yazi 比其他终端文件管理器的优势是功能密度：安装加依赖后，图片预览、代码高亮、搜索、批量重命名全都有了，不需要额外配置插件。
+</p>
+
+<p>
+当然，如果你本来就是 <code>ls</code> 、 <code>cd</code> 、 <code>mv</code> 走天下的极简派，或者已经深度定制了 ranger 的配置，Yazi 可能没那么大吸引力。但对想找一个功能齐全、配置量小的终端文件管理器的人来说，装好依赖就能用，上手成本很低。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-09</span>
+    <span class="post-info">2026-05-10</span>
+    <a href="../../../../../tags/yazi">yazi</a> : <a href="../../../../../tags/terminal">terminal</a> : <a href="../../../../../tags/file-manager">file-manager</a> : <a href="../../../../../tags/tui">tui</a> : <a href="../../../../../tags/tool">tool</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; lr4makjpv3fujjm3xj0gr41ufh &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
