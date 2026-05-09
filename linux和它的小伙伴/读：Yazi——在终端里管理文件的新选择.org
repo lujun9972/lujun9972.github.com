@@ -1,0 +1,127 @@
+#+TITLE: 读：Yazi——在终端里管理文件的新选择
+#+AUTHOR: darksun,Claude Code
+#+TAGS: yazi,terminal,file-manager,tui,tool
+#+DATE: [2026-05-09 六]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Yazi 是一个用 Rust 写的终端文件管理器，支持异步并发、图片预览、代码高亮、批量重命名和多种搜索方式。本文基于 It's FOSS 的上手体验，梳理安装配置步骤和核心功能，看看它能不能替代图形界面下对文件管理器的依赖。
+
+[[https://itsfoss.com/yazi/][原文（It's FOSS）]] 的作者分享了自己试用 Yazi 的体验。Yazi 是一个终端下的文件管理器，用 Rust 写的。我第一次听说它时心里想的是：终端文件管理器又不是什么新鲜东西，ranger、nnn、lf 都在那儿摆着，Yazi 能有什么不一样？读完发现它的差异化做得相当到位，值得写一篇上手参考。
+
+* 安装
+
+Yazi 在 Arch Linux、Void Linux、OpenSUSE Tumbleweed 等的官方仓库里都有。Arch 上安装时需要把依赖也带上，很多高级功能（图片预览、压缩包预览、语法高亮）都靠这些外部工具支撑：
+
+#+begin_src shell
+sudo pacman -S yazi ffmpeg 7zip jq poppler fd ripgrep fzf zoxide resvg imagemagick
+#+end_src
+
+每个依赖的作用：
+
+- =ffmpeg= ：视频缩略图
+- =7zip= ：压缩包预览和解压
+- =jq= ：JSON 语法高亮
+- =poppler= ：PDF 预览
+- =fd= ：文件名搜索（ =find= 的现代替代）
+- =ripgrep= ：文件内容搜索（ =grep= 的现代替代）
+- =fzf= ：模糊搜索
+- =zoxide= ：智能目录跳转（自动记录你常去的目录）
+- =resvg= ：SVG 图片预览
+- =imagemagick= ：通用图片处理
+
+Ubuntu 可以用 snap 安装：
+
+#+begin_src shell
+sudo snap install yazi --classic
+#+end_src
+
+再安装依赖包：
+
+#+begin_src shell
+sudo apt install ffmpeg 7zip jq poppler-utils fd-find ripgrep fzf zoxide imagemagick
+#+end_src
+
+如果你的发行版仓库里没有 Yazi，直接去 [[https://github.com/sxyazi/yazi/releases][GitHub Releases]] 下载二进制文件，给执行权限就能跑。
+
+* 启动脚本：退出时自动 cd 到当前目录
+
+Yazi 本身只是一个文件管理器，退出后你的终端不会自动进入你最后浏览的目录。要解决这个问题，原文推荐在 shell 配置文件中加一个 wrapper 函数：
+
+#+begin_src shell
+function y() {
+	local tmp="$(mktemp -t "yazi-cwd.XXXXXX")" cwd
+	command yazi "$@" --cwd-file="$tmp"
+	IFS= read -r -d '' cwd < "$tmp"
+	[ "$cwd" != "$PWD" ] && [ -d "$cwd" ] && builtin cd -- "$cwd"
+	rm -f -- "$tmp"
+}
+#+end_src
+
+这个 wrapper 做了四件事：
+
+1. 用 =mktemp= 创建一个临时文件，用来存放 Yazi 退出时的目录路径
+2. 启动 Yazi 时传 =--cwd-file= 参数，Yazi 退出时会把最后所在的目录路径写入这个临时文件
+3. 读取临时文件中的路径，如果路径有效且不等于当前目录，就 =cd= 过去
+4. 删除临时文件
+
+把这个函数加到 =~/.bashrc= 或 =~/.zshrc= 里，重启 shell 后输入 =y= 就能启动 Yazi。
+
+有两点注意：小写 =q= 退出会 cd 到新目录，大写 =Q= 退出会留在原目录。另外 =command yazi= 的 =command= 前缀是防御性的，防止 shell 递归调用。虽然函数名已经是 =y= 而不是 =yazi= ，但如果有人把函数名改成 =yazi= ，不加 =command= 就会死循环。
+
+* 功能亮点
+
+** 图片和文件预览
+
+Yazi 的预览功能依赖前面安装的那一坨外部工具。只要依赖齐全，它能在右侧分栏预览大部分文件类型：
+
+- 图片（需要终端支持图片协议，如 Kitty、Ghostty）
+- 代码文件（语法高亮）
+- 压缩包内容（不解压直接看里面有什么）
+- PDF 文档
+
+预览时按 =Shift+J= 向下滚动、 =Shift+K= 向上滚动。
+
+** 目录快速跳转
+
+按 =g= 再按空格，弹出路径输入框。输入绝对路径或相对路径，Yazi 会自动补全匹配的目录名。平常我们 =cd= 敲路径、 =ls= 看一眼、再 =cd= ……反复折腾。Yazi 的自动补全把中间步骤全省了。
+
+** 文件搜索
+
+Yazi 有两种搜索方式：
+
+- =s= ：按文件名搜索。背后调 =fd= ，比传统的 =find= 快得多，因为 =fd= 默认跳过 =.gitignore= 中的文件和隐藏目录
+- =S= ：按文件内容搜索。背后调 =ripgrep= ，比 =grep= 快，默认会忽略 =.git= 、二进制文件和无用的系统文件
+- =Ctrl+s= ：取消当前搜索
+
+两种搜索都支持正则表达式。
+
+** 批量重命名
+
+Yazi 的批量重命名思路务实：直接打开你的终端编辑器，把文件名列表交给你编辑，保存退出就完事。操作步骤：
+
+1. 按空格选中要重命名的文件（选中状态跨目录保持，你可以从不同目录挑选文件）
+2. 按 =r= ，Yazi 会在 =$EDITOR= 中打开一个文件名列表
+3. 在编辑器中修改文件名，保存退出（Vim 里就是 =:wq= ）
+
+省去了传统做法里写循环、调 =rename= 命令的步骤。唯一的注意点：如果你从不同目录选了文件，文件名前会带路径，改的时候别动路径部分就行。
+
+** 模糊搜索和 zoxide 集成
+
+- =z= ：在当前目录中模糊搜索文件，背后调 =fzf= 。文件名记不全的时候用
+- =Z= ：跳转到 =zoxide= 追踪的目录。 =zoxide= 是一个智能 =cd= 替代，它会自动记录你去过的目录并分析访问频率，你输入几个字母就能跳到你最常去的匹配目录
+
+这两者解决的是不同层面的"找东西"问题： =z= 在当前目录找文件， =Z= 在整个文件系统中找你常去的目录。
+
+** 多标签
+
+按 =t= 打开新标签，每个标签有独立的浏览位置。用数字键在标签之间切换（ =1= 、 =2= 、 =3=...）， =Ctrl+C= 关闭当前标签。这跟浏览器的标签逻辑完全一样，上手零成本。
+
+** 更多功能
+
+Yazi 还支持标准的文件操作（复制、粘贴、剪切）、可视模式选中、按键帮助（ =F1= 弹出完整按键列表， =ESC= 返回）。如果记不住快捷键，随时按 =F1= 查看就行。
+
+* 是否值得用
+
+本文作者正在构建一个全 TUI 工作流：Helix 写代码、Glow 预览 Markdown、Yazi 管理文件。如果你的日常也大量待在终端里，Yazi 比其他终端文件管理器的优势是功能密度：安装加依赖后，图片预览、代码高亮、搜索、批量重命名全都有了，不需要额外配置插件。
+
+当然，如果你本来就是 =ls= 、 =cd= 、 =mv= 走天下的极简派，或者已经深度定制了 ranger 的配置，Yazi 可能没那么大吸引力。但对想找一个功能齐全、配置量小的终端文件管理器的人来说，装好依赖就能用，上手成本很低。
