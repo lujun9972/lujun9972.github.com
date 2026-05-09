@@ -1,0 +1,198 @@
+#+TITLE: 读：Linux 创建指定大小文件的三种方式——dd、fallocate 与 truncate
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-05-09 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 创建指定大小的文件，Linux 有三个命令可用，但它们的实现方法完全不同：dd 逐字节写数据，fallocate 让文件系统预留空间，truncate 只改元数据。本文用四个场景讲清楚什么时候用哪一个，每个示例都附带实测输出。
+
+你需要一个 1GB 测试文件，用于磁盘基准测试、填满分区验证告警阈值、或者模拟大日志文件。 =touch= 命令只能给你一个 0 字节空壳，对这些场景毫无用处。
+
+Linux 有三个命令能创建指定大小的文件： =dd= 、 =fallocate= 和 =truncate= 。实现方式完全不同，适用于不同的场景。
+
+* 场景一：磁盘基准测试
+
+要对磁盘做顺序写速度测试，你需要让数据真的写进去。 =dd= 就是这个场景的工具。
+
+=dd= 从输入源逐字节读数据，一块一块写入输出文件。最常用的数据源是 =/dev/zero= ，这个设备持续产出空字节：
+
+#+BEGIN_SRC shell
+dd if=/dev/zero of=testfile.img bs=1M count=100
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+输入了 100+0 块记录
+输出了 100+0 块记录
+104857600 字节 (105 MB, 100 MiB) 已复制，0.041992 s，2.5 GB/s
+#+END_EXAMPLE
+
+参数拆解：
+- =if=/dev/zero= 从 zero 设备读取，这个设备无限产出空字节
+- =of=testfile.img= 写入目标文件
+- =bs=1M= 每次读写操作的块大小为 1MB
+- =count=100= 复制 100 个块，100 × 1MB = 100MB
+
+输出本身就是一个简易的磁盘写入基准：实际字节数、用时、传输速度全给了。这是真正的数据写入，不是预留空间，写 100MB 到磁盘需要多久，命令就要跑多久。
+
+要创建 1GB 文件，直接把 count 放大：
+
+#+BEGIN_SRC shell
+dd if=/dev/zero of=testfile.img bs=1M count=1024
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+输入了 1024+0 块记录
+输出了 1024+0 块记录
+1073741824 字节 (1.1 GB, 1.0 GiB) 已复制，3.30795 s，325 MB/s
+#+END_EXAMPLE
+
+大文件写入时加上 =status=progress= 可以看实时进度：
+
+#+BEGIN_SRC shell
+dd if=/dev/zero of=bigfile.img bs=1M count=4096 status=progress
+#+END_SRC
+
+*速度取决于你的磁盘。上面 100MB 的测试在 SSD 上只花了 0.04 秒（2.5 GB/s），但 1GB 文件降到了 325 MB/s，因为 SSD 的缓存写完之后真实速度就暴露了。机械硬盘上的差异会更明显。*
+
+* 场景二：快速创建大文件占位
+
+磁盘基准测试要的是真实写入。但很多时候你只需要一个指定大小的大文件先把空间占着。比如：
+- 创建 VM 磁盘镜像，之后会往里面装系统
+- 预分配日志文件，防止磁盘碎片
+- 快速占满分区到某个阈值，测试告警
+
+这时候 =fallocate= 是正确选择。它在文件系统层面预留空间，不写数据，所以即使 GB 级文件也是秒级的。
+
+#+BEGIN_SRC shell
+time fallocate -l 1G largefile.img
+#+END_SRC
+
+对比 =dd= 写 1GB 花了 3.3 秒， =fallocate= 快得多：
+
+#+BEGIN_EXAMPLE
+real    0m1.162s
+user    0m0.000s
+sys     0m0.960s
+#+END_EXAMPLE
+
+验证文件大小：
+
+#+BEGIN_SRC shell
+ls -lh largefile.img
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+-rw-r--r-- 1 lujun9972 users 1.0G  5月 9日 22:36 largefile.img
+#+END_EXAMPLE
+
+=fallocate= 支持 ext4、xfs、btrfs 等现代文件系统。如果遇到 "Operation not supported" 错误，说明你的文件系统不支持预分配（比如 tmpfs 或 FAT），这时退回到 =dd= 。
+
+工作机制： =fallocate= 调用文件系统的 =fallocate()= 系统调用，文件系统直接标记一段连续块为"已分配但未初始化"。从文件系统的角度看空间已经被占用了，但实际数据块还没写入。读这些未初始化的块时，文件系统返回零值。这跟 2018 年我在《ext4 tips 三则》里写的 ext4 范围预分配是同一个机制。
+
+* 场景三：测试占位，空间都不想占
+
+有时候连预留空间都不必要，你只需要一个文件"看起来"有某个大小。比如：
+- 写测试用例，需要指定大小的输入文件
+- 临时占位，文件内容完全无所谓
+- 多个测试并行，磁盘空间有限
+
+=truncate= 只改元数据，不分配任何磁盘块，创建的是稀疏文件。
+
+#+BEGIN_SRC shell
+truncate -s 1G sparsefile.img
+#+END_SRC
+
+用 =du= 看实际占用：
+
+#+BEGIN_SRC shell
+du -sh sparsefile.img
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+0	sparsefile.img
+#+END_EXAMPLE
+
+0 字节。文件大小只在元数据里存在，没有任何块被分配。用 =stat= 看更直观：
+
+#+BEGIN_SRC shell
+stat sparsefile.img
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+  大小：1073741824 	块：0          IO 块大小：2097152 一般文件
+#+END_EXAMPLE
+
+注意 =stat= 输出里的"块：0"。对比前面 =dd= 和 =fallocate= 创建的 100MB 文件， =stat= 都显示"块：204800"（204800 × 512 字节/块 = 100MB）。
+
+=truncate= 真正的杀手功能是扩缩已有文件， =dd= 和 =fallocate= 都做不到：
+
+#+BEGIN_SRC shell
+# 扩容 500MB
+truncate -s +500M sparsefile.img
+# 缩到 200MB
+truncate -s 200M sparsefile.img
+#+END_SRC
+
+缩文件时 =truncate= 会静默丢弃超出新边界的数据，没有警告。对存着真实内容的文件用之前要想清楚。
+
+* 场景四：创建 swap 文件
+
+如果你要在 Linux 上添加 swap 空间，创建 swap 文件是常见做法。这个场景下，选错命令会导致 =mkswap= 报错。
+
+内核要求 swap 空间必须被完全分配。稀疏文件不行，因为内核需要把内存页换出到实际存在的磁盘块上， =truncate= 创建的稀疏文件会让 =mkswap= 直接报错。
+
+在 ext4 和 xfs 上， =dd= 和 =fallocate= 通常都能用。但在 btrfs 上， =fallocate= 创建的 swap 文件可能有问题。最保险、兼容性最好的方法是 =dd= ：
+
+#+BEGIN_SRC shell
+sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+#+END_SRC
+
+要让它开机自动挂载，在 =/etc/fstab= 里加一行：
+
+#+BEGIN_EXAMPLE
+/swapfile none swap sw 0 0
+#+END_EXAMPLE
+
+* 如何验证文件的实际大小
+
+创建完文件后， =ls -lh= 可以快速看一眼人类可读的大小，但它会四舍五入。精确比较三个命令的差异，你需要 =stat= 和 =du= 。
+
+=stat= 告诉你两个关键数字："大小"是文件字节数，"块"是实际分配的 512 字节块数（中文 locale 下显示为"大小"和"块"，英文 locale 下为 =Size= 和 =Blocks= ）。
+
+把三种方式创建的文件放在一起对比：
+
+#+BEGIN_SRC shell
+du -sh test_dd.img test_falloc.img test_trunc.img
+#+END_SRC
+
+#+BEGIN_EXAMPLE
+100M	test_dd.img
+100M	test_falloc.img
+0	test_trunc.img
+#+END_EXAMPLE
+
+- =dd= 创建的： =du= 显示 100M， =stat= 的"块"是 204800（204800 × 512 = 100MB），数据真实存在
+- =fallocate= 创建的： =du= 也显示 100M，空间已被预留，但数据块未初始化
+- =truncate= 创建的： =du= 显示 0， =stat= 的"块"是 0，没有任何磁盘分配
+
+这也是判断一个文件是不是稀疏文件的标准方法： =ls -lh= 显示的大小比 =du -sh= 大得多，就是稀疏文件。
+
+* 怎么选：一张对比表
+
+| 标准 | dd | fallocate | truncate |
+|------|-----|-----------|----------|
+| 工作机制 | 逐字节写数据 | 文件系统预留空间 | 只改元数据 |
+| 速度（1GB） | 3.3s（SSD，取决于盘速） | 1.2s | 瞬间 |
+| 实际分配磁盘块 | 是 | 是（预留，未初始化） | 否 |
+| =du -sh= 显示 | 等于文件大小 | 等于文件大小 | 0 |
+| 适用文件系统 | 所有 | ext4/xfs/btrfs 等 | 所有 |
+| 扩缩已有文件 | 否 | 否 | 是 |
+| swap 文件 | 最保险 | ext4/xfs 上可用 | 不可用 |
+
+记住三条就够：
+- 要测磁盘速度、要确保数据已写入 → =dd=
+- 要一个大文件占位，不关心内容 → =fallocate=
+- 要一个"看起来大"的文件，空间都不想占 → =truncate=
