@@ -115,8 +115,23 @@ if (!hasCalendarPermission()) {
 }
 #+end_src
 
+**影响范围**：CalendarSyncService 的 =onCreate()= 和 =onStartCommand()= 都需要加权限检查。
+
+修复权限检查后，又踩了一个新坑：=onCreate()= 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
+
+#+begin_src java
+// onDestroy 必须做空检查
+@Override
+public void onDestroy() {
+    if (sharedPreferences != null) {
+        sharedPreferences.unregisterOnSharedPreferenceChangeListener(this);
+    }
+    super.onDestroy();
+}
+#+end_src
+
 #+begin_quote
-教训：加了 early return 后别忘了 onDestroy() 也可能被调用。我就在这里踩了 NPE——onCreate 提前返回导致 =sharedPreferences= 为 null，但 onDestroy() 直接调了 =unregisterOnSharedPreferenceChangeListener()=。
+教训：在 =onCreate()= / =onStartCommand()= 中加 early return（比如权限检查失败后 =stopSelf()=）时，=onDestroy()= 仍会被 Android 调用。所有在 =onDestroy()= 中使用的字段都必须做空检查。
 #+end_quote
 
 ** 坑 4：主线程网络操作
