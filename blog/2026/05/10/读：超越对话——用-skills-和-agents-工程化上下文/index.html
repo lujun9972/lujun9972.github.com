@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：超越对话——用 Skills 和 Agents 工程化上下文 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="DZone 上 Ioan Tinca 提出了一种观点：用 LLM 不该是&quot;聊天&quot;，而应该是&quot;上下文工程&quot;。本文解读 Skills 按需注入、Subagents 上下文隔离、契约-执行分离三条核心机制，以及 prompt→skill→agent 的递进路线，穿插 Claude Code 实际使用体验。" />
+  <meta name="keywords" content="claude-code,skills,subagents,llm,context-engineering" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：超越对话——用 Skills 和 Agents 工程化上下文</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4dd9b26">Token 税：上下文是有限资源</a></li>
+<li><a href="#orga61b0b0">Skills：用到时才注入</a></li>
+<li><a href="#orgce3e357">Subagents：用新上下文隔离问题</a></li>
+<li><a href="#org218926e">组合：Skills 做契约，Agents 做执行</a></li>
+<li><a href="#orga851a33">从简单开始，逐步扩展</a></li>
+<li><a href="#orgf299a9a">从使用者到设计者</a></li>
+</ul>
+</div>
+</div>
+<p>
+把 Claude 当聊天框用，问一句答一句，这是大多数人的用法。但 DZone 上 Ioan Tinca 的 <a href="https://dzone.com/articles/beyond-conversation-mastering-context-with-claude">这篇文章</a> 给了一个不同的视角：Claude 不只是一个对话界面，它是一个可以嵌入系统的推理引擎。当你从"对话"切换到"上下文工程"的思维模式，Claude 就从被动助手变成了开发工作流里的活跃组件。
+</p>
+
+<p>
+这个转变的起点，是一个简单约束，但大多数人没意识到它的分量。
+</p>
+
+<div id="outline-container-org4dd9b26" class="outline-2">
+<h2 id="org4dd9b26">Token 税：上下文是有限资源</h2>
+<div class="outline-text-2" id="text-org4dd9b26">
+<p>
+Claude 按 token 运转。现代模型虽然支持超大上下文窗口，但这个空间终究是有限的。你塞进去的每条指令、每个文件、每条历史消息都在抢模型的注意力。原文把这叫做"token 税"：上下文越多，模型要筛选的信息就越多，响应变慢、成本上升。更隐蔽的问题是，无关信息混进来会拉低输出质量。上下文不管理就会变噪声，噪声导致错误。
+</p>
+
+<p>
+所以关键不是"给更多信息"，而是"在正确的时间给正确的信息"。Skills 和 Subagents 就是干这个的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga61b0b0" class="outline-2">
+<h2 id="orga61b0b0">Skills：用到时才注入</h2>
+<div class="outline-text-2" id="text-orga61b0b0">
+<p>
+Skill 是把知识和能力模块化的机制。每个 Skill 有一个简短描述和一套详细指令。大多数时候，模型只看到描述。详细的指令在任务真正触发这个 Skill 时才注入上下文。
+</p>
+
+<p>
+效果很直接：上下文保持精瘦，token 用量下降，行为也更可预测。你不再需要维护一个又长又脆的 prompt，取而代之的是一个可组合的能力库。
+</p>
+
+<p>
+用我自己的例子。 <code>url2blog</code> 这个 Skill 平时只占一行描述："从 URL 读取内容，生成经过实际执行验证的 Org-mode 博文"。只有当我真的贴了一个 URL 并输入 <code>/url2blog</code> 时，完整的流程指令（分层读取、内容评估、格式规范、人味儿去 AI 味、子代理审查、代码验证等十几个步骤）才会展开。 = 人味儿= skill 也一样：平时一行描述，调用时才把六类 AI 写作指纹的诊断标准注入上下文。
+</p>
+
+<p>
+这些指令如果常年挂在系统 prompt 里，每次对话都要消耗几百行 token。但它们 99% 的时间用不上。Skills 的设计让它们只在用到时才出现。
+</p>
+
+<p>
+原文把 Skills 分了两类。一类简单：格式化输出、约束代码风格、注入领域知识。另一类更像外部工具的接口，模型生成指令，独立的系统去执行。不管是哪类，核心思想一样：别扛着你暂时不需要的知识。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgce3e357" class="outline-2">
+<h2 id="orgce3e357">Subagents：用新上下文隔离问题</h2>
+<div class="outline-text-2" id="text-orgce3e357">
+<p>
+Skills 控制往上下文里放什么。Subagents 控制用几个上下文。
+</p>
+
+<p>
+一个任务太大、太杂的时候，硬塞进一个会话会让上下文迅速膨胀。Subagent 的解法是另起炉灶：给它一个干净的上下文窗口，让它独立工作，不受主会话的干扰。完成后只返回精炼结果。
+</p>
+
+<p>
+这跟软件工程的模块化原则一样。你不会把所有逻辑塞进一个函数。你会拆模块、设边界、让组件独立工作。Subagents 把这个原则搬到了 LLM 工作流里。
+</p>
+
+<p>
+我的博客工作流里就有这个模式。博文草稿写完后，我会启动一个子代理做独立审查。它带着全新的上下文窗口读博文，检查格式、逻辑、代码、翻译腔。因为它没看过我写草稿时的纠结过程，不会被中间讨论带偏，能发现我陷在主上下文里看不到的问题。审完只返回一个修改清单，不把审查过程的所有中间推理塞回主会话。
+</p>
+
+<p>
+更复杂的场景里，多个 Subagents 可以并行跑，把一个大问题拆成几个小问题同时解决。也可以给 Subagent 配外部存储，让它持久化结果或在上次运行的基础上继续。
+</p>
+
+<p>
+原文强调了一点：这些行为不是模型自己长出来的，是你围绕模型构建的系统赋予它的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org218926e" class="outline-2">
+<h2 id="org218926e">组合：Skills 做契约，Agents 做执行</h2>
+<div class="outline-text-2" id="text-org218926e">
+<p>
+单独用 Skills 或 Subagents 都有用，但组合起来效果完全不同。
+</p>
+
+<p>
+在这个模式里，Skill 不只是注入上下文，它还负责校验输入、约束结构、决定是否需要委托。如果一切就绪，它触发 Subagent 去干重活。Skill 是契约，定义任务怎么执行；Subagent 是执行者，在独立空间里完成工作。
+</p>
+
+<p>
+这种分离解决了一个常见问题：LLM 天然倾向啰嗦和松散的结构。通过 Skill 收敛入口，你可以强制特定的输出格式、约束行为范围、阻止不必要的计算。同时把昂贵的操作（大上下文窗口、多步推理）限制在真正需要的时候才触发。
+</p>
+
+<p>
+以 <code>url2blog</code> 为例。这个 Skill 定义了博文生成的完整契约：URL 安全验证、内容深度评估的五个测试、子代理审查、Org-mode 格式规范、危险模式检测等等。但具体执行时，像子代理审查这一步，Skill 只定义了审查标准和输出格式，实际的审查工作委托给一个独立的 Subagent 在干净上下文里完成。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga851a33" class="outline-2">
+<h2 id="orga851a33">从简单开始，逐步扩展</h2>
+<div class="outline-text-2" id="text-orga851a33">
+<p>
+直接跳到复杂的 Agent 架构很有诱惑力，但原文的建议是克制。
+</p>
+
+<p>
+大多数工作流的起点是一个 prompt。如果一条简单指令能稳定工作，就没必要加复杂度。当某些模式开始反复出现，比如你发现自己在重复类似的格式化要求、反复强调同样的约束，这就是引入 Skill 的时机。只有当任务大到上下文装不下、或者需要隔离执行时，才上 Subagents。
+</p>
+
+<p>
+Prompt → Skill → Agent 这个递进路线，保持了系统的可理解和可维护。
+</p>
+
+<p>
+这个建议很务实。我自己用 Claude Code 的过程就是这样演进的：一开始是简单的中文问答，后来发现每次写博文都要重复交代格式规范，就有了 <code>url2blog</code> skill。再后来发现草稿写完自己审不出问题，就加了子代理审查步骤。每一步都是被实际痛点推着走的，没有预先规划好的架构。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf299a9a" class="outline-2">
+<h2 id="orgf299a9a">从使用者到设计者</h2>
+<div class="outline-text-2" id="text-orgf299a9a">
+<p>
+把这些拼在一起，心智模型就变了。你不再是在"跟 Claude 聊天"，而是在设计上下文怎么在系统中流动。你决定模型看到什么、什么时候看到、工作怎么分工。
+</p>
+
+<p>
+这就是"用 LLM"和"工程化 LLM"的区别。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-10</span>
+    <span class="post-info">2026-05-10</span>
+    <a href="../../../../../tags/claude-code">claude-code</a> : <a href="../../../../../tags/skills">skills</a> : <a href="../../../../../tags/subagents">subagents</a> : <a href="../../../../../tags/llm">llm</a> : <a href="../../../../../tags/context-engineering">context-engineering</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 4kqc5qddvvaudodmeuvkhwl1qd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>org-mobile-push 卡顿排查实战：从黑盒到字节码反编译 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="keywords" content="异闻录 Emacs" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">org-mobile-push 卡顿排查实战：从黑盒到字节码反编译</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge80669c">故障现象</a></li>
+<li><a href="#org547a30d">第一步：缩小范围——到底是哪个步骤慢？</a>
+<ul>
+<li><a href="#org80e4c38">添加计时日志</a></li>
+<li><a href="#org6034d2c">第一轮结果</a></li>
+</ul>
+</li>
+<li><a href="#org2a1b60d">第二步：搞清楚 org-mobile-push 内部调了什么</a></li>
+<li><a href="#org3526d0b">第三步：用 advice 注入计时——踩坑与解决</a>
+<ul>
+<li><a href="#org8bb01ff">坑1：=:around= advice 中 orig-fn 不是符号</a></li>
+<li><a href="#org000a83d">坑2：改用 <code>let</code> 捕获函数名后闭包失效</a></li>
+<li><a href="#orga959bb3">解决方案：用 <code>defmacro</code> 在编译期展开</a></li>
+</ul>
+</li>
+<li><a href="#orga5570aa">第四步：精确定位——哪个 agenda 命令卡死了？</a></li>
+<li><a href="#orgd0de47d">第五步：为什么 Habits 命令会卡死？</a></li>
+<li><a href="#org55dbbcd">第六步：验证与修复</a></li>
+<li><a href="#org54ff27d">总结</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orge80669c" class="outline-2">
+<h2 id="orge80669c">故障现象</h2>
+<div class="outline-text-2" id="text-orge80669c">
+<p>
+我用 Docker 跑了一个 <a href="https://github.com/lujun9972/mobileorg-sync">mobileorg-sync</a> 服务，实现手机端 Org-mode（MobileOrg）和电脑端的自动同步。同步流程大概是：
+</p>
+
+<ol class="org-ol">
+<li><code>git pull</code> 拉取最新org数据</li>
+<li><code>org-mobile-pull</code> 应用手机端的修改</li>
+<li><code>org-mobile-push</code> 生成 agenda 视图推送到手机</li>
+<li><code>git commit &amp;&amp; git push</code> 提交并推送org数据</li>
+</ol>
+
+<p>
+某天发现，同步脚本卡住了——日志显示 <code>Creating agendas...</code> 后就再也没有输出。等了 16 分钟进程还在跑，CPU 占用 99%。
+</p>
+
+<p>
+整个排查过程花了不少功夫，也踩了很多 Elisp advice（函数建议）的坑。下面一步步复盘。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org547a30d" class="outline-2">
+<h2 id="org547a30d">第一步：缩小范围——到底是哪个步骤慢？</h2>
+<div class="outline-text-2" id="text-org547a30d">
+</div>
+<div id="outline-container-org80e4c38" class="outline-3">
+<h3 id="org80e4c38">添加计时日志</h3>
+<div class="outline-text-3" id="text-org80e4c38">
+<p>
+首先需要搞清楚，是 <code>org-mobile-pull</code> 慢，还是 <code>org-mobile-push</code> 慢，还是 <code>git</code> 操作慢？
+</p>
+
+<p>
+我先定义一个日志函数，把带时间戳的消息追加写入文件。这样即使进程卡死，已经写入的日志也不会丢失：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">mobileorg-sync-log</span> (fmt <span class="org-type">&amp;rest</span> args)
+  <span class="org-doc">"&#24102;&#26102;&#38388;&#25139;&#20889;&#20837;&#26085;&#24535;&#21040;&#25991;&#20214;&#65292;&#21516;&#26102;&#36755;&#20986;&#21040; stdout&#12290;"</span>
+  (<span class="org-keyword">let</span> ((msg (format <span class="org-string">"[%s] %s"</span>
+               (format-time-string <span class="org-string">"%Y-%m-%d %H:%M:%S.%3N"</span>)
+               (apply #'format fmt args))))
+    (message <span class="org-string">"PERF: %s"</span> msg)    <span class="org-comment-delimiter">; </span><span class="org-comment">&#36755;&#20986;&#21040; stdout
+</span>    (<span class="org-keyword">with-temp-buffer</span>
+      (insert msg <span class="org-string">"\n"</span>)
+      (append-to-file (point-min) (point-max) <span class="org-string">"/tmp/mobileorg-sync-perf.log"</span>))))
+</pre>
+</div>
+
+<p>
+然后定义一个计时宏 <code>mobileorg-sync--timed</code> ，用它把 <code>mobileorg-sync</code> 函数中的每个步骤包裹起来：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defmacro</span> <span class="org-function-name">mobileorg-sync--timed</span> (label <span class="org-type">&amp;rest</span> body)
+  <span class="org-doc">"&#25191;&#34892; BODY &#24182;&#35760;&#24405;&#32791;&#26102;&#65292;LABEL &#20026;&#27493;&#39588;&#21517;&#12290;"</span>
+  `(<span class="org-keyword">let</span> ((start (float-time)))
+     (mobileorg-sync-log <span class="org-string">"&gt;&gt;&gt; BEGIN %s"</span> ,label)
+     (<span class="org-keyword">prog1</span> (<span class="org-keyword">progn</span> ,@body)
+       (mobileorg-sync-log <span class="org-string">"&lt;&lt;&lt; END %s (%.3fs)"</span> ,label (- (float-time) start)))))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">mobileorg-sync</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">let</span> ((default-directory org-directory))
+    (mobileorg-sync--timed <span class="org-string">"git pull"</span>        (shell-command <span class="org-string">"git pull"</span>))
+    (mobileorg-sync--timed <span class="org-string">"org-mobile-pull"</span>  (org-mobile-pull))
+    (mobileorg-sync--timed <span class="org-string">"save-some-buffers"</span> (save-some-buffers 4))
+    (mobileorg-sync--timed <span class="org-string">"org-mobile-push"</span>  (org-mobile-push))
+    ...))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6034d2c" class="outline-3">
+<h3 id="org6034d2c">第一轮结果</h3>
+<div class="outline-text-3" id="text-org6034d2c">
+<p>
+部署后运行，日志输出如下：
+</p>
+
+<pre class="example" id="org2150256">
+[08:20:46.982] &gt;&gt;&gt; BEGIN org-mobile-pull
+[08:20:47.305] &lt;&lt;&lt; END org-mobile-pull (0.323s)
+[08:20:47.310] &gt;&gt;&gt; BEGIN org-mobile-push
+（等了 16 分钟，没有后续输出）
+</pre>
+
+<p>
+<code>org-mobile-pull</code> 只用了 0.3 秒，而 <code>org-mobile-push</code> 卡了 16 分钟以上。问题锁定在 <code>org-mobile-push</code> 。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2a1b60d" class="outline-2">
+<h2 id="org2a1b60d">第二步：搞清楚 org-mobile-push 内部调了什么</h2>
+<div class="outline-text-2" id="text-org2a1b60d">
+<p>
+<code>org-mobile-push</code> 是 Org-mode 内置函数，但我的容器里只装了编译后的 <code>.elc</code> 字节码文件，没有 <code>.el</code> 源码。=find-function= 也找不到源文件。
+</p>
+
+<p>
+怎么办？Emacs 的字节码文件虽然不能直接阅读，但可以提取编译时生成的 <i>常量表</i> 。每个编译后的函数都有一张常量表，里面按序存放了函数内部引用的所有符号和字面量。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let*</span> ((def (indirect-function 'org-mobile-push))
+       (consts (aref def 2)))   <span class="org-comment-delimiter">; </span><span class="org-comment">&#32034;&#24341; 2 &#26159;&#24120;&#37327;&#34920;
+</span>  (<span class="org-keyword">dotimes</span> (i (length consts))
+    (message <span class="org-string">"[%d] %S"</span> i (aref consts i))))
+</pre>
+</div>
+
+<p>
+输出如下（省略了不关键的部分）：
+</p>
+
+<pre class="example" id="org7200458">
+[17] org-mobile-check-setup
+[18] org-mobile-prepare-file-lists
+[19] message
+[20] "Creating agendas..."
+[24] org-mobile-create-sumo-agenda
+[25] "Creating agendas...done"
+[26] org-save-all-org-buffers
+[28] org-mobile-copy-agenda-files
+[30] org-mobile-create-index-file
+[32] org-mobile-write-checksums
+</pre>
+
+<p>
+于是 <code>org-mobile-push</code> 的完整执行流程一目了然：
+</p>
+
+<ol class="org-ol">
+<li><code>org-mobile-check-setup</code></li>
+<li><code>org-mobile-prepare-file-lists</code></li>
+<li><code>message "Creating agendas..."</code></li>
+<li><code>org-mobile-create-sumo-agenda</code></li>
+<li><code>org-save-all-org-buffers</code></li>
+<li><code>org-mobile-copy-agenda-files</code></li>
+<li><code>org-mobile-create-index-file</code></li>
+<li><code>org-mobile-write-checksums</code></li>
+</ol>
+
+<p>
+其中第 4 步 <code>org-mobile-create-sumo-agenda</code> 看名字就知道是"生成汇总 agenda"的关键步骤。用同样的常量表方法继续挖它一层：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let*</span> ((def (indirect-function 'org-mobile-create-sumo-agenda))
+       (consts (aref def 2)))
+  (<span class="org-keyword">dotimes</span> (i (length consts))
+    (message <span class="org-string">"[%d] %S"</span> i (aref consts i))))
+</pre>
+</div>
+
+<pre class="example" id="org7dbc14a">
+[3]  org-agenda-custom-commands
+[4]  org-mobile-creating-agendas
+[6]  "agendas.org"
+[7]  org-mobile-sumo-agenda-command
+[13] org-store-agenda-views
+</pre>
+
+<p>
+可以看到它调用了 <code>org-store-agenda-views</code> ，并引用了 <code>org-agenda-custom-commands</code> 。所以这就是生成所有自定义 agenda 视图的地方。
+</p>
+
+<p>
+这是一个非常有用的小技巧：即使没有源码，也能通过常量表了解函数的执行逻辑。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3526d0b" class="outline-2">
+<h2 id="org3526d0b">第三步：用 advice 注入计时——踩坑与解决</h2>
+<div class="outline-text-2" id="text-org3526d0b">
+<p>
+知道了 <code>org-mobile-push</code> 内部调用了哪些函数，下一步就是用 Emacs 的 <i>advice</i> 机制，在每个子函数执行前后插入计时代码。
+</p>
+
+<p>
+advice 类似于其他语言中的装饰器（decorator）或 AOP，可以在不修改原函数的情况下，在函数执行前后插入自定义逻辑。比如 <code>:before</code> advice 在原函数执行前运行，=:after= 在执行后运行，=:around= 可以完全包裹原函数。
+</p>
+</div>
+
+<div id="outline-container-org8bb01ff" class="outline-3">
+<h3 id="org8bb01ff">坑1：=:around= advice 中 orig-fn 不是符号</h3>
+<div class="outline-text-3" id="text-org8bb01ff">
+<p>
+我最初尝试用 <code>:around</code> advice 包裹 <code>org-mobile-check-setup</code> 等函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(advice-add 'org-mobile-check-setup <span class="org-builtin">:around</span>
+            (<span class="org-keyword">lambda</span> (orig-fn <span class="org-type">&amp;rest</span> args)
+              (<span class="org-keyword">let</span> ((fn-name (symbol-name orig-fn)))  <span class="org-comment-delimiter">; </span><span class="org-comment">&#8592; &#25253;&#38169;&#65281;
+</span>                (mobileorg-sync-log <span class="org-string">"&gt;&gt; %s START"</span> fn-name)
+                (apply orig-fn args))))
+</pre>
+</div>
+
+<p>
+运行时报错：
+</p>
+
+<pre class="example" id="org1638c1b">
+Wrong type argument: symbolp, #[0 "À Â" [org-mobile-files-alist ...] 2]
+</pre>
+
+<p>
+原因是 <code>:around</code> advice 的第一个参数 <code>orig-fn</code> 接收的是 /原始函数对象/，可能是字节码对象（=#[0 ...]=），而不是函数的符号名。对字节码对象调用 <code>symbol-name</code> 当然会报错。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org000a83d" class="outline-3">
+<h3 id="org000a83d">坑2：改用 <code>let</code> 捕获函数名后闭包失效</h3>
+<div class="outline-text-3" id="text-org000a83d">
+<p>
+为了绕开坑1，我在 advice 外面用 <code>let</code> 提前捕获函数名，让 lambda 通过闭包引用它：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">dolist</span> (fn '(org-mobile-check-setup org-mobile-prepare-file-lists ...))
+  (<span class="org-keyword">let</span> ((fname (symbol-name fn)))
+    (advice-add fn <span class="org-builtin">:around</span>
+                (<span class="org-keyword">lambda</span> (orig-fn <span class="org-type">&amp;rest</span> args)
+                  (mobileorg-sync-log <span class="org-string">"&gt;&gt; %s START"</span> fname)  <span class="org-comment-delimiter">; </span><span class="org-comment">&#24341;&#29992;&#22806;&#23618; let &#30340; fname
+</span>                  (apply orig-fn args)))))
+</pre>
+</div>
+
+<p>
+运行时报错：
+</p>
+
+<pre class="example" id="org756ca7c">
+Symbol's value as variable is void: fname
+</pre>
+
+<p>
+这说明 <code>fname</code> 并没有被 lambda 闭包捕获。这个脚本使用 <code>emacs --quick --script</code> 方式运行，文件头通过 <code># -*- lexical-binding: t; -*-</code> 声明了词法作用域。但由于脚本第一行是 shell 多行注释伪装成 Elisp 的技巧（=\":\"; exec emacs --quick --script \"$0\"<code>），可能影响了 Emacs 对 file-local variables 的解析，导致词法绑定没有真正生效。于是 lambda 中的 =fname</code> 变成了自由变量，运行时找不到绑定就报错了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga959bb3" class="outline-3">
+<h3 id="orga959bb3">解决方案：用 <code>defmacro</code> 在编译期展开</h3>
+<div class="outline-text-3" id="text-orga959bb3">
+<p>
+既然闭包不可靠，我就用宏（macro）来彻底规避这个问题。宏在 <i>编译期</i> 就会把函数名字面量直接写进生成的代码，完全不依赖运行时的闭包捕获：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defmacro</span> <span class="org-function-name">mobileorg--def-perf-advice</span> (fn)
+  (<span class="org-keyword">let</span> ((before-fn (intern (format <span class="org-string">"mobileorg--perf-before-%s"</span> fn)))
+        (after-fn  (intern (format <span class="org-string">"mobileorg--perf-after-%s"</span> fn))))
+    `(<span class="org-keyword">progn</span>
+       (<span class="org-keyword">defun</span> ,before-fn (<span class="org-type">&amp;rest</span> _)
+         (mobileorg--perf-log (format <span class="org-string">"&gt;&gt; %s START"</span> ,(symbol-name fn)))
+         (puthash ',fn (float-time) mobileorg--perf-start-times))
+       (<span class="org-keyword">defun</span> ,after-fn (<span class="org-type">&amp;rest</span> _)
+         (mobileorg--perf-log
+          (format <span class="org-string">"&lt;&lt; %s END (%.3fs)"</span> ,(symbol-name fn)
+                  (- (float-time) (gethash ',fn mobileorg--perf-start-times)))))
+       <span class="org-comment-delimiter">;; </span><span class="org-comment">&#29992; :before &#21644; :after&#65292;&#32780;&#19981;&#26159; :around
+</span>       <span class="org-comment-delimiter">;; </span><span class="org-comment">:before/:after &#30340; advice &#20989;&#25968;&#21482;&#25509;&#25910;&#21407;&#20989;&#25968;&#30340;&#21442;&#25968;&#65292;&#19981;&#25509;&#25910; orig-fn
+</span>       <span class="org-comment-delimiter">;; </span><span class="org-comment">&#32780; :around &#30340; advice &#20989;&#25968;&#31532;&#19968;&#20010;&#21442;&#25968;&#23601;&#26159; orig-fn&#65288;&#21487;&#33021;&#26159;&#23383;&#33410;&#30721;&#23545;&#35937;&#65292;&#19981;&#26159;&#31526;&#21495;&#65289;
+</span>       <span class="org-comment-delimiter">;; </span><span class="org-comment">&#25152;&#20197;&#29992; :before/:after &#20174;&#26681;&#26412;&#19978;&#19981;&#23384;&#22312; orig-fn &#31867;&#22411;&#38382;&#39064;
+</span>       (advice-add ',fn <span class="org-builtin">:before</span> #',before-fn)
+       (advice-add ',fn <span class="org-builtin">:after</span>  #',after-fn))))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#23545;&#27599;&#20010;&#30446;&#26631;&#20989;&#25968;&#29983;&#25104;&#29420;&#31435;&#30340; advice
+</span>(<span class="org-keyword">dolist</span> (fn '(org-mobile-check-setup
+              org-mobile-prepare-file-lists
+              org-mobile-create-sumo-agenda
+              org-store-agenda-views
+              org-mobile-write-agenda-for-mobile
+              org-agenda-list org-tags-view org-todo-list))
+  (eval `(mobileorg--def-perf-advice ,fn)))
+</pre>
+</div>
+
+<p>
+这个方案同时解决了两个坑：
+</p>
+<ul class="org-ul">
+<li>用 <code>:before</code> / <code>:after</code> 而非 <code>:around</code> ，彻底避开了 <code>orig-fn</code> 类型问题</li>
+<li>用 <code>defmacro</code> 在宏展开时嵌入字面量，彻底避开了闭包捕获问题</li>
+</ul>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga5570aa" class="outline-2">
+<h2 id="orga5570aa">第四步：精确定位——哪个 agenda 命令卡死了？</h2>
+<div class="outline-text-2" id="text-orga5570aa">
+<p>
+用修复后的 advice 重新运行，终于拿到了详细的函数级日志：
+</p>
+
+<pre class="example" id="orga924399">
+[09:20:05.514] &gt;&gt; org-mobile-create-sumo-agenda START
+[09:20:05.514] &gt;&gt; org-store-agenda-views START
+[09:20:09.246] &gt;&gt; org-agenda-list START
+[09:20:14.305] &lt;&lt; org-agenda-list END (5.058s)
+[09:20:14.305] &gt;&gt; org-todo-list START
+[09:20:14.442] &lt;&lt; org-todo-list END (0.136s)
+[09:20:14.442] &gt;&gt; org-todo-list START
+[09:20:14.582] &lt;&lt; org-todo-list END (0.139s)
+[09:20:14.582] &gt;&gt; org-tags-view START
+[09:20:17.853] &lt;&lt; org-tags-view END (3.270s)
+[09:20:17.853] &gt;&gt; org-tags-view START
+[09:20:21.183] &lt;&lt; org-tags-view END (3.330s)
+[09:20:21.184] &gt;&gt; org-tags-view START
+[09:20:24.777] &lt;&lt; org-tags-view END (3.593s)
+[09:20:24.778] &gt;&gt; org-tags-view START
+（卡住，之后再无输出）
+</pre>
+
+<p>
+<code>org-store-agenda-views</code> 会遍历 <code>org-agenda-custom-commands</code> 中的每一条命令，逐一生成 agenda 视图。每条命令对应一次底层函数调用（=org-agenda-list= 、=org-todo-list= 或 <code>org-tags-view</code> ）。
+</p>
+
+<p>
+我的 <code>org-agenda-custom-commands</code> 配置是这样的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> org-agenda-custom-commands
+      '((<span class="org-string">"n"</span> <span class="org-string">"Next"</span>   todo      <span class="org-string">"NEXT"</span>  (...))        <span class="org-comment-delimiter">; </span><span class="org-comment">todo &#31867;
+</span>        (<span class="org-string">"t"</span> <span class="org-string">"Today"</span>  todo      <span class="org-string">"TODAY"</span> (...))         <span class="org-comment-delimiter">; </span><span class="org-comment">todo &#31867;
+</span>        (<span class="org-string">"t"</span> <span class="org-string">"Today"</span>  (<span class="org-keyword">lambda</span> ...) <span class="org-string">""</span>)                 <span class="org-comment-delimiter">; </span><span class="org-comment">&#33258;&#23450;&#20041;
+</span>        (<span class="org-string">"s"</span> <span class="org-string">"&#36229;&#24066;"</span>   tags      <span class="org-string">"&#36229;&#24066;"</span>  (...))         <span class="org-comment-delimiter">; </span><span class="org-comment">tags &#31867;
+</span>        (<span class="org-string">"m"</span> <span class="org-string">"&#20250;&#35758;"</span>   tags      <span class="org-string">"&#20250;&#35758;"</span>  (...))         <span class="org-comment-delimiter">; </span><span class="org-comment">tags &#31867;
+</span>        (<span class="org-string">"o"</span> <span class="org-string">"OFFICE"</span> tags      <span class="org-string">"WORK"</span>  (...))         <span class="org-comment-delimiter">; </span><span class="org-comment">tags &#31867;
+</span>        (<span class="org-string">"h"</span> <span class="org-string">"Habits"</span> tags-todo <span class="org-string">"STYLE=\"habit\""</span> (...)) <span class="org-comment-delimiter">; </span><span class="org-comment">tags-todo &#31867;
+</span>        ))
+</pre>
+</div>
+
+<p>
+对照日志，可以把每次函数调用和具体命令一一对应起来：
+</p>
+
+<pre class="example" id="orgf146c6c">
+"n" NEXT       → org-todo-list  (0.14s) ✓
+"t" TODAY      → org-todo-list  (0.14s) ✓
+"t" (lambda)   → org-agenda-list (5.1s) ✓
+"s" 超市       → org-tags-view  (3.3s)
+"m" 会议       → org-tags-view  (3.3s)
+"o" WORK       → org-tags-view  (3.6s)
+"h" Habits     → org-tags-view  (卡死！) ✗
+</pre>
+
+<p>
+罪魁祸首就是 <code>("h" "Habits" tags-todo "STYLE</code>\"habit\"" ...)= 这条命令。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd0de47d" class="outline-2">
+<h2 id="orgd0de47d">第五步：为什么 Habits 命令会卡死？</h2>
+<div class="outline-text-2" id="text-orgd0de47d">
+<p>
+这条命令的类型是 <code>tags-todo</code> ，匹配条件是 <code>STYLE</code>"habit"= 。
+</p>
+
+<p>
+这里要区分两个概念：
+</p>
+<ul class="org-ul">
+<li>/Tags/（标签）写在标题行末尾，比如 <code>* TODO 买菜 :生活:</code> 。搜索标签只需要扫描标题行，速度很快。</li>
+<li><i>Properties/（属性）写在 <code>:PROPERTIES:</code> drawer 中，比如 <code>:STYLE: habit:</code> 。搜索属性需要 /打开每个 headline 的属性 drawer</i> 来解析，开销大得多。</li>
+</ul>
+
+<p>
+<code>my</code> 配置中的 <code>org-agenda-file-regexp</code> 匹配了 <code>_archive</code> 文件，所以 agenda 范围包含了 <code>office.org_archive</code> （5272 个 headline、1.9MB）。=tags-todo "STYLE=\"habit\""= 会在 <i>所有</i> headline 上逐个解析属性 drawer，试图匹配 <code>STYLE</code> 属性。这就是灾难性的性能表现。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org55dbbcd" class="outline-2">
+<h2 id="org55dbbcd">第六步：验证与修复</h2>
+<div class="outline-text-2" id="text-org55dbbcd">
+<p>
+先做一个快速验证——去掉 Habits 命令，只保留 todo 类命令，看 <code>org-mobile-push</code> 多快：
+</p>
+
+<pre class="example" id="org1ad5487">
+real  0m12.001s
+</pre>
+
+<p>
+12 秒！再加上 tags 命令（不含 Habits）：
+</p>
+
+<pre class="example" id="org03f8288">
+real  0m33.782s
+</pre>
+
+<p>
+34 秒。而加上 Habits 命令就是 16 分钟以上。差距一目了然。
+</p>
+
+<p>
+最终修改很简单——从 <code>org-agenda-custom-commands</code> 中移除 Habits 命令即可。修改后完整同步时间从 <i>16+ 分钟降到 24 秒</i> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org54ff27d" class="outline-2">
+<h2 id="org54ff27d">总结</h2>
+<div class="outline-text-2" id="text-org54ff27d">
+<p>
+这次排查用到几个关键技巧：
+</p>
+
+<ol class="org-ol">
+<li>**计时日志定位大范围**：用宏在 sync 的每个步骤前后记录时间戳，先确定是 <code>push</code> 而不是 <code>pull</code> 慢。</li>
+<li>**字节码常量表反推执行流程**：没有源码时，用 <code>(aref (indirect-function 'fn) 2)</code> 提取常量表，就能看清函数调用了哪些子函数。</li>
+<li>**advice 注入计时代码**：Emacs 的 advice 机制类似于装饰器，可以在不修改原函数的情况下插入逻辑。但要注意 <code>:around</code> advice 中 <code>orig-fn</code> 可能是字节码对象而非符号，以及闭包在特定加载方式下可能失效的问题。用 <code>defmacro</code> 生成命名函数配合 <code>:before</code> / <code>:after</code> 是最稳妥的方案。</li>
+<li>**对比实验验证假设**：分别测试"只有 todo 命令"和"todo + tags"的耗时，精确定位到 <code>tags-todo "STYLE</code>\"habit\""= 是卡死的原因。</li>
+</ol>
+
+<p>
+最后的教训是：=tags-todo= 搭配属性匹配（如 <code>STYLE</code>"habit"= ）需要对每个 headline 解析属性 drawer，在大量 headline 的场景下性能极差。如果需要在移动端查看 Habits，可以考虑改用 tag（比如 <code>:habit:</code> ）来代替属性匹配，这样只需要扫描标题行，速度会快得多。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-10</span>
+    <span class="post-info">2026-05-10</span>
+    <a href="../../../../../tags/异闻录-emacs">异闻录 Emacs</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 4kqc5qddvvaudodmeuvkhwl1qd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
