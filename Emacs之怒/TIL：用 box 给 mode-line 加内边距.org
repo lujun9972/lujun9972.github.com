@@ -1,0 +1,67 @@
+#+TITLE: TIL：用 :box 给 mode-line 加内边距
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: emacs,mode-line,face,tips
+#+DATE: [2026-05-10 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Amin Bandali 和 Protesilaos 在 code review 视频里讨论了一个技巧——用 Emacs 的 :box face 属性给 mode-line 做视觉内边距。本文记录实现方式和原理。
+
+Amin Bandali 最近请 Protesilaos 做 Emacs 教练，审查他即将提交 GNU ELPA 的 =ffs= 包。两人录了一个 [[https://kelar.org/~bandali/gnu/emacs/ffs-code-review-prot.html][视频]]，后半段聊到一个 mode-line 美化技巧：用 =:box= 属性给 mode-line 文字四周加留白，让文字和边框之间有点空间，看着不挤。
+
+* 是什么
+
+Emacs 的 =:box= face 属性除了画边框，还藏了一个特性：当 =:color= 和背景色相同时，边框颜色融入背景，只剩间距——画了框但看不出来，只感觉到留白。这段代码就是利用这个特性：
+
+#+begin_src elisp
+(doric-themes-with-colors
+  (custom-set-faces
+   `(mode-line
+     ((t :box (:line-width 6 :color ,bg-shadow-intense))))
+   `(mode-line-inactive
+     ((t :box (:line-width 6 :color ,bg-shadow-subtle))))
+   `(mode-line-highlight
+     ((t :box (:color ,bg-shadow-intense))))))
+#+end_src
+
+=doric-themes-with-colors= 是 Prot 的主题包提供的宏，把主题调色板里的颜色暴露出来。 =bg-shadow-intense= 是比 mode-line 背景稍深的颜色，用来造"无边框有间距"的视觉效果。
+
+加上这段配置之后，mode-line 的变化如下。
+
+默认：文字紧贴边框。
+
+#+begin_example
+┌──────────────────────┐
+│ U:**-  foo.el   Elisp│
+└──────────────────────┘
+#+end_example
+
+加内边距后：上下各多出 6px 留白。
+
+#+begin_example
+┌────────────────────────┐
+│                        │
+│  U:**-  foo.el   Elisp │
+│                        │
+└────────────────────────┘
+#+end_example
+
+* 为什么不可以直接调整mode-line的高度
+
+直接调 mode-line face 的高度会引发一堆连锁反应：字体对齐、窗口分割线、header-line 的间距全都得跟着调。用 =:box= 不用动这些。它只是在 face 渲染时"撑开"了 box，实际布局不变。
+
+一个具体场景是：如果你用的主题 mode-line 默认紧贴文字，读起来会有点压迫感。加 6px 的 box 内边距后，文字有呼吸空间，但不会破坏主题其他部分的配色一致性。
+
+* 我的用法
+
+不依赖 =doric-themes= 也能做。直接用当前主题背景色的通用写法：
+
+#+begin_src elisp
+(let ((bg (face-background 'mode-line)))
+  (custom-set-faces
+   `(mode-line
+     ((t :box (:line-width 6 :color ,bg))))
+   `(mode-line-inactive
+     ((t :box (:line-width 6 :color ,bg))))))
+#+end_src
+
+不过 =doric-themes-with-colors= 的优势是能取到比背景更深一点的阴影色，视觉层次更自然。如果用纯背景色，box 和背景完全融合，内边距效果还在，但少了那一点立体感。
