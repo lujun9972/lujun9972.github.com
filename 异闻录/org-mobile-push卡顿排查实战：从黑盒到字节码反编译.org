@@ -1,0 +1,308 @@
+#+TITLE: org-mobile-push 卡顿排查实战：从黑盒到字节码反编译
+#+AUTHOR: lujun9972
+#+TAGS: 异闻录 Emacs
+#+DATE: [2026-05-10 六 10:30]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+* 故障现象
+
+我用 Docker 跑了一个 [[https://github.com/lujun9972/mobileorg-sync][mobileorg-sync]] 服务，实现手机端 Org-mode（MobileOrg）和电脑端的自动同步。同步流程大概是：
+
+1. =git pull= 拉取最新org数据
+2. =org-mobile-pull= 应用手机端的修改
+3. =org-mobile-push= 生成 agenda 视图推送到手机
+4. =git commit && git push= 提交并推送org数据
+
+某天发现，同步脚本卡住了——日志显示 =Creating agendas...= 后就再也没有输出。等了 16 分钟进程还在跑，CPU 占用 99%。
+
+整个排查过程花了不少功夫，也踩了很多 Elisp advice（函数建议）的坑。下面一步步复盘。
+
+* 第一步：缩小范围——到底是哪个步骤慢？
+
+** 添加计时日志
+
+首先需要搞清楚，是 =org-mobile-pull= 慢，还是 =org-mobile-push= 慢，还是 =git= 操作慢？
+
+我先定义一个日志函数，把带时间戳的消息追加写入文件。这样即使进程卡死，已经写入的日志也不会丢失：
+
+#+begin_src emacs-lisp
+(defun mobileorg-sync-log (fmt &rest args)
+  "带时间戳写入日志到文件，同时输出到 stdout。"
+  (let ((msg (format "[%s] %s"
+               (format-time-string "%Y-%m-%d %H:%M:%S.%3N")
+               (apply #'format fmt args))))
+    (message "PERF: %s" msg)    ; 输出到 stdout
+    (with-temp-buffer
+      (insert msg "\n")
+      (append-to-file (point-min) (point-max) "/tmp/mobileorg-sync-perf.log"))))
+#+end_src
+
+然后定义一个计时宏 =mobileorg-sync--timed= ，用它把 =mobileorg-sync= 函数中的每个步骤包裹起来：
+
+#+begin_src emacs-lisp
+(defmacro mobileorg-sync--timed (label &rest body)
+  "执行 BODY 并记录耗时，LABEL 为步骤名。"
+  `(let ((start (float-time)))
+     (mobileorg-sync-log ">>> BEGIN %s" ,label)
+     (prog1 (progn ,@body)
+       (mobileorg-sync-log "<<< END %s (%.3fs)" ,label (- (float-time) start)))))
+
+(defun mobileorg-sync ()
+  (interactive)
+  (let ((default-directory org-directory))
+    (mobileorg-sync--timed "git pull"        (shell-command "git pull"))
+    (mobileorg-sync--timed "org-mobile-pull"  (org-mobile-pull))
+    (mobileorg-sync--timed "save-some-buffers" (save-some-buffers 4))
+    (mobileorg-sync--timed "org-mobile-push"  (org-mobile-push))
+    ...))
+#+end_src
+
+** 第一轮结果
+
+部署后运行，日志输出如下：
+
+#+begin_example
+[08:20:46.982] >>> BEGIN org-mobile-pull
+[08:20:47.305] <<< END org-mobile-pull (0.323s)
+[08:20:47.310] >>> BEGIN org-mobile-push
+（等了 16 分钟，没有后续输出）
+#+end_example
+
+=org-mobile-pull= 只用了 0.3 秒，而 =org-mobile-push= 卡了 16 分钟以上。问题锁定在 =org-mobile-push= 。
+
+* 第二步：搞清楚 org-mobile-push 内部调了什么
+
+=org-mobile-push= 是 Org-mode 内置函数，但我的容器里只装了编译后的 =.elc= 字节码文件，没有 =.el= 源码。=find-function= 也找不到源文件。
+
+怎么办？Emacs 的字节码文件虽然不能直接阅读，但可以提取编译时生成的 /常量表/ 。每个编译后的函数都有一张常量表，里面按序存放了函数内部引用的所有符号和字面量。
+
+#+begin_src emacs-lisp
+(let* ((def (indirect-function 'org-mobile-push))
+       (consts (aref def 2)))   ; 索引 2 是常量表
+  (dotimes (i (length consts))
+    (message "[%d] %S" i (aref consts i))))
+#+end_src
+
+输出如下（省略了不关键的部分）：
+
+#+begin_example
+[17] org-mobile-check-setup
+[18] org-mobile-prepare-file-lists
+[19] message
+[20] "Creating agendas..."
+[24] org-mobile-create-sumo-agenda
+[25] "Creating agendas...done"
+[26] org-save-all-org-buffers
+[28] org-mobile-copy-agenda-files
+[30] org-mobile-create-index-file
+[32] org-mobile-write-checksums
+#+end_example
+
+于是 =org-mobile-push= 的完整执行流程一目了然：
+
+1. =org-mobile-check-setup=
+2. =org-mobile-prepare-file-lists=
+3. =message "Creating agendas..."=
+4. =org-mobile-create-sumo-agenda=
+5. =org-save-all-org-buffers=
+6. =org-mobile-copy-agenda-files=
+7. =org-mobile-create-index-file=
+8. =org-mobile-write-checksums=
+
+其中第 4 步 =org-mobile-create-sumo-agenda= 看名字就知道是"生成汇总 agenda"的关键步骤。用同样的常量表方法继续挖它一层：
+
+#+begin_src emacs-lisp
+(let* ((def (indirect-function 'org-mobile-create-sumo-agenda))
+       (consts (aref def 2)))
+  (dotimes (i (length consts))
+    (message "[%d] %S" i (aref consts i))))
+#+end_src
+
+#+begin_example
+[3]  org-agenda-custom-commands
+[4]  org-mobile-creating-agendas
+[6]  "agendas.org"
+[7]  org-mobile-sumo-agenda-command
+[13] org-store-agenda-views
+#+end_example
+
+可以看到它调用了 =org-store-agenda-views= ，并引用了 =org-agenda-custom-commands= 。所以这就是生成所有自定义 agenda 视图的地方。
+
+这是一个非常有用的小技巧：即使没有源码，也能通过常量表了解函数的执行逻辑。
+
+* 第三步：用 advice 注入计时——踩坑与解决
+
+知道了 =org-mobile-push= 内部调用了哪些函数，下一步就是用 Emacs 的 /advice/ 机制，在每个子函数执行前后插入计时代码。
+
+advice 类似于其他语言中的装饰器（decorator）或 AOP，可以在不修改原函数的情况下，在函数执行前后插入自定义逻辑。比如 =:before= advice 在原函数执行前运行，=:after= 在执行后运行，=:around= 可以完全包裹原函数。
+
+** 坑1：=:around= advice 中 orig-fn 不是符号
+
+我最初尝试用 =:around= advice 包裹 =org-mobile-check-setup= 等函数：
+
+#+begin_src emacs-lisp
+(advice-add 'org-mobile-check-setup :around
+            (lambda (orig-fn &rest args)
+              (let ((fn-name (symbol-name orig-fn)))  ; ← 报错！
+                (mobileorg-sync-log ">> %s START" fn-name)
+                (apply orig-fn args))))
+#+end_src
+
+运行时报错：
+
+#+begin_example
+Wrong type argument: symbolp, #[0 "À Â" [org-mobile-files-alist ...] 2]
+#+end_example
+
+原因是 =:around= advice 的第一个参数 =orig-fn= 接收的是 /原始函数对象/，可能是字节码对象（=#[0 ...]=），而不是函数的符号名。对字节码对象调用 =symbol-name= 当然会报错。
+
+** 坑2：改用 =let= 捕获函数名后闭包失效
+
+为了绕开坑1，我在 advice 外面用 =let= 提前捕获函数名，让 lambda 通过闭包引用它：
+
+#+begin_src emacs-lisp
+(dolist (fn '(org-mobile-check-setup org-mobile-prepare-file-lists ...))
+  (let ((fname (symbol-name fn)))
+    (advice-add fn :around
+                (lambda (orig-fn &rest args)
+                  (mobileorg-sync-log ">> %s START" fname)  ; 引用外层 let 的 fname
+                  (apply orig-fn args)))))
+#+end_src
+
+运行时报错：
+
+#+begin_example
+Symbol's value as variable is void: fname
+#+end_example
+
+这说明 =fname= 并没有被 lambda 闭包捕获。这个脚本使用 =emacs --quick --script= 方式运行，文件头通过 =# -*- lexical-binding: t; -*-= 声明了词法作用域。但由于脚本第一行是 shell 多行注释伪装成 Elisp 的技巧（=\":\"; exec emacs --quick --script \"$0\"=），可能影响了 Emacs 对 file-local variables 的解析，导致词法绑定没有真正生效。于是 lambda 中的 =fname= 变成了自由变量，运行时找不到绑定就报错了。
+
+** 解决方案：用 =defmacro= 在编译期展开
+
+既然闭包不可靠，我就用宏（macro）来彻底规避这个问题。宏在 /编译期/ 就会把函数名字面量直接写进生成的代码，完全不依赖运行时的闭包捕获：
+
+#+begin_src emacs-lisp
+(defmacro mobileorg--def-perf-advice (fn)
+  (let ((before-fn (intern (format "mobileorg--perf-before-%s" fn)))
+        (after-fn  (intern (format "mobileorg--perf-after-%s" fn))))
+    `(progn
+       (defun ,before-fn (&rest _)
+         (mobileorg--perf-log (format ">> %s START" ,(symbol-name fn)))
+         (puthash ',fn (float-time) mobileorg--perf-start-times))
+       (defun ,after-fn (&rest _)
+         (mobileorg--perf-log
+          (format "<< %s END (%.3fs)" ,(symbol-name fn)
+                  (- (float-time) (gethash ',fn mobileorg--perf-start-times)))))
+       ;; 用 :before 和 :after，而不是 :around
+       ;; :before/:after 的 advice 函数只接收原函数的参数，不接收 orig-fn
+       ;; 而 :around 的 advice 函数第一个参数就是 orig-fn（可能是字节码对象，不是符号）
+       ;; 所以用 :before/:after 从根本上不存在 orig-fn 类型问题
+       (advice-add ',fn :before #',before-fn)
+       (advice-add ',fn :after  #',after-fn))))
+
+;; 对每个目标函数生成独立的 advice
+(dolist (fn '(org-mobile-check-setup
+              org-mobile-prepare-file-lists
+              org-mobile-create-sumo-agenda
+              org-store-agenda-views
+              org-mobile-write-agenda-for-mobile
+              org-agenda-list org-tags-view org-todo-list))
+  (eval `(mobileorg--def-perf-advice ,fn)))
+#+end_src
+
+这个方案同时解决了两个坑：
+- 用 =:before= / =:after= 而非 =:around= ，彻底避开了 =orig-fn= 类型问题
+- 用 =defmacro= 在宏展开时嵌入字面量，彻底避开了闭包捕获问题
+
+* 第四步：精确定位——哪个 agenda 命令卡死了？
+
+用修复后的 advice 重新运行，终于拿到了详细的函数级日志：
+
+#+begin_example
+[09:20:05.514] >> org-mobile-create-sumo-agenda START
+[09:20:05.514] >> org-store-agenda-views START
+[09:20:09.246] >> org-agenda-list START
+[09:20:14.305] << org-agenda-list END (5.058s)
+[09:20:14.305] >> org-todo-list START
+[09:20:14.442] << org-todo-list END (0.136s)
+[09:20:14.442] >> org-todo-list START
+[09:20:14.582] << org-todo-list END (0.139s)
+[09:20:14.582] >> org-tags-view START
+[09:20:17.853] << org-tags-view END (3.270s)
+[09:20:17.853] >> org-tags-view START
+[09:20:21.183] << org-tags-view END (3.330s)
+[09:20:21.184] >> org-tags-view START
+[09:20:24.777] << org-tags-view END (3.593s)
+[09:20:24.778] >> org-tags-view START
+（卡住，之后再无输出）
+#+end_example
+
+=org-store-agenda-views= 会遍历 =org-agenda-custom-commands= 中的每一条命令，逐一生成 agenda 视图。每条命令对应一次底层函数调用（=org-agenda-list= 、=org-todo-list= 或 =org-tags-view= ）。
+
+我的 =org-agenda-custom-commands= 配置是这样的：
+
+#+begin_src emacs-lisp
+(setq org-agenda-custom-commands
+      '(("n" "Next"   todo      "NEXT"  (...))        ; todo 类
+        ("t" "Today"  todo      "TODAY" (...))         ; todo 类
+        ("t" "Today"  (lambda ...) "")                 ; 自定义
+        ("s" "超市"   tags      "超市"  (...))         ; tags 类
+        ("m" "会议"   tags      "会议"  (...))         ; tags 类
+        ("o" "OFFICE" tags      "WORK"  (...))         ; tags 类
+        ("h" "Habits" tags-todo "STYLE=\"habit\"" (...)) ; tags-todo 类
+        ))
+#+end_src
+
+对照日志，可以把每次函数调用和具体命令一一对应起来：
+
+#+begin_example
+"n" NEXT       → org-todo-list  (0.14s) ✓
+"t" TODAY      → org-todo-list  (0.14s) ✓
+"t" (lambda)   → org-agenda-list (5.1s) ✓
+"s" 超市       → org-tags-view  (3.3s)
+"m" 会议       → org-tags-view  (3.3s)
+"o" WORK       → org-tags-view  (3.6s)
+"h" Habits     → org-tags-view  (卡死！) ✗
+#+end_example
+
+罪魁祸首就是 =("h" "Habits" tags-todo "STYLE=\"habit\"" ...)= 这条命令。
+
+* 第五步：为什么 Habits 命令会卡死？
+
+这条命令的类型是 =tags-todo= ，匹配条件是 =STYLE="habit"= 。
+
+这里要区分两个概念：
+- /Tags/（标签）写在标题行末尾，比如 =* TODO 买菜 :生活:= 。搜索标签只需要扫描标题行，速度很快。
+- /Properties/（属性）写在 =:PROPERTIES:= drawer 中，比如 =:STYLE: habit:= 。搜索属性需要 /打开每个 headline 的属性 drawer/ 来解析，开销大得多。
+
+=my= 配置中的 =org-agenda-file-regexp= 匹配了 =_archive= 文件，所以 agenda 范围包含了 =office.org_archive= （5272 个 headline、1.9MB）。=tags-todo "STYLE=\"habit\""= 会在 /所有/ headline 上逐个解析属性 drawer，试图匹配 =STYLE= 属性。这就是灾难性的性能表现。
+
+* 第六步：验证与修复
+
+先做一个快速验证——去掉 Habits 命令，只保留 todo 类命令，看 =org-mobile-push= 多快：
+
+#+begin_example
+real  0m12.001s
+#+end_example
+
+12 秒！再加上 tags 命令（不含 Habits）：
+
+#+begin_example
+real  0m33.782s
+#+end_example
+
+34 秒。而加上 Habits 命令就是 16 分钟以上。差距一目了然。
+
+最终修改很简单——从 =org-agenda-custom-commands= 中移除 Habits 命令即可。修改后完整同步时间从 /16+ 分钟降到 24 秒/ 。
+
+* 总结
+
+这次排查用到几个关键技巧：
+
+1. **计时日志定位大范围**：用宏在 sync 的每个步骤前后记录时间戳，先确定是 =push= 而不是 =pull= 慢。
+2. **字节码常量表反推执行流程**：没有源码时，用 =(aref (indirect-function 'fn) 2)= 提取常量表，就能看清函数调用了哪些子函数。
+3. **advice 注入计时代码**：Emacs 的 advice 机制类似于装饰器，可以在不修改原函数的情况下插入逻辑。但要注意 =:around= advice 中 =orig-fn= 可能是字节码对象而非符号，以及闭包在特定加载方式下可能失效的问题。用 =defmacro= 生成命名函数配合 =:before= / =:after= 是最稳妥的方案。
+4. **对比实验验证假设**：分别测试"只有 todo 命令"和"todo + tags"的耗时，精确定位到 =tags-todo "STYLE=\"habit\""= 是卡死的原因。
+
+最后的教训是：=tags-todo= 搭配属性匹配（如 =STYLE="habit"= ）需要对每个 headline 解析属性 drawer，在大量 headline 的场景下性能极差。如果需要在移动端查看 Habits，可以考虑改用 tag（比如 =:habit:= ）来代替属性匹配，这样只需要扫描标题行，速度会快得多。
