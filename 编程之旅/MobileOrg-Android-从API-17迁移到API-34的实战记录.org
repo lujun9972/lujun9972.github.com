@@ -117,7 +117,13 @@ if (!hasCalendarPermission()) {
 
 **影响范围**：CalendarSyncService 的 =onCreate()= 和 =onStartCommand()= 都需要加权限检查。
 
-修复权限检查后，又踩了一个新坑：=onCreate()= 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
+** 坑 4：Service early return 导致 onDestroy NPE
+
+#+begin_quote
+症状：修复权限检查后，CalendarSyncService.onDestroy() 抛 NullPointerException
+#+end_quote
+
+修复坑 3 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
 
 #+begin_src java
 // onDestroy 必须做空检查
@@ -134,7 +140,7 @@ public void onDestroy() {
 教训：在 =onCreate()= / =onStartCommand()= 中加 early return（比如权限检查失败后 =stopSelf()=）时，=onDestroy()= 仍会被 Android 调用。所有在 =onDestroy()= 中使用的字段都必须做空检查。
 #+end_quote
 
-** 坑 4：主线程网络操作
+** 坑 5：主线程网络操作
 
 #+begin_quote
 症状：SSH Connection failed: android.os.NetworkOnMainThreadException
@@ -157,7 +163,7 @@ public SSHSynchronizer(Context context) {
 
 后台线程的 =getRemoteFile()= 已经有重连逻辑，会自动在正确的线程上建立连接。
 
-** 坑 5：隐式广播不送达
+** 坑 6：隐式广播不送达
 
 #+begin_quote
 症状：同步后变更计数不刷新，同步动画不显示，但同步本身是成功的
@@ -182,7 +188,7 @@ context.sendBroadcast(intent);
 教训：targetSdk 升级后，最危险的不是崩溃，而是功能静默失效。崩溃至少有日志，静默失效只能靠用户反馈。
 #+end_quote
 
-** 坑 6：Preference 的隐式 Intent 解析错误
+** 坑 7：Preference 的隐式 Intent 解析错误
 
 #+begin_quote
 症状：点击 Setup Wizard 直接退回到大纲界面
@@ -204,7 +210,7 @@ XML Preference 中用隐式 intent 打开 Activity：
 </Preference>
 #+end_src
 
-** 坑 7：动画在未挂载的 View 上启动
+** 坑 8：动画在未挂载的 View 上启动
 
 #+begin_quote
 症状：同步图标的旋转动画不显示
