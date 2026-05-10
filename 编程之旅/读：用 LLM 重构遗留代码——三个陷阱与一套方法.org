@@ -1,0 +1,159 @@
+#+TITLE: 读：用 LLM 重构遗留代码——三个陷阱与一套方法
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: 编程之旅,AI,重构,软件工程
+#+DATE: [2026-05-10 日]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Jubin Abhishek Soni 把 2000 行 Python 遗留代码喂给了 Gemini 3，观察 AI 如何做重构。本文不逐条讲 SRP/DI 这些课本原则，而是聚焦真正有用的部分：用 LLM 重构时最容易踩的三个陷阱，以及一套可照做的重构步骤。
+
+Jubin Abhishek Soni 干了一件每个程序员都想干的事：把自己最烂的遗留代码丢给 AI，看它怎么收拾。
+
+他把一个 2000 行的 Python 单体脚本喂给了 Gemini 3。这个脚本有个叫 =process_claim()= 的函数全塞在一个函数里——验证输入、连数据库、算税额、发邮件、写日志。代码注释里还有一句 =// I am sorry= 。他管这次实验叫"数字考古"。
+
+* AI 做了什么
+
+Gemini 3 把这个函数拆成了四个独立类，每个只做一件事：
+
+#+begin_src python
+# 重构前：一个函数包了五件事
+def process_claim(claim_data):
+    if not claim_data.get("id"):
+        return "Error"
+    db = connect_to_db("prod_db")
+    db.execute(f"INSERT INTO claims VALUES ({claim_data['id']})")
+    total = claim_data['amount'] * 1.15
+    send_email("admin@company.com", f"Claim {total} processed")
+    return "Success"
+
+# 重构后：职责分离
+class ClaimValidator:
+    def validate(self, data):
+        if not data.get("id"):
+            raise ValidationError("Missing ID")
+
+class TaxCalculator:
+    def calculate(self, amount, region_code):
+        rate = self._get_rate(region_code)
+        return amount * rate
+
+class ClaimService:
+    def __init__(self, validator, calculator, repository, notifier):
+        self.validator = validator
+        self.calculator = calculator
+        self.repository = repository
+        self.notifier = notifier
+
+    def execute(self, claim_data):
+        self.validator.validate(claim_data)
+        total = self.calculator.calculate(claim_data['amount'], "US")
+        self.repository.save(claim_data)
+        self.notifier.send(f"Claim {total} processed")
+#+end_src
+
+AI 用了哪几条原则？原文列了五条：单一职责（拆大函数）、依赖注入（类需要什么从外面传进来，而不是自己在内部创建）、防御式编程（捕获具体异常而不是 =except: pass= ）、不可变状态（返回新对象而不是改全局变量）、现代语法。这些原则本身都是课本内容，不展开了。值得一张对比表快速过一遍：
+
+| 方面 | 遗留做法 | 改后 |
+|------|---------|------|
+| 逻辑 | 几百行的函数，if/else 嵌套七八层 | 短小的纯函数，用 early return 减少嵌套 |
+| 数据 | 直接改全局状态 | 不可变数据 + 局部状态 |
+| 依赖 | 类内部硬编码 =new= | 构造函数注入 |
+| 错误处理 | =except: pass= 吞掉一切 | 特定异常类型 + 写日志 + 向上抛 |
+| 文档 | 注释解释代码干了什么 | 好命名解释做了什么，注释解释为什么 |
+
+看表比看五节文字高效。
+
+关键是：AI 不是乱改的。它遵循了一套清晰的步骤。Soni 从这次实验中总结出的三个陷阱和一套方法，是本文真正要说的。
+
+* 三个陷阱
+
+** 陷阱一：没测试就重构
+
+Soni 说这是最重要的教训。重构前必须先写特征测试（characterization test）。
+
+很多人的直觉是：代码太烂了，先重构再补测试。这个顺序简直就是灾难。烂代码的"正确行为"往往不是设计出来的，而是历史沉淀出来的——某个边界条件在线上跑了三年没出过事，但你自己看代码根本看不出这个条件。重构的时候把它改掉了，上线就炸。
+
+特征测试跟单元测试不一样：它不验证"结果对不对"，只记录"当前行为是什么"。输入 X，当前输出 Y，记录下来。重构后输入同样的 X，输出还是 Y，就说明没改坏。
+
+具体做法：从最常出问题的模块开始。跑一遍现有输入输出，把结果录成测试。然后用 LLM 重构这个模块，跑测试，通过就继续，不通过就回退。
+
+** 陷阱二：过度工程化
+
+LLM 重构的一个特别问题：AI 太喜欢上设计模式。你给它一段简单的 if/else，它可能还你一个策略模式 + 工厂模式 + 依赖注入容器，三重抽象套在一起。
+
+Soni 发现 Gemini 3 也有这个倾向。原文里的代码被加了四个类和一个构造函数注入，在 2000 行的单体脚本背景下，这个抽象层级可能是合适的。但如果是 50 行的工具函数，同样的做法就是浪费。
+
+原则很简单：只引入能解决当前问题的复杂度。简单函数不需要类，一个类不需要三层抽象。"万一以后要扩展呢"不是加抽象的理由。大部分"以后"根本不会来，真来了再改也来得及。
+
+** 陷阱三：别一把梭全重写
+
+这个陷阱对 LLM 重构尤其危险。"一把梭"的意思是：把整个项目全喂给 AI，期望它吐出一个完整的重构版。听起来省事，实际是给自己挖坑。
+
+别这么干。Soni 说他见过的最惨案例就是团队把整个系统丢给 AI，拿回来一个不能跑的 Frankenstein。
+
+正确做法：一次重构一个模块。改完就跑测试，确认系统还在跑。再改下一个。AI 能帮你加速每个模块，但控制节奏的是你。
+
+* 一套方法
+
+Soni 从实验中提炼了五个步骤，可以当作 LLM 辅助重构的标准流程：
+
+1. *找最痛的点* 。不是先重构最好重构的，而是先重构出问题最频繁的那个模块。最痛的那个模块如果重构完确实变好了（bug 少了、改起来快了），说明这个方向对；如果连最痛的都救不回来，那换个思路。而且痛点一解决，效果立竿见影，团队也更愿意继续。
+2. *写特征测试把当前行为固定下来* 。没有测试网，不敢跳。
+3. *把业务逻辑从基础设施里抽出来* 。数据库连接、网络调用、文件读写，这些都算基础设施。核心计算逻辑抽成纯函数，它就不依赖环境，可以单独测。
+4. *引入依赖注入* 。上一步抽出纯函数之后，原来那些依赖外部服务的地方改成从外部传进来。测试环境传 mock，生产环境传真实服务。
+5. *用新语法改善可读性* 。Python 的类型提示、dataclass、async/await 等。这一步放最后，因为它改变的是可读性而不是结构，风险最小。
+
+这套流程最妙的地方是每一步都是可逆的。改到第三步觉得不对劲，可以停下来，系统仍然正常工作。不会出现"重构了一半，旧代码删了，新代码没跑通"的绝境。
+
+Soni 用这段经历说了句大实话：把烂代码喂给 AI 之后，最大的收获不是 AI 帮你改了代码，而是 AI 逼你面对自己逃避的工程纪律。没有测试、职责不清、全局变量满天飞——这些不是新技术问题，是你一直知道但懒得修的问题。AI 只是让你没法再糊弄过去而已。
+
+* 附录：用 LLM 生成特征测试
+
+回头看你可能在想：特征测试得写一堆用例，自己写也太累了。能不能让 LLM 帮写？能，而且操作很自然。三步走。
+
+*第一步：喂代码，让 AI 找分支*
+
+把 =process_claim()= 的源码贴给 LLM，问：这个函数有哪些输入会导致不同的执行路径？列出所有分支条件和对应的输入用例。
+
+AI 会扫出三条：
+- =claim_data= 没有 ="id"= 字段 → 走 =return "Error"= 分支
+- =claim_data= 有 ="id"= → 走数据库写入 + 税额计算 + 发邮件分支
+- =amount= 值不同 → 税额不同（1.15 倍率）
+
+*第二步：你在本地跑一遍，拿真实输出*
+
+这一步不能省。LLM 可以猜输出，但猜的是"应该是"而不是"实际是"。遗留代码的"实际行为"经常跟任何人猜测都不一样。
+
+输入 ={"amount": 100}= （没有 id），实际输出 =Error= —— 好，记录。输入 ={"id": "A001", "amount": 200}= ，实际输出 =Success= ，税额是 =230= —— 好，记录。把这些输入和实际输出整理成一张表，交还给 LLM。
+
+*第三步：让 LLM 生成测试框架*
+
+把输入输出表连同原始函数一起给 LLM，说：生成 pytest 测试，assert 值严格匹配这些输出。
+
+#+begin_src python
+import pytest
+
+def test_process_claim_missing_id():
+    """输入缺 id → 当前返回 'Error'"""
+    result = process_claim({"amount": 100})
+    assert result == "Error"
+
+def test_process_claim_normal():
+    """正常输入 → 当前返回 'Success'"""
+    result = process_claim({"id": "A001", "amount": 200})
+    assert result == "Success"
+
+def test_process_claim_tax_calculation():
+    """税额 = amount * 1.15，需要 mock 掉 DB 和邮件才能验证"""
+    pass  # 见下方注意
+#+end_src
+
+跑一遍，全绿。此后你对这个模块做任何修改，测试红了就知道改出问题了。
+
+*一个重要限制*
+
+上面=process_claim()= 内部调了 =connect_to_db()= 和 =send_email()= ，本地根本没有这些函数。这种情况下有两个选择：
+
+- 把纯计算逻辑先抽出来（税额计算 =amount * 1.15= ），只给纯函数写测试。这是最干净的做法。
+- 让 LLM 生成 mock，但 mock 的行为是 LLM 猜的，不是真实行为。如果你想让测试真正可靠，mock 的输入输出映射需要去线上日志里查。
+
+本质上 LLM 帮你做了两件事：分支分析（代替人工看代码）和样板代码生成（代替手写测试框架）。但输入输出映射这一环，机器替你跑不了。
