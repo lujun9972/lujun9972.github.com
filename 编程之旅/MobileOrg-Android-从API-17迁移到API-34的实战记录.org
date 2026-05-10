@@ -228,6 +228,34 @@ synchronizerMenuItem.setActionView(refreshView);
 refreshView.post(() -> refreshView.startAnimation(rotate));
 #+end_src
 
+** 坑 9：Intent.getAction() 返回 null 导致 NPE
+
+#+begin_quote
+症状：Setup Wizard 完成后，OutlineActivity 崩溃 NullPointerException
+#+end_quote
+
+之前修改 Wizard 完成后的导航逻辑，使用 =FLAG_ACTIVITY_SINGLE_TOP= 回到已有的 OutlineActivity：
+
+#+begin_src java
+Intent outlineIntent = new Intent(context, OutlineActivity.class);
+outlineIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+context.startActivity(outlineIntent);
+#+end_src
+
+由于 =FLAG_ACTIVITY_SINGLE_TOP=，Android 不会创建新实例，而是调用已有实例的 =onNewIntent()=。但这个 Intent 没有设 action，所以 =getAction()= 返回 null：
+
+#+begin_src java
+// 崩溃：intent.getAction() 为 null，对 null 调 equals()
+if (intent.getAction().equals(SYNC_FAILED)) { ... }
+
+// 修复：常量在左，天然防 null
+if (SYNC_FAILED.equals(intent.getAction())) { ... }
+#+end_src
+
+#+begin_quote
+教训：=Intent.getAction()= 可以为 null。使用 =FLAG_ACTIVITY_SINGLE_TOP= 导航回已有 Activity 时，=onNewIntent()= 收到的 Intent 可能没有 action。养成 =CONSTANT.equals(variable)= 的习惯可以避免此类 NPE。
+#+end_quote
+
 * 经验总结
 
 ** 1. 静默失效比崩溃更可怕
