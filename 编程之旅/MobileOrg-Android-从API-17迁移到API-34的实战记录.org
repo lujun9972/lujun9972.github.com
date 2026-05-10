@@ -1,0 +1,237 @@
+#+TITLE: MobileOrg Android：从 API 17 迁移到 API 34 的实战记录
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Android 迁移 MobileOrg 兼容性
+#+DATE: [2026-05-10 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+MobileOrg Android 是一个 Org-mode 的 Android 客户端，fork 自已经停止维护的 [[https://github.com/matburt/mobileorg-android][matburt/mobileorg-android]]。原始代码写于 2013 年左右，targetSdk 为 17（Android 4.2），使用 ActionBarSherlock、Support Library v4 等早已废弃的库。
+
+Google Play 要求 targetSdk 33+，所以必须迁移。本文记录了整个迁移过程中的踩坑和修复经验。
+
+* 迁移时间线
+
+整个迁移分三个阶段，共 50+ 个 commit：
+
+** 第一阶段：构建系统升级
+
+原始项目使用 ADT 构建，没有 Gradle 支持。首先需要让项目能编译：
+
+1. 创建 Gradle 构建配置（AGP 3.0.1 + Gradle 4.1）
+2. 解决 ActionBarSherlock 兼容性（禁用 AAPT2）
+3. 解决 support-v4 版本冲突（降级到 25.4.0）
+
+** 第二阶段：AndroidX 迁移
+
+1. 替换 ActionBarSherlock 为 AppCompat
+2. 执行 AndroidX 迁移（Refactor → Migrate to AndroidX）
+3. 升级到现代工具链（AGP 8.2.2 + Gradle 8.5 + JDK 17 + compileSdk 34）
+
+** 第三阶段：运行时兼容性修复
+
+这是最耗时的阶段。代码能编译，但在现代 Android 上各种崩溃和功能异常。下面详细记录。
+
+* 踩过的坑
+
+** 坑 1：ActionBarSherlock → AppCompat 的菜单图标消失
+
+#+begin_quote
+症状：菜单图标在 ActionBar 上不显示
+#+end_quote
+
+AppCompat 使用自己的 namespace 解析 =showAsAction= 属性。如果用 =android:showAsAction=，AppCompat 会静默忽略，图标不显示但不报错。
+
+#+begin_src xml
+<!-- 错误：AppCompat 会忽略 -->
+<item android:showAsAction="ifRoom" />
+
+<!-- 正确：必须用 app namespace -->
+<item app:showAsAction="ifRoom"
+    xmlns:app="http://schemas.android.com/apk/res-auto" />
+#+end_src
+
+**影响范围**：项目中 8 个菜单 XML 文件全部需要修改。只修了一个文件时，其他界面（capture 保存按钮、节点操作按钮等）的图标依然消失。
+
+#+begin_quote
+教训：迁移框架后要全局搜索同类问题，不要只修一个文件就以为搞定了。
+#+end_quote
+
+** 坑 2：NotificationChannel 导致前台服务崩溃
+
+#+begin_quote
+症状：CannotPostForegroundServiceNotificationException: Bad notification for startForeground
+#+end_quote
+
+Android 8.0（API 26）引入了 NotificationChannel。Android 13（API 33）进一步强化——如果 notification 引用的 channel 不存在，直接抛异常崩溃。
+
+原始代码通过反射创建 channel（因为当时 compileSdk 是 23），但反射异常被静默吞掉了。Channel 没创建成功，notification 引用了一个不存在的 channel，崩溃。
+
+#+begin_src java
+// 原来的反射方式——异常被吞掉，channel 创建失败但不知道
+try {
+    Class<?> channelClass = Class.forName("android.app.NotificationChannel");
+    // ...
+} catch (Exception e) {
+    // 静默失败！
+}
+
+// 修复：compileSdk 34 已经有直接 API，不需要反射
+NotificationChannel channel = new NotificationChannel(channelId, name,
+    NotificationManager.IMPORTANCE_LOW);
+nm.createNotificationChannel(channel);
+#+end_src
+
+同时，所有 =NotificationCompat.Builder= 构造函数都必须传 CHANNEL_ID：
+
+#+begin_src java
+// 错误：没有 channel ID
+new NotificationCompat.Builder(context)
+
+// 正确
+new NotificationCompat.Builder(context, CHANNEL_ID)
+#+end_src
+
+**影响范围**：6 处 Builder 调用点，涉及 SyncService、TimeclockService、SynchronizerNotification、SynchronizerNotificationCompat。
+
+** 坑 3：危险权限的运行时检查
+
+#+begin_quote
+症状：CalendarSyncService 启动时 SecurityException 崩溃
+#+end_quote
+
+Android 6.0（API 23）引入了运行时权限。=READ_CALENDAR= 和 =WRITE_CALENDAR= 是危险权限，光在 Manifest 声明不够，必须运行时请求。
+
+#+begin_src java
+// 在 Service.onCreate() 中检查权限
+if (!hasCalendarPermission()) {
+    stopSelf();  // 无权限则优雅退出
+    return;
+}
+#+end_src
+
+#+begin_quote
+教训：加了 early return 后别忘了 onDestroy() 也可能被调用。我就在这里踩了 NPE——onCreate 提前返回导致 =sharedPreferences= 为 null，但 onDestroy() 直接调了 =unregisterOnSharedPreferenceChangeListener()=。
+#+end_quote
+
+** 坑 4：主线程网络操作
+
+#+begin_quote
+症状：SSH Connection failed: android.os.NetworkOnMainThreadException
+#+end_quote
+
+Android 3.0 开始禁止主线程网络操作。但 =SyncService.getSynchronizer()= 在主线程调用 =new SSHSynchronizer()=，而 SSHSynchronizer 的构造函数调了 =connect()= 做网络连接。
+
+#+begin_src java
+// 错误：构造函数中发起网络连接
+public SSHSynchronizer(Context context) {
+    // ... 读取配置 ...
+    this.connect();  // 网络操作在主线程！
+}
+
+// 修复：移除构造函数中的 connect()，让后台线程处理
+public SSHSynchronizer(Context context) {
+    // ... 只读取配置，不连接 ...
+}
+#+end_src
+
+后台线程的 =getRemoteFile()= 已经有重连逻辑，会自动在正确的线程上建立连接。
+
+** 坑 5：隐式广播不送达
+
+#+begin_quote
+症状：同步后变更计数不刷新，同步动画不显示，但同步本身是成功的
+#+end_quote
+
+这是最隐蔽的一个问题。=OrgUtils.announceSyncDone()= 通过 =sendBroadcast()= 发送隐式广播通知 UI 刷新。但 targetSdk 34 的设备上，隐式广播可能不被 =RECEIVER_NOT_EXPORTED= 的 receiver 接收。
+
+#+begin_src java
+// 错误：隐式广播，targetSdk 34 可能不送达
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+context.sendBroadcast(intent);
+
+// 修复：设为显式广播
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+intent.setPackage(context.getPackageName());  // 关键！
+context.sendBroadcast(intent);
+#+end_src
+
+这个问题的影响面很大：变更计数不刷新、同步动画不显示、编辑后列表不更新——全部因为广播没送达。但不会报任何错误，就是功能静默失效。
+
+#+begin_quote
+教训：targetSdk 升级后，最危险的不是崩溃，而是功能静默失效。崩溃至少有日志，静默失效只能靠用户反馈。
+#+end_quote
+
+** 坑 6：Preference 的隐式 Intent 解析错误
+
+#+begin_quote
+症状：点击 Setup Wizard 直接退回到大纲界面
+#+end_quote
+
+XML Preference 中用隐式 intent 打开 Activity：
+
+#+begin_src xml
+<!-- 错误：隐式 intent 可能解析到错误的 Activity -->
+<Preference android:title="Setup Wizard">
+    <intent android:action="com.matburt.mobileorg.Settings.SETUP_WIZARD" />
+</Preference>
+
+<!-- 修复：显式指定目标 -->
+<Preference android:title="Setup Wizard">
+    <intent
+        android:targetPackage="com.matburt.mobileorg"
+        android:targetClass="com.matburt.mobileorg.Gui.Wizard.WizardActivity" />
+</Preference>
+#+end_src
+
+** 坑 7：动画在未挂载的 View 上启动
+
+#+begin_quote
+症状：同步图标的旋转动画不显示
+#+end_quote
+
+先 =startAnimation()= 再 =setActionView()=，此时 view 还没挂载到 window，动画被静默忽略。
+
+#+begin_src java
+// 错误顺序
+refreshView.startAnimation(rotate);  // view 还没挂载！
+synchronizerMenuItem.setActionView(refreshView);
+
+// 修复：先挂载，再用 post 延迟启动动画
+synchronizerMenuItem.setActionView(refreshView);
+refreshView.post(() -> refreshView.startAnimation(rotate));
+#+end_src
+
+* 经验总结
+
+** 1. 静默失效比崩溃更可怕
+
+Android 兼容性的最大敌人不是 =FATAL EXCEPTION=，而是功能静默消失。=android:showAsAction= 被忽略、隐式广播不送达、动画不播放——这些都不会出现在 logcat 里，只能靠人工测试发现。
+
+** 2. 全局搜索同类问题
+
+修了一个文件的 =showAsAction= 后，必须全局搜索所有同类问题。Android 迁移中的问题往往是同一模式在多处重复。我们用 =grep -r "android:showAsAction"= 一次性找到了 7 个文件。
+
+** 3. 生命周期配对调用
+
+=onCreate()= 中加 early return 时，必须检查 =onDestroy()= 是否使用了会被跳过的字段。Android 保证 =onDestroy()= 在 =stopSelf()= 后仍被调用。
+
+** 4. 编译通过≠运行正确
+
+compileSdk 升级后，很多废弃 API 仍然编译通过但运行时行为改变。需要逐个在目标设备上测试。
+
+** 5. 用 CI 构建而非本地构建
+
+全程通过 GitHub Actions 构建 APK，在真机上测试。本地环境和 CI 环境的差异可能导致遗漏问题。
+
+* 致谢
+
+本次迁移全程由 [[https://claude.ai/code][Claude Code]] 辅助完成。从构建系统升级到运行时兼容性修复，Claude Code 在以下方面提供了巨大帮助：
+
+- 快速定位 Android 版本兼容性问题
+- 系统性地搜索同类问题（如全局搜索所有 =NotificationCompat.Builder= 调用）
+- 在修复一个 bug 时预判可能引入的新问题（如 early return 导致的 NPE）
+- 将每个修复经验记录到 CLAUDE.md 中，避免重复踩坑
+
+当然，Claude Code 也犯了错误——比如只修了一个菜单文件的 =showAsAction= 就以为搞定了。这时候需要人工介入，做全局检查。AI 是好助手，但不能替代人类的判断力。
+
+* Footnotes
