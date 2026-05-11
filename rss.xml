@@ -4,10 +4,422 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Sun, 10 May 2026 12:52:59 UTC</pubDate>
-    <lastBuildDate>Sun, 10 May 2026 12:52:59 UTC</lastBuildDate>
+    <pubDate>Mon, 11 May 2026 09:12:25 UTC</pubDate>
+    <lastBuildDate>Mon, 11 May 2026 09:12:25 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>MobileOrg Android：从 API 17 迁移到 API 34 的实战记录</title>
+<link>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</link>
+<description>#+BEGIN_quote
+本文迁移全程借助 [[https://claude.ai/code][Claude Code]] 完成，我本人没有手动编写任何代码。整个过程是：真机测试发现问题 → 将 logcat 或现象描述给 Claude Code → Claude Code 定位原因并生成修复代码 → 推送 GitHub Actions 构建 → 再测试验证。包括本文本身，也是借助 Claude Code 生成的。
+
+由于我不是 Android 开发者，对文中涉及的技术细节无法保证完全准确，请读者自行判断。
+#+END_quote
+
+MobileOrg Android 是一个 Org-mode 的 Android 客户端，fork 自已经停止维护的 [[https://github.com/matburt/mobileorg-android][matburt/mobileorg-android]]。原始代码写于 2013 年左右，targetSdk 为 17（Android 4.2），使用 ActionBarSherlock、Support Library v4 等早已废弃的库。
+
+Google Play 要求 targetSdk 33+，所以必须迁移。本文记录了整个迁移过程中的踩坑和修复经验。
+
+* 迁移时间线
+
+整个迁移分三个阶段，共 50+ 个 commit：
+
+** 第一阶段：构建系统升级
+
+原始项目使用 ADT 构建，没有 Gradle 支持。首先需要让项目能编译：
+
+1. 创建 Gradle 构建配置（AGP 3.0.1 + Gradle 4.1）
+2. 解决 ActionBarSherlock 兼容性（禁用 AAPT2）
+3. 解决 support-v4 版本冲突（降级到 25.4.0）
+
+** 第二阶段：AndroidX 迁移
+
+1. 替换 ActionBarSherlock 为 AppCompat
+2. 执行 AndroidX 迁移（Refactor → Migrate to AndroidX）
+3. 升级到现代工具链（AGP 8.2.2 + Gradle 8.5 + JDK 17 + compileSdk 34）
+
+** 第三阶段：运行时兼容性修复
+
+这是最耗时的阶段。代码能编译，但在现代 Android 上各种崩溃和功能异常。下面详细记录。
+
+* 踩过的坑
+
+** 坑 1：ActionBarSherlock → AppCompat 的菜单图标消失
+
+#+begin_quote
+症状：菜单图标在 ActionBar 上不显示
+#+end_quote
+
+AppCompat 使用自己的 namespace 解析 =showAsAction= 属性。如果用 =android:showAsAction=，AppCompat 会静默忽略，图标不显示但不报错。
+
+#+begin_src xml
+&lt;!-- 错误：AppCompat 会忽略 --&gt;
+&lt;item android:showAsAction=&quot;ifRoom&quot; /&gt;
+
+&lt;!-- 正确：必须用 app namespace --&gt;
+&lt;item app:showAsAction=&quot;ifRoom&quot;
+    xmlns:app=&quot;http://schemas.android.com/apk/res-auto&quot; /&gt;
+#+end_src
+
+**影响范围**：项目中 8 个菜单 XML 文件全部需要修改。只修了一个文件时，其他界面（capture 保存按钮、节点操作按钮等）的图标依然消失。
+
+#+begin_quote
+教训：迁移框架后要全局搜索同类问题，不要只修一个文件就以为搞定了。
+#+end_quote
+
+** 坑 2：NotificationChannel 导致前台服务崩溃
+
+#+begin_quote
+症状：CannotPostForegroundServiceNotificationException: Bad notification for startForeground
+#+end_quote
+
+Android 8.0（API 26）引入了 NotificationChannel。Android 13（API 33）进一步强化——如果 notification 引用的 channel 不存在，直接抛异常崩溃。
+
+原始代码通过反射创建 channel（因为当时 compileSdk 是 23），但反射异常被静默吞掉了。Channel 没创建成功，notification 引用了一个不存在的 channel，崩溃。
+
+#+begin_src java
+// 原来的反射方式——异常被吞掉，channel 创建失败但不知道
+try {
+    Class&lt;?&gt; channelClass = Class.forName(&quot;android.app.NotificationChannel&quot;);
+    // ...
+} catch (Exception e) {
+    // 静默失败！
+}
+
+// 修复：compileSdk 34 已经有直接 API，不需要反射
+NotificationChannel channel = new NotificationChannel(channelId, name,
+    NotificationManager.IMPORTANCE_LOW);
+nm.createNotificationChannel(channel);
+#+end_src
+
+同时，所有 =NotificationCompat.Builder= 构造函数都必须传 CHANNEL_ID：
+
+#+begin_src java
+// 错误：没有 channel ID
+new NotificationCompat.Builder(context)
+
+// 正确
+new NotificationCompat.Builder(context, CHANNEL_ID)
+#+end_src
+
+**影响范围**：6 处 Builder 调用点，涉及 SyncService、TimeclockService、SynchronizerNotification、SynchronizerNotificationCompat。
+
+** 坑 3：危险权限的运行时检查
+
+#+begin_quote
+症状：CalendarSyncService 启动时 SecurityException 崩溃
+#+end_quote
+
+Android 6.0（API 23）引入了运行时权限。=READ_CALENDAR= 和 =WRITE_CALENDAR= 是危险权限，光在 Manifest 声明不够，必须运行时请求。
+
+#+begin_src java
+// 在 Service.onCreate() 中检查权限
+if (!hasCalendarPermission()) {
+    stopSelf();  // 无权限则优雅退出
+    return;
+}
+#+end_src
+
+**影响范围**：CalendarSyncService 的 =onCreate()= 和 =onStartCommand()= 都需要加权限检查。
+
+** 坑 4：Service early return 导致 onDestroy NPE
+
+#+begin_quote
+症状：修复权限检查后，CalendarSyncService.onDestroy() 抛 NullPointerException
+#+end_quote
+
+修复坑 3 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
+
+#+begin_src java
+// onDestroy 必须做空检查
+@Override
+public void onDestroy() {
+    if (sharedPreferences != null) {
+        sharedPreferences.unregisterOnSharedPreferenceChangeListener(this);
+    }
+    super.onDestroy();
+}
+#+end_src
+
+#+begin_quote
+教训：在 =onCreate()= / =onStartCommand()= 中加 early return（比如权限检查失败后 =stopSelf()=）时，=onDestroy()= 仍会被 Android 调用。所有在 =onDestroy()= 中使用的字段都必须做空检查。
+#+end_quote
+
+** 坑 5：主线程网络操作
+
+#+begin_quote
+症状：SSH Connection failed: android.os.NetworkOnMainThreadException
+#+end_quote
+
+Android 3.0 开始禁止主线程网络操作。但 =SyncService.getSynchronizer()= 在主线程调用 =new SSHSynchronizer()=，而 SSHSynchronizer 的构造函数调了 =connect()= 做网络连接。
+
+#+begin_src java
+// 错误：构造函数中发起网络连接
+public SSHSynchronizer(Context context) {
+    // ... 读取配置 ...
+    this.connect();  // 网络操作在主线程！
+}
+
+// 修复：移除构造函数中的 connect()，让后台线程处理
+public SSHSynchronizer(Context context) {
+    // ... 只读取配置，不连接 ...
+}
+#+end_src
+
+后台线程的 =getRemoteFile()= 已经有重连逻辑，会自动在正确的线程上建立连接。
+
+** 坑 6：隐式广播不送达
+
+#+begin_quote
+症状：同步后变更计数不刷新，同步动画不显示，但同步本身是成功的
+#+end_quote
+
+这是最隐蔽的一个问题。=OrgUtils.announceSyncDone()= 通过 =sendBroadcast()= 发送隐式广播通知 UI 刷新。但 targetSdk 34 的设备上，隐式广播可能不被 =RECEIVER_NOT_EXPORTED= 的 receiver 接收。
+
+#+begin_src java
+// 错误：隐式广播，targetSdk 34 可能不送达
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+context.sendBroadcast(intent);
+
+// 修复：设为显式广播
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+intent.setPackage(context.getPackageName());  // 关键！
+context.sendBroadcast(intent);
+#+end_src
+
+这个问题的影响面很大：变更计数不刷新、同步动画不显示、编辑后列表不更新——全部因为广播没送达。但不会报任何错误，就是功能静默失效。
+
+#+begin_quote
+教训：targetSdk 升级后，最危险的不是崩溃，而是功能静默失效。崩溃至少有日志，静默失效只能靠用户反馈。
+#+end_quote
+
+** 坑 7：Preference 的隐式 Intent 解析错误
+
+#+begin_quote
+症状：点击 Setup Wizard 直接退回到大纲界面
+#+end_quote
+
+XML Preference 中用隐式 intent 打开 Activity：
+
+#+begin_src xml
+&lt;!-- 错误：隐式 intent 可能解析到错误的 Activity --&gt;
+&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
+    &lt;intent android:action=&quot;com.matburt.mobileorg.Settings.SETUP_WIZARD&quot; /&gt;
+&lt;/Preference&gt;
+
+&lt;!-- 修复：显式指定目标 --&gt;
+&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
+    &lt;intent
+        android:targetPackage=&quot;com.matburt.mobileorg&quot;
+        android:targetClass=&quot;com.matburt.mobileorg.Gui.Wizard.WizardActivity&quot; /&gt;
+&lt;/Preference&gt;
+#+end_src
+
+** 坑 8：动画在未挂载的 View 上启动
+
+#+begin_quote
+症状：同步图标的旋转动画不显示
+#+end_quote
+
+先 =startAnimation()= 再 =setActionView()=，此时 view 还没挂载到 window，动画被静默忽略。
+
+#+begin_src java
+// 错误顺序
+refreshView.startAnimation(rotate);  // view 还没挂载！
+synchronizerMenuItem.setActionView(refreshView);
+
+// 修复：先挂载，再用 post 延迟启动动画
+synchronizerMenuItem.setActionView(refreshView);
+refreshView.post(() -&gt; refreshView.startAnimation(rotate));
+#+end_src
+
+** 坑 9：Intent.getAction() 返回 null 导致 NPE
+
+#+begin_quote
+症状：Setup Wizard 完成后，OutlineActivity 崩溃 NullPointerException
+#+end_quote
+
+之前修改 Wizard 完成后的导航逻辑，使用 =FLAG_ACTIVITY_SINGLE_TOP= 回到已有的 OutlineActivity：
+
+#+begin_src java
+Intent outlineIntent = new Intent(context, OutlineActivity.class);
+outlineIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+context.startActivity(outlineIntent);
+#+end_src
+
+由于 =FLAG_ACTIVITY_SINGLE_TOP=，Android 不会创建新实例，而是调用已有实例的 =onNewIntent()=。但这个 Intent 没有设 action，所以 =getAction()= 返回 null：
+
+#+begin_src java
+// 崩溃：intent.getAction() 为 null，对 null 调 equals()
+if (intent.getAction().equals(SYNC_FAILED)) { ... }
+
+// 修复：常量在左，天然防 null
+if (SYNC_FAILED.equals(intent.getAction())) { ... }
+#+end_src
+
+#+begin_quote
+教训：=Intent.getAction()= 可以为 null。使用 =FLAG_ACTIVITY_SINGLE_TOP= 导航回已有 Activity 时，=onNewIntent()= 收到的 Intent 可能没有 action。养成 =CONSTANT.equals(variable)= 的习惯可以避免此类 NPE。
+#+end_quote
+
+** 坑 10：AndroidX Fragment 要求内部类为 public static
+
+#+begin_quote
+症状：点击 TimeclockDialog 的编辑按钮，或 DateTableRow 的日期/时间选择器，抛 IllegalStateException
+#+end_quote
+
+AndroidX Fragment 1.2+ 强制要求所有 Fragment 子类必须是 =public static=。非 static 内部类持有外部类隐式引用，无法通过无参构造器反射重建。
+
+#+begin_src java
+// 错误：非 static 内部类
+private class EditTimePickerFragment extends DialogFragment { ... }
+
+// 修复：改为 public static，数据通过 Bundle 传入
+public static class EditTimePickerFragment extends DialogFragment {
+    public static EditTimePickerFragment newInstance(int hour, int minute) {
+        EditTimePickerFragment f = new EditTimePickerFragment();
+        Bundle args = new Bundle();
+        args.putInt(&quot;hour&quot;, hour);
+        args.putInt(&quot;minute&quot;, minute);
+        f.setArguments(args);
+        return f;
+    }
+}
+#+end_src
+
+**影响范围**：4 个 Fragment 内部类（=TimeclockDialog.EditTimePickerFragment=、=DateTableRow= 的 3 个日期/时间选择器 Fragment）。
+
+** 坑 11：registerReceiver 必须指定 RECEIVER_EXPORTED/RECEIVER_NOT_EXPORTED
+
+#+begin_quote
+症状：OutlineActivity 启动时崩溃 SecurityException
+#+end_quote
+
+Android 13（API 33）要求调用 =registerReceiver()= 时必须指定 =RECEIVER_EXPORTED= 或 =RECEIVER_NOT_EXPORTED= 标志。项目中所有 =registerReceiver= 调用都需要加 API 级别判断：
+
+#+begin_src java
+if (Build.VERSION.SDK_INT &gt;= 33) {
+    registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+} else {
+    registerReceiver(receiver, filter);
+}
+#+end_src
+
+**影响范围**：3 处（=OutlineActivity=、=AgendaActivity=、=MobileOrgWidget=）。
+
+** 坑 12：危险权限的防御性编码——UI 层检查不够
+
+#+begin_quote
+症状：通过 ActionMode 菜单点击&quot;录音&quot;后，RecordingService 崩溃 setAudioSource failed
+#+end_quote
+
+新增的录音功能有两个 UI 入口：ActionMode 长按菜单和三点选项菜单。选项菜单路径做了 =RECORD_AUDIO= 权限检查，但 ActionMode 路径直接启动了 Service，跳过了权限检查。更关键的是，Service 本身对 =MediaRecorder.setAudioSource()= 没有做 try-catch，权限缺失时直接崩溃。
+
+这暴露了危险权限的两个常见疏漏：
+
+1. *每个 UI 入口都要独立检查权限*——不能假设用户只从特定路径进入
+2. *Service 必须防御性编码*——权限可能在 UI 检查和 Service 执行之间被用户撤销
+
+#+begin_src java
+// Service 中必须 try-catch 包裹硬件 API
+mediaRecorder = new MediaRecorder();
+try {
+    mediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
+    mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS);
+    // ... prepare, start
+} catch (Exception e) {
+    releaseRecorder();
+    stopSelf();
+    return;
+}
+#+end_src
+
+** 坑 13：权限检查静默失败——用户点击按钮无反应
+
+#+begin_quote
+症状：长按节点后点击 Record 按钮，ActionMode 关闭了但什么都没发生
+#+end_quote
+
+ActionMode 路径使用 =checkCallingOrSelfPermission()= 检查录音权限，失败时只打印一条 Log.w 就 return 了，没有任何用户可见的反馈。用户看到的就是按钮点击无效。
+
+#+begin_src java
+// 错误：静默失败，用户看不到任何反馈
+if (PERMISSION_GRANTED != context.checkCallingOrSelfPermission(RECORD_AUDIO)) {
+    Log.w(&quot;Tag&quot;, &quot;permission not granted&quot;);
+    return;  // 用户：？？？
+}
+
+// 修复：委托给 Activity 的统一权限请求方法
+// OutlineActionMode 中：
+private void runRecordingService() {
+    if (context instanceof OutlineActivity) {
+        ((OutlineActivity) context).tryStartRecording(node.id);
+    }
+}
+
+// OutlineActivity.tryStartRecording() 统一处理：
+// 1. 检查 ContextCompat.checkSelfPermission()
+// 2. 已授权 → 直接启动 Service
+// 3. 未授权 → ActivityCompat.requestPermissions() 弹出系统对话框
+#+end_src
+
+#+begin_quote
+教训：(1) =checkCallingOrSelfPermission()= 不适合 UI 层权限检查——它是给 Binder IPC 用的，不是给按钮点击用的。(2) 多个 UI 入口需要同一权限时，应委托给同一个方法处理，避免重复逻辑和遗漏。
+#+end_quote
+
+** 坑 14：通知 Action 图标全部用了同一个图标
+
+#+begin_quote
+症状：录音通知右边显示两个一样的麦克风图标，分不清暂停和停止
+#+end_quote
+
+新建通知的 =NotificationCompat.Action= 时，暂停和停止按钮都用了 =R.drawable.ic_menu_record=（麦克风图标），没有为每个操作创建语义化的图标。
+
+#+begin_src java
+// 错误：两个按钮都是麦克风
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 麦克风
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 也是麦克风
+
+// 修复：每个操作用自己的语义图标
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_media_stop, ...);   // ■ 方框
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_media_pause, ...);  // ⏸ 双竖线
+#+end_src
+
+#+begin_quote
+教训：通知的每个 Action 按钮都应该有独立、语义清晰的图标。Material Design Icons 提供了标准的 pause、stop、play 等图标，直接复用即可。
+#+end_quote
+
+* 经验总结
+
+** 1. 静默失效比崩溃更可怕
+
+Android 兼容性的最大敌人不是 =FATAL EXCEPTION=，而是功能静默消失。=android:showAsAction= 被忽略、隐式广播不送达、动画不播放——这些都不会出现在 logcat 里，只能靠人工测试发现。
+
+** 2. 全局搜索同类问题
+
+修了一个文件的 =showAsAction= 后，必须全局搜索所有同类问题。Android 迁移中的问题往往是同一模式在多处重复。我们用 =grep -r &quot;android:showAsAction&quot;= 一次性找到了 7 个文件。
+
+** 3. 生命周期配对调用
+
+=onCreate()= 中加 early return 时，必须检查 =onDestroy()= 是否使用了会被跳过的字段。Android 保证 =onDestroy()= 在 =stopSelf()= 后仍被调用。
+
+** 4. 编译通过≠运行正确
+
+compileSdk 升级后，很多废弃 API 仍然编译通过但运行时行为改变。需要逐个在目标设备上测试。
+
+** 5. 用 CI 构建而非本地构建
+
+全程通过 GitHub Actions 构建 APK，在真机上测试。本地环境和 CI 环境的差异可能导致遗漏问题。
+
+* Footnotes
+</description>
+<pubDate>2026-05-11</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</guid>
+</item>
 <item>
 <title>读：MCP 时代的安全威胁——幻觉权限与三道防线</title>
 <link>https://lujun9972.github.io/blog/2026/05/10/读：mcp-时代的安全威胁——幻觉权限与三道防线/index.html</link>
@@ -357,287 +769,6 @@ real  0m33.782s
 </description>
 <pubDate>2026-05-10</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/10/org-mobile-push-卡顿排查实战：从黑盒到字节码反编译/index.html</guid>
-</item>
-<item>
-<title>MobileOrg Android：从 API 17 迁移到 API 34 的实战记录</title>
-<link>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</link>
-<description>#+BEGIN_quote
-本文迁移全程借助 [[https://claude.ai/code][Claude Code]] 完成，我本人没有手动编写任何代码。整个过程是：真机测试发现问题 → 将 logcat 或现象描述给 Claude Code → Claude Code 定位原因并生成修复代码 → 推送 GitHub Actions 构建 → 再测试验证。包括本文本身，也是借助 Claude Code 生成的。
-
-由于我不是 Android 开发者，对文中涉及的技术细节无法保证完全准确，请读者自行判断。
-#+END_quote
-
-MobileOrg Android 是一个 Org-mode 的 Android 客户端，fork 自已经停止维护的 [[https://github.com/matburt/mobileorg-android][matburt/mobileorg-android]]。原始代码写于 2013 年左右，targetSdk 为 17（Android 4.2），使用 ActionBarSherlock、Support Library v4 等早已废弃的库。
-
-Google Play 要求 targetSdk 33+，所以必须迁移。本文记录了整个迁移过程中的踩坑和修复经验。
-
-* 迁移时间线
-
-整个迁移分三个阶段，共 50+ 个 commit：
-
-** 第一阶段：构建系统升级
-
-原始项目使用 ADT 构建，没有 Gradle 支持。首先需要让项目能编译：
-
-1. 创建 Gradle 构建配置（AGP 3.0.1 + Gradle 4.1）
-2. 解决 ActionBarSherlock 兼容性（禁用 AAPT2）
-3. 解决 support-v4 版本冲突（降级到 25.4.0）
-
-** 第二阶段：AndroidX 迁移
-
-1. 替换 ActionBarSherlock 为 AppCompat
-2. 执行 AndroidX 迁移（Refactor → Migrate to AndroidX）
-3. 升级到现代工具链（AGP 8.2.2 + Gradle 8.5 + JDK 17 + compileSdk 34）
-
-** 第三阶段：运行时兼容性修复
-
-这是最耗时的阶段。代码能编译，但在现代 Android 上各种崩溃和功能异常。下面详细记录。
-
-* 踩过的坑
-
-** 坑 1：ActionBarSherlock → AppCompat 的菜单图标消失
-
-#+begin_quote
-症状：菜单图标在 ActionBar 上不显示
-#+end_quote
-
-AppCompat 使用自己的 namespace 解析 =showAsAction= 属性。如果用 =android:showAsAction=，AppCompat 会静默忽略，图标不显示但不报错。
-
-#+begin_src xml
-&lt;!-- 错误：AppCompat 会忽略 --&gt;
-&lt;item android:showAsAction=&quot;ifRoom&quot; /&gt;
-
-&lt;!-- 正确：必须用 app namespace --&gt;
-&lt;item app:showAsAction=&quot;ifRoom&quot;
-    xmlns:app=&quot;http://schemas.android.com/apk/res-auto&quot; /&gt;
-#+end_src
-
-**影响范围**：项目中 8 个菜单 XML 文件全部需要修改。只修了一个文件时，其他界面（capture 保存按钮、节点操作按钮等）的图标依然消失。
-
-#+begin_quote
-教训：迁移框架后要全局搜索同类问题，不要只修一个文件就以为搞定了。
-#+end_quote
-
-** 坑 2：NotificationChannel 导致前台服务崩溃
-
-#+begin_quote
-症状：CannotPostForegroundServiceNotificationException: Bad notification for startForeground
-#+end_quote
-
-Android 8.0（API 26）引入了 NotificationChannel。Android 13（API 33）进一步强化——如果 notification 引用的 channel 不存在，直接抛异常崩溃。
-
-原始代码通过反射创建 channel（因为当时 compileSdk 是 23），但反射异常被静默吞掉了。Channel 没创建成功，notification 引用了一个不存在的 channel，崩溃。
-
-#+begin_src java
-// 原来的反射方式——异常被吞掉，channel 创建失败但不知道
-try {
-    Class&lt;?&gt; channelClass = Class.forName(&quot;android.app.NotificationChannel&quot;);
-    // ...
-} catch (Exception e) {
-    // 静默失败！
-}
-
-// 修复：compileSdk 34 已经有直接 API，不需要反射
-NotificationChannel channel = new NotificationChannel(channelId, name,
-    NotificationManager.IMPORTANCE_LOW);
-nm.createNotificationChannel(channel);
-#+end_src
-
-同时，所有 =NotificationCompat.Builder= 构造函数都必须传 CHANNEL_ID：
-
-#+begin_src java
-// 错误：没有 channel ID
-new NotificationCompat.Builder(context)
-
-// 正确
-new NotificationCompat.Builder(context, CHANNEL_ID)
-#+end_src
-
-**影响范围**：6 处 Builder 调用点，涉及 SyncService、TimeclockService、SynchronizerNotification、SynchronizerNotificationCompat。
-
-** 坑 3：危险权限的运行时检查
-
-#+begin_quote
-症状：CalendarSyncService 启动时 SecurityException 崩溃
-#+end_quote
-
-Android 6.0（API 23）引入了运行时权限。=READ_CALENDAR= 和 =WRITE_CALENDAR= 是危险权限，光在 Manifest 声明不够，必须运行时请求。
-
-#+begin_src java
-// 在 Service.onCreate() 中检查权限
-if (!hasCalendarPermission()) {
-    stopSelf();  // 无权限则优雅退出
-    return;
-}
-#+end_src
-
-**影响范围**：CalendarSyncService 的 =onCreate()= 和 =onStartCommand()= 都需要加权限检查。
-
-** 坑 4：Service early return 导致 onDestroy NPE
-
-#+begin_quote
-症状：修复权限检查后，CalendarSyncService.onDestroy() 抛 NullPointerException
-#+end_quote
-
-修复坑 3 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
-
-#+begin_src java
-// onDestroy 必须做空检查
-@Override
-public void onDestroy() {
-    if (sharedPreferences != null) {
-        sharedPreferences.unregisterOnSharedPreferenceChangeListener(this);
-    }
-    super.onDestroy();
-}
-#+end_src
-
-#+begin_quote
-教训：在 =onCreate()= / =onStartCommand()= 中加 early return（比如权限检查失败后 =stopSelf()=）时，=onDestroy()= 仍会被 Android 调用。所有在 =onDestroy()= 中使用的字段都必须做空检查。
-#+end_quote
-
-** 坑 5：主线程网络操作
-
-#+begin_quote
-症状：SSH Connection failed: android.os.NetworkOnMainThreadException
-#+end_quote
-
-Android 3.0 开始禁止主线程网络操作。但 =SyncService.getSynchronizer()= 在主线程调用 =new SSHSynchronizer()=，而 SSHSynchronizer 的构造函数调了 =connect()= 做网络连接。
-
-#+begin_src java
-// 错误：构造函数中发起网络连接
-public SSHSynchronizer(Context context) {
-    // ... 读取配置 ...
-    this.connect();  // 网络操作在主线程！
-}
-
-// 修复：移除构造函数中的 connect()，让后台线程处理
-public SSHSynchronizer(Context context) {
-    // ... 只读取配置，不连接 ...
-}
-#+end_src
-
-后台线程的 =getRemoteFile()= 已经有重连逻辑，会自动在正确的线程上建立连接。
-
-** 坑 6：隐式广播不送达
-
-#+begin_quote
-症状：同步后变更计数不刷新，同步动画不显示，但同步本身是成功的
-#+end_quote
-
-这是最隐蔽的一个问题。=OrgUtils.announceSyncDone()= 通过 =sendBroadcast()= 发送隐式广播通知 UI 刷新。但 targetSdk 34 的设备上，隐式广播可能不被 =RECEIVER_NOT_EXPORTED= 的 receiver 接收。
-
-#+begin_src java
-// 错误：隐式广播，targetSdk 34 可能不送达
-Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
-context.sendBroadcast(intent);
-
-// 修复：设为显式广播
-Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
-intent.setPackage(context.getPackageName());  // 关键！
-context.sendBroadcast(intent);
-#+end_src
-
-这个问题的影响面很大：变更计数不刷新、同步动画不显示、编辑后列表不更新——全部因为广播没送达。但不会报任何错误，就是功能静默失效。
-
-#+begin_quote
-教训：targetSdk 升级后，最危险的不是崩溃，而是功能静默失效。崩溃至少有日志，静默失效只能靠用户反馈。
-#+end_quote
-
-** 坑 7：Preference 的隐式 Intent 解析错误
-
-#+begin_quote
-症状：点击 Setup Wizard 直接退回到大纲界面
-#+end_quote
-
-XML Preference 中用隐式 intent 打开 Activity：
-
-#+begin_src xml
-&lt;!-- 错误：隐式 intent 可能解析到错误的 Activity --&gt;
-&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
-    &lt;intent android:action=&quot;com.matburt.mobileorg.Settings.SETUP_WIZARD&quot; /&gt;
-&lt;/Preference&gt;
-
-&lt;!-- 修复：显式指定目标 --&gt;
-&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
-    &lt;intent
-        android:targetPackage=&quot;com.matburt.mobileorg&quot;
-        android:targetClass=&quot;com.matburt.mobileorg.Gui.Wizard.WizardActivity&quot; /&gt;
-&lt;/Preference&gt;
-#+end_src
-
-** 坑 8：动画在未挂载的 View 上启动
-
-#+begin_quote
-症状：同步图标的旋转动画不显示
-#+end_quote
-
-先 =startAnimation()= 再 =setActionView()=，此时 view 还没挂载到 window，动画被静默忽略。
-
-#+begin_src java
-// 错误顺序
-refreshView.startAnimation(rotate);  // view 还没挂载！
-synchronizerMenuItem.setActionView(refreshView);
-
-// 修复：先挂载，再用 post 延迟启动动画
-synchronizerMenuItem.setActionView(refreshView);
-refreshView.post(() -&gt; refreshView.startAnimation(rotate));
-#+end_src
-
-** 坑 9：Intent.getAction() 返回 null 导致 NPE
-
-#+begin_quote
-症状：Setup Wizard 完成后，OutlineActivity 崩溃 NullPointerException
-#+end_quote
-
-之前修改 Wizard 完成后的导航逻辑，使用 =FLAG_ACTIVITY_SINGLE_TOP= 回到已有的 OutlineActivity：
-
-#+begin_src java
-Intent outlineIntent = new Intent(context, OutlineActivity.class);
-outlineIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-context.startActivity(outlineIntent);
-#+end_src
-
-由于 =FLAG_ACTIVITY_SINGLE_TOP=，Android 不会创建新实例，而是调用已有实例的 =onNewIntent()=。但这个 Intent 没有设 action，所以 =getAction()= 返回 null：
-
-#+begin_src java
-// 崩溃：intent.getAction() 为 null，对 null 调 equals()
-if (intent.getAction().equals(SYNC_FAILED)) { ... }
-
-// 修复：常量在左，天然防 null
-if (SYNC_FAILED.equals(intent.getAction())) { ... }
-#+end_src
-
-#+begin_quote
-教训：=Intent.getAction()= 可以为 null。使用 =FLAG_ACTIVITY_SINGLE_TOP= 导航回已有 Activity 时，=onNewIntent()= 收到的 Intent 可能没有 action。养成 =CONSTANT.equals(variable)= 的习惯可以避免此类 NPE。
-#+end_quote
-
-* 经验总结
-
-** 1. 静默失效比崩溃更可怕
-
-Android 兼容性的最大敌人不是 =FATAL EXCEPTION=，而是功能静默消失。=android:showAsAction= 被忽略、隐式广播不送达、动画不播放——这些都不会出现在 logcat 里，只能靠人工测试发现。
-
-** 2. 全局搜索同类问题
-
-修了一个文件的 =showAsAction= 后，必须全局搜索所有同类问题。Android 迁移中的问题往往是同一模式在多处重复。我们用 =grep -r &quot;android:showAsAction&quot;= 一次性找到了 7 个文件。
-
-** 3. 生命周期配对调用
-
-=onCreate()= 中加 early return 时，必须检查 =onDestroy()= 是否使用了会被跳过的字段。Android 保证 =onDestroy()= 在 =stopSelf()= 后仍被调用。
-
-** 4. 编译通过≠运行正确
-
-compileSdk 升级后，很多废弃 API 仍然编译通过但运行时行为改变。需要逐个在目标设备上测试。
-
-** 5. 用 CI 构建而非本地构建
-
-全程通过 GitHub Actions 构建 APK，在真机上测试。本地环境和 CI 环境的差异可能导致遗漏问题。
-
-* Footnotes
-</description>
-<pubDate>2026-05-10</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</guid>
 </item>
 <item>
 <title>TIL：微服务与复杂度守恒——从单体到分布式的代价转移</title>
