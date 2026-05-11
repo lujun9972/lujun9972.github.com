@@ -256,6 +256,137 @@ if (SYNC_FAILED.equals(intent.getAction())) { ... }
 教训：=Intent.getAction()= 可以为 null。使用 =FLAG_ACTIVITY_SINGLE_TOP= 导航回已有 Activity 时，=onNewIntent()= 收到的 Intent 可能没有 action。养成 =CONSTANT.equals(variable)= 的习惯可以避免此类 NPE。
 #+end_quote
 
+** 坑 10：AndroidX Fragment 要求内部类为 public static
+
+#+begin_quote
+症状：点击 TimeclockDialog 的编辑按钮，或 DateTableRow 的日期/时间选择器，抛 IllegalStateException
+#+end_quote
+
+AndroidX Fragment 1.2+ 强制要求所有 Fragment 子类必须是 =public static=。非 static 内部类持有外部类隐式引用，无法通过无参构造器反射重建。
+
+#+begin_src java
+// 错误：非 static 内部类
+private class EditTimePickerFragment extends DialogFragment { ... }
+
+// 修复：改为 public static，数据通过 Bundle 传入
+public static class EditTimePickerFragment extends DialogFragment {
+    public static EditTimePickerFragment newInstance(int hour, int minute) {
+        EditTimePickerFragment f = new EditTimePickerFragment();
+        Bundle args = new Bundle();
+        args.putInt("hour", hour);
+        args.putInt("minute", minute);
+        f.setArguments(args);
+        return f;
+    }
+}
+#+end_src
+
+**影响范围**：4 个 Fragment 内部类（=TimeclockDialog.EditTimePickerFragment=、=DateTableRow= 的 3 个日期/时间选择器 Fragment）。
+
+** 坑 11：registerReceiver 必须指定 RECEIVER_EXPORTED/RECEIVER_NOT_EXPORTED
+
+#+begin_quote
+症状：OutlineActivity 启动时崩溃 SecurityException
+#+end_quote
+
+Android 13（API 33）要求调用 =registerReceiver()= 时必须指定 =RECEIVER_EXPORTED= 或 =RECEIVER_NOT_EXPORTED= 标志。项目中所有 =registerReceiver= 调用都需要加 API 级别判断：
+
+#+begin_src java
+if (Build.VERSION.SDK_INT >= 33) {
+    registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+} else {
+    registerReceiver(receiver, filter);
+}
+#+end_src
+
+**影响范围**：3 处（=OutlineActivity=、=AgendaActivity=、=MobileOrgWidget=）。
+
+** 坑 12：危险权限的防御性编码——UI 层检查不够
+
+#+begin_quote
+症状：通过 ActionMode 菜单点击"录音"后，RecordingService 崩溃 setAudioSource failed
+#+end_quote
+
+新增的录音功能有两个 UI 入口：ActionMode 长按菜单和三点选项菜单。选项菜单路径做了 =RECORD_AUDIO= 权限检查，但 ActionMode 路径直接启动了 Service，跳过了权限检查。更关键的是，Service 本身对 =MediaRecorder.setAudioSource()= 没有做 try-catch，权限缺失时直接崩溃。
+
+这暴露了危险权限的两个常见疏漏：
+
+1. *每个 UI 入口都要独立检查权限*——不能假设用户只从特定路径进入
+2. *Service 必须防御性编码*——权限可能在 UI 检查和 Service 执行之间被用户撤销
+
+#+begin_src java
+// Service 中必须 try-catch 包裹硬件 API
+mediaRecorder = new MediaRecorder();
+try {
+    mediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
+    mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS);
+    // ... prepare, start
+} catch (Exception e) {
+    releaseRecorder();
+    stopSelf();
+    return;
+}
+#+end_src
+
+** 坑 13：权限检查静默失败——用户点击按钮无反应
+
+#+begin_quote
+症状：长按节点后点击 Record 按钮，ActionMode 关闭了但什么都没发生
+#+end_quote
+
+ActionMode 路径使用 =checkCallingOrSelfPermission()= 检查录音权限，失败时只打印一条 Log.w 就 return 了，没有任何用户可见的反馈。用户看到的就是按钮点击无效。
+
+#+begin_src java
+// 错误：静默失败，用户看不到任何反馈
+if (PERMISSION_GRANTED != context.checkCallingOrSelfPermission(RECORD_AUDIO)) {
+    Log.w("Tag", "permission not granted");
+    return;  // 用户：？？？
+}
+
+// 修复：委托给 Activity 的统一权限请求方法
+// OutlineActionMode 中：
+private void runRecordingService() {
+    if (context instanceof OutlineActivity) {
+        ((OutlineActivity) context).tryStartRecording(node.id);
+    }
+}
+
+// OutlineActivity.tryStartRecording() 统一处理：
+// 1. 检查 ContextCompat.checkSelfPermission()
+// 2. 已授权 → 直接启动 Service
+// 3. 未授权 → ActivityCompat.requestPermissions() 弹出系统对话框
+#+end_src
+
+#+begin_quote
+教训：(1) =checkCallingOrSelfPermission()= 不适合 UI 层权限检查——它是给 Binder IPC 用的，不是给按钮点击用的。(2) 多个 UI 入口需要同一权限时，应委托给同一个方法处理，避免重复逻辑和遗漏。
+#+end_quote
+
+** 坑 14：通知 Action 图标全部用了同一个图标
+
+#+begin_quote
+症状：录音通知右边显示两个一样的麦克风图标，分不清暂停和停止
+#+end_quote
+
+新建通知的 =NotificationCompat.Action= 时，暂停和停止按钮都用了 =R.drawable.ic_menu_record=（麦克风图标），没有为每个操作创建语义化的图标。
+
+#+begin_src java
+// 错误：两个按钮都是麦克风
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 麦克风
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 也是麦克风
+
+// 修复：每个操作用自己的语义图标
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_media_stop, ...);   // ■ 方框
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_media_pause, ...);  // ⏸ 双竖线
+#+end_src
+
+#+begin_quote
+教训：通知的每个 Action 按钮都应该有独立、语义清晰的图标。Material Design Icons 提供了标准的 pause、stop、play 等图标，直接复用即可。
+#+end_quote
+
 * 经验总结
 
 ** 1. 静默失效比崩溃更可怕
