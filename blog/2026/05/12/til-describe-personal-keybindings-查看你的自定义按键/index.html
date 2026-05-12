@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: describe-personal-keybindings 查看你的自定义按键 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="Emacs, 按键绑定, use-package, TIL" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: describe-personal-keybindings 查看你的自定义按键</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org75871b6">前提：必须用 bind-key</a></li>
+<li><a href="#org359b084">bind-key 的几个变体</a></li>
+</ul>
+</div>
+</div>
+<p>
+Emacs 的 <code>describe-personal-keybindings</code> 命令（属于 <code>use-package</code> ，Emacs 29+ 已内置）能列出你所有自定义的按键绑定，还会告诉你覆盖了哪些原有绑定。
+</p>
+
+<p>
+运行 <code>M-x describe-personal-keybindings</code> ，你会看到类似这样的输出：
+</p>
+
+<pre class="example" id="orga27c1fa">
+Key name          Command                                 Comments
+----------------- --------------------------------------- ---------------------
+C-c f             `auto-fill-mode'
+C-c t             `toggle-truncate-lines'
+
+C-x C-s           `write-file'                            was `save-buffer'
+</pre>
+
+<p>
+<code>Comments</code> 列显示 <code>was 'save-buffer'</code> ，说明 <code>C-x C-s</code> 原来绑定的是 <code>save-buffer</code> ，被你改成了 <code>write-file</code> 。升级 Emacs 后跑一遍这个命令，能发现新版有没有给你之前没绑过的键加默认功能。
+</p>
+
+<div id="outline-container-org75871b6" class="outline-2">
+<h2 id="org75871b6">前提：必须用 bind-key</h2>
+<div class="outline-text-2" id="text-org75871b6">
+<p>
+这个命令只认 <code>bind-key</code> 宏定义的按键。用 <code>define-key</code> 定义的不会出现在列表里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#20250;&#20986;&#29616;&#22312; describe-personal-keybindings &#20013;
+</span>(<span class="org-keyword">bind-key</span> <span class="org-string">"C-c t"</span> #'toggle-truncate-lines)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#19981;&#20250;&#20986;&#29616;
+</span>(define-key global-map (kbd <span class="org-string">"C-c d"</span>) #'diff-mode)
+</pre>
+</div>
+
+<p>
+如果你用 <code>use-package</code> 的 <code>:bind</code> 关键字，底层走的也是 <code>bind-key</code> ，所以会被记录。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org359b084" class="outline-2">
+<h2 id="org359b084">bind-key 的几个变体</h2>
+<div class="outline-text-2" id="text-org359b084">
+<p>
+<code>bind-key</code> 还有几个变体：
+</p>
+
+<ul class="org-ul">
+<li><code>bind-key*</code> ：比 <code>bind-key</code> 更强，会覆盖 minor mode 的绑定。普通 <code>bind-key</code> 定义的键，如果某个 minor mode 也绑了同一个键，minor mode 优先； <code>bind-key*</code> 则反过来，你的绑定始终生效</li>
+<li><code>unbind-key</code> ：解除某个键的绑定</li>
+<li><code>bind-keys</code> / <code>bind-keys*</code> ：批量绑定多个键</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">bind-keys &#25209;&#37327;&#32465;&#23450;
+</span>(<span class="org-keyword">bind-keys</span>
+ (<span class="org-string">"C-c t"</span> . toggle-truncate-lines)
+ (<span class="org-string">"C-c f"</span> . auto-fill-mode)
+ (<span class="org-string">"C-c a"</span> . align-current))
+</pre>
+</div>
+
+<p>
+如果你还在用 <code>define-key</code> 管理按键，可以考虑逐步迁移到 <code>use-package</code> 的 <code>:bind</code> （底层就是 <code>bind-keys</code> ），这样所有自定义按键都能被 <code>describe-personal-keybindings</code> 追踪到。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-12</span>
+    <span class="post-info">2026-05-12</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/按键绑定">按键绑定</a> : <a href="../../../../../tags/use-package">use-package</a> : <a href="../../../../../tags/til">TIL</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; 3xvpnnmqe0pufide3cozgi5fjc &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
