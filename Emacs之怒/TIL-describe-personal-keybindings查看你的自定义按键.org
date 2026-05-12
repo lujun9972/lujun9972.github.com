@@ -1,0 +1,53 @@
+#+TITLE: TIL: describe-personal-keybindings 查看你的自定义按键
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, 按键绑定, use-package, TIL
+#+DATE: [2026-05-12 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+Emacs 的 =describe-personal-keybindings= 命令（属于 =use-package= ，Emacs 29+ 已内置）能列出你所有自定义的按键绑定，还会告诉你覆盖了哪些原有绑定。
+
+运行 =M-x describe-personal-keybindings= ，你会看到类似这样的输出：
+
+#+BEGIN_EXAMPLE
+Key name          Command                                 Comments
+----------------- --------------------------------------- ---------------------
+C-c f             `auto-fill-mode'
+C-c t             `toggle-truncate-lines'
+
+C-x C-s           `write-file'                            was `save-buffer'
+#+END_EXAMPLE
+
+=Comments= 列显示 =was 'save-buffer'= ，说明 =C-x C-s= 原来绑定的是 =save-buffer= ，被你改成了 =write-file= 。升级 Emacs 后跑一遍这个命令，能发现新版有没有给你之前没绑过的键加默认功能。
+
+* 前提：必须用 bind-key
+
+这个命令只认 =bind-key= 宏定义的按键。用 =define-key= 定义的不会出现在列表里：
+
+#+BEGIN_SRC emacs-lisp
+;; 会出现在 describe-personal-keybindings 中
+(bind-key "C-c t" #'toggle-truncate-lines)
+
+;; 不会出现
+(define-key global-map (kbd "C-c d") #'diff-mode)
+#+END_SRC
+
+如果你用 =use-package= 的 =:bind= 关键字，底层走的也是 =bind-key= ，所以会被记录。
+
+* bind-key 的几个变体
+
+=bind-key= 还有几个变体：
+
+- =bind-key*= ：比 =bind-key= 更强，会覆盖 minor mode 的绑定。普通 =bind-key= 定义的键，如果某个 minor mode 也绑了同一个键，minor mode 优先； =bind-key*= 则反过来，你的绑定始终生效
+- =unbind-key= ：解除某个键的绑定
+- =bind-keys= / =bind-keys*= ：批量绑定多个键
+
+#+BEGIN_SRC emacs-lisp
+;; bind-keys 批量绑定
+(bind-keys
+ ("C-c t" . toggle-truncate-lines)
+ ("C-c f" . auto-fill-mode)
+ ("C-c a" . align-current))
+#+END_SRC
+
+如果你还在用 =define-key= 管理按键，可以考虑逐步迁移到 =use-package= 的 =:bind= （底层就是 =bind-keys= ），这样所有自定义按键都能被 =describe-personal-keybindings= 追踪到。
