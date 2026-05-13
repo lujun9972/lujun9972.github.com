@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Emacs Chat 技巧拾遗——从 bandali 的配置里捡到的 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Sacha Chua 的 Emacs Chat 播客时隔十年重启，第一期嘉宾是 Amin Bandali。他直播翻了自己的 Emacs 配置，聊了不少实用技巧。本文从中捡出最值得的几个技巧：indicate-buffer-boundaries 的 fringe 箭头、minibuffer-with-setup-hook 预填充 M-x、user-lisp-directory 自动加载目录、repeat-mode 单键重复、EXWM 专场，最后末尾速览收拢零散技巧。" />
+  <meta name="keywords" content="emacs,exwm,configuration,tips" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Emacs Chat 技巧拾遗——从 bandali 的配置里捡到的</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org657cd1d">indicate-buffer-boundaries：一行看出 buffer 边界和末尾换行符</a></li>
+<li><a href="#org13f0a4b">minibuffer-with-setup-hook：预填充 M-x，省掉一堆快捷键</a></li>
+<li><a href="#org86d47c8">user-lisp-directory：Emacs 31 的自动加载目录</a></li>
+<li><a href="#orga74d208">repeat-mode：按一次前缀，后面只敲一个键</a></li>
+<li><a href="#org1a1d9e6">EXWM：当 Emacs 成了窗口管理器</a>
+<ul>
+<li><a href="#org6d7feeb">simulation-keys：把 Emacs 快捷键带到所有应用</a></li>
+<li><a href="#orgbe3b484">prefix map：减少 EXWM 全局键注册，加速启动</a></li>
+<li><a href="#org59588ff">浮动窗口：用 instance name 自动识别</a></li>
+<li><a href="#org387b796">工作区按需创建</a></li>
+<li><a href="#org3c60dc0">exwm-xsettings：动态 DPI 和屏幕热插拔</a></li>
+<li><a href="#orge78be7e">其他 EXWM 细节</a></li>
+</ul>
+</li>
+<li><a href="#org6cd8691">其他速览</a>
+<ul>
+<li><a href="#orgb8fe593">滚动：一行一行滚</a></li>
+<li><a href="#org5fcff7e">auto-revert + undo：看一眼新版本，不喜欢就撤销</a></li>
+<li><a href="#orgfb8b4e7">display-fill-column-indicator：一条竖线提醒你别写太长</a></li>
+<li><a href="#org29145c0">GC 阈值：启动时临时调高</a></li>
+<li><a href="#org0cf7d37">bandali-define-keys：一次定义多个快捷键</a></li>
+<li><a href="#org61eada6">给命令设"门禁"：误触的提醒，常用的放行</a></li>
+<li><a href="#org784d98a">全局字体缩放</a></li>
+<li><a href="#org9dafbe7">手搓 fundamental-mode-hook</a></li>
+<li><a href="#org1b48a76">init-file-debug：不用重开 Emacs 就能让所有错误进 debugger</a></li>
+<li><a href="#org207d185">package-review-policy：更新包前先看 diff</a></li>
+<li><a href="#org1a4c0f9">ffs（Form Feed Slides）：最简单的幻灯片工具</a></li>
+<li><a href="#org7627260">TRAMP：ssh 配置补全</a></li>
+<li><a href="#org8f7a2c7">其他小东西</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+Sacha Chua 的 Emacs Chat 播客停了十年，最近重启了。第一期嘉宾是 Amin Bandali，EmacsConf 的组织者之一，Debian Developer，用了十多年 Emacs。他在 <a href="https://kelar.org/~bandali/gnu/emacs/emacs-chat-202605.html">这期播客</a> 里直播翻了自己的配置，聊了一个多小时。
+</p>
+
+<p>
+bandali 的配置风格偏极简：不用 <code>use-package</code> ，包用 git submodule 手动管理，配置是一个 literate Org 文件，tangle 成独立 Elisp 文件。很多思路来自 Prot，但也加了自己的改动。
+</p>
+
+<p>
+下面是我从这期播客里捡到的技巧，按上手难度排：一行配置就够用的在前面，EXWM 这种大件放后面，剩下的零散技巧收在末尾速览。
+</p>
+
+<div id="outline-container-org657cd1d" class="outline-2">
+<h2 id="org657cd1d">indicate-buffer-boundaries：一行看出 buffer 边界和末尾换行符</h2>
+<div class="outline-text-2" id="text-org657cd1d">
+<p>
+这个设置只有一行，但解决了两个实际问题——属于那种"改量极小、效果立现"的类型：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq-default</span> indicate-buffer-boundaries 'left)
+</pre>
+</div>
+
+<p>
+效果：每个 buffer 的左边 fringe 区域会出现小箭头。
+</p>
+
+<ul class="org-ul">
+<li>箭头朝下：下面还有内容，可以继续往下翻</li>
+<li>箭头朝上：上面还有内容，可以继续往上翻</li>
+<li>两个箭头都有：上下都还有内容</li>
+<li>箭头形状变了：文件末尾没有换行符</li>
+</ul>
+
+<p>
+这行配置解决了两个问题。一个是"不用看 scroll bar 就知道还能不能翻页"。另一个更实用：能一眼看出文件末尾有没有换行符。很多配置文件（crontab、nginx conf 等）对末尾换行符敏感，少一个换行符可能出问题，靠这个箭头能马上发现。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org13f0a4b" class="outline-2">
+<h2 id="org13f0a4b">minibuffer-with-setup-hook：预填充 M-x，省掉一堆快捷键</h2>
+<div class="outline-text-2" id="text-org13f0a4b">
+<p>
+<code>C-h</code> 下面挂了很多 help 命令，但不是每个都有默认快捷键。像 <code>find-library</code> 、 <code>describe-face</code> 这些常用的命令，给它们各分配一个快捷键吧，记不住；不给吧，每次都要敲全名很麻烦。
+</p>
+
+<p>
+bandali 的做法是：不分配快捷键，但提供一个辅助函数。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">defun</span> <span class="org-function-name">bandali-call-interactively-insert</span> (command <span class="org-type">&amp;optional</span> string)
+  <span class="org-doc">"Call COMMAND interactively, pre-filling the minibuffer with STRING."</span>
+  (<span class="org-keyword">minibuffer-with-setup-hook</span>
+      (<span class="org-keyword">lambda</span> ()
+        (<span class="org-keyword">when</span> string
+          (insert string)))
+    (call-interactively command)))
+</pre>
+</div>
+
+<p>
+作用是把 <code>M-x</code> 打开后自动填一段前缀，你再接着敲后面的字就行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(bandali-call-interactively-insert 'describe-function <span class="org-string">"describe-"</span>)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#25171;&#24320; M-x &#21518;&#37324;&#38754;&#24050;&#32463;&#22635;&#22909;&#20102; "describe-"&#65292;&#20877;&#25970; face &#23601;&#21464;&#25104; describe-face</span>
+</pre>
+</div>
+
+<p>
+他绑了两个键： <code>C-c h a</code> 预填 <code>apropos-</code> ， <code>C-c h d</code> 预填 <code>describe-</code> 。以后想查什么 help 命令，按这两个键再敲几个字就出来了，不用记十几个快捷键。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org86d47c8" class="outline-2">
+<h2 id="org86d47c8">user-lisp-directory：Emacs 31 的自动加载目录</h2>
+<div class="outline-text-2" id="text-org86d47c8">
+<p>
+Emacs 31 新增了一个变量 <code>user-lisp-directory</code> 。你给它指定一个目录，Emacs 启动时会自动递归扫描里面的所有 <code>.el</code> 文件，逐个 byte-compile、native-compile，最后加到 <code>load-path</code> 。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> user-lisp-directory (expand-file-name <span class="org-string">"lisp"</span> user-emacs-directory))
+</pre>
+</div>
+
+<p>
+这样一来，不需要手动 <code>add-to-list 'load-path</code> ，也不用在配置里写一堆 <code>require</code> 。把包往目录里一放，Emacs 自己搞定。
+</p>
+
+<p>
+对于还在用旧版 Emacs 的，可以用 Philip Kaludercic 的 <code>site-lisp</code> 包（GNU ELPA 可安装）做兼容回退。 <code>site-lisp</code> 是 <code>user-lisp-directory</code> 的前身，行为基本一致。
+</p>
+
+<p>
+如果你跟 bandali 一样，包管理用的是 git submodule，所有第三方包放在一个目录里，这个变量刚好可以用。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga74d208" class="outline-2">
+<h2 id="orga74d208">repeat-mode：按一次前缀，后面只敲一个键</h2>
+<div class="outline-text-2" id="text-orga74d208">
+<p>
+<code>repeat-mode</code> 是 Emacs 内置功能，Emacs 28 就引入了。它的工作机制分两阶段：
+</p>
+
+<ol class="org-ol">
+<li>第一次正常按完整快捷键（比如 <code>C-x o</code> 切窗口）</li>
+<li>之后只需要按快捷键的最后一个键（ <code>o</code> ），不用再按前缀</li>
+</ol>
+
+<p>
+在 echo area 能看到提示："Repeat with o, O"。哪些命令能用 <code>repeat-mode</code> ，由各自 keymap 声明。
+</p>
+
+<p>
+播客里 bandali 提到他用 <code>repeat-mode</code> 最多的地方是 EXWM 工作区切换。他绑了 <code>s-,</code> 做前缀，按一次之后用 <code>p</code> 和 <code>n</code> 上下切工作区，用 <code>h</code> 、 <code>j</code> 、 <code>k</code> 、 <code>l</code> 四向切窗口。切一连串工作区的时候明显方便很多。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1a1d9e6" class="outline-2">
+<h2 id="org1a1d9e6">EXWM：当 Emacs 成了窗口管理器</h2>
+<div class="outline-text-2" id="text-org1a1d9e6">
+<p>
+bandali 2018 年用过 EXWM，后来换到 Sway/Wayland，最近又回来了。按他的说法，EXWM 这东西试过一次就想回来。这节是他配置里最重头的部分。
+</p>
+</div>
+
+<div id="outline-container-org6d7feeb" class="outline-3">
+<h3 id="org6d7feeb">simulation-keys：把 Emacs 快捷键带到所有应用</h3>
+<div class="outline-text-3" id="text-org6d7feeb">
+<p>
+EXWM 的 <code>exwm-input-simulation-keys</code> 能让你在别的 X11 应用里用 Emacs 快捷键。原理很简单：EXWM 拦截你按的键，翻译成目标应用的按键发过去。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> exwm-input-simulation-keys
+      '(([?\C-b] . [left])     <span class="org-comment-delimiter">; </span><span class="org-comment">C-b &#8594; &#24038;&#31661;&#22836;
+</span>        ([?\C-f] . [right])    <span class="org-comment-delimiter">; </span><span class="org-comment">C-f &#8594; &#21491;&#31661;&#22836;
+</span>        ([?\C-p] . [up])       <span class="org-comment-delimiter">; </span><span class="org-comment">C-p &#8594; &#19978;&#31661;&#22836;
+</span>        ([?\C-n] . [down])     <span class="org-comment-delimiter">; </span><span class="org-comment">C-n &#8594; &#19979;&#31661;&#22836;
+</span>        ([?\C-a] . [home])     <span class="org-comment-delimiter">; </span><span class="org-comment">C-a &#8594; Home
+</span>        ([?\C-e] . [end])      <span class="org-comment-delimiter">; </span><span class="org-comment">C-e &#8594; End
+</span>        ([?\C-w] . [?\C-x])    <span class="org-comment-delimiter">; </span><span class="org-comment">C-w &#8594; C-x&#65288;&#20999;&#21040; Firefox &#37324;&#19981;&#20250;&#20851;&#26631;&#31614;&#39029;&#20102;&#65289;
+</span>        ([?\M-w] . [?\C-c])))  <span class="org-comment-delimiter">; </span><span class="org-comment">M-w &#8594; C-c</span>
+</pre>
+</div>
+
+<p>
+<code>C-w</code> → <code>C-x</code> 这条：在 Firefox 里按 <code>C-w</code> 本来会关标签页，映射之后变剪切，跟 Emacs 里的行为一致了。用惯 Emacs 键位的人不用再脑内切两套快捷键。
+</p>
+
+<p>
+模拟键还能按应用分别设。比如在终端里把 <code>C-c C-c</code> 透传过去，因为终端需要自己处理这个信号。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbe3b484" class="outline-3">
+<h3 id="orgbe3b484">prefix map：减少 EXWM 全局键注册，加速启动</h3>
+<div class="outline-text-3" id="text-orgbe3b484">
+<p>
+EXWM 设置全局键的方式是逐个加到 <code>exwm-input-global-keys</code> 。键多了启动就慢。bandali 的解法是定义一个 prefix map，只把这一个 map 注册给 EXWM：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(define-prefix-command 'bandali-prefix-exwm-map)
+(define-key bandali-prefix-exwm-map (kbd <span class="org-string">"b"</span>) #'bandali-browser-menu)
+(define-key bandali-prefix-exwm-map (kbd <span class="org-string">"SPC"</span>) #'async-shell-command)
+(define-key bandali-prefix-exwm-map (kbd <span class="org-string">"p"</span>) #'exwm-workspace-prev)
+(define-key bandali-prefix-exwm-map (kbd <span class="org-string">"n"</span>) #'exwm-workspace-next)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">... &#26356;&#22810;&#32465;&#23450;
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#27880;&#20876;&#36825;&#20010; prefix &#32473; EXWM
+</span>(exwm-input-set-key (kbd <span class="org-string">"s-x"</span>) bandali-prefix-exwm-map)
+</pre>
+</div>
+
+<p>
+窗口管理相关的键全挂在 <code>s-x</code> 这个前缀下，EXWM 只需要知道一个入口。他还用 <code>s-,</code> 做另一个入口，左半边键盘的 <code>x</code> 紧挨 Super 键，两个手指一次能按到。右边没有 Super 键的键盘上，他把右 Control 映射成 Super，用 <code>s-,</code> 同样顺手。
+</p>
+
+<p>
+如果有 ZSA Voyager 这类可编程键盘，甚至能把 <code>s-x</code> 映射成单个按键。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org59588ff" class="outline-3">
+<h3 id="org59588ff">浮动窗口：用 instance name 自动识别</h3>
+<div class="outline-text-3" id="text-org59588ff">
+<p>
+EXWM 默认把所有窗口平铺。有些窗口不适合平铺（比如对话框、小工具），可以用浮动模式。
+</p>
+
+<p>
+bandali 的做法是约定命名规则，让 EXWM 自动识别：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#21551;&#21160;&#32456;&#31471;&#26102;&#25351;&#23450; instance name
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">xterm -name floating
+</span>
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#37197;&#32622;&#37324;&#21305;&#37197; instance name&#65292;&#33258;&#21160;&#28014;&#21160;
+</span>(<span class="org-keyword">setq</span> exwm-manage-configurations
+      '(((<span class="org-builtin">:instance</span> . <span class="org-string">"floating"</span>)
+         floating t)))
+</pre>
+</div>
+
+<p>
+任何应用只要启动时指定了 <code>instance</code> 名，EXWM 就能按规则处理。这比每次手动切换浮动/平铺省心。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org387b796" class="outline-3">
+<h3 id="org387b796">工作区按需创建</h3>
+<div class="outline-text-3" id="text-org387b796">
+<p>
+EXWM 默认可以预设 10 个工作区，但 bandali 发现日常用不到这么多，初始只开 5 个，减少启动负担。切换到一个不存在的工作区时，EXWM 自动创建它。快捷键可以从 0 绑到 9，用到哪个创哪个。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> exwm-workspace-number 5)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3c60dc0" class="outline-3">
+<h3 id="org3c60dc0">exwm-xsettings：动态 DPI 和屏幕热插拔</h3>
+<div class="outline-text-3" id="text-org3c60dc0">
+<p>
+<code>exwm-xsettings</code> 让 X11 下的字体、DPI 等设置可以在运行时改，不用写 X resources 文件重启。bandali 用它来响应显示器热插拔：外接显示器时降低分辨率和 DPI，拔掉后恢复高分屏设置。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">defun</span> <span class="org-function-name">bandali-exwm-screen-change</span> ()
+  <span class="org-doc">"Adjust screen settings based on connected outputs."</span>
+  (<span class="org-keyword">if</span> (bandali-external-monitor-connected-p)
+      (<span class="org-keyword">progn</span>
+        (start-process-shell-command
+         <span class="org-string">"xrandr"</span> nil
+         <span class="org-string">"xrandr --output eDP-1 --mode 1920x1080"</span>)
+        (exwm-xsettings-change-dpi 96))
+    (exwm-xsettings-change-dpi 144)))
+</pre>
+</div>
+
+<p>
+这解决了 X11 没有逐显示器 DPI 的问题：只有一个全局 DPI 值，但在插拔显示器时会动态修改。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge78be7e" class="outline-3">
+<h3 id="orge78be7e">其他 EXWM 细节</h3>
+<div class="outline-text-3" id="text-orge78be7e">
+<ul class="org-ul">
+<li><code>exwm-input-send-next-key</code> ：这个命令的作用是"把下一个按键原样交给 X 应用，Emacs 别拦截"。Emacs 默认把它绑在 <code>C-c C-q</code> 上，bandali 觉得两个键的组合太啰嗦，直接改绑到 <code>C-q</code> 。按一下 <code>C-q</code> 之后，再按的键就会透传给底层应用。比如 <code>C-q C-t</code> ， <code>C-t</code> 不会被 Emacs 吃掉，而是原样发给 Firefox 或终端。</li>
+<li>buffer 重命名：每个 X 窗口在 Emacs 里是一个 buffer。他写了个 hook，把窗口标题映射成 buffer 名显示在 mode-line 上，超过 25 个字符截断加省略号：</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">defun</span> <span class="org-function-name">bandali-exwm-rename-buffer</span> ()
+  <span class="org-doc">"Rename EXWM buffers to reflect their window title."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">let</span> ((title (<span class="org-keyword">if</span> (&lt;= (length exwm-title) 25)
+                   exwm-title
+                 (concat (substring exwm-title 0 25) <span class="org-string">"..."</span>))))
+    (exwm-workspace-rename-buffer title)))
+
+(add-hook 'exwm-update-title-hook #'bandali-exwm-rename-buffer)
+</pre>
+</div>
+
+<p>
+<code>exwm-update-title-hook</code> 在窗口标题变化时触发，所以 Firefox 切标签页、终端换目录，mode-line 上的 buffer 名跟着变。
+</p>
+<ul class="org-ul">
+<li>通知：用 Dunst 做通知守护进程。启动 Dunst 后用 <code>set-process-query-on-exit-flag</code> 标记它，退 Emacs 时不会因为 Dunst 还活着就弹确认框：</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">when</span> (executable-find <span class="org-string">"dunst"</span>)
+  (<span class="org-keyword">let</span> ((proc (start-process <span class="org-string">"dunst"</span> nil <span class="org-string">"dunst"</span>)))
+    (set-process-query-on-exit-flag proc nil)))
+</pre>
+</div>
+
+<p>
+<code>set-process-query-on-exit-flag</code> 设为 nil 的意思是：这个进程退出 Emacs 时直接杀掉，别问我。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6cd8691" class="outline-2">
+<h2 id="org6cd8691">其他速览</h2>
+<div class="outline-text-2" id="text-org6cd8691">
+<p>
+播客里还聊了不少零散技巧，篇幅放不进前面五节，但值得快速扫一遍。
+</p>
+</div>
+
+<div id="outline-container-orgb8fe593" class="outline-3">
+<h3 id="orgb8fe593">滚动：一行一行滚</h3>
+<div class="outline-text-3" id="text-orgb8fe593">
+<p>
+Emacs 默认滚到页面底部时会跳半屏然后居中。bandali 设了两个变量改成逐行滚：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> scroll-conservatively 101
+      scroll-preserve-screen-position t)
+</pre>
+</div>
+
+<p>
+<code>scroll-conservatively</code> 的意思是：当光标移出可见区域时，Emacs 滚多少行把光标露出来。值设成大于 100 之后，行为变了：不管光标移多远，Emacs 只滚刚好把光标拉回视野的行数，从不跳半屏、从不重新居中。设 101 就是利用了这条规则，让每次滚动都是"刚好够"的一行。
+</p>
+
+<p>
+<code>scroll-preserve-screen-position</code> 让滚动后光标在屏幕上的位置不变。两个变量搭配，滚起来感觉跟 <code>C-n</code> / <code>C-p</code> 一样自然。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5fcff7e" class="outline-3">
+<h3 id="org5fcff7e">auto-revert + undo：看一眼新版本，不喜欢就撤销</h3>
+<div class="outline-text-3" id="text-org5fcff7e">
+<div class="org-src-container">
+<pre class="src src-elisp">(global-auto-revert-mode 1)
+</pre>
+</div>
+
+<p>
+auto-revert 让 Emacs 监听文件变化，文件被外部改了就自动刷新 buffer。刷新后按 <code>C-/</code> 能回到修改前的内容。相当于"看一眼外面改了啥，不喜欢就 undo 回去"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfb8b4e7" class="outline-3">
+<h3 id="orgfb8b4e7">display-fill-column-indicator：一条竖线提醒你别写太长</h3>
+<div class="outline-text-3" id="text-orgfb8b4e7">
+<p>
+在 70 列位置画一条细竖线，提醒自己代码和文本别写太长。他用 hook 只在 <code>prog-mode</code> 和 text-mode 里开，不全局限。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(add-hook 'prog-mode-hook #'display-fill-column-indicator-mode)
+(add-hook 'text-mode-hook #'display-fill-column-indicator-mode)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org29145c0" class="outline-3">
+<h3 id="org29145c0">GC 阈值：启动时临时调高</h3>
+<div class="outline-text-3" id="text-org29145c0">
+<p>
+默认 <code>gc-cons-threshold</code> 是 8MB。bandali 启动时临时提到 30MB 以减少 GC 次数，在 <code>after-init-hook</code> 里恢复默认。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">early-init &#25110; init &#24320;&#22836;
+</span>(<span class="org-keyword">setq</span> gc-cons-threshold (* 30 1024 1024))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">init &#26411;&#23614;
+</span>(add-hook 'after-init-hook
+          (<span class="org-keyword">lambda</span> ()
+            (<span class="org-keyword">setq</span> gc-cons-threshold (* 8 1024 1024))))
+</pre>
+</div>
+
+<p>
+他还在 <code>early-init</code> 里设了 <code>load-prefer-newer</code> 为 t。如果手动改了 <code>.el</code> 文件忘了重新编译，Emacs 自动用最新的版本，不会加载过期的 <code>.elc</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0cf7d37" class="outline-3">
+<h3 id="org0cf7d37">bandali-define-keys：一次定义多个快捷键</h3>
+<div class="outline-text-3" id="text-org0cf7d37">
+<p>
+一个薄包装，调用 <code>define-key</code> 但支持一次传多对键和命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">defmacro</span> <span class="org-function-name">bandali-define-keys</span> (keymap <span class="org-type">&amp;rest</span> definitions)
+  `(<span class="org-keyword">progn</span>
+     ,@(mapcar (<span class="org-keyword">lambda</span> (def) `(define-key ,keymap ,@def))
+               (seq-partition definitions 2))))
+</pre>
+</div>
+
+<p>
+跟 Prot 的版本比，他不限制 key 必须是 <code>kbd</code> 字符串，老的 vector 写法也能用。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org61eada6" class="outline-3">
+<h3 id="org61eada6">给命令设"门禁"：误触的提醒，常用的放行</h3>
+<div class="outline-text-3" id="text-org61eada6">
+<p>
+Emacs 有一个保护机制：某些命令（新手容易误触或不知道后果的）默认会弹确认框，多问一句"你确定要执行吗？"。
+</p>
+
+<p>
+比如 <code>narrow-to-region</code> 会把 buffer 收缩到选中区域，没经验的人缩完之后发现内容"丢了"，以为出了 bug。Emacs 的做法是：第一次执行时弹框，问你 y/n。你回答 y 就执行一次，回答 n 不执行，回答 ! 就永久放行。
+</p>
+
+<p>
+bandali 对两类命令做了不同的处理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#33258;&#24049;&#24120;&#29992;&#30340;&#65292;&#30452;&#25509;&#25918;&#34892;&#65292;&#19981;&#24377;&#30830;&#35748;
+</span>(put 'narrow-to-region 'disabled nil)
+(put 'narrow-to-page 'disabled nil)
+(<span class="org-keyword">dolist</span> (cmd '(list-timers narrow-to-defun narrow-to-page narrow-to-region))
+  (put cmd 'disabled nil))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#23481;&#26131;&#35823;&#35302;&#30340;&#65292;&#20027;&#21160;&#21152;&#38376;&#31105;&#65292;&#25353;&#20102;&#24377;&#30830;&#35748;
+</span>(put 'overwrite-mode 'disabled t)
+</pre>
+</div>
+
+<p>
+<code>overwrite-mode</code> 他从来不主动用，但偶尔会误按。给它加门禁之后，误按了会弹确认，不会不知不觉把光标后面的字全替换掉。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org784d98a" class="outline-3">
+<h3 id="org784d98a">全局字体缩放</h3>
+<div class="outline-text-3" id="text-org784d98a">
+<p>
+Emacs 29 加了全局缩放命令，连 mode-line 一起放大缩小。bandali 把默认的 <code>C-x C-+</code> / <code>C-x C--</code> 换成全局版，局部缩放挪到别的键：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#25226;&#40664;&#35748;&#30340;&#20840;&#23616;&#32553;&#25918;&#32465;&#21040; C-x C-+/C-x C--
+</span>(keymap-global-set <span class="org-string">"C-x C-="</span> 'global-text-scale-adjust)
+(keymap-global-set <span class="org-string">"C-x C--"</span> 'global-text-scale-adjust)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#23616;&#37096;&#32553;&#25918;&#25386;&#21040; C-x C-M-+/C-x C-M--
+</span>(keymap-global-set <span class="org-string">"C-x C-M-="</span> 'text-scale-adjust)
+(keymap-global-set <span class="org-string">"C-x C-M--"</span> 'text-scale-adjust)
+</pre>
+</div>
+
+<p>
+<code>global-text-scale-adjust</code> 缩放时影响所有 buffer 和 mode-line，投屏分享屏幕时很实用。 <code>text-scale-adjust</code> 只缩当前 buffer。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9dafbe7" class="outline-3">
+<h3 id="org9dafbe7">手搓 fundamental-mode-hook</h3>
+<div class="outline-text-3" id="text-org9dafbe7">
+<p>
+Emacs 没有 <code>fundamental-mode-hook</code> 。他抄了 Prot 的方案自己加了一个：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">bandali-fundamental-mode-hook</span> nil
+  <span class="org-doc">"Hook run when entering fundamental-mode."</span>)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">bandali-run-fundamental-mode-hook</span> ()
+  (<span class="org-keyword">when</span> (eq major-mode 'fundamental-mode)
+    (run-hooks 'bandali-fundamental-mode-hook)))
+
+(add-hook 'after-change-major-mode-hook
+          #'bandali-run-fundamental-mode-hook)
+</pre>
+</div>
+
+<p>
+原理是每次切换 major-mode 后检查一下：如果切到了 fundamental-mode，就跑自定义的 hook。作用场景很窄：比如你在全局开了 <code>display-fill-column-indicator-mode</code> ，但 fundamental-mode 里那根竖线没意义，就可以用这个 hook 单独关掉。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1b48a76" class="outline-3">
+<h3 id="org1b48a76">init-file-debug：不用重开 Emacs 就能让所有错误进 debugger</h3>
+<div class="outline-text-3" id="text-org1b48a76">
+<p>
+排查 init 配置问题时，通常要带 <code>--debug-init</code> 重开 Emacs。但 <code>--debug-init</code> 只管 init 阶段的错误，init 跑完之后， <code>debug-on-error</code> 恢复为 nil，后续错误不会进 debugger。
+</p>
+
+<p>
+bandali 的做法是加一行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> debug-on-error init-file-debug)
+</pre>
+</div>
+
+<p>
+<code>init-file-debug</code> 是 Emacs 的内部变量：启动时传了 <code>--debug-init</code> ，它就是 t；没传就是 nil。这行配置的效果是：
+</p>
+
+<ul class="org-ul">
+<li>不带 <code>--debug-init</code> 启动： <code>debug-on-error</code> 为 nil，一切正常</li>
+<li>带 <code>--debug-init</code> 启动： <code>debug-on-error</code> 变成 t，整个会话期间任何 Elisp 错误都会弹出 debugger，不管错在 init 里还是 init 之后</li>
+</ul>
+
+<p>
+等于一个开关同时控制 init 阶段的调试和后续的错误捕获。排查完把启动参数去掉，行为就恢复了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org207d185" class="outline-3">
+<h3 id="org207d185">package-review-policy：更新包前先看 diff</h3>
+<div class="outline-text-3" id="text-org207d185">
+<p>
+Emacs 31 的新功能。用 package.el 更新包时，自动展示新旧版本的 diff：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">setq</span> package-review-policy 'review)
+</pre>
+</div>
+
+<p>
+设为 <code>review</code> 之后，更新包时会弹出 diff 让你过目，了解这个版本改了什么再做决定。bandali 自己虽然用 git submodule 管包，但把这个写进配置是为了让看到的人知道有这个功能。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1a4c0f9" class="outline-3">
+<h3 id="org1a4c0f9">ffs（Form Feed Slides）：最简单的幻灯片工具</h3>
+<div class="outline-text-3" id="text-org1a4c0f9">
+<p>
+bandali 自己写的包，准备提交 GNU ELPA。原理极简：用 <code>^L</code> 字符（ <code>C-q C-l</code> ）当幻灯片分隔符，不限文件格式，纯文本就能做演示。特色功能是 speaker notes：准备两个文件（一个放幻灯片，一个放讲稿），在哪个窗口翻页，另一个跟着翻。适合双屏演示，一个屏幕放幻灯片，一个放备忘。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7627260" class="outline-3">
+<h3 id="org7627260">TRAMP：ssh 配置补全</h3>
+<div class="outline-text-3" id="text-org7627260">
+<p>
+从 TRAMP manual 抄来的用法，让 TRAMP 读 <code>~/.ssh/config</code> 做主机名补全：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-elisp">(<span class="org-keyword">with-eval-after-load</span> 'tramp
+  (add-to-list 'tramp-completion-function-alist
+               '(ssh <span class="org-string">"~/.ssh/config"</span> tramp-parse-sconfig)))
+</pre>
+</div>
+
+<p>
+配好之后， <code>C-x C-f /ssh: TAB</code> 会列出 <code>~/.ssh/config</code> 里定义的所有主机，不用手敲域名。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8f7a2c7" class="outline-3">
+<h3 id="org8f7a2c7">其他小东西</h3>
+<div class="outline-text-3" id="text-org8f7a2c7">
+<ul class="org-ul">
+<li><code>ring-bell-function</code> 设为 ignore，被提示音吓过，关掉。</li>
+<li><code>recentf</code> 不仅追踪文件，他还写了个函数让开过的目录也加入 <code>recentf-list</code> （排除了 home 目录），这样能在 <code>recentf-open-files</code> 里直接跳回之前的项目目录。</li>
+<li><code>emacsclient</code> 设成 <code>EDITOR</code> 和 <code>VISUAL</code> ，外部程序打开文件时复用已有 Emacs 进程。</li>
+<li>字体：用 Sahel 显示波斯文/阿拉伯文，emoji 单独设彩色字体。</li>
+<li><code>custom-file</code> 单独存放，不让 Customize 系统污染 <code>.emacs</code> 。</li>
+<li>doric-themes：用粗细和灰度做层级区分，不靠五颜六色。</li>
+</ul>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-10</span>
+    <span class="post-info">2026-05-13</span>
+    <a href="../../../../../tags/emacs">emacs</a> : <a href="../../../../../tags/exwm">exwm</a> : <a href="../../../../../tags/configuration">configuration</a> : <a href="../../../../../tags/tips">tips</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmeorf1 &lt;dot&gt; evz1atmcliiexf3fmmiqzozgad &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
