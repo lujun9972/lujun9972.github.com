@@ -1,0 +1,365 @@
+#+TITLE: 读：Emacs Chat 技巧拾遗——从 bandali 的配置里捡到的
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: emacs,exwm,configuration,tips
+#+DATE: [2026-05-10 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Sacha Chua 的 Emacs Chat 播客时隔十年重启，第一期嘉宾是 Amin Bandali。他直播翻了自己的 Emacs 配置，聊了不少实用技巧。本文从中捡出最值得的几个技巧：indicate-buffer-boundaries 的 fringe 箭头、minibuffer-with-setup-hook 预填充 M-x、user-lisp-directory 自动加载目录、repeat-mode 单键重复、EXWM 专场，最后末尾速览收拢零散技巧。
+
+Sacha Chua 的 Emacs Chat 播客停了十年，最近重启了。第一期嘉宾是 Amin Bandali，EmacsConf 的组织者之一，Debian Developer，用了十多年 Emacs。他在 [[https://kelar.org/~bandali/gnu/emacs/emacs-chat-202605.html][这期播客]] 里直播翻了自己的配置，聊了一个多小时。
+
+bandali 的配置风格偏极简：不用 =use-package= ，包用 git submodule 手动管理，配置是一个 literate Org 文件，tangle 成独立 Elisp 文件。很多思路来自 Prot，但也加了自己的改动。
+
+下面是我从这期播客里捡到的技巧，按上手难度排：一行配置就够用的在前面，EXWM 这种大件放后面，剩下的零散技巧收在末尾速览。
+
+* indicate-buffer-boundaries：一行看出 buffer 边界和末尾换行符
+
+这个设置只有一行，但解决了两个实际问题——属于那种"改量极小、效果立现"的类型：
+
+#+begin_src elisp
+(setq-default indicate-buffer-boundaries 'left)
+#+end_src
+
+效果：每个 buffer 的左边 fringe 区域会出现小箭头。
+
+- 箭头朝下：下面还有内容，可以继续往下翻
+- 箭头朝上：上面还有内容，可以继续往上翻
+- 两个箭头都有：上下都还有内容
+- 箭头形状变了：文件末尾没有换行符
+
+这行配置解决了两个问题。一个是"不用看 scroll bar 就知道还能不能翻页"。另一个更实用：能一眼看出文件末尾有没有换行符。很多配置文件（crontab、nginx conf 等）对末尾换行符敏感，少一个换行符可能出问题，靠这个箭头能马上发现。
+
+* minibuffer-with-setup-hook：预填充 M-x，省掉一堆快捷键
+
+=C-h= 下面挂了很多 help 命令，但不是每个都有默认快捷键。像 =find-library= 、 =describe-face= 这些常用的命令，给它们各分配一个快捷键吧，记不住；不给吧，每次都要敲全名很麻烦。
+
+bandali 的做法是：不分配快捷键，但提供一个辅助函数。
+
+#+begin_src elisp
+(defun bandali-call-interactively-insert (command &optional string)
+  "Call COMMAND interactively, pre-filling the minibuffer with STRING."
+  (minibuffer-with-setup-hook
+      (lambda ()
+        (when string
+          (insert string)))
+    (call-interactively command)))
+#+end_src
+
+作用是把 =M-x= 打开后自动填一段前缀，你再接着敲后面的字就行：
+
+#+begin_src elisp
+(bandali-call-interactively-insert 'describe-function "describe-")
+;; 打开 M-x 后里面已经填好了 "describe-"，再敲 face 就变成 describe-face
+#+end_src
+
+他绑了两个键： =C-c h a= 预填 =apropos-= ， =C-c h d= 预填 =describe-= 。以后想查什么 help 命令，按这两个键再敲几个字就出来了，不用记十几个快捷键。
+
+* user-lisp-directory：Emacs 31 的自动加载目录
+
+Emacs 31 新增了一个变量 =user-lisp-directory= 。你给它指定一个目录，Emacs 启动时会自动递归扫描里面的所有 =.el= 文件，逐个 byte-compile、native-compile，最后加到 =load-path= 。
+
+#+begin_src elisp
+(setq user-lisp-directory (expand-file-name "lisp" user-emacs-directory))
+#+end_src
+
+这样一来，不需要手动 =add-to-list 'load-path= ，也不用在配置里写一堆 =require= 。把包往目录里一放，Emacs 自己搞定。
+
+对于还在用旧版 Emacs 的，可以用 Philip Kaludercic 的 =site-lisp= 包（GNU ELPA 可安装）做兼容回退。 =site-lisp= 是 =user-lisp-directory= 的前身，行为基本一致。
+
+如果你跟 bandali 一样，包管理用的是 git submodule，所有第三方包放在一个目录里，这个变量刚好可以用。
+
+* repeat-mode：按一次前缀，后面只敲一个键
+
+=repeat-mode= 是 Emacs 内置功能，Emacs 28 就引入了。它的工作机制分两阶段：
+
+1. 第一次正常按完整快捷键（比如 =C-x o= 切窗口）
+2. 之后只需要按快捷键的最后一个键（ =o= ），不用再按前缀
+
+在 echo area 能看到提示："Repeat with o, O"。哪些命令能用 =repeat-mode= ，由各自 keymap 声明。
+
+播客里 bandali 提到他用 =repeat-mode= 最多的地方是 EXWM 工作区切换。他绑了 =s-,= 做前缀，按一次之后用 =p= 和 =n= 上下切工作区，用 =h= 、 =j= 、 =k= 、 =l= 四向切窗口。切一连串工作区的时候明显方便很多。
+
+* EXWM：当 Emacs 成了窗口管理器
+
+bandali 2018 年用过 EXWM，后来换到 Sway/Wayland，最近又回来了。按他的说法，EXWM 这东西试过一次就想回来。这节是他配置里最重头的部分。
+
+** simulation-keys：把 Emacs 快捷键带到所有应用
+
+EXWM 的 =exwm-input-simulation-keys= 能让你在别的 X11 应用里用 Emacs 快捷键。原理很简单：EXWM 拦截你按的键，翻译成目标应用的按键发过去。
+
+#+begin_src elisp
+(setq exwm-input-simulation-keys
+      '(([?\C-b] . [left])     ; C-b → 左箭头
+        ([?\C-f] . [right])    ; C-f → 右箭头
+        ([?\C-p] . [up])       ; C-p → 上箭头
+        ([?\C-n] . [down])     ; C-n → 下箭头
+        ([?\C-a] . [home])     ; C-a → Home
+        ([?\C-e] . [end])      ; C-e → End
+        ([?\C-w] . [?\C-x])    ; C-w → C-x（切到 Firefox 里不会关标签页了）
+        ([?\M-w] . [?\C-c])))  ; M-w → C-c
+#+end_src
+
+=C-w= → =C-x= 这条：在 Firefox 里按 =C-w= 本来会关标签页，映射之后变剪切，跟 Emacs 里的行为一致了。用惯 Emacs 键位的人不用再脑内切两套快捷键。
+
+模拟键还能按应用分别设。比如在终端里把 =C-c C-c= 透传过去，因为终端需要自己处理这个信号。
+
+** prefix map：减少 EXWM 全局键注册，加速启动
+
+EXWM 设置全局键的方式是逐个加到 =exwm-input-global-keys= 。键多了启动就慢。bandali 的解法是定义一个 prefix map，只把这一个 map 注册给 EXWM：
+
+#+begin_src elisp
+(define-prefix-command 'bandali-prefix-exwm-map)
+(define-key bandali-prefix-exwm-map (kbd "b") #'bandali-browser-menu)
+(define-key bandali-prefix-exwm-map (kbd "SPC") #'async-shell-command)
+(define-key bandali-prefix-exwm-map (kbd "p") #'exwm-workspace-prev)
+(define-key bandali-prefix-exwm-map (kbd "n") #'exwm-workspace-next)
+;; ... 更多绑定
+
+;; 只注册这个 prefix 给 EXWM
+(exwm-input-set-key (kbd "s-x") bandali-prefix-exwm-map)
+#+end_src
+
+窗口管理相关的键全挂在 =s-x= 这个前缀下，EXWM 只需要知道一个入口。他还用 =s-,= 做另一个入口，左半边键盘的 =x= 紧挨 Super 键，两个手指一次能按到。右边没有 Super 键的键盘上，他把右 Control 映射成 Super，用 =s-,= 同样顺手。
+
+如果有 ZSA Voyager 这类可编程键盘，甚至能把 =s-x= 映射成单个按键。
+
+** 浮动窗口：用 instance name 自动识别
+
+EXWM 默认把所有窗口平铺。有些窗口不适合平铺（比如对话框、小工具），可以用浮动模式。
+
+bandali 的做法是约定命名规则，让 EXWM 自动识别：
+
+#+begin_src elisp
+;; 启动终端时指定 instance name
+;; xterm -name floating
+
+;; 配置里匹配 instance name，自动浮动
+(setq exwm-manage-configurations
+      '(((:instance . "floating")
+         floating t)))
+#+end_src
+
+任何应用只要启动时指定了 =instance= 名，EXWM 就能按规则处理。这比每次手动切换浮动/平铺省心。
+
+** 工作区按需创建
+
+EXWM 默认可以预设 10 个工作区，但 bandali 发现日常用不到这么多，初始只开 5 个，减少启动负担。切换到一个不存在的工作区时，EXWM 自动创建它。快捷键可以从 0 绑到 9，用到哪个创哪个。
+
+#+begin_src elisp
+(setq exwm-workspace-number 5)
+#+end_src
+
+** exwm-xsettings：动态 DPI 和屏幕热插拔
+
+=exwm-xsettings= 让 X11 下的字体、DPI 等设置可以在运行时改，不用写 X resources 文件重启。bandali 用它来响应显示器热插拔：外接显示器时降低分辨率和 DPI，拔掉后恢复高分屏设置。
+
+#+begin_src elisp
+(defun bandali-exwm-screen-change ()
+  "Adjust screen settings based on connected outputs."
+  (if (bandali-external-monitor-connected-p)
+      (progn
+        (start-process-shell-command
+         "xrandr" nil
+         "xrandr --output eDP-1 --mode 1920x1080")
+        (exwm-xsettings-change-dpi 96))
+    (exwm-xsettings-change-dpi 144)))
+#+end_src
+
+这解决了 X11 没有逐显示器 DPI 的问题：只有一个全局 DPI 值，但在插拔显示器时会动态修改。
+
+** 其他 EXWM 细节
+
+- =exwm-input-send-next-key= ：这个命令的作用是"把下一个按键原样交给 X 应用，Emacs 别拦截"。Emacs 默认把它绑在 =C-c C-q= 上，bandali 觉得两个键的组合太啰嗦，直接改绑到 =C-q= 。按一下 =C-q= 之后，再按的键就会透传给底层应用。比如 =C-q C-t= ， =C-t= 不会被 Emacs 吃掉，而是原样发给 Firefox 或终端。
+- buffer 重命名：每个 X 窗口在 Emacs 里是一个 buffer。他写了个 hook，把窗口标题映射成 buffer 名显示在 mode-line 上，超过 25 个字符截断加省略号：
+
+#+begin_src elisp
+(defun bandali-exwm-rename-buffer ()
+  "Rename EXWM buffers to reflect their window title."
+  (interactive)
+  (let ((title (if (<= (length exwm-title) 25)
+                   exwm-title
+                 (concat (substring exwm-title 0 25) "..."))))
+    (exwm-workspace-rename-buffer title)))
+
+(add-hook 'exwm-update-title-hook #'bandali-exwm-rename-buffer)
+#+end_src
+
+=exwm-update-title-hook= 在窗口标题变化时触发，所以 Firefox 切标签页、终端换目录，mode-line 上的 buffer 名跟着变。
+- 通知：用 Dunst 做通知守护进程。启动 Dunst 后用 =set-process-query-on-exit-flag= 标记它，退 Emacs 时不会因为 Dunst 还活着就弹确认框：
+
+#+begin_src elisp
+(when (executable-find "dunst")
+  (let ((proc (start-process "dunst" nil "dunst")))
+    (set-process-query-on-exit-flag proc nil)))
+#+end_src
+
+=set-process-query-on-exit-flag= 设为 nil 的意思是：这个进程退出 Emacs 时直接杀掉，别问我。
+
+* 其他速览
+
+播客里还聊了不少零散技巧，篇幅放不进前面五节，但值得快速扫一遍。
+
+** 滚动：一行一行滚
+
+Emacs 默认滚到页面底部时会跳半屏然后居中。bandali 设了两个变量改成逐行滚：
+
+#+begin_src elisp
+(setq scroll-conservatively 101
+      scroll-preserve-screen-position t)
+#+end_src
+
+=scroll-conservatively= 的意思是：当光标移出可见区域时，Emacs 滚多少行把光标露出来。值设成大于 100 之后，行为变了：不管光标移多远，Emacs 只滚刚好把光标拉回视野的行数，从不跳半屏、从不重新居中。设 101 就是利用了这条规则，让每次滚动都是"刚好够"的一行。
+
+=scroll-preserve-screen-position= 让滚动后光标在屏幕上的位置不变。两个变量搭配，滚起来感觉跟 =C-n= / =C-p= 一样自然。
+
+** auto-revert + undo：看一眼新版本，不喜欢就撤销
+
+#+begin_src elisp
+(global-auto-revert-mode 1)
+#+end_src
+
+auto-revert 让 Emacs 监听文件变化，文件被外部改了就自动刷新 buffer。刷新后按 =C-/= 能回到修改前的内容。相当于"看一眼外面改了啥，不喜欢就 undo 回去"。
+
+** display-fill-column-indicator：一条竖线提醒你别写太长
+
+在 70 列位置画一条细竖线，提醒自己代码和文本别写太长。他用 hook 只在 =prog-mode= 和 text-mode 里开，不全局限。
+
+#+begin_src elisp
+(add-hook 'prog-mode-hook #'display-fill-column-indicator-mode)
+(add-hook 'text-mode-hook #'display-fill-column-indicator-mode)
+#+end_src
+
+** GC 阈值：启动时临时调高
+
+默认 =gc-cons-threshold= 是 8MB。bandali 启动时临时提到 30MB 以减少 GC 次数，在 =after-init-hook= 里恢复默认。
+
+#+begin_src elisp
+;; early-init 或 init 开头
+(setq gc-cons-threshold (* 30 1024 1024))
+
+;; init 末尾
+(add-hook 'after-init-hook
+          (lambda ()
+            (setq gc-cons-threshold (* 8 1024 1024))))
+#+end_src
+
+他还在 =early-init= 里设了 =load-prefer-newer= 为 t。如果手动改了 =.el= 文件忘了重新编译，Emacs 自动用最新的版本，不会加载过期的 =.elc= 。
+
+** bandali-define-keys：一次定义多个快捷键
+
+一个薄包装，调用 =define-key= 但支持一次传多对键和命令：
+
+#+begin_src elisp
+(defmacro bandali-define-keys (keymap &rest definitions)
+  `(progn
+     ,@(mapcar (lambda (def) `(define-key ,keymap ,@def))
+               (seq-partition definitions 2))))
+#+end_src
+
+跟 Prot 的版本比，他不限制 key 必须是 =kbd= 字符串，老的 vector 写法也能用。
+
+** 给命令设"门禁"：误触的提醒，常用的放行
+
+Emacs 有一个保护机制：某些命令（新手容易误触或不知道后果的）默认会弹确认框，多问一句"你确定要执行吗？"。
+
+比如 =narrow-to-region= 会把 buffer 收缩到选中区域，没经验的人缩完之后发现内容"丢了"，以为出了 bug。Emacs 的做法是：第一次执行时弹框，问你 y/n。你回答 y 就执行一次，回答 n 不执行，回答 ! 就永久放行。
+
+bandali 对两类命令做了不同的处理：
+
+#+begin_src elisp
+;; 自己常用的，直接放行，不弹确认
+(put 'narrow-to-region 'disabled nil)
+(put 'narrow-to-page 'disabled nil)
+(dolist (cmd '(list-timers narrow-to-defun narrow-to-page narrow-to-region))
+  (put cmd 'disabled nil))
+
+;; 容易误触的，主动加门禁，按了弹确认
+(put 'overwrite-mode 'disabled t)
+#+end_src
+
+=overwrite-mode= 他从来不主动用，但偶尔会误按。给它加门禁之后，误按了会弹确认，不会不知不觉把光标后面的字全替换掉。
+
+** 全局字体缩放
+
+Emacs 29 加了全局缩放命令，连 mode-line 一起放大缩小。bandali 把默认的 =C-x C-+= / =C-x C--= 换成全局版，局部缩放挪到别的键：
+
+#+begin_src elisp
+;; 把默认的全局缩放绑到 C-x C-+/C-x C--
+(keymap-global-set "C-x C-=" 'global-text-scale-adjust)
+(keymap-global-set "C-x C--" 'global-text-scale-adjust)
+;; 局部缩放挪到 C-x C-M-+/C-x C-M--
+(keymap-global-set "C-x C-M-=" 'text-scale-adjust)
+(keymap-global-set "C-x C-M--" 'text-scale-adjust)
+#+end_src
+
+=global-text-scale-adjust= 缩放时影响所有 buffer 和 mode-line，投屏分享屏幕时很实用。 =text-scale-adjust= 只缩当前 buffer。
+
+** 手搓 fundamental-mode-hook
+
+Emacs 没有 =fundamental-mode-hook= 。他抄了 Prot 的方案自己加了一个：
+
+#+begin_src elisp
+(defvar bandali-fundamental-mode-hook nil
+  "Hook run when entering fundamental-mode.")
+
+(defun bandali-run-fundamental-mode-hook ()
+  (when (eq major-mode 'fundamental-mode)
+    (run-hooks 'bandali-fundamental-mode-hook)))
+
+(add-hook 'after-change-major-mode-hook
+          #'bandali-run-fundamental-mode-hook)
+#+end_src
+
+原理是每次切换 major-mode 后检查一下：如果切到了 fundamental-mode，就跑自定义的 hook。作用场景很窄：比如你在全局开了 =display-fill-column-indicator-mode= ，但 fundamental-mode 里那根竖线没意义，就可以用这个 hook 单独关掉。
+
+** init-file-debug：不用重开 Emacs 就能让所有错误进 debugger
+
+排查 init 配置问题时，通常要带 =--debug-init= 重开 Emacs。但 =--debug-init= 只管 init 阶段的错误，init 跑完之后， =debug-on-error= 恢复为 nil，后续错误不会进 debugger。
+
+bandali 的做法是加一行：
+
+#+begin_src elisp
+(setq debug-on-error init-file-debug)
+#+end_src
+
+=init-file-debug= 是 Emacs 的内部变量：启动时传了 =--debug-init= ，它就是 t；没传就是 nil。这行配置的效果是：
+
+- 不带 =--debug-init= 启动： =debug-on-error= 为 nil，一切正常
+- 带 =--debug-init= 启动： =debug-on-error= 变成 t，整个会话期间任何 Elisp 错误都会弹出 debugger，不管错在 init 里还是 init 之后
+
+等于一个开关同时控制 init 阶段的调试和后续的错误捕获。排查完把启动参数去掉，行为就恢复了。
+
+** package-review-policy：更新包前先看 diff
+
+Emacs 31 的新功能。用 package.el 更新包时，自动展示新旧版本的 diff：
+
+#+begin_src elisp
+(setq package-review-policy 'review)
+#+end_src
+
+设为 =review= 之后，更新包时会弹出 diff 让你过目，了解这个版本改了什么再做决定。bandali 自己虽然用 git submodule 管包，但把这个写进配置是为了让看到的人知道有这个功能。
+
+** ffs（Form Feed Slides）：最简单的幻灯片工具
+
+bandali 自己写的包，准备提交 GNU ELPA。原理极简：用 =^L= 字符（ =C-q C-l= ）当幻灯片分隔符，不限文件格式，纯文本就能做演示。特色功能是 speaker notes：准备两个文件（一个放幻灯片，一个放讲稿），在哪个窗口翻页，另一个跟着翻。适合双屏演示，一个屏幕放幻灯片，一个放备忘。
+
+** TRAMP：ssh 配置补全
+
+从 TRAMP manual 抄来的用法，让 TRAMP 读 =~/.ssh/config= 做主机名补全：
+
+#+begin_src elisp
+(with-eval-after-load 'tramp
+  (add-to-list 'tramp-completion-function-alist
+               '(ssh "~/.ssh/config" tramp-parse-sconfig)))
+#+end_src
+
+配好之后， =C-x C-f /ssh: TAB= 会列出 =~/.ssh/config= 里定义的所有主机，不用手敲域名。
+
+** 其他小东西
+
+- =ring-bell-function= 设为 ignore，被提示音吓过，关掉。
+- =recentf= 不仅追踪文件，他还写了个函数让开过的目录也加入 =recentf-list= （排除了 home 目录），这样能在 =recentf-open-files= 里直接跳回之前的项目目录。
+- =emacsclient= 设成 =EDITOR= 和 =VISUAL= ，外部程序打开文件时复用已有 Emacs 进程。
+- 字体：用 Sahel 显示波斯文/阿拉伯文，emoji 单独设彩色字体。
+- =custom-file= 单独存放，不让 Customize 系统污染 =.emacs= 。
+- doric-themes：用粗细和灰度做层级区分，不靠五颜六色。
