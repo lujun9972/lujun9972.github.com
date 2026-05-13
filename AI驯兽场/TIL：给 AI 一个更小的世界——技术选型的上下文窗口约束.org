@@ -1,0 +1,25 @@
+#+TITLE: TIL：给 AI 一个更小的世界——技术选型的上下文窗口约束
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI驯兽场,AI,技术选型,vibe-coding,LLM
+#+DATE: [2026-05-13 三]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Alberto Miorin 提出了一个有趣的观念：给 AI 一个足够小的世界比给它更强大的工具更重要，整个系统要精简到能塞进上下文窗口。
+
+Alberto Miorin 提了个叫 "Vibecoder Stack" 的技术栈组合（Astro + PocketBase + Docker + ONCE + BigConfig），五层工具的选型标准都是同一条： *整个系统要简单到能塞进 LLM 的上下文窗口* 。
+
+* 为什么这个标准成立
+
+给 AI 一个微服务架构、Kubernetes 集群、三个数据库、消息队列组成的庞然大而无，然而它的上下文窗口里只装得下一小部分。于是它开始盲人摸象。猜服务之间怎么调用，猜配置文件格式，猜 CI/CD 流水线结构。猜得越多，幻觉越多。
+
+把系统缩小到单二进制后端 + 静态前端 + 一个 Docker 镜像 + 一台 VPS，AI 能看见全局，幻觉骤降。
+
+而且简单系统对人的脑子也友好。区别是人能靠经验绕开复杂系统的坑，而 AI 直接掉进去。
+
+* 选型时的三个"小世界"原则
+
+1. *单二进制优于微服务* 。PocketBase 是一个 Go 编译出来的可执行文件，SQLite 嵌在里面，所以数据库就是个文件。备份是 =cp= ，恢复是拷回去。AI 只需要理解"有一个文件，里面是数据和 schema"，不用同时掌握 ORM、迁移脚本、连接池、独立数据库进程。
+2. *配置本身即真相，不靠外部状态* 。Terraform 你写了 =.tf= 配置文件，但它还悄悄维护了一份 =terraform.tfstate= 状态文件,这份文件记录着"你写的配置"和"云上实际资源"的对应关系。丢了它，光有配置没用。Ansible 的 inventory、facts 缓存也是类似的问题。BigConfig 没有这份隐藏状态： =bb.edn= 和 =.envrc= 两个文件就是全部真相。AI 不需要额外理解一份看不见的状态文件。
+3. *一台机器，别搞多租户* 。ONCE 理念：应用装一次，跑在自己服务器上，用自己的数据。不做 SaaS 多租户，Kubernetes、服务网格、自动伸缩器就都不需要了。
+
+AI 够聪明。是给它的世界太大了。把系统精简到上下文窗口能装下的程度，幻觉自己就少了。
