@@ -1,0 +1,194 @@
+#+TITLE: 读：SES——Emacs内置的简易电子表格
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,SES,电子表格
+#+DATE: [2026-05-14 Thu]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: SES（Simple Emacs Spreadsheet）是 Emacs 自带的电子表格模式。本文通过记账和服务器资源巡检两个场景，演示 SES 的基础填表、Elisp 公式计算、条件聚合等操作，并在末尾与 Org Table 做横向对比，帮你判断什么场景下该用什么工具。
+
+在用 Emacs 做表格这件事上，大多数人的第一反应是 Org Table——在 org 文件里画表格、按 =C-c == 算公式。但有时候你只是想打开一个文件，像 Excel 那样往格子里填数、写公式、看结果，不需要 org 文件那一整套标题、TODO、tags 的体系。这时候 [[https://www.gnu.org/software/emacs/manual/html_mono/ses.html][SES（Simple Emacs Spreadsheet）]] 就派上用场了。
+
+SES 是 Emacs 自带的 major mode，文件名以 =.ses= 结尾就会自动进入。它的定位如其名：简单，不支持图表，但足够覆盖你日常需要的电子表格操作。
+
+* 场景一：记账
+
+先从最经典的电子表格"hello world"开始：记账。新建一个 =finances.ses= 文件。
+
+Emacs 会打开一个空白的电子表格，里面只有一个 A1 单元格。我们先搭好表头。
+
+** 填表头
+
+把光标移到 A1 单元格内部，按 ="= （双引号），minibuffer 会出现提示让你输入文本。输入 =Income= 回车。现在需要第二列，按 =TAB= 在右边创建一个新单元格 B1，在里面同样按 ="= 输入 =Expenses= 。
+
+#+begin_example
+Income                   Expenses
+#+end_example
+
+** 填数据
+
+SES 新建后只有 A1 这一个单元格，要填数据得先创建新行。把光标移到表格下方的空白区域，按 =C-o= 在当前行上方插入一行。连续按三次，创建 3 个空行。
+
+现在在 A2、A3、A4 里输入数字——直接打数字键就会弹提示。在 B 列输入负数的支出。
+
+#+begin_example
+Income                   Expenses
+10.5                     -3
+45.32                    -9.87
+1                        -0.5
+#+end_example
+
+** 用公式算余额
+
+在 A5 写求和公式。按 =(= （左括号），输入：
+
+#+begin_src elisp
+(apply #'ses+ (ses-range A2 A4))
+#+end_src
+
+=SES= 会帮你自动把单元格坐标（如 A2）转成真实的值。同理在 B5 求和支出。然后在 C5 用公式 =(ses+ A5 B5)= 算出最终余额。
+
+#+begin_example
+Income                   Expenses
+10.5                     -3
+45.32                    -9.87
+1                        -0.5
+56.82                    -13.37                   43.45
+#+end_example
+
+=ses+= 是 SES 内置的安全加法函数。有两个好处：(1) 自动跳过空单元格；(2) 空范围返回 0 而不是报错。这一点很重要，后面插入新行的时候你会看到。
+
+** 插入新行，公式自动调整
+
+假设后来又翻到几张旧账单，要在中间加几行支出。把光标移到数据区最后一行，按 =C-o= 插入新行，填入新账目。
+
+每次插入，已经算好的总计会立刻自动更新。按回车选中一个公式单元格， =ses-range= 的范围已经自动扩大到新的数据范围了。这是 SES 跟 Org Table 相比最明显的便利：不用手动调公式范围。
+
+* 场景二：服务器集群资源巡检
+
+运维工作中经常要盯一批服务器的资源占用：CPU、内存、磁盘余量。这些数据来自监控系统，但如果你想把最近一次巡检的快照拉出来做个快速聚合分析，SES 很顺手。
+
+新建 =server-inventory.ses= ，先填表头和数据（方法跟场景一一样："= 输文本，数字键输数值）。"Environment" 比较长，填完后光标移到 B 列任意单元格，按 =w= 输入一个合适的宽度值（比如 12），列宽就能完整显示了：
+
+#+begin_example
+Hostname     Environment   OS       CPU%   Memory%   Disk%
+web-01       production    ubuntu   23     45        62
+web-02       production    ubuntu   35     52        78
+db-01        production    centos   12     78        34
+web-stg-01   staging       ubuntu   8      30        25
+db-stg-01    staging       centos   5      25        18
+#+end_example
+
+一个实用小技巧：SES 没有直接的"复制上方单元格"快捷键。相邻行内容一样时（比如 B2、B3、B4 都是 "production"），用公式 ="(=B2=)"= 来引用上一个格的值可以省点事，但会建立依赖关系。数据量不大的话，直接敲字反而最快。
+
+数据多了以后，手动回答这类问题就很容易出错：每个环境的平均 CPU 是多少？Ubuntu 和 CentOS 机器的资源占用有没有差异？磁盘超过 80% 的有几台？
+
+** 条件筛选：ses-select
+
+=ses-select= 是 SES 内置的筛选函数：传入一个测试范围、一个比对值和结果范围，返回所有比对通过的结果。
+
+想知道所有生产环境机器的平均 CPU：
+
+#+begin_src elisp
+(ses-average
+ (ses-select (ses-range B2 B6)
+             "production"
+             (ses-range D2 D6)))
+#+end_src
+
+=ses-select= 做的事情：逐行比较 B 列（Environment）的值是否等于 ="production"= ，命中就把对应行 D 列（CPU%）加入结果列表， =ses-average= 求平均。代入示例数据，生产环境平均 CPU 是 23.33%。
+
+同理，按 OS 筛选也不在话下，把比对列换到 C 列就行。比如想知道 Ubuntu 机器的平均内存：
+
+#+begin_src elisp
+(ses-average
+ (ses-select (ses-range C2 C6)
+             "ubuntu"
+             (ses-range E2 E6)))
+#+end_src
+
+会得到 42.33%。
+
+按环境、按 OS、按任意你填了分类标签的列，一样的套路。
+
+** 处理空值：! 标志
+
+不是每台机器都能准时回传数据。假设 =db-stg-01= 的网络刚好断了，Disk% 单元格是空白的。如果你直接用 Emacs 自带的 =max= 函数去算某个环境的最高磁盘占用：
+
+#+begin_src elisp
+(apply #'max
+ (ses-select (ses-range B2 B6 !)
+             "production"
+             (ses-range F2 F6 !)))
+#+end_src
+
+=ses-range= 末尾的 =!= 标志告诉 SES：跳过空单元格，不把它们送进 =max= 。没有这个标志，普通 Elisp 函数遇到空值就直接报错退出了。
+
+运行结果：生产环境磁盘占用最高的是 78%（ =web-02= ）。
+
+=min= 也是同样的用法，把 =#'max= 换成 =#'min= 就行。
+
+** 统计数量
+
+用 =length= 统计某类机器有多少台：
+
+#+begin_src elisp
+(length
+ (ses-select (ses-range B2 B6 !)
+             "staging"
+             (ses-range D2 D6 !)))
+#+end_src
+
+示例数据中 staging 环境有 2 台机器。
+
+**非等值筛选：ses-select 做不到的
+
+=ses-select= 只支持等值比较。如果想统计"磁盘占用超过 80% 的机器有多少台"，就超出它的能力了。但你可以在 SES 公式里直接用 Elisp 的标准过滤函数，比如 =seq-filter= ：
+
+#+begin_src elisp
+(length
+ (seq-filter (lambda (x) (> x 80))
+             (ses-range F2 F6 !)))
+#+end_src
+
+=ses-range= 返回的是普通的 Elisp 列表， =seq-filter= 对它做一个 =lambda= 过滤：大于 80 的保留，其他的丢出去。 =!= 先排掉空单元格，避免 =lambda= 拿到 =nil= 报错。
+
+示例数据中所有磁盘都低于 80%，所以返回 0。同理， =cl-remove-if= 、 =seq-find= 这些函数都可以在 SES 公式里直接用，过滤器可以写任意复杂的条件。关键就是记住： =ses-range= 吐出来的是标准列表，之后你想怎么处理都行。
+
+通过函数组合就可以直接在电子表格里就能把集群概览跑出来。数据变了公式自动重算，下次巡检拷新数据进来，所有聚合结果实时更新。
+
+* SES vs Org Table
+
+讲了 SES 能干什么之后，自然会问：什么时候用 SES，什么时候用 Org Table？
+
+| 工具      | 最适合的场景                                 | 公式能力                                   | 劣势                         |
+|-----------+---------------------------------------------+-------------------------------------------+------------------------------|
+| SES       | 打开就填、需要交互式电子表格                   | Elisp 公式、自动重算、单元格引用自动跟踪     | 纯 =.ses= 文件，不嵌入文档     |
+| Org Table | 表格只是文档的一部分，要导出或写报告             | =TBLFM= 公式 + Calc 语法，手动重算           | 插入行列后引用不自动调整       |
+
+简单说：你要写文档顺便放个表格 → Org Table。你要像管服务器清单那样频繁增改数据、调公式 → SES。
+
+SES 的局限也不小。内置的空值安全函数不够多——目前只有 =ses+= 和 =ses-average= ，其他聚合都得靠 =!= 标志配合普通 Elisp 函数。它也不支持图表、条件格式、数据验证这些重型电子表格的功能。但你本来也不会在 Emacs 里做这些事，所以它找准的位置就是：数据量不大、不想离开 Emacs、想要公式自动重算的轻量级场景。
+
+* 导出与实用技巧
+
+SES 的导出很简单：选中区域，按普通 Emacs 操作复制（ =M-w= ），每列用 tab 分隔。粘贴到别的 buffer 里就是纯文本。把 tab 替换成逗号就是 CSV。
+
+导出为 Org 表格也容易：直接复制粘贴后，用 =C-c |= 在 org buffer 里做区域转换就行。
+
+* 速查：SES 常用按键
+
+| 按键     | 作用                         |
+|----------+------------------------------|
+| =M-o=    | 在当前列左边插入一列           |
+| =M-k=    | 删除当前列                   |
+| =C-o=    | 在当前行上方插入一行           |
+| =C-k=    | 删除当前行                   |
+| ="=      | 输入文本                     |
+| 数字键   | 输入数值                     |
+| =(=      | 输入 Elisp 表达式             |
+| =TAB=    | 右边创建新单元格并移动光标     |
+| =RET=    | 查看/编辑当前单元格的表达式    |
+| =C-d=    | 清空当前单元格                |
+| =w=      | 设置当前列宽度                |
+| =h=      | 显示 SES 所有按键绑定          |
+| =M-w=    | 复制选中区域（tab 分隔）       |
