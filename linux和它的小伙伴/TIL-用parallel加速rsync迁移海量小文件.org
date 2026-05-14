@@ -1,0 +1,46 @@
+#+TITLE: TIL: 用 parallel 加速 rsync 迁移海量小文件
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: rsync,parallel,小文件,存储迁移,TIL
+#+DATE: [2026-05-14 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: rsync 单线程处理海量小文件时瓶颈在文件数而非数据量。用 GNU parallel 把目录拆分给多个 rsync 并行跑，能明显缩短迁移时间。
+
+存储迁移时，真正头疼的不是几个大文件，而是目录树里塞满的几万、几十万个小文件。 =rsync= 可以用来进行文件迁移，但它是单线程的,也就是说一个文件处理完才处理下一个。小文件的问题在于每个文件都要 =stat= 、比较、传输，这套固定开销跟文件大小无关。文件越小，传输本身越快，但 stat 和校验的时间一点没少，结果就是大部分时间花在排队上，磁盘反而闲着。TecMint 的[[https://www.tecmint.com/copy-large-files-faster-linux/][一篇文章]]给出了用 GNU parallel 把 rsync 并行化的方案。
+
+** 是什么
+
+核心思路：把源目录的顶层子目录分给多个 =rsync= 同时跑，让磁盘 I/O 队列不空等。
+
+本地拷贝：
+
+#+begin_src shell
+find /source/directory -mindepth 1 -maxdepth 1 -type d | \
+  parallel -j 4 rsync -a {} /destination/directory/
+#+end_src
+
+跨网络同步（存储迁移更常见的场景）：
+
+#+begin_src shell
+find /source/directory -mindepth 1 -maxdepth 1 -type d | \
+  parallel -j 4 rsync -az {} user@remote:/destination/directory/
+#+end_src
+
+pipeline 分三步：
+1. =find -mindepth 1 -maxdepth 1 -type d= 列出源目录的顶层子目录
+2. =parallel -j 4= 同时启动 4 个 =rsync= 进程， ={}= 被替换为每个子目录路径
+3. =rsync -a= 以归档模式同步每个子目录到目标（ =-z= 额外启用压缩，远程传输时有用）
+
+** 为什么有效
+
+rsync 单线程处理大文件时，瓶颈在磁盘 I/O 读写速度，大部分时间花在实际传输数据上。但处理小文件时，大部分时间花在文件系统的元数据操作（stat、open、close）和 rsync 自己的校验逻辑上，真正传数据的时间反而少。并行化让多个 rsync 同时处理不同子目录，stat 等一个文件的时候另一个 rsync 已经在传数据了，磁盘闲不下来。
+
+** 注意事项
+
+1. =-j= 的值没有万能公式，从 4 开始试，跑的时候看 =iostat= 的 =%util= 和 =await= ，磁盘利用率没满就往上加，满了就减。机械盘（HDD）通常扛不住太多并发，SSD 和网络存储可以高一些
+2. 这个方案按顶层子目录分片。如果文件全平铺在一个目录里（没有子目录）， =find= 只会返回一条结果，等于没有并行。这种情况按文件名分片：
+   #+begin_src shell
+   find /source -type f | split -l 1000 - /tmp/chunk.
+   parallel -j 4 'rsync -a --files-from={} / /destination/' ::: /tmp/chunk.*
+   #+end_src
+3. 迁移完成后跑一次 =rsync -avnc= （dry-run + checksum 模式），它会逐文件校验但不动数据，只报差异。比 =sha256sum= 快得多，几十万文件也不怕。如果想更省时间，抽检关键目录也行
