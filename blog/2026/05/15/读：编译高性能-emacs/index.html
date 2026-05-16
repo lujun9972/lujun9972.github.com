@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：编译高性能 Emacs - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Linux 发行版自带的 Emacs 是通用二进制，为了兼容老硬件牺牲了性能。从源码编译能让 Emacs 针对你的 CPU 生成优化代码，还能去掉不需要的遗留兼容层。本文解读 James Cherti 的编译教程，覆盖依赖安装、Native Compiler 优化配置、编译参数选择和验证。" />
+  <meta name="keywords" content="Emacs, 编译, 性能优化, native-comp" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：编译高性能 Emacs</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc748399">为什么要自己编译</a></li>
+<li><a href="#org8b6400f">安装编译依赖</a>
+<ul>
+<li><a href="#org623120d">Arch Linux</a></li>
+<li><a href="#org527140d">Debian / Ubuntu</a></li>
+<li><a href="#orgcb656b6">通用依赖列表</a></li>
+</ul>
+</li>
+<li><a href="#org98c1b20">优化 Native Compiler 配置</a></li>
+<li><a href="#org132d840">编译 Emacs</a>
+<ul>
+<li><a href="#org12bb3d8">第一步：获取源码</a></li>
+<li><a href="#orgc722879">第二步：清理（从旧版本切换时必做）</a></li>
+<li><a href="#org4d8370e">第三步：生成配置脚本</a></li>
+<li><a href="#org4765ebd">第四步：设置编译器参数</a></li>
+<li><a href="#org965137a">第五步：配置构建选项</a></li>
+<li><a href="#orga832af8">第六步：编译和安装</a></li>
+</ul>
+</li>
+<li><a href="#org13ce89f">验证编译结果</a></li>
+<li><a href="#org2bf3eeb">可选的精简参数</a></li>
+</ul>
+</div>
+</div>
+<p>
+James Cherti 在 <a href="https://www.jamescherti.com/compiling-emacs/">他的博客</a> 写了一篇详细的 Emacs 编译优化指南。核心思路是：Linux 发行版打包的通用二进制为了兼容各种老硬件，编译时没用上你 CPU 的特定指令集。自己从源码编译，相当于让编译器专门为你的 CPU 生成机器码。
+</p>
+
+<p>
+除了 CPU 指令集优化，自己编译还有两个好处：
+</p>
+
+<ol class="org-ol">
+<li><b>去掉遗留兼容层</b> ：Wayland 用户可以完全跳过 X11 显示协议代码，不用拖着几十年前的兼容逻辑</li>
+<li><b>优化 Native Compiler</b> ：Emacs 28+ 的 native compilation 能把 Elisp 编译成机器码，但默认编译参数是通用的。自己调整参数后，所有包的运行速度都能提升</li>
+</ol>
+
+<div id="outline-container-orgc748399" class="outline-2">
+<h2 id="orgc748399">为什么要自己编译</h2>
+<div class="outline-text-2" id="text-orgc748399">
+<p>
+自己编译时把 <code>-march=native</code> 传给 GCC，编译器会检测你的 CPU 型号，生成针对这个型号的指令。同一个函数，通用二进制用标量运算一个字节一个字节地处理，优化后的二进制可能用 SIMD 指令一次处理 16 或 32 个字节。
+</p>
+
+<p>
+还有一个优化点：Native Compiler（ <code>native compilation</code> ）。Emacs 28 开始支持把 Elisp 编译成本地机器码（ <code>.eln</code> 文件），取代传统的字节码（ <code>.elc</code> ）。但默认情况下， <code>.eln</code> 的编译不会针对你的 CPU 优化，用的还是通用指令。配好 <code>native-comp-compiler-options</code> 后，每个 Elisp 包都会针对你的 CPU 编译。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8b6400f" class="outline-2">
+<h2 id="org8b6400f">安装编译依赖</h2>
+<div class="outline-text-2" id="text-org8b6400f">
+</div>
+<div id="outline-container-org623120d" class="outline-3">
+<h3 id="org623120d">Arch Linux</h3>
+<div class="outline-text-3" id="text-org623120d">
+<p>
+Arch 上最干净的方式是用官方 PKGBUILD 自动拉取依赖列表：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mkdir -p ~/emacs-deps
+<span class="org-builtin">cd</span> ~/emacs-deps
+wget https://gitlab.archlinux.org/archlinux/packaging/packages/emacs/-/raw/main/PKGBUILD
+makepkg --syncdeps --nobuild
+</pre>
+</div>
+
+<p>
+依赖装完后 <code>~/emacs-deps</code> 目录可以删掉。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org527140d" class="outline-3">
+<h3 id="org527140d">Debian / Ubuntu</h3>
+<div class="outline-text-3" id="text-org527140d">
+<p>
+先启用源码仓库。旧版 Debian/Ubuntu 编辑 <code>/etc/apt/sources.list</code> ，取消 <code>deb-src</code> 行的注释。新版（Ubuntu 24.04+）的源配置格式不同，具体操作查发行版文档。启用后：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo apt update
+sudo apt build-dep emacs
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcb656b6" class="outline-3">
+<h3 id="orgcb656b6">通用依赖列表</h3>
+<div class="outline-text-3" id="text-orgcb656b6">
+<p>
+其他发行版需要手动安装这些开发库（包名通常带 <code>-dev</code> 或 <code>-devel</code> 后缀）：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">类别</th>
+<th scope="col" class="org-left">依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">编译工具</td>
+<td class="org-left">gcc, make, autoconf, automake, pkg-config, git, texinfo</td>
+</tr>
+
+<tr>
+<td class="org-left">Native Compiler</td>
+<td class="org-left">libgccjit（版本要和 GCC 一致，Debian/Ubuntu 装 <code>libgccjit-&lt;版本号&gt;-dev</code> ）</td>
+</tr>
+
+<tr>
+<td class="org-left">系统库</td>
+<td class="org-left">glib2, gnutls, zlib, ncurses, sqlite3, tree-sitter（Debian/Ubuntu 装 <code>libtree-sitter-dev</code> ）， gmp</td>
+</tr>
+
+<tr>
+<td class="org-left">图形 / PGTK</td>
+<td class="org-left">gtk3, cairo, harfbuzz, pango, dbus</td>
+</tr>
+
+<tr>
+<td class="org-left">图片格式</td>
+<td class="org-left">libjpeg, libpng, libtiff, giflib, libwebp, librsvg2, lcms2</td>
+</tr>
+
+<tr>
+<td class="org-left">字体 / 排版</td>
+<td class="org-left">fontconfig, freetype2, libotf, m17n-lib, libxml2</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org98c1b20" class="outline-2">
+<h2 id="org98c1b20">优化 Native Compiler 配置</h2>
+<div class="outline-text-2" id="text-org98c1b20">
+<p>
+这一步在编译 Emacs <b>之前</b> 做，因为 Native Compiler 的配置写在 <code>early-init.el</code> 里，编译完第一次启动 Emacs 时它会用这些参数来编译所有 <code>.el</code> 文件。
+</p>
+
+<p>
+先查你的 CPU 架构代号：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">gcc -march=native -Q --help=target | grep march
+</pre>
+</div>
+
+<p>
+输出类似：
+</p>
+
+<pre class="example" id="orgc9ca119">
+-march=		skylake
+</pre>
+
+<p>
+ARM 设备输出类似：
+</p>
+
+<pre class="example" id="org27f615b">
+-march=		armv8-a+crypto+crc
+</pre>
+
+<p>
+<code>armv8-a</code> 是 ARM 64 位基础指令集， <code>+crypto</code> 是加密扩展（硬件加速 AES、SHA 等）， <code>+crc</code> 是 CRC32 校验扩展。 <code>+</code> 号是 GCC 的语法，表示在基础架构上启用可选扩展。
+</p>
+
+<p>
+记住你查到的架构代号。
+</p>
+
+<p>
+然后在 <code>~/.emacs.d/early-init.el</code> 里加上（Emacs 27+ 才有这个文件，没有就新建一个）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> my-cpu-architecture <span class="org-string">"skylake"</span>) <span class="org-comment-delimiter">; </span><span class="org-comment">&#25442;&#25104;&#20320;&#19978;&#38754;&#26597;&#21040;&#30340;&#26550;&#26500;
+</span>
+(<span class="org-keyword">setq</span> native-comp-compiler-options
+      `(<span class="org-comment-delimiter">;; </span><span class="org-comment">&#26680;&#24515;&#20248;&#21270;&#65306;O2 &#26159;&#23433;&#20840;&#19982;&#24615;&#33021;&#30340;&#24179;&#34913;&#28857;
+</span>        <span class="org-string">"-O2"</span>
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#38024;&#23545;&#20320;&#30340; CPU &#26550;&#26500;&#29983;&#25104;&#25351;&#20196;
+</span>        ,(format <span class="org-string">"-mtune=%s"</span> my-cpu-architecture)
+        ,(format <span class="org-string">"-march=%s"</span> my-cpu-architecture)
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21435;&#25481;&#35843;&#35797;&#31526;&#21495;&#65292;&#20943;&#23567; .eln &#25991;&#20214;&#20307;&#31215;&#65292;&#21152;&#24555;&#32534;&#35793;&#36895;&#24230;
+</span>        <span class="org-string">"-g0"</span>
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20445;&#30041;&#26632;&#24103;&#25351;&#38024;&#65292;&#26041;&#20415;&#25490;&#26597;&#23849;&#28291;&#65288;Emacs &#24320;&#21457;&#32773;&#25512;&#33616;&#65289;
+</span>        <span class="org-string">"-fno-omit-frame-pointer"</span>
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#38450;&#27490;&#32534;&#35793;&#22120;&#20570;&#19981;&#23433;&#20840;&#30340;&#28014;&#28857;&#20551;&#35774;
+</span>        <span class="org-string">"-fno-finite-math-only"</span>))
+</pre>
+</div>
+
+<p>
+*ARM 用户注意*：ARM 上 <code>-march</code> 和 <code>-mtune</code> 接受的值不同。 <code>-march</code> 接受架构字符串（如 <code>armv8-a+crypto+crc</code> ），但 <code>-mtune</code> 要传具体 CPU 名称（如 <code>cortex-a72</code> ），不能用同一个值。查 <code>-mtune</code> 值的命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">gcc -mtune=native -Q --help=target | grep mtune
+</pre>
+</div>
+
+<p>
+ARM 用户的配置要分开设置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> my-cpu-architecture <span class="org-string">"armv8-a+crypto+crc"</span>) <span class="org-comment-delimiter">; </span><span class="org-comment">&#20174; gcc -march=native &#26597;&#21040;
+</span>(<span class="org-keyword">setq</span> my-cpu-tune <span class="org-string">"cortex-a72"</span>)                  <span class="org-comment-delimiter">; </span><span class="org-comment">&#20174; gcc -mtune=native &#26597;&#21040;
+</span>
+(<span class="org-keyword">setq</span> native-comp-compiler-options
+      `(<span class="org-string">"-O2"</span>
+        ,(format <span class="org-string">"-march=%s"</span> my-cpu-architecture)
+        ,(format <span class="org-string">"-mtune=%s"</span> my-cpu-tune)
+        <span class="org-string">"-g0"</span>
+        <span class="org-string">"-fno-omit-frame-pointer"</span>
+        <span class="org-string">"-fno-finite-math-only"</span>))
+
+(<span class="org-keyword">setq</span> native-comp-driver-options
+      '(<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21387;&#32553;&#37325;&#23450;&#20301;&#34920;&#65292;&#20943;&#23567;&#25991;&#20214;&#20307;&#31215;&#65292;&#30053;&#24494;&#21152;&#24555;&#21152;&#36733;
+</span>        <span class="org-string">"-Wl,-z,pack-relative-relocs"</span>
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#38142;&#25509;&#22120;&#32423;&#21035;&#20248;&#21270;&#65288;&#23383;&#31526;&#20018;&#21512;&#24182;&#31561;&#65289;
+</span>        <span class="org-string">"-Wl,-O2"</span>
+        <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#38142;&#25509;&#23454;&#38469;&#29992;&#21040;&#30340;&#24211;&#65292;&#20943;&#23569;&#19981;&#24517;&#35201;&#20381;&#36182;
+</span>        <span class="org-string">"-Wl,--as-needed"</span>))
+</pre>
+</div>
+
+<p>
+几个要点：
+</p>
+
+<ul class="org-ul">
+<li><b>不要用 <code>native</code> 做 <code>march</code> 的值</b> 。libgccjit（负责 native compilation 的库）不能像独立 GCC 那样自动探测主机 CPU，传 <code>native</code> 可能导致编译失败。必须手动查到架构代号再填。</li>
+<li><code>-O2</code> 而不是 <code>-O3</code> 。Emacs 开发者明确建议不要用 <code>-O3</code> ，因为它在 Emacs 这种大型老旧 C 代码库上可能触发未定义行为，导致随机崩溃或界面卡死。</li>
+<li><code>-g0</code> 去掉调试符号。 <code>.eln</code> 文件不需要调试，去掉后文件更小、编译更快。</li>
+<li><code>-fno-omit-frame-pointer</code> 保留栈帧指针。虽然省掉栈帧指针能腾出一个通用寄存器，但在现代 CPU 上性能提升微乎其微，反而会让崩溃时的栈回溯变得难以阅读（Emacs 开发者 Eli Zaretskii 在 bug#76180 中也指出了这个问题）。</li>
+</ul>
+
+<p>
+改完配置后，需要清掉旧的 <code>.eln</code> 缓存让 Emacs 用新参数重新编译：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">find ~/.emacs.d/ -name <span class="org-string">'*.eln'</span> -delete
+</pre>
+</div>
+
+<p>
+下次启动 Emacs 时，Native Compiler 会在后台自动用新参数重新编译所有 <code>.el</code> 文件。不用手动触发，Emacs 加载包时发现缺 <code>.eln</code> ，自己就会起后台线程编译。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org132d840" class="outline-2">
+<h2 id="org132d840">编译 Emacs</h2>
+<div class="outline-text-2" id="text-org132d840">
+</div>
+<div id="outline-container-org12bb3d8" class="outline-3">
+<h3 id="org12bb3d8">第一步：获取源码</h3>
+<div class="outline-text-3" id="text-org12bb3d8">
+<div class="org-src-container">
+<pre class="src src-shell">git clone https://github.com/emacs-mirror/emacs
+<span class="org-builtin">cd</span> emacs
+git checkout <span class="org-string">"emacs-30.2"</span>  ; &#29992; git tag &#26597;&#30475;&#25152;&#26377;&#29256;&#26412;&#26631;&#31614;
+</pre>
+</div>
+
+<p>
+Emacs 仓库历史很长，网络不稳定时完整克隆容易断。可以浅克隆只拉指定版本：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">git clone --depth 1 --branch emacs-30.2 https://github.com/emacs-mirror/emacs
+</pre>
+</div>
+
+<p>
+如果 GitHub 访问不了，用 Savannah 官方仓库：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">git clone https://git.savannah.gnu.org/git/emacs.git
+<span class="org-builtin">cd</span> emacs
+git checkout <span class="org-string">"emacs-30.2"</span>
+</pre>
+</div>
+
+<p>
+Savannah 偶尔会很慢，但能访问。建议 checkout 稳定的发布标签而不是 <code>master</code> 分支，master 上的代码随时在变，编译失败的风险更高。
+</p>
+
+<p>
+如果 clone 报 <code>curl 16 Error in the HTTP/2 framing layer</code> ，是 git 和 HTTP/2 的兼容性问题，强制用 HTTP/1.1 就行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">git config --global http.version HTTP/1.1
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc722879" class="outline-3">
+<h3 id="orgc722879">第二步：清理（从旧版本切换时必做）</h3>
+<div class="outline-text-3" id="text-orgc722879">
+<p>
+如果你之前编译过，或者从一个版本切换到另一个版本，必须彻底清理：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">git reset --hard HEAD
+git clean -f -d -x
+rm -fr .git/hooks/*
+</pre>
+</div>
+
+<p>
+这一步不能省。Emacs 的构建过程很复杂：C 核心要先编译自己的 Lisp 文件。如果残留了上次编译的缓存文件（ <code>.o</code> 、 <code>Makefile</code> 、 <code>.elc</code> ），它们会静默污染新编译，轻则编译报错，重则运行时出现段错误。这三条命令等于给仓库做一次出厂重置。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4d8370e" class="outline-3">
+<h3 id="org4d8370e">第三步：生成配置脚本</h3>
+<div class="outline-text-3" id="text-org4d8370e">
+<div class="org-src-container">
+<pre class="src src-shell">./autogen.sh
+</pre>
+</div>
+
+<p>
+这个脚本读取仓库里的开发者配置文件，生成最终的 <code>./configure</code> 脚本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4765ebd" class="outline-3">
+<h3 id="org4765ebd">第四步：设置编译器参数</h3>
+<div class="outline-text-3" id="text-org4765ebd">
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">export</span> <span class="org-variable-name">CFLAGS</span>=<span class="org-string">"-O2 -pipe -march=native -mtune=native -fno-omit-frame-pointer -fno-plt -flto=auto"</span>
+<span class="org-builtin">export</span> <span class="org-variable-name">LDFLAGS</span>=<span class="org-string">"-Wl,-O2 -Wl,-z,now -Wl,-z,relro -Wl,--sort-common -Wl,--as-needed -Wl,-z,pack-relative-relocs -flto=auto"</span>
+</pre>
+</div>
+
+<p>
+关键参数解释：
+</p>
+
+<ul class="org-ul">
+<li><code>-march=native -mtune=native</code> ：针对当前 CPU 生成指令。这里可以用 <code>native</code> ，因为是给标准 GCC 用的，它能正确探测 CPU。</li>
+<li><code>-flto=auto</code> ：链接时优化（Link-Time Optimization）。让编译器在链接阶段做跨文件的优化（内联、死代码消除），生成更小更快的二进制。 <code>auto</code> 自动检测 CPU 核心数来并行优化。</li>
+<li><code>-fno-plt</code> ：去掉间接跳转（PLT），直接调用外部函数。运行时调用效率更高，代价是动态加载的开销略增。</li>
+<li><code>-pipe</code> ：用管道替代临时文件传递编译中间结果，加快编译速度。</li>
+<li><code>-Wl,-z,now -Wl,-z,relro</code> ：启动时立刻解析所有动态符号，而不是延迟解析。启动慢一点点，但运行时调用更稳定更快。</li>
+<li><code>-Wl,--sort-common</code> ：合并重复的符号，减少内存占用。</li>
+<li><code>-Wl,-z,pack-relative-relocs</code> ：压缩重定位表，减小二进制体积。</li>
+</ul>
+
+<p>
+注意：确保 <code>CC</code> 环境变量指向的 GCC 版本和 <code>libgccjit</code> 版本一致。比如 <code>export CC</code>"/usr/bin/gcc-11"= 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org965137a" class="outline-3">
+<h3 id="org965137a">第五步：配置构建选项</h3>
+<div class="outline-text-3" id="text-org965137a">
+<p>
+Wayland 用户（PGTK 构建）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">./configure <span class="org-sh-escaped-newline">\</span>
+  --without-x <span class="org-sh-escaped-newline">\</span>
+  --with-pgtk <span class="org-sh-escaped-newline">\</span>
+  --with-toolkit-scroll-bars <span class="org-sh-escaped-newline">\</span>
+  --with-cairo <span class="org-sh-escaped-newline">\</span>
+  --without-xft <span class="org-sh-escaped-newline">\</span>
+  --with-harfbuzz <span class="org-sh-escaped-newline">\</span>
+  --without-libotf <span class="org-sh-escaped-newline">\</span>
+  --with-gnutls <span class="org-sh-escaped-newline">\</span>
+  --without-xdbe <span class="org-sh-escaped-newline">\</span>
+  --without-xim <span class="org-sh-escaped-newline">\</span>
+  --without-gpm <span class="org-sh-escaped-newline">\</span>
+  --disable-gc-mark-trace <span class="org-sh-escaped-newline">\</span>
+  --enable-link-time-optimization <span class="org-sh-escaped-newline">\</span>
+  --with-gsettings <span class="org-sh-escaped-newline">\</span>
+  --with-modules <span class="org-sh-escaped-newline">\</span>
+  --with-threads <span class="org-sh-escaped-newline">\</span>
+  --with-libgmp <span class="org-sh-escaped-newline">\</span>
+  --with-xml2 <span class="org-sh-escaped-newline">\</span>
+  --with-tree-sitter <span class="org-sh-escaped-newline">\</span>
+  --with-zlib <span class="org-sh-escaped-newline">\</span>
+  --without-included-regex <span class="org-sh-escaped-newline">\</span>
+  --with-native-compilation <span class="org-sh-escaped-newline">\</span>
+  --with-file-notification=inotify <span class="org-sh-escaped-newline">\</span>
+  --without-compress-install
+</pre>
+</div>
+
+<p>
+X11 用户把 <code>--without-x --with-pgtk</code> 换成 <code>--with-x --with-x-toolkit=gtk3 --without-toolkit-scroll-bars</code> ，其余参数相同。
+</p>
+
+<p>
+几个重要参数的取舍理由：
+</p>
+
+<ul class="org-ul">
+<li><code>--enable-link-time-optimization</code> ：让构建系统在编译和链接阶段都启用 LTO。构建系统会自动检测 CPU 核心数并注入 <code>-flto=N</code> ，还确保 <code>ar</code> 和 <code>ranlib</code> 等归档工具使用正确的 LTO 插件。</li>
+<li><code>--disable-gc-mark-trace</code> ：去掉 GC 标记阶段的调试代码，GC 性能提升约 5%。</li>
+<li><code>--with-native-compilation</code> ：启用 native compilation。不加 <code>aot</code> 标志，这样构建时不会编译内置 Lisp 文件，而是等第一次启动 Emacs 时用你在 <code>early-init.el</code> 里配的优化参数来编译。如果 configure 报 <code>libgccjit was not found</code> ，说明缺开发包，用 <code>sudo apt install libgccjit-$(gcc -dumpversion | cut -d. -f1)-dev</code> 装上（版本号要和 GCC 一致）。</li>
+<li><code>--with-cairo --with-harfbuzz</code> ：用现代的文字渲染管线。Cairo 负责绘图，HarfBuzz 负责文字塑形（把 Unicode 码点变成屏幕上的字形），替代了老旧的 Xft。</li>
+<li><code>--without-xft</code> ：Xft 已被 Cairo + HarfBuzz 取代，不需要了。</li>
+<li><code>--without-libotf</code> ：OpenType 字体库已被 HarfBuzz 取代。关掉它不影响字体质量，还能减小二进制体积。</li>
+<li><code>--with-libgmp</code> ：启用 GMP（GNU 多精度算术库）。Emacs 用它做大整数运算。如果不装这个库，Emacs 会回退到纯 C 实现的 <code>mini-gmp</code> ，速度差很多。</li>
+<li><code>--without-included-regex</code> ：用系统 libc 的正则引擎替代 Emacs 自带的 GNU regex。现代 Linux 的 glibc 正则引擎比 Emacs 自带的更快、维护更好。</li>
+<li><code>--without-xim</code> ：XIM 是老旧的 X11 输入法协议。Wayland / PGTK 构建不需要它，现代输入法由 GTK 或桌面环境处理。X11 上用 fcitx5 / ibus 的用户一般不受影响，但如果编译后输入法出问题，可以去掉这个参数。</li>
+<li><code>--with-file-notification=inotify</code> ：强制用 Linux 内核的 inotify API 监听文件变化，比轮询快得多。</li>
+<li><code>--without-gpm</code> ：GPM 是 Linux 文本终端的鼠标支持服务。在图形桌面环境的终端模拟器里用 Emacs 的话，不需要 GPM。</li>
+<li><code>--without-compress-install</code> ：默认安装时 Emacs 会压缩 Lisp 文件（ <code>.el.gz</code> ）。关掉压缩后加载文件时跳过解压步骤。不过实际性能差异通常很小，因为 Emacs 优先加载编译过的 <code>.elc</code> 或 <code>.eln</code> 。</li>
+<li><code>--without-xdbe</code> ：X11 双缓冲扩展。现代 GTK / PGTK 构建自己处理窗口缓冲，这个扩展是多余的。</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orga832af8" class="outline-3">
+<h3 id="orga832af8">第六步：编译和安装</h3>
+<div class="outline-text-3" id="text-orga832af8">
+<div class="org-src-container">
+<pre class="src src-shell">make -j <span class="org-string">"$(</span><span class="org-sh-quoted-exec">nproc</span><span class="org-string">)"</span> -l <span class="org-string">"$(</span><span class="org-sh-quoted-exec">nproc --ignore=1</span><span class="org-string">)"</span>
+</pre>
+</div>
+
+<p>
+<code>-j $(nproc)</code> 设置最大并发编译数等于 CPU 核心数。 <code>-l $(nproc --ignore=1)</code> 设置负载上限为核心数减一：如果系统负载已经很高， <code>make</code> 会暂停调度新任务，避免把系统卡死。
+</p>
+
+<p>
+编译完成后安装：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo make install-strip
+</pre>
+</div>
+
+<p>
+<code>install-strip</code> 比 <code>install</code> 多一步：去掉二进制中的调试符号，减小磁盘占用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org13ce89f" class="outline-2">
+<h2 id="org13ce89f">验证编译结果</h2>
+<div class="outline-text-2" id="text-org13ce89f">
+<p>
+启动 Emacs 后，检查编译特性：
+</p>
+
+<p>
+<code>M-x describe-variable RET system-configuration-features RET</code>
+</p>
+
+<p>
+输出会列出所有编译进去的库和特性，确认 <code>native compilation</code> 、 <code>tree-sitter</code> 、 <code>Cairo</code> 等都在里面。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2bf3eeb" class="outline-2">
+<h2 id="org2bf3eeb">可选的精简参数</h2>
+<div class="outline-text-2" id="text-org2bf3eeb">
+<p>
+如果你的使用场景主要是文本编辑，可以进一步精简：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">参数</th>
+<th scope="col" class="org-left">效果</th>
+<th scope="col" class="org-left">代价</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>--without-sound</code></td>
+<td class="org-left">去掉音频支持</td>
+<td class="org-left">听不到系统提示音和番茄钟提醒</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>--without-dbus</code></td>
+<td class="org-left">去掉 D-Bus 集成</td>
+<td class="org-left">影响桌面通知、GNOME Keyring、文件管理器集成等</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>--without-sqlite3</code></td>
+<td class="org-left">去掉内置 SQLite</td>
+<td class="org-left">org-roam 等依赖本地数据库的包不能用</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>--disable-build-details</code></td>
+<td class="org-left">去掉构建元数据</td>
+<td class="org-left">不影响性能，但二进制变成可复现构建</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>--without-kerberos --without-pop</code></td>
+<td class="org-left">去掉老旧邮件协议支持</td>
+<td class="org-left">现代 Emacs 邮件方案不受影响</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+原文还提到了 <code>-O3</code> 替代 <code>-O2</code> 的风险优化：理论上 <code>-O3</code> 会做更激进的函数内联和循环展开，但在 Emacs 这种代码库上， <code>-O3</code> 容易触发未定义行为导致随机崩溃。Emacs 源码树的 <code>INSTALL</code> 文件里明确建议不要用 <code>-O3</code> 、 <code>-Os</code> 和 <code>-fsanitize=undefined</code> 。除非你愿意承担风险并做好回退准备，否则不建议尝试。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-15</span>
+    <span class="post-info">2026-05-16</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/编译">编译</a> : <a href="../../../../../tags/性能优化">性能优化</a> : <a href="../../../../../tags/native-comp">native-comp</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; floazsvxcilefmrd5phyrjbtph &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
