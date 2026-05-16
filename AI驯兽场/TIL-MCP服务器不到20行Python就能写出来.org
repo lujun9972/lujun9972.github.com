@@ -1,0 +1,66 @@
+#+TITLE: TIL: MCP 服务器不到 20 行 Python 就能写出来
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: MCP,Python,tool-calling
+#+DATE: [2026-05-16 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Al Sweigart 用 FastMCP 搭了一个不到 20 行的 MCP 服务器，暴露两个工具函数给本地 LLM。核心为：用装饰器注册工具，docstring 当 prompt，stdio 管道通信。客户端通过 Claude Code 直连 MCP 服务器。
+
+* 是什么
+
+Al Sweigart 在 [[https://inventwithpython.com/blog/basic-mcp-python-example.html][The Simplest MCP Example Possible in Python]] 里演示了一个不到 20 行的 MCP 服务器：
+
+#+begin_src python
+from mcp.server.fastmcp import FastMCP
+import datetime
+
+mcp = FastMCP("TimeServer")
+
+@mcp.tool()
+def get_current_time() -> str:
+    """Get the current local time of day, formatted as HH:MM:SS (24-hour clock)."""
+    return str(datetime.datetime.now().time())[:8]
+
+@mcp.tool()
+def get_current_date() -> str:
+    """Get the current local date, formatted as YYYY-MM-DD."""
+    return str(datetime.datetime.now())[:10]
+
+if __name__ == "__main__":
+    mcp.run()
+#+end_src
+
+* 为什么这么简单
+
+三个设计决策把代码量压到最少：
+
+1. =@mcp.tool()= 装饰器把普通函数注册为 MCP 工具，不用手写 JSON Schema
+2. docstring 直接当工具描述，LLM 靠它判断什么时候调用。用英文写效果最好，因为大多数 LLM 训练数据以英文为主
+3. stdio 传输（ =mcp.run()= ），客户端把 server 当子进程启动，stdin/stdout 管道通信，不走网络
+
+* 客户端怎么连
+
+不用写客户端代码。Claude Code 原生支持 MCP 协议，配置文件加两行就行。
+
+在项目根目录创建（或编辑）=.mcp.json=：
+
+#+begin_src json
+{
+  "mcpServers": {
+    "time-server": {
+      "command": "python",
+      "args": ["mcp_server.py"]
+    }
+  }
+}
+#+end_src
+
+或者直接用 =claude mcp add= 命令添加（注意 =--= 后面有空格）：
+
+#+begin_src sh
+claude mcp add time-server -- python mcp_server.py
+#+end_src
+
+添加后在对话中就能直接用了。比如问 "What time is it?" —— Claude Code 检测到 =get_current_time= 工具 → 自动调用 → 拿到结果回复你。
+
+整个过程 LLM 自己决定「要不要调工具」「调哪个工具」。协议和 [[file:读：理解MCP架构——LLM直接调API与MCP协议的对比.org][Claude Code 里用的 MCP]] 完全一致 —— 毕竟 Claude Code 本身就是 MCP 客户端。
