@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: MCP 服务器不到 20 行 Python 就能写出来 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Al Sweigart 用 FastMCP 搭了一个不到 20 行的 MCP 服务器，暴露两个工具函数给本地 LLM。核心为：用装饰器注册工具，docstring 当 prompt，stdio 管道通信。客户端通过 Claude Code 直连 MCP 服务器。" />
+  <meta name="keywords" content="MCP,Python,tool-calling" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: MCP 服务器不到 20 行 Python 就能写出来</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org8c884bc">是什么</a></li>
+<li><a href="#orge838d84">为什么这么简单</a></li>
+<li><a href="#org45819b2">客户端怎么连</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org8c884bc" class="outline-2">
+<h2 id="org8c884bc">是什么</h2>
+<div class="outline-text-2" id="text-org8c884bc">
+<p>
+Al Sweigart 在 <a href="https://inventwithpython.com/blog/basic-mcp-python-example.html">The Simplest MCP Example Possible in Python</a> 里演示了一个不到 20 行的 MCP 服务器：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> mcp.server.fastmcp <span class="org-keyword">import</span> FastMCP
+<span class="org-keyword">import</span> datetime
+
+<span class="org-variable-name">mcp</span> <span class="org-operator">=</span> FastMCP(<span class="org-string">"TimeServer"</span>)
+
+<span class="org-type">@mcp.tool</span>()
+<span class="org-keyword">def</span> <span class="org-function-name">get_current_time</span>() <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-doc">"""Get the current local time of day, formatted as HH:MM:SS (24-hour clock)."""</span>
+    <span class="org-keyword">return</span> <span class="org-builtin">str</span>(datetime.datetime.now().time())[:8]
+
+<span class="org-type">@mcp.tool</span>()
+<span class="org-keyword">def</span> <span class="org-function-name">get_current_date</span>() <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-doc">"""Get the current local date, formatted as YYYY-MM-DD."""</span>
+    <span class="org-keyword">return</span> <span class="org-builtin">str</span>(datetime.datetime.now())[:10]
+
+<span class="org-keyword">if</span> <span class="org-builtin">__name__</span> <span class="org-operator">==</span> <span class="org-string">"__main__"</span>:
+    mcp.run()
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge838d84" class="outline-2">
+<h2 id="orge838d84">为什么这么简单</h2>
+<div class="outline-text-2" id="text-orge838d84">
+<p>
+三个设计决策把代码量压到最少：
+</p>
+
+<ol class="org-ol">
+<li><code>@mcp.tool()</code> 装饰器把普通函数注册为 MCP 工具，不用手写 JSON Schema</li>
+<li>docstring 直接当工具描述，LLM 靠它判断什么时候调用。用英文写效果最好，因为大多数 LLM 训练数据以英文为主</li>
+<li>stdio 传输（ <code>mcp.run()</code> ），客户端把 server 当子进程启动，stdin/stdout 管道通信，不走网络</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org45819b2" class="outline-2">
+<h2 id="org45819b2">客户端怎么连</h2>
+<div class="outline-text-2" id="text-org45819b2">
+<p>
+不用写客户端代码。Claude Code 原生支持 MCP 协议，配置文件加两行就行。
+</p>
+
+<p>
+在项目根目录创建（或编辑）=.mcp.json=：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-json">{
+  "mcpServers": {
+    "time-server": {
+      "command": "python",
+      "args": ["mcp_server.py"]
+    }
+  }
+}
+</pre>
+</div>
+
+<p>
+或者直接用 <code>claude mcp add</code> 命令添加（注意 <code>--</code> 后面有空格）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">claude mcp add time-server -- python mcp_server.py
+</pre>
+</div>
+
+<p>
+添加后在对话中就能直接用了。比如问 "What time is it?" —— Claude Code 检测到 <code>get_current_time</code> 工具 → 自动调用 → 拿到结果回复你。
+</p>
+
+<p>
+整个过程 LLM 自己决定「要不要调工具」「调哪个工具」。协议和 <a href="读：理解MCP架构——LLM直接调API与MCP协议的对比.html">Claude Code 里用的 MCP</a> 完全一致 —— 毕竟 Claude Code 本身就是 MCP 客户端。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-16</span>
+    <span class="post-info">2026-05-17</span>
+    <a href="../../../../../tags/mcp">MCP</a> : <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/tool-calling">tool-calling</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; 2vk1hzk5occetmhudv1e2gzmqb &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
