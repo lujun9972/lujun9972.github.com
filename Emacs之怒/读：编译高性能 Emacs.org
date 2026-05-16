@@ -1,0 +1,305 @@
+#+TITLE: 读：编译高性能 Emacs
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, 编译, 性能优化, native-comp
+#+DATE: [2026-05-15 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Linux 发行版自带的 Emacs 是通用二进制，为了兼容老硬件牺牲了性能。从源码编译能让 Emacs 针对你的 CPU 生成优化代码，还能去掉不需要的遗留兼容层。本文解读 James Cherti 的编译教程，覆盖依赖安装、Native Compiler 优化配置、编译参数选择和验证。
+
+James Cherti 在 [[https://www.jamescherti.com/compiling-emacs/][他的博客]] 写了一篇详细的 Emacs 编译优化指南。核心思路是：Linux 发行版打包的通用二进制为了兼容各种老硬件，编译时没用上你 CPU 的特定指令集。自己从源码编译，相当于让编译器专门为你的 CPU 生成机器码。
+
+除了 CPU 指令集优化，自己编译还有两个好处：
+
+1. *去掉遗留兼容层* ：Wayland 用户可以完全跳过 X11 显示协议代码，不用拖着几十年前的兼容逻辑
+2. *优化 Native Compiler* ：Emacs 28+ 的 native compilation 能把 Elisp 编译成机器码，但默认编译参数是通用的。自己调整参数后，所有包的运行速度都能提升
+
+* 为什么要自己编译
+
+自己编译时把 ~-march=native~ 传给 GCC，编译器会检测你的 CPU 型号，生成针对这个型号的指令。同一个函数，通用二进制用标量运算一个字节一个字节地处理，优化后的二进制可能用 SIMD 指令一次处理 16 或 32 个字节。
+
+还有一个优化点：Native Compiler（ =native compilation= ）。Emacs 28 开始支持把 Elisp 编译成本地机器码（ =.eln= 文件），取代传统的字节码（ =.elc= ）。但默认情况下， =.eln= 的编译不会针对你的 CPU 优化，用的还是通用指令。配好 =native-comp-compiler-options= 后，每个 Elisp 包都会针对你的 CPU 编译。
+
+* 安装编译依赖
+
+** Arch Linux
+
+Arch 上最干净的方式是用官方 PKGBUILD 自动拉取依赖列表：
+
+#+begin_src shell
+mkdir -p ~/emacs-deps
+cd ~/emacs-deps
+wget https://gitlab.archlinux.org/archlinux/packaging/packages/emacs/-/raw/main/PKGBUILD
+makepkg --syncdeps --nobuild
+#+end_src
+
+依赖装完后 =~/emacs-deps= 目录可以删掉。
+
+** Debian / Ubuntu
+
+先启用源码仓库。旧版 Debian/Ubuntu 编辑 =/etc/apt/sources.list= ，取消 =deb-src= 行的注释。新版（Ubuntu 24.04+）的源配置格式不同，具体操作查发行版文档。启用后：
+
+#+begin_src shell
+sudo apt update
+sudo apt build-dep emacs
+#+end_src
+
+** 通用依赖列表
+
+其他发行版需要手动安装这些开发库（包名通常带 =-dev= 或 =-devel= 后缀）：
+
+| 类别 | 依赖 |
+|------|------|
+| 编译工具 | gcc, make, autoconf, automake, pkg-config, git, texinfo |
+| Native Compiler | libgccjit（版本要和 GCC 一致，Debian/Ubuntu 装 =libgccjit-<版本号>-dev= ） |
+| 系统库 | glib2, gnutls, zlib, ncurses, sqlite3, tree-sitter（Debian/Ubuntu 装 =libtree-sitter-dev= ）， gmp |
+| 图形 / PGTK | gtk3, cairo, harfbuzz, pango, dbus |
+| 图片格式 | libjpeg, libpng, libtiff, giflib, libwebp, librsvg2, lcms2 |
+| 字体 / 排版 | fontconfig, freetype2, libotf, m17n-lib, libxml2 |
+
+* 优化 Native Compiler 配置
+
+这一步在编译 Emacs *之前* 做，因为 Native Compiler 的配置写在 =early-init.el= 里，编译完第一次启动 Emacs 时它会用这些参数来编译所有 =.el= 文件。
+
+先查你的 CPU 架构代号：
+
+#+begin_src shell
+gcc -march=native -Q --help=target | grep march
+#+end_src
+
+输出类似：
+
+#+begin_example
+  -march=		skylake
+#+end_example
+
+ARM 设备输出类似：
+
+#+begin_example
+  -march=		armv8-a+crypto+crc
+#+end_example
+
+=armv8-a= 是 ARM 64 位基础指令集， =+crypto= 是加密扩展（硬件加速 AES、SHA 等）， =+crc= 是 CRC32 校验扩展。 =+= 号是 GCC 的语法，表示在基础架构上启用可选扩展。
+
+记住你查到的架构代号。
+
+然后在 =~/.emacs.d/early-init.el= 里加上（Emacs 27+ 才有这个文件，没有就新建一个）：
+
+#+begin_src emacs-lisp
+(setq my-cpu-architecture "skylake") ; 换成你上面查到的架构
+
+(setq native-comp-compiler-options
+      `(;; 核心优化：O2 是安全与性能的平衡点
+        "-O2"
+        ;; 针对你的 CPU 架构生成指令
+        ,(format "-mtune=%s" my-cpu-architecture)
+        ,(format "-march=%s" my-cpu-architecture)
+        ;; 去掉调试符号，减小 .eln 文件体积，加快编译速度
+        "-g0"
+        ;; 保留栈帧指针，方便排查崩溃（Emacs 开发者推荐）
+        "-fno-omit-frame-pointer"
+        ;; 防止编译器做不安全的浮点假设
+        "-fno-finite-math-only"))
+#+end_src
+
+*ARM 用户注意*：ARM 上 =-march= 和 =-mtune= 接受的值不同。 =-march= 接受架构字符串（如 =armv8-a+crypto+crc= ），但 =-mtune= 要传具体 CPU 名称（如 =cortex-a72= ），不能用同一个值。查 =-mtune= 值的命令：
+
+#+begin_src shell
+gcc -mtune=native -Q --help=target | grep mtune
+#+end_src
+
+ARM 用户的配置要分开设置：
+
+#+begin_src emacs-lisp
+(setq my-cpu-architecture "armv8-a+crypto+crc") ; 从 gcc -march=native 查到
+(setq my-cpu-tune "cortex-a72")                  ; 从 gcc -mtune=native 查到
+
+(setq native-comp-compiler-options
+      `("-O2"
+        ,(format "-march=%s" my-cpu-architecture)
+        ,(format "-mtune=%s" my-cpu-tune)
+        "-g0"
+        "-fno-omit-frame-pointer"
+        "-fno-finite-math-only"))
+
+(setq native-comp-driver-options
+      '(;; 压缩重定位表，减小文件体积，略微加快加载
+        "-Wl,-z,pack-relative-relocs"
+        ;; 链接器级别优化（字符串合并等）
+        "-Wl,-O2"
+        ;; 只链接实际用到的库，减少不必要依赖
+        "-Wl,--as-needed"))
+#+end_src
+
+几个要点：
+
+- *不要用 =native= 做 =march= 的值* 。libgccjit（负责 native compilation 的库）不能像独立 GCC 那样自动探测主机 CPU，传 =native= 可能导致编译失败。必须手动查到架构代号再填。
+- =-O2= 而不是 =-O3= 。Emacs 开发者明确建议不要用 =-O3= ，因为它在 Emacs 这种大型老旧 C 代码库上可能触发未定义行为，导致随机崩溃或界面卡死。
+- =-g0= 去掉调试符号。 =.eln= 文件不需要调试，去掉后文件更小、编译更快。
+- =-fno-omit-frame-pointer= 保留栈帧指针。虽然省掉栈帧指针能腾出一个通用寄存器，但在现代 CPU 上性能提升微乎其微，反而会让崩溃时的栈回溯变得难以阅读（Emacs 开发者 Eli Zaretskii 在 bug#76180 中也指出了这个问题）。
+
+改完配置后，需要清掉旧的 =.eln= 缓存让 Emacs 用新参数重新编译：
+
+#+begin_src shell
+find ~/.emacs.d/ -name '*.eln' -delete
+#+end_src
+
+下次启动 Emacs 时，Native Compiler 会在后台自动用新参数重新编译所有 =.el= 文件。不用手动触发，Emacs 加载包时发现缺 =.eln= ，自己就会起后台线程编译。
+
+* 编译 Emacs
+
+** 第一步：获取源码
+
+#+begin_src shell
+git clone https://github.com/emacs-mirror/emacs
+cd emacs
+git checkout "emacs-30.2"  ; 用 git tag 查看所有版本标签
+#+end_src
+
+Emacs 仓库历史很长，网络不稳定时完整克隆容易断。可以浅克隆只拉指定版本：
+
+#+begin_src shell
+git clone --depth 1 --branch emacs-30.2 https://github.com/emacs-mirror/emacs
+#+end_src
+
+如果 GitHub 访问不了，用 Savannah 官方仓库：
+
+#+begin_src shell
+git clone https://git.savannah.gnu.org/git/emacs.git
+cd emacs
+git checkout "emacs-30.2"
+#+end_src
+
+Savannah 偶尔会很慢，但能访问。建议 checkout 稳定的发布标签而不是 =master= 分支，master 上的代码随时在变，编译失败的风险更高。
+
+如果 clone 报 =curl 16 Error in the HTTP/2 framing layer= ，是 git 和 HTTP/2 的兼容性问题，强制用 HTTP/1.1 就行：
+
+#+begin_src shell
+git config --global http.version HTTP/1.1
+#+end_src
+
+** 第二步：清理（从旧版本切换时必做）
+
+如果你之前编译过，或者从一个版本切换到另一个版本，必须彻底清理：
+
+#+begin_src shell
+git reset --hard HEAD
+git clean -f -d -x
+rm -fr .git/hooks/*
+#+end_src
+
+这一步不能省。Emacs 的构建过程很复杂：C 核心要先编译自己的 Lisp 文件。如果残留了上次编译的缓存文件（ =.o= 、 =Makefile= 、 =.elc= ），它们会静默污染新编译，轻则编译报错，重则运行时出现段错误。这三条命令等于给仓库做一次出厂重置。
+
+** 第三步：生成配置脚本
+
+#+begin_src shell
+./autogen.sh
+#+end_src
+
+这个脚本读取仓库里的开发者配置文件，生成最终的 =./configure= 脚本。
+
+** 第四步：设置编译器参数
+
+#+begin_src shell
+export CFLAGS="-O2 -pipe -march=native -mtune=native -fno-omit-frame-pointer -fno-plt -flto=auto"
+export LDFLAGS="-Wl,-O2 -Wl,-z,now -Wl,-z,relro -Wl,--sort-common -Wl,--as-needed -Wl,-z,pack-relative-relocs -flto=auto"
+#+end_src
+
+关键参数解释：
+
+- =-march=native -mtune=native= ：针对当前 CPU 生成指令。这里可以用 =native= ，因为是给标准 GCC 用的，它能正确探测 CPU。
+- =-flto=auto= ：链接时优化（Link-Time Optimization）。让编译器在链接阶段做跨文件的优化（内联、死代码消除），生成更小更快的二进制。 =auto= 自动检测 CPU 核心数来并行优化。
+- =-fno-plt= ：去掉间接跳转（PLT），直接调用外部函数。运行时调用效率更高，代价是动态加载的开销略增。
+- =-pipe= ：用管道替代临时文件传递编译中间结果，加快编译速度。
+- =-Wl,-z,now -Wl,-z,relro= ：启动时立刻解析所有动态符号，而不是延迟解析。启动慢一点点，但运行时调用更稳定更快。
+- =-Wl,--sort-common= ：合并重复的符号，减少内存占用。
+- =-Wl,-z,pack-relative-relocs= ：压缩重定位表，减小二进制体积。
+
+注意：确保 =CC= 环境变量指向的 GCC 版本和 =libgccjit= 版本一致。比如 =export CC="/usr/bin/gcc-11"= 。
+
+** 第五步：配置构建选项
+
+Wayland 用户（PGTK 构建）：
+
+#+begin_src shell
+./configure \
+  --without-x \
+  --with-pgtk \
+  --with-toolkit-scroll-bars \
+  --with-cairo \
+  --without-xft \
+  --with-harfbuzz \
+  --without-libotf \
+  --with-gnutls \
+  --without-xdbe \
+  --without-xim \
+  --without-gpm \
+  --disable-gc-mark-trace \
+  --enable-link-time-optimization \
+  --with-gsettings \
+  --with-modules \
+  --with-threads \
+  --with-libgmp \
+  --with-xml2 \
+  --with-tree-sitter \
+  --with-zlib \
+  --without-included-regex \
+  --with-native-compilation \
+  --with-file-notification=inotify \
+  --without-compress-install
+#+end_src
+
+X11 用户把 =--without-x --with-pgtk= 换成 =--with-x --with-x-toolkit=gtk3 --without-toolkit-scroll-bars= ，其余参数相同。
+
+几个重要参数的取舍理由：
+
+- =--enable-link-time-optimization= ：让构建系统在编译和链接阶段都启用 LTO。构建系统会自动检测 CPU 核心数并注入 =-flto=N= ，还确保 =ar= 和 =ranlib= 等归档工具使用正确的 LTO 插件。
+- =--disable-gc-mark-trace= ：去掉 GC 标记阶段的调试代码，GC 性能提升约 5%。
+- =--with-native-compilation= ：启用 native compilation。不加 =aot= 标志，这样构建时不会编译内置 Lisp 文件，而是等第一次启动 Emacs 时用你在 =early-init.el= 里配的优化参数来编译。如果 configure 报 =libgccjit was not found= ，说明缺开发包，用 =sudo apt install libgccjit-$(gcc -dumpversion | cut -d. -f1)-dev= 装上（版本号要和 GCC 一致）。
+- =--with-cairo --with-harfbuzz= ：用现代的文字渲染管线。Cairo 负责绘图，HarfBuzz 负责文字塑形（把 Unicode 码点变成屏幕上的字形），替代了老旧的 Xft。
+- =--without-xft= ：Xft 已被 Cairo + HarfBuzz 取代，不需要了。
+- =--without-libotf= ：OpenType 字体库已被 HarfBuzz 取代。关掉它不影响字体质量，还能减小二进制体积。
+- =--with-libgmp= ：启用 GMP（GNU 多精度算术库）。Emacs 用它做大整数运算。如果不装这个库，Emacs 会回退到纯 C 实现的 =mini-gmp= ，速度差很多。
+- =--without-included-regex= ：用系统 libc 的正则引擎替代 Emacs 自带的 GNU regex。现代 Linux 的 glibc 正则引擎比 Emacs 自带的更快、维护更好。
+- =--without-xim= ：XIM 是老旧的 X11 输入法协议。Wayland / PGTK 构建不需要它，现代输入法由 GTK 或桌面环境处理。X11 上用 fcitx5 / ibus 的用户一般不受影响，但如果编译后输入法出问题，可以去掉这个参数。
+- =--with-file-notification=inotify= ：强制用 Linux 内核的 inotify API 监听文件变化，比轮询快得多。
+- =--without-gpm= ：GPM 是 Linux 文本终端的鼠标支持服务。在图形桌面环境的终端模拟器里用 Emacs 的话，不需要 GPM。
+- =--without-compress-install= ：默认安装时 Emacs 会压缩 Lisp 文件（ =.el.gz= ）。关掉压缩后加载文件时跳过解压步骤。不过实际性能差异通常很小，因为 Emacs 优先加载编译过的 =.elc= 或 =.eln= 。
+- =--without-xdbe= ：X11 双缓冲扩展。现代 GTK / PGTK 构建自己处理窗口缓冲，这个扩展是多余的。
+
+** 第六步：编译和安装
+
+#+begin_src shell
+make -j "$(nproc)" -l "$(nproc --ignore=1)"
+#+end_src
+
+=-j $(nproc)= 设置最大并发编译数等于 CPU 核心数。 =-l $(nproc --ignore=1)= 设置负载上限为核心数减一：如果系统负载已经很高， =make= 会暂停调度新任务，避免把系统卡死。
+
+编译完成后安装：
+
+#+begin_src shell
+sudo make install-strip
+#+end_src
+
+=install-strip= 比 =install= 多一步：去掉二进制中的调试符号，减小磁盘占用。
+
+* 验证编译结果
+
+启动 Emacs 后，检查编译特性：
+
+=M-x describe-variable RET system-configuration-features RET=
+
+输出会列出所有编译进去的库和特性，确认 =native compilation= 、 =tree-sitter= 、 =Cairo= 等都在里面。
+
+* 可选的精简参数
+
+如果你的使用场景主要是文本编辑，可以进一步精简：
+
+| 参数 | 效果 | 代价 |
+|------+------+------|
+| =--without-sound= | 去掉音频支持 | 听不到系统提示音和番茄钟提醒 |
+| =--without-dbus= | 去掉 D-Bus 集成 | 影响桌面通知、GNOME Keyring、文件管理器集成等 |
+| =--without-sqlite3= | 去掉内置 SQLite | org-roam 等依赖本地数据库的包不能用 |
+| =--disable-build-details= | 去掉构建元数据 | 不影响性能，但二进制变成可复现构建 |
+| =--without-kerberos --without-pop= | 去掉老旧邮件协议支持 | 现代 Emacs 邮件方案不受影响 |
+
+原文还提到了 =-O3= 替代 =-O2= 的风险优化：理论上 =-O3= 会做更激进的函数内联和循环展开，但在 Emacs 这种代码库上， =-O3= 容易触发未定义行为导致随机崩溃。Emacs 源码树的 =INSTALL= 文件里明确建议不要用 =-O3= 、 =-Os= 和 ~-fsanitize=undefined~ 。除非你愿意承担风险并做好回退准备，否则不建议尝试。
