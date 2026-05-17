@@ -1,0 +1,194 @@
+#+TITLE: 读：Git 仓库里的隐藏配置文件
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: git, 配置, 团队协作
+#+DATE: [2026-05-17 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Git 仓库根目录下除了 .gitignore 还有很多特殊文件。.gitattributes 控制文件处理方式，.mailmap 统一作者身份，.git-blame-ignore-revs 让 blame 跳过格式化噪音。本文按用途分组介绍这些文件，帮你找到能用上的那些文件。
+
+[[https://programmingdigest.net/links/22231/ad1b5032-3f72-4bd8-8edd-07d3205514b8/email][原文]] 系统梳理了 Git 仓库里跟着代码一起提交、影响 Git 和工具行为的特殊文件。.gitignore 大多数人都知道（一个容易踩的坑：它只影响未跟踪的文件，已经跟踪的加进 .gitignore 后仍在仓库里，需要 =git rm --cached= 移除），但 .gitattributes、.mailmap、.git-blame-ignore-revs 这些你可能见过但没深究过。下面按用途分组，挑出值得了解的。
+
+* 让 Git 正确处理你的文件
+
+** .gitattributes：告诉 Git 怎么对待每个文件
+
+.gitattributes 比 .gitignore 强大得多，它精确控制 Git 对特定文件的处理方式：行尾怎么转换、当二进制还是文本看待、用哪种 diff、冲突时怎么合并。
+
+行尾统一是最常见的用途：
+
+#+begin_src gitattributes
+*.sh text eol=lf
+*.bat text eol=crlf
+*.png binary
+#+end_src
+
+=text= 属性让 Git 提交时把行尾统一为 LF 存进仓库，checkout 时再按 =eol= 的设定转回来（或保持 LF）。 =binary= 让 Git 跳过 diff 和合并，直接保留一个版本。
+
+diff 和 merge 也能定制：
+
+#+begin_src gitattributes
+*.json diff=json
+package-lock.json merge=ours
+#+end_src
+
+~merge=ours~ 在合并冲突时保留当前分支的版本，然后在 git config 里定义这个驱动：
+
+#+begin_src shell
+git config --global merge.ours.driver true
+#+end_src
+
+lock 文件冲突就不用手动解决了。
+
+Git LFS 的文件模式也可以在这里声明：
+
+#+begin_src gitattributes
+*.psd filter=lfs diff=lfs merge=lfs
+#+end_src
+
+.gitattributes 还能控制 GitHub 的语言统计。GitHub 用 Linguist 自动检测仓库语言占比，但经常会把 vendor 目录和生成代码算进去。在 .gitattributes 里标记就能修正：
+
+#+begin_src gitattributes
+vendor/* linguist-vendored
+*.gen.go linguist-generated
+docs/* linguist-documentation
+#+end_src
+
+=linguist-vendored= 排除第三方代码， =linguist-generated= 让 diff 默认折叠， =linguist-documentation= 排除文档。
+
+和 .gitignore 一样，.gitattributes 可以放在子目录中局部生效，也可以放在 =.git/info/attributes= 里做本地配置。
+
+* 让团队协作更顺畅
+** .lfsconfig：Git LFS 的仓库级配置
+
+团队用 Git LFS 时，每个人都要手动配 LFS 服务器地址。.lfsconfig 把这个配置跟着仓库走：
+
+#+begin_src conf
+[lfs]
+    url = https://lfs.example.com/repo
+[lfs "transfer"]
+    maxretries = 3
+#+end_src
+
+它用 git config 格式，所有人 clone 后自动使用相同的 LFS 设置。LFS 的文件匹配模式仍然在 .gitattributes 里声明（ =filter=lfs= ），.lfsconfig 只管连接和传输参数。
+
+注意，项目中途加 LFS 不会自动迁移已提交的文件，需要跑 =git lfs migrate= 重写历史。
+
+
+** .mailmap：统一贡献者身份
+
+换过邮箱或拼错过名字的人，在 =git log= 里会显示成多个不同的人。.mailmap 把它们合并为一个身份。
+
+格式是：左边是你想显示的身份，右边是提交里实际出现的。比如换了邮箱：
+
+#+begin_src example
+Jane Developer <jane@example.com> <jane@old-job.com>
+#+end_src
+
+把旧邮箱的提交统一归到新邮箱下。名字拼错了也能改：
+
+#+begin_src example
+Jane Developer <jane@example.com> Jane Dev <jane@example.com>
+#+end_src
+
+Git 在 =git shortlog -sn= 、 =git log= 、 =git blame= 中都会使用这个映射。
+
+有一点要注意：GitHub 的贡献者图表不读 .mailmap，即使你配好了，GitHub 网页上可能还是显示重复。
+
+** .git-blame-ignore-revs：让 blame 跳过噪音提交
+
+全仓库跑一次格式化之后， =git blame= 的输出基本就废了，每行都显示成格式化那次提交。.git-blame-ignore-revs 让 blame 跳过这些噪音提交：
+
+#+begin_src example
+# 跑了 prettier
+a1b2c3d4e5f6789012345678abcdef1234567890
+# 迁移到 ESLint flat config
+b2c3d4e5f60123456789abcdef01234567890123
+#+end_src
+
+一行一个 commit SHA， =#= 开头是注释。配一次就行：
+
+#+begin_src shell
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+#+end_src
+
+GitHub、GitLab 15.4+ 和 Gitea 会自动读这个文件，不用手动配置。
+
+一个坑：如果在全局 git config 里设了 =blame.ignoreRevsFile= ，在没有这个文件的仓库里 =git blame= 会报错。要么每个仓库单独配，要么确保所有仓库都有一个（哪怕是空的）.git-blame-ignore-revs。
+
+** .gitmessage：提交消息模板
+
+=.gitmessage= 是提交消息的预填模板：
+
+#+begin_src example
+# <type>: <subject>
+#
+# <body>
+#
+# <footer>
+#
+# Types: feat, fix, docs, style, refactor, test, chore
+#+end_src
+
+配好之后，每次 =git commit= 打开编辑器就自动填入：
+
+#+begin_src shell
+git config commit.template .gitmessage
+#+end_src
+
+文件跟着仓库走，但 =commit.template= 配置不跟着走，每个开发者 clone 之后需要自己跑一次 =git config commit.template .gitmessage= 才能生效。很多团队因此更愿意用 commit-msg hook 来校验格式，而不是靠模板引导。
+
+* 管理外部依赖
+
+** .gitmodules：子模块配置
+
+子模块把其他 Git 仓库嵌进来当依赖用：
+
+#+begin_src gitmodules
+[submodule "vendor/lib"]
+    path = vendor/lib
+    url = https://github.com/example/lib.git
+    branch = main
+#+end_src
+
+=git clone= 不会自动拉子模块，需要 =git submodule update --init --recursive= ，或者 clone 时加 =--recurse-submodules= 。
+
+子模块跟踪的是具体 commit，不是版本范围，版本管理不够灵活。忘记更新会造成状态混乱。但对于把第三方源码直接放进仓库（vendor）的场景，或者一个仓库管多个项目（monorepo）只想 checkout 部分目录的场景，子模块够用。
+
+* 平台与生态扩展
+
+** Forge 文件夹
+
+=.github/= 、 =.gitlab/= 、 =.gitea/= 、 =.forgejo/= 、 =.bitbucket/= 不是 Git 的功能，是各平台的约定。里面放 CI/CD 配置、Issue/PR 模板、CODEOWNERS 等，跟着代码走，平台自动识别。
+
+Forgejo 和 Gitea 有回退链，会依次查找：
+
+- Forgejo： =.forgejo/= → =.gitea/= → =.github/=
+- Gitea： =.gitea/= → =.github/=
+
+所以在 GitHub 上用的 =.github/= 配置，迁移到 Gitea 后还能直接用。
+
+SourceHut 用 =.build.yml= 或 =.builds/*.yml= 做 CI，不用专门的文件夹。
+
+** 跟着仓库走的其他配置
+
+"在仓库根目录放一个点文件，工具自动识别"这个模式不限于 Git：
+
+- =.editorconfig= ：跨编辑器统一缩进风格、行尾、字符编码。VS Code 原生支持，Vim 和 Emacs 需要装插件
+- =.dockerignore= ：跟 .gitignore 语法一样，排除 Docker 构建上下文中的文件，加速构建并防止敏感信息进入镜像
+- =.ruby-version= 、 =.node-version= 、 =.python-version= ：告诉版本管理工具（rbenv、nodenv、pyenv、asdf）用哪个语言版本， =cd= 进目录自动切换
+- =.jj/= ：Jujutsu（一个 Git 兼容的版本控制工具）的工作目录状态，同时尊重 Git 的所有配置文件
+
+** 顺便一提：.gitkeep
+
+=.gitkeep= 不是 Git 的功能，只是一个约定。Git 不跟踪空目录，在里面放个文件，Git 就有东西可以跟踪了。文件名是任意的，叫什么都行， =.gitkeep= 只是大家的习惯。
+
+* 还有一些不常见的
+
+几个不太常见但特定场景有用的文件：
+
+- =.gitconfig= （仓库级）：Git 不会自动加载仓库里的 .gitconfig（安全原因），但项目可以附带一个，让开发者手动 =git config include.path ../.gitconfig= 引入。常见于 monorepo
+- =.gitsigners= ：记录可信的 GPG/SSH 签名密钥，配合 =gpg.ssh.allowedSignersFile= 使用，Linux 内核项目在用
+- =.gitreview= ：Gerrit 代码审查集成配置，OpenStack、Android 等项目在用
+- =.gitlint= ：gitlint 的配置文件，校验提交消息格式
+
+这些文件做的事情都一样：配置跟着代码走，团队共享同一套规则。
