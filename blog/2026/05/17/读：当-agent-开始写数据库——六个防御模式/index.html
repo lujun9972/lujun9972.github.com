@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：当 Agent 开始写数据库——六个防御模式 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="AI Agent 连上数据库后，传统架构的五个假设全部失灵。Arpit Bhayani 在 [[https://arpitbhayani.co][他的博客]] 上提出了六个数据库层的防御模式：专用角色绑超时、软删除追踪、幂等键、独立连接池、查询注释监控、语义化 Schema。本篇是[[file:读：当 Agent 成为生产调用者——四个被打破的运维假设.org][上篇]]的数据库层续篇，跳过概念铺垫，直入实操。" />
+  <meta name="keywords" content="AI,Agent,数据库,PostgreSQL,运维,防御性设计" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：当 Agent 开始写数据库——六个防御模式</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orged0136d">模式一：给 Agent 建专用角色，绑超时</a></li>
+<li><a href="#org208b338">模式二：软删除 + 操作者追踪</a></li>
+<li><a href="#org863954c">模式三：幂等键</a></li>
+<li><a href="#orgf8cea87">模式四：独立连接池 + PgBouncer</a></li>
+<li><a href="#org5fb7b71">模式五：查询注释监控</a></li>
+<li><a href="#org71ee62b">模式六：语义化 Schema + 视图层</a></li>
+<li><a href="#org3985726">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+上篇 <a href="读：当 Agent 成为生产调用者——四个被打破的运维假设.html">当 Agent 成为生产调用者</a> 聊了 Agent 打破运维假设的宏观框架。Arpit Bhayani 在 <a href="https://programmingdigest.net/links/22232/ad1b5032-3f72-4bd8-8edd-07d3205514b8/email">这篇文章</a> 里把镜头拉近到数据库层，逐个拆解传统数据库架构建立在哪些假设之上，以及 Agent 如何把每个假设都踩了一遍。六个防御模式，全是已有技术的重新组合，不需要新工具。
+</p>
+
+<div id="outline-container-orged0136d" class="outline-2">
+<h2 id="orged0136d">模式一：给 Agent 建专用角色，绑超时</h2>
+<div class="outline-text-2" id="text-orged0136d">
+<p>
+Agent 查数据库没人盯着。一条查询跑了 30 秒，人写出来的代码会有人发现不对劲去排查，Agent 不会，它可能只是在推理循环里卡住了。
+</p>
+
+<p>
+PostgreSQL 可以在角色上直接绑超时，不用动应用代码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">ROLE</span> agent_worker;
+<span class="org-keyword">ALTER</span> <span class="org-keyword">ROLE</span> agent_worker <span class="org-keyword">SET</span> statement_timeout = <span class="org-string">'5s'</span>;
+<span class="org-keyword">ALTER</span> <span class="org-keyword">ROLE</span> agent_worker <span class="org-keyword">SET</span> idle_in_transaction_session_timeout = <span class="org-string">'10s'</span>;
+</pre>
+</div>
+
+<p>
+<code>statement_timeout</code> 管单条语句的执行上限，超了自动取消。 <code>idle_in_transaction_session_timeout</code> 管事务开启后的空闲等待上限。Agent 经常在事务中间停下来等 LLM 返回结果，这个参数就是治这个毛病的：思考可以，别占着事务连接不放。
+</p>
+
+<p>
+超时绑在角色上而不是应用上，好处是同一个数据库里人走普通角色、Agent 走 <code>agent_worker</code> 角色，各管各的超时，互不干扰。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org208b338" class="outline-2">
+<h2 id="org208b338">模式二：软删除 + 操作者追踪</h2>
+<div class="outline-text-2" id="text-org208b338">
+<p>
+Agent 会删数据，而且可能因为推理出错、重试或者误解任务而删掉不该删的。人删数据好歹是有意为之，出问题找得到人；Agent 删数据是自主决策的结果，你没法事后问它"你当时怎么想的"。
+</p>
+
+<p>
+所以不能让它硬删。加三列标记删除：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">ALTER</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">orders</span> <span class="org-keyword">ADD</span> <span class="org-keyword">COLUMN</span> deleted_at TIMESTAMPTZ;
+<span class="org-keyword">ALTER</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">orders</span> <span class="org-keyword">ADD</span> <span class="org-keyword">COLUMN</span> deleted_by TEXT;
+<span class="org-keyword">ALTER</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">orders</span> <span class="org-keyword">ADD</span> <span class="org-keyword">COLUMN</span> delete_reason TEXT;
+</pre>
+</div>
+
+<p>
+再建一个视图给 Agent 用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">VIEW</span> <span class="org-function-name">active_orders</span> <span class="org-keyword">AS</span>
+  <span class="org-keyword">SELECT</span> * <span class="org-keyword">FROM</span> orders <span class="org-keyword">WHERE</span> deleted_at <span class="org-keyword">IS</span> <span class="org-keyword">NULL</span>;
+</pre>
+</div>
+
+<p>
+Agent 查 <code>active_orders</code> ，看不到已删除的行，也恢复不了。
+</p>
+
+<p>
+<code>deleted_by</code> 这一列比另外两列都重要。出事后两小时你要查"Agent X 到底删了什么"，靠的就是它：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> * <span class="org-keyword">FROM</span> orders
+<span class="org-keyword">WHERE</span> deleted_by = <span class="org-string">'agent:customer-support-v2'</span>
+<span class="org-keyword">ORDER</span> <span class="org-keyword">BY</span> deleted_at <span class="org-keyword">DESC</span>;
+</pre>
+</div>
+
+<p>
+值用 <code>agent:角色名</code> 和 <code>user:用户ID</code> 两种前缀区分来源，排查时一眼分清是人干的还是 Agent 干的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org863954c" class="outline-2">
+<h2 id="org863954c">模式三：幂等键</h2>
+<div class="outline-text-2" id="text-org863954c">
+<p>
+Agent 天生会重试。所有编排框架都是"至少执行一次"的语义：步骤失败了重跑，网络抖动让它以为没成功就再来一遍。写入路径不做幂等保护，重试一次就多一行脏数据。
+</p>
+
+<p>
+幂等键的原理不复杂：Agent 每次写入带一个稳定标识符，数据库靠唯一约束拒绝重复，重试多少次都只留一条记录。
+</p>
+
+<p>
+先建一张带幂等键的状态变更表：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">order_state_log</span> (
+  id UUID <span class="org-keyword">DEFAULT</span> gen_random_uuid() <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span>,
+  order_id UUID <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">REFERENCES</span> orders(id),
+  previous_status TEXT,
+  new_status TEXT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span>,
+  changed_by TEXT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span>,
+  changed_at TIMESTAMPTZ <span class="org-keyword">DEFAULT</span> now(),
+  reason TEXT,
+  idempotency_key TEXT <span class="org-keyword">UNIQUE</span>
+);
+</pre>
+</div>
+
+<p>
+键从编排层的 task_id + 操作类型 + 目标 ID 组合生成，同一个逻辑操作不管重试几次都出同一个键。一行Shell 就能算：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> -n <span class="org-string">"task-abc-123:update_status:order-456"</span> | sha256sum | cut -c1-32
+</pre>
+</div>
+
+<pre class="example" id="org42c665d">
+c72a5000a3e5135734decc054b677e3b
+</pre>
+
+<p>
+Agent 第一次写入成功，第二次重试时 <code>UNIQUE</code> 约束静默拒绝，响应照样返回成功。数据库里始终只有一条记录，不会因为重试而膨胀。
+</p>
+
+<p>
+这种"只追加不修改"的思路跟 <a href="../编程之旅/读：Event-Sourcing-让你的数据库记住每一次变更.html">Event Sourcing</a> 同源，只不过 Event Sourcing 是整条链路只追加，这里是单表级别：每条状态变更都是一行新记录，"撤销"就是再插一行，不走 UPDATE 或 DELETE。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf8cea87" class="outline-2">
+<h2 id="orgf8cea87">模式四：独立连接池 + PgBouncer</h2>
+<div class="outline-text-2" id="text-orgf8cea87">
+<p>
+Agent 连数据库的方式跟人不一样，连的久、连的多、数量不可控。
+</p>
+
+<p>
+连的久：Agent 发一条查询，停下来等 LLM 推理，再发一条，再等。连接占用时间拉长到查询时间 + LLM 推理时间 x 推理步数，比普通请求长一个数量级。
+</p>
+
+<p>
+连的多：一个高层任务可能生成多个子 Agent 并行干活，一个任务变五个连接。
+</p>
+
+<p>
+数量不可控：开发时 3 个 Agent，上线时变 30 个，没人想起来更新连接池配置。
+</p>
+
+<p>
+所以 Agent 要用独立的连接池，跟人工流量分开：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">&#36830;&#25509;&#27744;&#37197;&#32622;&#31034;&#24847;&#65288;&#20851;&#38190;&#21442;&#25968;&#65289;
+</span><span class="org-variable-name">pool_size</span> <span class="org-operator">=</span> 10,           <span class="org-comment-delimiter"># </span><span class="org-comment">Agent &#22522;&#30784;&#27744;&#22823;&#23567;
+</span><span class="org-variable-name">max_overflow</span> <span class="org-operator">=</span> 5,         <span class="org-comment-delimiter"># </span><span class="org-comment">&#31361;&#21457;&#23481;&#37327;
+</span><span class="org-variable-name">pool_timeout</span> <span class="org-operator">=</span> 3,         <span class="org-comment-delimiter"># </span><span class="org-comment">3 &#31186;&#25343;&#19981;&#21040;&#36830;&#25509;&#23601;&#22833;&#36133;&#65292;&#19981;&#25490;&#38431;
+</span><span class="org-variable-name">pool_recycle</span> <span class="org-operator">=</span> 300,       <span class="org-comment-delimiter"># </span><span class="org-comment">5 &#20998;&#38047;&#22238;&#25910;&#36830;&#25509;</span>
+</pre>
+</div>
+
+<p>
+<code>pool_timeout</code> 设为 3 秒是故意的。拿不到连接就快速失败、带退避重试，别在队列里等着。排队等待是级联故障的经典起点。
+</p>
+
+<p>
+Agent 数量多了以后，在 Agent 和 PostgreSQL 之间加一层 PgBouncer（连接池代理），设为事务级池化：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-conf"><span class="org-comment-delimiter"># </span><span class="org-comment">pgbouncer.ini
+</span><span class="org-variable-name">pool_mode</span> = transaction       <span class="org-comment-delimiter"># </span><span class="org-comment">&#20107;&#21153;&#19968;&#32467;&#26463;&#23601;&#24402;&#36824;&#36830;&#25509;
+</span><span class="org-variable-name">max_client_conn</span> = 500         <span class="org-comment-delimiter"># </span><span class="org-comment">Agent &#31471;&#21487;&#20197;&#36830; 500 &#20010;
+</span><span class="org-variable-name">default_pool_size</span> = 20        <span class="org-comment-delimiter"># </span><span class="org-comment">&#23454;&#38469; PostgreSQL &#36830;&#25509;&#21482;&#35201; 20 &#20010;
+</span><span class="org-variable-name">reserve_pool_size</span> = 5         <span class="org-comment-delimiter"># </span><span class="org-comment">&#24212;&#24613;&#23481;&#37327;</span>
+</pre>
+</div>
+
+<p>
+事务级池化的意思是：Agent 的多步任务期间一直占着连接，但每个事务一提交，PgBouncer 就把底层 PostgreSQL 连接转给别的 Agent 用。20 个真实连接就能服务 500 个 Agent 连接。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5fb7b71" class="outline-2">
+<h2 id="org5fb7b71">模式五：查询注释监控</h2>
+<div class="outline-text-2" id="text-org5fb7b71">
+<p>
+Agent 出的 bug 跟普通应用 bug 不一样。普通应用报错，日志里有堆栈，工程师能查。Agent 的错误是语义级的：查询语法正确，返回了结果，但结果本身是错的。日志里完全看不出来。Agent 拿到慢查询结果照用不误，拿到空结果集不知道是数据真的不存在还是查询写错了，继续往下走，可能拿错误数据做决策。
+</p>
+
+<p>
+解法是给每条 Agent 查询打标签，标明是哪个 Agent、哪个任务、哪一步发出的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-comment">/* agent_id=fulfillment-v3, task_id=task-abc-123, step=check-inventory */</span>
+<span class="org-keyword">SELECT</span> * <span class="org-keyword">FROM</span> orders <span class="org-keyword">WHERE</span> fulfillment_status = <span class="org-string">'pending'</span>;
+</pre>
+</div>
+
+<p>
+注释会出现在 <code>pg_stat_activity</code> 、 <code>pg_stat_statements</code> 和慢查询日志里。 <code>pg_stat_statements</code> 是 PostgreSQL 扩展，需要先启用（ <code>CREATE EXTENSION pg_stat_statements</code> ）才能查。按 Agent 分组的监控视图：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span>
+  (regexp_match(query, <span class="org-string">'agent_id=([^,]+)'</span>))[1] <span class="org-keyword">AS</span> agent_id,
+  <span class="org-builtin">count</span>(*) <span class="org-keyword">AS</span> call_count,
+  round(mean_exec_time::<span class="org-type">numeric</span>, 2) <span class="org-keyword">AS</span> avg_ms,
+  round(total_exec_time::<span class="org-type">numeric</span>, 2) <span class="org-keyword">AS</span> total_ms
+<span class="org-keyword">FROM</span> pg_stat_statements
+<span class="org-keyword">WHERE</span> query <span class="org-keyword">LIKE</span> <span class="org-string">'%agent_id=%'</span>
+<span class="org-keyword">GROUP</span> <span class="org-keyword">BY</span> 1
+<span class="org-keyword">ORDER</span> <span class="org-keyword">BY</span> total_ms <span class="org-keyword">DESC</span>;
+</pre>
+</div>
+
+<p>
+某个 Agent 占了 60% 的数据库时间，马上能定位到。没注释的话， <code>pg_stat_statements</code> 里一堆 SQL，只能猜"这大概是哪个 Agent 发的"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org71ee62b" class="outline-2">
+<h2 id="org71ee62b">模式六：语义化 Schema + 视图层</h2>
+<div class="outline-text-2" id="text-org71ee62b">
+<p>
+Agent 通过 Text-to-SQL、MCP 工具或直接读 schema 来了解表结构。列名叫什么，直接决定 LLM 生成的 SQL 对不对。
+</p>
+
+<p>
+看两组对比就明白了：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-comment-delimiter">-- </span><span class="org-comment">&#32553;&#20889;&#24335;&#21629;&#21517;&#65288;&#20154;&#33021;&#30475;&#25026;&#65292;LLM &#23481;&#26131;&#29468;&#38169;&#65289;
+</span><span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">orders</span> (
+  id UUID <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span>,
+  usr_id UUID,           <span class="org-comment-delimiter">-- </span><span class="org-comment">&#21738;&#20010;&#29992;&#25143;&#65311;
+</span>  stat_cd <span class="org-type">INT</span>,           <span class="org-comment-delimiter">-- </span><span class="org-comment">2 &#26159;&#20160;&#20040;&#24847;&#24605;&#65311;7 &#21602;&#65311;
+</span>  flg_1 <span class="org-type">BOOLEAN</span>,         <span class="org-comment-delimiter">-- </span><span class="org-comment">&#36825;&#26159;&#21861;&#65311;
+</span>  upd_ts TIMESTAMPTZ     <span class="org-comment-delimiter">-- </span><span class="org-comment">&#35841;&#26356;&#26032;&#30340;&#65311;
+</span>);
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-comment-delimiter">-- </span><span class="org-comment">&#35821;&#20041;&#21270;&#21629;&#21517;&#65288;LLM &#20960;&#20046;&#19981;&#20250;&#29468;&#38169;&#65289;
+</span><span class="org-keyword">CREATE</span> <span class="org-keyword">TABLE</span> <span class="org-function-name">orders</span> (
+  id UUID <span class="org-keyword">PRIMARY</span> <span class="org-keyword">KEY</span>,
+  customer_id UUID <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">REFERENCES</span> customers(id),
+  fulfillment_status TEXT <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">CHECK</span> (
+    fulfillment_status <span class="org-keyword">IN</span> (<span class="org-string">'pending'</span>, <span class="org-string">'processing'</span>, <span class="org-string">'shipped'</span>, <span class="org-string">'delivered'</span>, <span class="org-string">'cancelled'</span>)
+  ),
+  requires_signature <span class="org-type">BOOLEAN</span> <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">DEFAULT</span> <span class="org-keyword">false</span>,
+  last_modified_at TIMESTAMPTZ <span class="org-keyword">NOT</span> <span class="org-keyword">NULL</span> <span class="org-keyword">DEFAULT</span> now()
+);
+</pre>
+</div>
+
+<p>
+第二套里 <code>fulfillment_status</code> 一看就知道是订单履行状态， <code>CHECK</code> 约束把合法值列全了，LLM 不用猜。第一套里 <code>stat_cd</code> 是个状态码，2 是什么 7 是什么，LLM 只能蒙。
+</p>
+
+<p>
+老表改名迁移成本太高，可以在上面盖一层视图：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">CREATE</span> <span class="org-keyword">VIEW</span> <span class="org-function-name">agent_orders</span> <span class="org-keyword">AS</span>
+<span class="org-keyword">SELECT</span>
+  id,
+  usr_id         <span class="org-keyword">AS</span> customer_id,
+  <span class="org-keyword">CASE</span> stat_cd
+    <span class="org-keyword">WHEN</span> 1 <span class="org-keyword">THEN</span> <span class="org-string">'pending'</span>
+    <span class="org-keyword">WHEN</span> 2 <span class="org-keyword">THEN</span> <span class="org-string">'processing'</span>
+    <span class="org-keyword">WHEN</span> 5 <span class="org-keyword">THEN</span> <span class="org-string">'shipped'</span>
+    <span class="org-keyword">WHEN</span> 7 <span class="org-keyword">THEN</span> <span class="org-string">'delivered'</span>
+    <span class="org-keyword">WHEN</span> 9 <span class="org-keyword">THEN</span> <span class="org-string">'cancelled'</span>
+  <span class="org-keyword">END</span>            <span class="org-keyword">AS</span> fulfillment_status,
+  flg_1          <span class="org-keyword">AS</span> requires_signature,
+  upd_ts         <span class="org-keyword">AS</span> last_modified_at
+<span class="org-keyword">FROM</span> orders
+<span class="org-keyword">WHERE</span> deleted_at <span class="org-keyword">IS</span> <span class="org-keyword">NULL</span>;  <span class="org-comment-delimiter">-- </span><span class="org-comment">Agent &#21482;&#30475;&#26377;&#25928;&#34892;</span>
+</pre>
+</div>
+
+<p>
+Agent 只查视图，不碰底层表。视图把缩写翻成语义化名字，把状态码翻成文字。再给列加注释，等于给 LLM 写参考手册：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql">COMMENT <span class="org-keyword">ON</span> <span class="org-keyword">COLUMN</span> agent_orders.fulfillment_status <span class="org-keyword">IS</span>
+  <span class="org-string">'&#35746;&#21333;&#22312;&#23653;&#34892;&#27969;&#31243;&#20013;&#30340;&#24403;&#21069;&#29366;&#24577;&#12290;&#29992;&#36825;&#20010;&#23383;&#27573;&#31579;&#36873;&#38656;&#35201;&#25805;&#20316;&#30340;&#35746;&#21333;&#65306;'</span>
+  <span class="org-string">'pending &#21644; processing &#26159;&#27963;&#36291;&#35746;&#21333;&#12290;'</span>
+  <span class="org-string">'cancelled &#35746;&#21333;&#19981;&#24212;&#34987;&#20462;&#25913;&#12290;'</span>;
+</pre>
+</div>
+
+<p>
+注释写得好，Text-to-SQL 生成的查询就准。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3985726" class="outline-2">
+<h2 id="org3985726">小结</h2>
+<div class="outline-text-2" id="text-org3985726">
+<p>
+六个模式全靠 PostgreSQL 已有能力就能实现：角色参数、软删除、唯一约束、连接池、查询注释、视图和列注释。不用上新工具、不用换新框架。变的只是默认配置的态度：以前这些是"锦上添花"的活，Agent 时代变成了"雪中送炭"的事。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-17</span>
+    <span class="post-info">2026-05-17</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/agent">Agent</a> : <a href="../../../../../tags/数据库">数据库</a> : <a href="../../../../../tags/postgresql">PostgreSQL</a> : <a href="../../../../../tags/运维">运维</a> : <a href="../../../../../tags/防御性设计">防御性设计</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; 0zykk4nl5xwuxebngw3xh43zsh &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
