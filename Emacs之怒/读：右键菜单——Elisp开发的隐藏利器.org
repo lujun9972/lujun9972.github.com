@@ -1,0 +1,131 @@
+#+TITLE: 读：右键菜单——Elisp 开发的隐藏利器
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, Elisp, context-menu, Anju, Edebug
+#+DATE: [2026-05-17 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs 28 引入了 context-menu-mode，为 Elisp 开发提供了上下文敏感的右键菜单。本文介绍内置菜单能力、Anju 包的 Edebug 增强，以及如何写自己的右键菜单项。
+
+原文来自 Charles Choi 的 [[http://yummymelon.com/devnull/enhancing-elisp-development-with-context-menus.html][Enhancing Elisp Development with Context Menus]]。
+
+* Elisp 开发的快捷键负担
+
+写 Elisp 的时候，调试是最让人头疼的环节。用 Edebug 调试要先跑 =M-x edebug-defun= 把函数标记一下，然后 =j= 步入、 =h= 步过、 =g= 继续、 =e= 求值表达式。这几个快捷键散落在不同的 keymap 里，不天天用的话根本记不住哪个是哪个。
+
+Emacs 28 给了一个低调的解法： =context-menu-mode= 。开启之后，在代码上右键就能根据光标位置弹出不同的操作菜单。不需要记快捷键，看菜单就知道能干什么。
+
+* 一行配置开启右键菜单
+
+#+begin_src emacs-lisp
+(context-menu-mode 1)
+#+end_src
+
+加到配置文件里就行。开启后，在 Elisp 文件里右键点击，菜单内容会根据光标位置自动调整。
+
+* 内置菜单已经不少
+
+Emacs 自带了 20 多个右键菜单钩子函数，都挂在 =context-menu-functions= 这个列表上。在 Elisp 文件里，默认生效的就有这些：
+
+| 菜单函数 | 作用 | 触发条件 |
+|---|---|---|
+| =elisp-context-menu= | 查看符号文档、查手册 | 光标在符号上 |
+| =prog-context-menu= | Xref 跳转（找定义、找引用） | 编程模式 |
+| =context-menu-region= | 复制、剪切、粘贴、搜索选中区域 | 选中了文本 |
+| =context-menu-ffap= | 打开光标处的文件路径 | 光标在文件路径上 |
+| =context-menu-vc= | 版本控制操作（commit、diff、log） | 文件受 VC 管理 |
+| =context-menu-undo= | 撤销、重做 | 始终显示 |
+
+其余十几个按需加载，比如 =dictionary-context-menu= 在字典模式激活时才出现， =hi-lock-context-menu= 在高亮模式里才有效。
+
+其中 =elisp-context-menu= 的实现值得细看。它用 =thing-at-mouse= 检测鼠标位置下的符号，然后判断这个符号是函数、变量还是 face，分别提供"查看文档"和"查手册"两个操作。下面是简化版的源码。
+
+#+begin_src emacs-lisp
+  ;; 内置 elisp-context-menu 的核心逻辑（简化版）
+  (defun elisp-context-menu (menu click)
+    (when (thing-at-mouse click 'symbol)
+      (let* ((string (thing-at-mouse click 'symbol t))
+             (symbol (intern string))
+             (title (cond
+                     ((and (fboundp symbol) (not (boundp symbol)))
+                      "Function")
+                     ((and (boundp symbol) (not (fboundp symbol)))
+                      "Variable"))))
+        (when title
+          (define-key-after menu [describe-symbol]
+            `(menu-item ,(format "Describe %s" title)
+                        (lambda (_click) (describe-symbol ',symbol)))
+            'elisp-separator))))
+    menu)
+#+end_src
+
+用 =thing-at-mouse= 获取鼠标位置的符号，用 =define-key-after= 往菜单里加条目，就这两招。
+
+* Anju：给 Elisp 右键菜单装上调试器
+
+Charles Choi 的 [[https://github.com/kickingvegas/anju][Anju]] 包（v1.3.0 起，MELPA 可装）在内置菜单基础上加了两层：
+
+1. 更细的场景感知：区分光标是在普通符号上、函数定义上、ERT 测试上、还是 lambda 上，每种情况给不同的菜单项
+2. Edebug 集成：当函数被插桩（instrument，就是用 =edebug-defun= 标记一下）后，右键菜单自动切换为 Edebug 命令：步入、步过、设断点、继续执行
+
+安装和配置：
+
+#+begin_src emacs-lisp
+(use-package anju
+  :ensure t
+  :hook (emacs-lisp-mode . anju-mode))
+#+end_src
+
+日常写配置改点 Elisp，不需要记住那些调试快捷键，右键就能操作。
+
+* 写一个自己的右键菜单
+
+写自己的菜单项只需要知道一件事：往 =context-menu-functions= 列表里加一个函数，这个函数接收 =menu= 和 =click= 两个参数，在函数里用 =define-key-after= 往菜单加条目，最后返回 =menu= 。
+
+下面是一个实际例子：右键在 Elisp 符号上时，加一个"复制符号名到剪贴板"的菜单项。
+
+#+begin_src emacs-lisp
+  (defun my-elisp-copy-symbol-menu (menu click)
+    "在右键菜单中添加「复制符号名」选项。"
+    (when (and (derived-mode-p 'emacs-lisp-mode)
+               (thing-at-mouse click 'symbol))
+      (let* ((sym (thing-at-mouse click 'symbol t)))
+        (define-key-after menu [my-copy-symbol]
+          `(menu-item ,(format "复制符号名: %s" sym)
+                      (lambda () (interactive)
+                        (kill-new ,sym)
+                        (message "已复制: %s" ,sym)))
+          'elisp-separator)))
+    menu)
+
+  (add-hook 'context-menu-functions #'my-elisp-copy-symbol-menu)
+#+end_src
+
+加载后，在 Elisp 文件里右键点击任何符号，菜单里就会出现"复制符号名"选项。注意 lambda 里的 =,sym= 在定义时就展开成实际值了，不是运行时才取值，所以菜单项被点击时 =sym= 的值还在。
+
+#+begin_example
+右键菜单（光标在 foo 上，实际顺序可能不同）:
+┌──────────────────────────┐
+│ 复制符号名: foo          │  ← 新增的菜单项
+│──────────────────────────│
+│ Describe Function        │  ← 内置
+│ Look up in Manual        │  ← 内置
+│──────────────────────────│
+│ 撤销                     │
+│ 剪切                     │
+│ ...                      │
+└──────────────────────────┘
+#+end_example
+
+* 为什么是右键菜单，不是 Transient
+
+Charles Choi 在设计这个功能时试了三种方案：
+
+1. Transient：窗口管理冲突。Transient 弹出时会重新布局窗口，和 Edebug 的窗口管理打架，导致布局乱跳
+2. Toolbar：macOS 上有 bug，布局也不灵活（按钮只能横排，没法做分组和折叠）
+3. Context Menu：不干扰窗口管理，右键弹出用完即消，和任何 mode 的窗口布局都不冲突
+
+如果你的 Emacs 包 UI 需要和 Edebug 这样的窗口管理机制共存，右键菜单比 Transient 更稳妥。
+
+* 小结
+
+=context-menu-mode= 是 Emacs 28 起内置的全局 minor mode，开启后右键菜单会根据上下文自动调整内容。Emacs 已经为编程模式、Elisp 符号、区域操作、版本控制等场景预置了菜单项，第三方包（如 Anju）可以在其基础上继续扩展。内置菜单够日常使用，常用 Edebug 的话装上 Anju 会顺手不少。
