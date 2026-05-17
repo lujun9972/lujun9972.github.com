@@ -1,0 +1,219 @@
+#+TITLE: 读：当 Agent 开始写数据库——六个防御模式
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI,Agent,数据库,PostgreSQL,运维,防御性设计
+#+DATE: [2026-05-17 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: AI Agent 连上数据库后，传统架构的五个假设全部失灵。Arpit Bhayani 在 [[https://arpitbhayani.co][他的博客]] 上提出了六个数据库层的防御模式：专用角色绑超时、软删除追踪、幂等键、独立连接池、查询注释监控、语义化 Schema。本篇是[[file:读：当 Agent 成为生产调用者——四个被打破的运维假设.org][上篇]]的数据库层续篇，跳过概念铺垫，直入实操。
+
+上篇 [[file:读：当 Agent 成为生产调用者——四个被打破的运维假设.org][当 Agent 成为生产调用者]] 聊了 Agent 打破运维假设的宏观框架。Arpit Bhayani 在 [[https://programmingdigest.net/links/22232/ad1b5032-3f72-4bd8-8edd-07d3205514b8/email][这篇文章]] 里把镜头拉近到数据库层，逐个拆解传统数据库架构建立在哪些假设之上，以及 Agent 如何把每个假设都踩了一遍。六个防御模式，全是已有技术的重新组合，不需要新工具。
+
+* 模式一：给 Agent 建专用角色，绑超时
+
+Agent 查数据库没人盯着。一条查询跑了 30 秒，人写出来的代码会有人发现不对劲去排查，Agent 不会，它可能只是在推理循环里卡住了。
+
+PostgreSQL 可以在角色上直接绑超时，不用动应用代码：
+
+#+begin_src sql
+CREATE ROLE agent_worker;
+ALTER ROLE agent_worker SET statement_timeout = '5s';
+ALTER ROLE agent_worker SET idle_in_transaction_session_timeout = '10s';
+#+end_src
+
+=statement_timeout= 管单条语句的执行上限，超了自动取消。 =idle_in_transaction_session_timeout= 管事务开启后的空闲等待上限。Agent 经常在事务中间停下来等 LLM 返回结果，这个参数就是治这个毛病的：思考可以，别占着事务连接不放。
+
+超时绑在角色上而不是应用上，好处是同一个数据库里人走普通角色、Agent 走 =agent_worker= 角色，各管各的超时，互不干扰。
+
+* 模式二：软删除 + 操作者追踪
+
+Agent 会删数据，而且可能因为推理出错、重试或者误解任务而删掉不该删的。人删数据好歹是有意为之，出问题找得到人；Agent 删数据是自主决策的结果，你没法事后问它"你当时怎么想的"。
+
+所以不能让它硬删。加三列标记删除：
+
+#+begin_src sql
+ALTER TABLE orders ADD COLUMN deleted_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN deleted_by TEXT;
+ALTER TABLE orders ADD COLUMN delete_reason TEXT;
+#+end_src
+
+再建一个视图给 Agent 用：
+
+#+begin_src sql
+CREATE VIEW active_orders AS
+  SELECT * FROM orders WHERE deleted_at IS NULL;
+#+end_src
+
+Agent 查 =active_orders= ，看不到已删除的行，也恢复不了。
+
+=deleted_by= 这一列比另外两列都重要。出事后两小时你要查"Agent X 到底删了什么"，靠的就是它：
+
+#+begin_src sql
+SELECT * FROM orders
+WHERE deleted_by = 'agent:customer-support-v2'
+ORDER BY deleted_at DESC;
+#+end_src
+
+值用 =agent:角色名= 和 =user:用户ID= 两种前缀区分来源，排查时一眼分清是人干的还是 Agent 干的。
+
+* 模式三：幂等键
+
+Agent 天生会重试。所有编排框架都是"至少执行一次"的语义：步骤失败了重跑，网络抖动让它以为没成功就再来一遍。写入路径不做幂等保护，重试一次就多一行脏数据。
+
+幂等键的原理不复杂：Agent 每次写入带一个稳定标识符，数据库靠唯一约束拒绝重复，重试多少次都只留一条记录。
+
+先建一张带幂等键的状态变更表：
+
+#+begin_src sql
+CREATE TABLE order_state_log (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  order_id UUID NOT NULL REFERENCES orders(id),
+  previous_status TEXT,
+  new_status TEXT NOT NULL,
+  changed_by TEXT NOT NULL,
+  changed_at TIMESTAMPTZ DEFAULT now(),
+  reason TEXT,
+  idempotency_key TEXT UNIQUE
+);
+#+end_src
+
+键从编排层的 task_id + 操作类型 + 目标 ID 组合生成，同一个逻辑操作不管重试几次都出同一个键。一行Shell 就能算：
+
+#+begin_src shell
+echo -n "task-abc-123:update_status:order-456" | sha256sum | cut -c1-32
+#+end_src
+
+#+begin_example
+c72a5000a3e5135734decc054b677e3b
+#+end_example
+
+Agent 第一次写入成功，第二次重试时 =UNIQUE= 约束静默拒绝，响应照样返回成功。数据库里始终只有一条记录，不会因为重试而膨胀。
+
+这种"只追加不修改"的思路跟 [[file:../编程之旅/读：Event-Sourcing-让你的数据库记住每一次变更.org][Event Sourcing]] 同源，只不过 Event Sourcing 是整条链路只追加，这里是单表级别：每条状态变更都是一行新记录，"撤销"就是再插一行，不走 UPDATE 或 DELETE。
+
+* 模式四：独立连接池 + PgBouncer
+
+Agent 连数据库的方式跟人不一样，连的久、连的多、数量不可控。
+
+连的久：Agent 发一条查询，停下来等 LLM 推理，再发一条，再等。连接占用时间拉长到查询时间 + LLM 推理时间 x 推理步数，比普通请求长一个数量级。
+
+连的多：一个高层任务可能生成多个子 Agent 并行干活，一个任务变五个连接。
+
+数量不可控：开发时 3 个 Agent，上线时变 30 个，没人想起来更新连接池配置。
+
+所以 Agent 要用独立的连接池，跟人工流量分开：
+
+#+begin_src python
+# 连接池配置示意（关键参数）
+pool_size = 10,           # Agent 基础池大小
+max_overflow = 5,         # 突发容量
+pool_timeout = 3,         # 3 秒拿不到连接就失败，不排队
+pool_recycle = 300,       # 5 分钟回收连接
+#+end_src
+
+=pool_timeout= 设为 3 秒是故意的。拿不到连接就快速失败、带退避重试，别在队列里等着。排队等待是级联故障的经典起点。
+
+Agent 数量多了以后，在 Agent 和 PostgreSQL 之间加一层 PgBouncer（连接池代理），设为事务级池化：
+
+#+begin_src conf
+# pgbouncer.ini
+pool_mode = transaction       # 事务一结束就归还连接
+max_client_conn = 500         # Agent 端可以连 500 个
+default_pool_size = 20        # 实际 PostgreSQL 连接只要 20 个
+reserve_pool_size = 5         # 应急容量
+#+end_src
+
+事务级池化的意思是：Agent 的多步任务期间一直占着连接，但每个事务一提交，PgBouncer 就把底层 PostgreSQL 连接转给别的 Agent 用。20 个真实连接就能服务 500 个 Agent 连接。
+
+* 模式五：查询注释监控
+
+Agent 出的 bug 跟普通应用 bug 不一样。普通应用报错，日志里有堆栈，工程师能查。Agent 的错误是语义级的：查询语法正确，返回了结果，但结果本身是错的。日志里完全看不出来。Agent 拿到慢查询结果照用不误，拿到空结果集不知道是数据真的不存在还是查询写错了，继续往下走，可能拿错误数据做决策。
+
+解法是给每条 Agent 查询打标签，标明是哪个 Agent、哪个任务、哪一步发出的：
+
+#+begin_src sql
+/* agent_id=fulfillment-v3, task_id=task-abc-123, step=check-inventory */
+SELECT * FROM orders WHERE fulfillment_status = 'pending';
+#+end_src
+
+注释会出现在 =pg_stat_activity= 、 =pg_stat_statements= 和慢查询日志里。 =pg_stat_statements= 是 PostgreSQL 扩展，需要先启用（ =CREATE EXTENSION pg_stat_statements= ）才能查。按 Agent 分组的监控视图：
+
+#+begin_src sql
+SELECT
+  (regexp_match(query, 'agent_id=([^,]+)'))[1] AS agent_id,
+  count(*) AS call_count,
+  round(mean_exec_time::numeric, 2) AS avg_ms,
+  round(total_exec_time::numeric, 2) AS total_ms
+FROM pg_stat_statements
+WHERE query LIKE '%agent_id=%'
+GROUP BY 1
+ORDER BY total_ms DESC;
+#+end_src
+
+某个 Agent 占了 60% 的数据库时间，马上能定位到。没注释的话， =pg_stat_statements= 里一堆 SQL，只能猜"这大概是哪个 Agent 发的"。
+
+* 模式六：语义化 Schema + 视图层
+
+Agent 通过 Text-to-SQL、MCP 工具或直接读 schema 来了解表结构。列名叫什么，直接决定 LLM 生成的 SQL 对不对。
+
+看两组对比就明白了：
+
+#+begin_src sql
+-- 缩写式命名（人能看懂，LLM 容易猜错）
+CREATE TABLE orders (
+  id UUID PRIMARY KEY,
+  usr_id UUID,           -- 哪个用户？
+  stat_cd INT,           -- 2 是什么意思？7 呢？
+  flg_1 BOOLEAN,         -- 这是啥？
+  upd_ts TIMESTAMPTZ     -- 谁更新的？
+);
+#+end_src
+
+#+begin_src sql
+-- 语义化命名（LLM 几乎不会猜错）
+CREATE TABLE orders (
+  id UUID PRIMARY KEY,
+  customer_id UUID NOT NULL REFERENCES customers(id),
+  fulfillment_status TEXT NOT NULL CHECK (
+    fulfillment_status IN ('pending', 'processing', 'shipped', 'delivered', 'cancelled')
+  ),
+  requires_signature BOOLEAN NOT NULL DEFAULT false,
+  last_modified_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+#+end_src
+
+第二套里 =fulfillment_status= 一看就知道是订单履行状态， =CHECK= 约束把合法值列全了，LLM 不用猜。第一套里 =stat_cd= 是个状态码，2 是什么 7 是什么，LLM 只能蒙。
+
+老表改名迁移成本太高，可以在上面盖一层视图：
+
+#+begin_src sql
+CREATE VIEW agent_orders AS
+SELECT
+  id,
+  usr_id         AS customer_id,
+  CASE stat_cd
+    WHEN 1 THEN 'pending'
+    WHEN 2 THEN 'processing'
+    WHEN 5 THEN 'shipped'
+    WHEN 7 THEN 'delivered'
+    WHEN 9 THEN 'cancelled'
+  END            AS fulfillment_status,
+  flg_1          AS requires_signature,
+  upd_ts         AS last_modified_at
+FROM orders
+WHERE deleted_at IS NULL;  -- Agent 只看有效行
+#+end_src
+
+Agent 只查视图，不碰底层表。视图把缩写翻成语义化名字，把状态码翻成文字。再给列加注释，等于给 LLM 写参考手册：
+
+#+begin_src sql
+COMMENT ON COLUMN agent_orders.fulfillment_status IS
+  '订单在履行流程中的当前状态。用这个字段筛选需要操作的订单：'
+  'pending 和 processing 是活跃订单。'
+  'cancelled 订单不应被修改。';
+#+end_src
+
+注释写得好，Text-to-SQL 生成的查询就准。
+
+* 小结
+
+六个模式全靠 PostgreSQL 已有能力就能实现：角色参数、软删除、唯一约束、连接池、查询注释、视图和列注释。不用上新工具、不用换新框架。变的只是默认配置的态度：以前这些是"锦上添花"的活，Agent 时代变成了"雪中送炭"的事。
