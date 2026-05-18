@@ -1,0 +1,787 @@
+#+TITLE: 读：gamegrid.el——Emacs 内置游戏是怎么写出来的
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,Elisp,gamegrid
+#+DATE: [2026-05-15 Thu]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 系统解读 Emacs 内置的 gamegrid.el 游戏库。从零开始讲解如何用 Elisp 写出网格游戏——搭框架、初始化 buffer、处理输入事件、配置显示系统，每一步都带代码示例和通俗解释，面向 Emacs 新手。
+
+vannilla.org 上有一个关于 Emacs 内置 gamegrid.el 库的四篇系列教程。Tetris、Snake、Pong 这些 Emacs 内置游戏，背后用的都是这一个核心库。但这个库没有手册，大量函数没有文档，作者是照着源码逆向才搞清楚它怎么工作。本文将四篇教程的内容合并梳理，从零开始讲解 gamegrid.el 的设计思路和用法。
+
+*阅读提示* ：本文代码分散在不同的讲解段落中，是为说明每个概念而拆开的。文末你会得到一个完整可运行的游戏骨架，但中间阅读时不用急着拼装，先理解每个部分在做什么。
+
+* 核心概念：gamegrid 能做什么
+
+Gamegrid 库的核心职责是帮游戏处理显示。Emacs 本身是文本编辑器，而且能在纯文本终端里运行，用 Gamegrid 写游戏意味着同一份代码既能在图形 Emacs 里显示图片，也能在终端里用字符代替。
+
+这类游戏有个限制：必须是基于网格的。元素不能重叠，移动也只能是网格大小的整数倍。所以它叫 gamegrid。
+
+除了显示，Gamegrid 还管两件事：一是自动更新游戏状态（内置了游戏循环，你只需要写 update 函数），二是分数管理（提供保存和加载分数的功能）。
+
+* 搭框架：buffer、mode、keymap
+
+使用 gamegrid 之前，需要先把"舞台"搭好。
+
+** Step 1：定义游戏 buffer
+
+大部分 gamegrid 函数需要一个特定的 buffer 才能工作，所以第一步是定义这个 buffer 的名字：
+
+#+begin_src emacs-lisp
+(require 'gamegrid)
+
+(defconst my-gamegrid-game-buffer-name "Gamegrid Game"
+  "Name of the game buffer.")
+#+end_src
+
+gamegrid 的大部分函数依赖 buffer-local 变量。所谓 buffer-local，就是变量的值只在特定 buffer 里生效，切到其他 buffer 就变回默认值。因为这一点，在调用 gamegrid 更新显示之前，最好检查一下当前 buffer 是不是游戏 buffer。
+
+** Step 2：定义启动函数
+
+启动函数是玩家入口，M-x 调用它开始游戏：
+
+#+begin_src emacs-lisp
+(defun my-gamegrid-game ()
+  "How to play the game should be placed in the docstring."
+  (interactive)
+  (switch-to-buffer my-gamegrid-game-buffer-name)
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-mode)
+  (my-gamegrid-game-start-game))
+#+end_src
+
+做的事包括：切到游戏 buffer，关掉可能残留的旧定时器，激活 major mode，启动新游戏。
+
+=gamegrid-kill-timer= 的作用是停掉上一次可能还在跑的游戏循环，相当于"所有东西从头来"。
+
+** Step 3：定义 major mode
+
+major mode 是 Emacs 里每个 buffer 的"模式身份"，它决定这个 buffer 里有哪些快捷键、语法高亮怎么显示、kill buffer 时做哪些清理工作。gamegrid 游戏的 major mode 通常从 =special-mode= 派生（ =special-mode= 是 Emacs 给只读展示类 buffer 准备的基类）：
+
+#+begin_src emacs-lisp
+(define-derived-mode my-gamegrid-game-mode special-mode "Gamegrid Game"
+  "Mode for my Gamegrid Game."
+  (add-hook 'kill-buffer-hook #'gamegrid-kill-timer nil t)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-init (my-gamegrid-game-display-options)))
+#+end_src
+
+做三件事：
+
+1. =add-hook= 挂了一个钩子：kill buffer 时自动停掉游戏循环。少了这行的话，buffer 关了游戏还在后台跑。
+2. =use-local-map= 设置初始快捷键。用的是"空 map"，只有"开始新游戏"和"关闭 buffer"两个键。
+3. =gamegrid-init= 初始化显示（这个最复杂，放到最后讲）。
+
+** Step 4：两套 keymap
+
+Gamegrid 的设计里用了两套快捷键映射：
+
+- *空 map* ：游戏开始前/结束后使用，只有 =n= 开始新游戏、 =q= 关闭 buffer
+- *游戏 map* ：游戏中使用的完整操作键
+
+好处是游戏结束（比如"死"了）后，玩家可以选择再来一局或关掉 buffer，而不会不小心触发游戏操作。
+
+空 map 长这样：
+
+#+begin_src emacs-lisp
+(defvar my-gamegrid-game-null-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'bury-buffer)
+    (define-key map (kbd "n") #'my-gamegrid-game-start-game)
+    map)
+  "Gamegrid Game's menu keymap.")
+#+end_src
+
+=bury-buffer= 不关闭 buffer，只是把它从当前窗口移走沉到底部，下次想玩了可以再找出来。
+
+* 启动游戏与初始化 buffer
+
+** 启动函数与游戏循环
+
+=my-gamegrid-game-start-game= 负责切换到"游戏中"状态：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-tick 0.5
+  "Time interval between each updates.")
+
+(defun my-gamegrid-game-start-game ()
+  "Start a new game."
+  (interactive)
+  (unless (string= (buffer-name (current-buffer))
+                   my-gamegrid-game-buffer-name)
+    (error "To start a new game, switch to the game buffer."))
+  (my-gamegrid-game-reset-game)
+  (use-local-map my-gamegrid-game-mode-map)
+  (gamegrid-start-timer my-gamegrid-game-tick
+                        #'my-gamegrid-game-update-game))
+#+end_src
+
+做的事情：
+
+1. 检查当前 buffer 是不是游戏 buffer，不是就报错（防止在别的 buffer 里误启动）。这属于防御性编程： =n= 键只在游戏 buffer 的 keymap 里绑了 =start-game= ，正常不会触发，但万一有别的代码直接调用了这个函数，至少不会在错误的 buffer 里搞乱游戏状态
+2. =my-gamegrid-game-reset-game= 重置游戏状态
+3. =use-local-map= 把快捷键从空 map 换成游戏 map。切换 keymap 是游戏"开始"与"结束"之间的分界线
+4. =gamegrid-start-timer= 启动游戏循环
+
+=my-gamegrid-game-tick= 的值 0.5 表示每 0.5 秒执行一次 update 函数。值越小游戏越快。作为参考，Emacs 内置的 Snake 用的是 0.2 秒。
+
+=gamegrid-start-timer= 的本质是一个 *固定间隔的 Emacs 定时器* 。定时器就是"每过一段时间自动调某个函数"，这里的 update 函数就是游戏的"心跳"。
+
+** 重置游戏状态
+
+=my-gamegrid-game-reset-game= 负责初始化 buffer 并重置状态：
+
+#+begin_src emacs-lisp
+(defun my-gamegrid-game-reset-game ()
+  "Reset the game."
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-init-buffer))
+#+end_src
+
+先关掉旧定时器，再初始化 buffer。为什么要有独立的 reset 函数而不是直接写在 start-game 里？因为如果重置逻辑很长很复杂（比如一个大型 Roguelike），拆出来更好维护。
+
+** 初始化 buffer：画网格
+
+Gamegrid 初始化 buffer 时，本质上是定义了一个矩形区域，里面布满网格单元。这跟用 SDL 或 GTK 写游戏时指定窗口尺寸是同样的概念，只是这里的单位不是像素，是"单元格数量"。
+
+下面是初始化函数，画一个四面围墙的空房间（代码中用到的 =my-gamegrid-game-player= 和 =my-gamegrid-game-player-x/y= 在后面的"处理输入"章节定义，这里先知道它们代表玩家实体的编号和坐标即可）：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-buffer-width 16
+  "Width of the game grid in cells.")
+(defconst my-gamegrid-game-buffer-height 16
+  "Height of the game grid in cells.")
+
+(defconst my-gamegrid-game-empty 0
+  "Entity ID for empty/uninitialized cells.")
+(defconst my-gamegrid-game-floor 1
+  "Entity ID for floor cells.")
+(defconst my-gamegrid-game-wall 2
+  "Entity ID for wall cells.")
+
+(defun my-gamegrid-game-init-buffer ()
+  "Initialize the buffer."
+  (gamegrid-init-buffer my-gamegrid-game-buffer-width
+                        my-gamegrid-game-buffer-height
+                        my-gamegrid-game-empty)
+  (let ((buffer-read-only nil))
+    ;; 先把所有格子设为墙
+    (dotimes (y my-gamegrid-game-buffer-height)
+      (dotimes (x my-gamegrid-game-buffer-width)
+        (gamegrid-set-cell x y my-gamegrid-game-wall)))
+    ;; 再把内部区域镂空为地板
+    (let ((y 1)
+          (wmax (1- my-gamegrid-game-buffer-width))
+          (hmax (1- my-gamegrid-game-buffer-height)))
+      (while (< y hmax)
+        (let ((x 1))
+          (while (< x wmax)
+            (gamegrid-set-cell x y my-gamegrid-game-floor)
+            (setq x (1+ x))))
+        (setq y (1+ y))))
+    ;; 在空地上放置玩家
+    (gamegrid-set-cell my-gamegrid-game-player-x
+                       my-gamegrid-game-player-y
+                       my-gamegrid-game-player)))
+#+end_src
+
+逐段解释：
+
+- =gamegrid-init-buffer= 的第一个参数 16 是每行 16 个格子，第二个 16 是每列 16 个格子，第三个参数 =my-gamegrid-game-empty (0)= 是"默认填充值"，后面会被覆盖掉
+- =buffer-read-only= 用 =let= 临时设为 =nil= ：major mode 从 =special-mode= 派生，而 =special-mode= 默认把 buffer 设成只读，不临时解开就没法写入内容
+- 第一个双重循环用 =gamegrid-set-cell= 把所有格子设为墙（ =2= ）
+- 第二个双重循环从 =y=1, x=1= 到 =y=14, x=14= ，把内部区域改成地板（ =1= ）。最终效果是外面一圈墙、中间是空地
+
+=gamegrid-set-cell= 的三个参数是：x 坐标、y 坐标、内容标识（数字）。坐标从 0 开始，(0, 0) 是 buffer 左上角。往坐标传负数或超过初始化尺寸的值会报错。
+
+* 处理输入：push/pop 解耦模式（重点）
+
+这是整个系列里最有意思的设计。
+
+** 游戏中的 keymap
+
+首先定义游戏中使用的 keymap：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-score-file-name "gamegrid-game-scores"
+  "File name for storing high scores.")
+(defvar my-gamegrid-game-score 0)
+
+(defvar my-gamegrid-game-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'my-gamegrid-game-end-game)
+    (define-key map (kbd "n") #'my-gamegrid-game-start-game)
+    (define-key map (kbd "p") #'my-gamegrid-game-pause-game)
+    (define-key map (kbd "a") #'my-gamegrid-game-move-left)
+    (define-key map (kbd "s") #'my-gamegrid-game-move-down)
+    (define-key map (kbd "d") #'my-gamegrid-game-move-right)
+    (define-key map (kbd "w") #'my-gamegrid-game-move-up)
+    map)
+  "The in-game keymap.")
+#+end_src
+
+WASD 移动、 =p= 暂停、 =n= 开始新游戏、 =q= 结束游戏。
+
+** 结束游戏
+
+结束游戏时需要做三件事：停止游戏循环、切换回空 keymap、保存分数：
+
+#+begin_src emacs-lisp
+(defun my-gamegrid-game-end-game ()
+  "End the current game."
+  (interactive)
+  (gamegrid-kill-timer)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-add-score my-gamegrid-game-score-file-name
+                      my-gamegrid-game-score))
+#+end_src
+
+=gamegrid-add-score= 把分数写入指定的分数文件。
+
+** 核心问题：为什么不能直接在按键回调里改游戏状态？
+
+这是理解 Gamegrid 输入处理的关键。
+
+=gamegrid-start-timer= 底层用的是 =run-with-timer= ，即非空闲定时器——理想情况下每隔固定时间触发一次。但这有两个问题叠加在一起：
+
+1. Emacs 是单线程事件循环，处理按键命令时定时器不会触发。如果你在按键回调里做耗时操作，定时器会被推迟到所有输入处理完才执行。
+2. 即使回调本身很快，按键自动重复的频率（每秒二三十次）也远高于定时器间隔（0.5 秒才一次）。
+
+结果就是：按住 =d= 键不松手，角色会在一个更新周期内跳好几个格子——游戏逻辑完全跟着按键频率走，跟原本设好的"每 tick 走一格"的节奏脱节。这在有自动移动物体的游戏里（比如 Pong 的球）尤其糟糕：球的更新跟玩家输入搅在一起，根本无法预测行为。
+
+** 解决方案：push/pop 解耦
+
+Gamegrid 内置游戏的解决方法是：
+
+1. *输入函数只做一件事* ：往全局列表里 push 一个操作指令，然后立刻返回
+2. *update 函数* 在定时器回调中 pop 这个操作指令，真正执行游戏逻辑
+
+输入函数几微秒就完成（只是往列表塞个 cons），不拖慢 Emacs 的命令循环。
+
+方向移动函数长这样：
+
+#+begin_src emacs-lisp
+(defvar my-gamegrid-game-update-list ())
+(defvar my-gamegrid-game-moved nil)
+
+(defun my-gamegrid-game-move-left ()
+  "Move the player left."
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons -1 0) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-down ()
+  "Move the player down."
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 0 1) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-right ()
+  "Move the player right."
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 1 0) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-up ()
+  "Move the player up."
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 0 -1) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+#+end_src
+
+每个方向函数往 =my-gamegrid-game-update-list= 里 push 一个 =(X增量 . Y增量)= 的 cons cell。
+
+=unless= 检查配 =setq= 的作用是 *防止长按* ：没有这个保护的话，按住键不放会往列表里塞几十上百个操作，玩家松开键后角色还会自己走半天。加了这个 flag 之后，每个更新周期只接收一次方向输入。等 update 函数消费了这个操作，flag 被重置，才能接收下一次输入。
+
+** 暂停的实现
+
+暂停的实现只用一个布尔变量：
+
+#+begin_src emacs-lisp
+(defvar my-gamegrid-game-paused nil)
+
+(defun my-gamegrid-game-pause-game ()
+  "Pause the game."
+  (interactive)
+  (if my-gamegrid-game-paused
+      (setq my-gamegrid-game-paused nil)
+    (setq my-gamegrid-game-paused t)))
+#+end_src
+
+=my-gamegrid-game-paused= 在 update 函数里被检查：如果为 =t= ，update 函数就不 pop 操作列表，也就不处理输入。输入函数本身仍然可以 push（不过有 moved flag 挡着，实际上 push 不了），但不会被消费。
+
+** update 函数
+
+更新函数是整个游戏的核心逻辑。示例游戏的目标很简单：用 WASD 移动一个彩色方块在房间里走，撞到墙就不动：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-player 3
+  "Entity ID for the player.")
+
+(defvar my-gamegrid-game-player-x 4)
+(defvar my-gamegrid-game-player-y 5)
+
+(defun my-gamegrid-game-update-game (buffer)
+  "Update the game.
+BUFFER is the buffer in which the function is called."
+  (unless (or my-gamegrid-game-paused
+              (not (string= (buffer-name buffer)
+                            my-gamegrid-game-buffer-name))
+              (null my-gamegrid-game-update-list))
+    (let ((action (pop my-gamegrid-game-update-list)))
+      (let ((nx (+ my-gamegrid-game-player-x (car action)))
+            (ny (+ my-gamegrid-game-player-y (cdr action))))
+        (unless (= (gamegrid-get-cell nx ny)
+                   my-gamegrid-game-wall)
+          ;; 擦掉旧位置
+          (gamegrid-set-cell my-gamegrid-game-player-x
+                             my-gamegrid-game-player-y
+                             my-gamegrid-game-floor)
+          ;; 画上新位置
+          (gamegrid-set-cell nx ny my-gamegrid-game-player)
+          (setq my-gamegrid-game-player-x nx
+                my-gamegrid-game-player-y ny
+                my-gamegrid-game-moved nil))))))
+#+end_src
+
+注意函数签名里的 =buffer= 参数： =gamegrid-start-timer= 传的是函数符号 =#'my-gamegrid-game-update-game= ，gamegrid 内部会自动把当前游戏 buffer 作为第一个参数传进来，不需要你手动传。
+
+逐段解释：
+
+1. 最外层的 =unless= 检查三个条件是否 *任一* 为真，为真就跳过本次更新：
+   - 游戏已暂停
+   - 当前 buffer 不是游戏 buffer（防止后台误更新）
+   - 操作列表为空
+
+2. =pop= 从列表里取出一个 cons，同时从列表中移除
+
+3. 算出新坐标 =nx, ny= ，用 =gamegrid-get-cell= 检查目标位置是不是墙。 =gamegrid-get-cell= 返回的就是之前用 =gamegrid-set-cell= 设进去的那个数字标识（0/1/2/3），用 ~=~ 直接比，很快
+
+4. 不是墙的话：先把旧位置擦成地板，再把新位置画成玩家，最后更新坐标变量，把 =moved= 置 =nil= 。这步很关键， =moved= 复位后输入函数才能接收下一个方向操作
+
+* 显示系统：三层 display options
+
+这是整个 gamegrid.el 最复杂的部分，原作者花了一整篇文章才讲清楚。
+
+** 实体标识与显示向量
+
+前面用数字 0、1、2、3 标识"空""地板""墙""玩家"。这些数字不光当标签用，它们在显示系统里还是数组索引。Gamegrid 用一个 *固定 256 个元素* 的向量（Elisp 里的向量就是方括号写的数组 =[a b c]= ）来存储每个实体的显示信息。256 这个数字不能改，也就是说一个 gamegrid 游戏最多有 256 种可显示元素。
+
+把实体编号映射到显示选项的函数：
+
+#+begin_src emacs-lisp
+(defun my-gamegrid-game-display-options ()
+  "Return a vector with display informations."
+  (let ((vec (make-vector 256 nil)))
+    (dotimes (c 256)
+      (aset vec c
+            (cond ((= c my-gamegrid-game-empty)
+                   my-gamegrid-game-empty-options)
+                  ((= c my-gamegrid-game-floor)
+                   my-gamegrid-game-floor-options)
+                  ((= c my-gamegrid-game-wall)
+                   my-gamegrid-game-wall-options)
+                  ((= c my-gamegrid-game-player)
+                   my-gamegrid-game-player-options)
+                  (t
+                   '(nil nil nil)))))
+    vec))
+#+end_src
+
+索引就是实体编号（0/1/2/3），值是对应的显示选项变量。 =t= 分支的 ='(nil nil nil)= 是兜底值，用了无效索引时什么都不显示。
+
+** 三层结构
+
+每个实体的显示选项是一个 *包含三个元素的列表* ：
+
+#+begin_src emacs-lisp
+'((第一层)   ; 显示形式
+  (第二层)   ; face 配置
+  (第三层))  ; 颜色配置
+#+end_src
+
+逐层来看。
+
+*** 第一层：显示形式
+
+决定实体"长什么样"。里面是一个嵌套列表，可能包含：
+
+| 第一个元素 | 含义 |
+|------------|------|
+| =t= | 用字符显示，第二个元素是字符的编码（如 32 = 空格， =?+=  = 加号） |
+| =glyph= | 用图片显示，第二个元素是图片规格 |
+| =emacs-tty= | 终端模式下覆盖 =t= 的显示 |
+
+=t= 列表是"兜底"列表，必须放在最后。如果 Gamegrid 找不到合适的图形方式，就用字符代替。
+
+最简单的例子：空实体（未初始化的格子），就显示一个空格：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-empty-options
+  '(((t 32))
+    nil
+    nil)
+  "Display options for empty cells.")
+#+end_src
+
+32 是空格字符的 ASCII 码，写成数字比写成 =? = 更直观。
+
+如果想用 gamegrid 内置的 3D 方块图（XPM 格式），要写成：
+
+#+begin_src emacs-lisp
+((glyph colorize)
+ (t 32))
+#+end_src
+
+=colorize= 表示"用默认 XPM 方块图，但可以重新着色"。Emacs 内置的 Tetris、Snake、Pong 用的就是这个技巧：同一张方块图，通过改颜色来区分不同的实体。
+
+墙用 =?+= 号兜底，这样在纯文本终端里至少能看到加号组成的边界。第一层写成：
+
+#+begin_src emacs-lisp
+((glyph colorize)
+ (t ?+))
+#+end_src
+
+如果需要自定义图片，把 =colorize= 换成图片规格列表：
+
+#+begin_src emacs-lisp
+((glyph ((:type xpm :file "my-player.xpm")))
+ (t ?P))
+#+end_src
+
+这会用一个自定义 XPM 文件显示玩家，如果图形不可用就用字符 =P= 替代。Gamegrid 支持的图片格式跟 Emacs 一样，Emacs 能显示 PNG，Gamegrid 就能用 PNG。
+
+不过原作者提醒：自定义图片是"实验性"功能，他测试时偶尔会出奇怪的结果，简单用的话通常没事。
+
+** 第二层：face 配置
+
+Emacs 里的 face 决定文字的字体、颜色、粗细等外观属性。当 glyph 不可用时，gamegrid 回退到这一层，用字符 + face 的组合来显示实体。
+
+第二层是嵌套列表，每个子列表都包含两个元素：第一个元素指定"什么时候用"，第二个元素指定"用哪个 face"。
+
+什么时候用（四种显示类型，按功能从高到低排列）：
+
+| 显示类型 | 环境 |
+|----------|------|
+| =color-x= | 图形界面 + 支持颜色但不支持图片 |
+| =mono-x= | 图形界面 + 不支持颜色和图片 |
+| =color-tty= | 终端 + 支持颜色 |
+| =mono-tty= | 终端 + 单色（实际上几乎永远不会触发，源码实现可能有 bug） |
+
+face 的可选值由 Gamegrid 预设，不能自定义。除了跟显示类型同名的 face（ =color-x=, =mono-x=, =color-tty=, =mono-tty= ），还有一个特殊的 =grid-x= 给墙之类的东西在单色模式下用。
+
+地板和墙的 face 层实际都长一样：
+
+#+begin_src emacs-lisp
+((color-x color-x)
+ (mono-x mono-x)
+ (color-tty color-tty))
+#+end_src
+
+每种显示类型匹配对应的同名 face。 =mono-tty= 没写是因为前面说的，它几乎永远不会被触发。
+
+** 第三层：颜色配置
+
+决定实体在支持颜色时的具体颜色。第三个元素也是列表，但结构跟前面不同：它包含 *两个子列表* ，分别对应图形环境和终端的颜色规格。
+
+图形环境用 RGB 浮点向量 =[红 绿 蓝]= ，每个值从 0 到 1：
+
+#+begin_src emacs-lisp
+((glyph color-x) [0 0 0])  ; 纯黑
+#+end_src
+
+终端用颜色名字符串（一般是 ANSI 颜色名）：
+
+#+begin_src emacs-lisp
+(color-tty "black")
+#+end_src
+
+RGB 向量用于给 XPM 方块重新着色。3D 方块的不同面会自动变深或变浅，你只需要给定基准色。
+
+完整的地板和墙显示选项：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-floor-options
+  '(((glyph colorize)
+     (t 32))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0 0 0])
+     (color-tty "black")))
+  "Display options for floor cells.")
+
+(defconst my-gamegrid-game-wall-options
+  '(((glyph colorize)
+     (t ?+))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.5 0.5 0.5])
+     (color-tty "gray")))
+  "Display options for wall cells.")
+#+end_src
+
+地板黑色、墙灰色。终端模式下地板不显示（空格看不见），墙用加号。
+
+玩家实体的完整选项：
+
+#+begin_src emacs-lisp
+(defconst my-gamegrid-game-player-options
+  '(((glyph ((:type xpm :file "my-player.xpm")))
+     (t ?P))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.9 0.3 0.7])
+     (color-tty "yellow")))
+  "Display options for the player (using a custom XPM image).")
+#+end_src
+
+图形环境用自定义 XPM 图 + 粉红色，终端用黄色字符 =P= 。
+
+** 三层结构回顾
+
+Gamegrid 选择实体的显示方式时从上往下尝试：先看第一层有没有合适的显示形式（glyph > emacs-tty > t 字符）；没有 glyph 就看第二层的 face；有了 face 再看第三层的颜色。这是一套完整的多级回退机制，让游戏在图形 Emacs 和纯文本终端里都能正常玩。
+
+* 附录：完整代码组装
+
+以下是按依赖顺序排列的完整代码。新建一个 =my-game.el= 文件，把下面的内容全部粘贴进去， =M-x eval-buffer= 后再 =M-x my-gamegrid-game= 就能开始玩了。
+
+#+begin_src emacs-lisp :tangle /tmp/my-game.el
+;;; my-game.el --- 一个 Gamegrid 示例游戏
+
+(require 'gamegrid)
+
+;; ── 基础常量 ──
+
+(defconst my-gamegrid-game-buffer-name "Gamegrid Game"
+  "Name of the game buffer.")
+
+(defconst my-gamegrid-game-buffer-width 16
+  "Width of the game grid in cells.")
+(defconst my-gamegrid-game-buffer-height 16
+  "Height of the game grid in cells.")
+
+(defconst my-gamegrid-game-empty 0
+  "Entity ID for empty/uninitialized cells.")
+(defconst my-gamegrid-game-floor 1
+  "Entity ID for floor cells.")
+(defconst my-gamegrid-game-wall 2
+  "Entity ID for wall cells.")
+(defconst my-gamegrid-game-player 3
+  "Entity ID for the player.")
+
+(defconst my-gamegrid-game-tick 0.5)
+
+(defconst my-gamegrid-game-score-file-name "gamegrid-game-scores"
+  "File name for storing high scores.")
+
+;; ── 全局变量 ──
+
+(defvar my-gamegrid-game-score 0)
+(defvar my-gamegrid-game-update-list ())
+(defvar my-gamegrid-game-moved nil)
+(defvar my-gamegrid-game-paused nil)
+
+(defvar my-gamegrid-game-player-x 4)
+(defvar my-gamegrid-game-player-y 5)
+
+;; ── 显示选项 ──
+
+(defconst my-gamegrid-game-empty-options
+  '(((t 32))
+    nil
+    nil)
+  "Display options for empty cells.")
+
+(defconst my-gamegrid-game-floor-options
+  '(((glyph colorize)
+     (t 32))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0 0 0])
+     (color-tty "black")))
+  "Display options for floor cells.")
+
+(defconst my-gamegrid-game-wall-options
+  '(((glyph colorize)
+     (t ?+))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.5 0.5 0.5])
+     (color-tty "gray")))
+  "Display options for wall cells.")
+
+;; 玩家也用 colorize（默认方块），靠颜色区分。
+;; 正文中展示了如何替换为自定义图片。
+(defconst my-gamegrid-game-player-options
+  '(((glyph colorize)
+     (t ?P))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.9 0.3 0.7])
+     (color-tty "yellow")))
+  "Display options for the player.")
+
+;; ── 显示选项向量 ──
+
+(defun my-gamegrid-game-display-options ()
+  (let ((vec (make-vector 256 nil)))
+    (dotimes (c 256)
+      (aset vec c
+            (cond ((= c my-gamegrid-game-empty)
+                   my-gamegrid-game-empty-options)
+                  ((= c my-gamegrid-game-floor)
+                   my-gamegrid-game-floor-options)
+                  ((= c my-gamegrid-game-wall)
+                   my-gamegrid-game-wall-options)
+                  ((= c my-gamegrid-game-player)
+                   my-gamegrid-game-player-options)
+                  (t
+                   '(nil nil nil)))))
+    vec))
+
+;; ── Keymap ──
+
+(defvar my-gamegrid-game-null-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'bury-buffer)
+    (define-key map (kbd "n") #'my-gamegrid-game-start-game)
+    map))
+
+(defvar my-gamegrid-game-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "q") #'my-gamegrid-game-end-game)
+    (define-key map (kbd "n") #'my-gamegrid-game-start-game)
+    (define-key map (kbd "p") #'my-gamegrid-game-pause-game)
+    (define-key map (kbd "a") #'my-gamegrid-game-move-left)
+    (define-key map (kbd "s") #'my-gamegrid-game-move-down)
+    (define-key map (kbd "d") #'my-gamegrid-game-move-right)
+    (define-key map (kbd "w") #'my-gamegrid-game-move-up)
+    map))
+
+;; ── 输入函数 ──
+
+(defun my-gamegrid-game-move-left ()
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons -1 0) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-down ()
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 0 1) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-right ()
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 1 0) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-move-up ()
+  (interactive)
+  (unless my-gamegrid-game-moved
+    (push (cons 0 -1) my-gamegrid-game-update-list)
+    (setq my-gamegrid-game-moved t)))
+
+(defun my-gamegrid-game-pause-game ()
+  (interactive)
+  (if my-gamegrid-game-paused
+      (setq my-gamegrid-game-paused nil)
+    (setq my-gamegrid-game-paused t)))
+
+(defun my-gamegrid-game-end-game ()
+  (interactive)
+  (gamegrid-kill-timer)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-add-score my-gamegrid-game-score-file-name
+                      my-gamegrid-game-score))
+
+;; ── Buffer 初始化 ──
+
+(defun my-gamegrid-game-init-buffer ()
+  (gamegrid-init-buffer my-gamegrid-game-buffer-width
+                        my-gamegrid-game-buffer-height
+                        my-gamegrid-game-empty)
+  (let ((buffer-read-only nil))
+    (dotimes (y my-gamegrid-game-buffer-height)
+      (dotimes (x my-gamegrid-game-buffer-width)
+        (gamegrid-set-cell x y my-gamegrid-game-wall)))
+    (let ((y 1)
+          (wmax (1- my-gamegrid-game-buffer-width))
+          (hmax (1- my-gamegrid-game-buffer-height)))
+      (while (< y hmax)
+        (let ((x 1))
+          (while (< x wmax)
+            (gamegrid-set-cell x y my-gamegrid-game-floor)
+            (setq x (1+ x))))
+        (setq y (1+ y))))
+    (gamegrid-set-cell my-gamegrid-game-player-x
+                       my-gamegrid-game-player-y
+                       my-gamegrid-game-player)))
+
+;; ── 游戏循环 ──
+
+(defun my-gamegrid-game-reset-game ()
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-init-buffer))
+
+(defun my-gamegrid-game-update-game (buffer)
+  (unless (or my-gamegrid-game-paused
+              (not (string= (buffer-name buffer)
+                            my-gamegrid-game-buffer-name))
+              (null my-gamegrid-game-update-list))
+    (let ((action (pop my-gamegrid-game-update-list)))
+      (let ((nx (+ my-gamegrid-game-player-x (car action)))
+            (ny (+ my-gamegrid-game-player-y (cdr action))))
+        (unless (= (gamegrid-get-cell nx ny)
+                   my-gamegrid-game-wall)
+          (gamegrid-set-cell my-gamegrid-game-player-x
+                             my-gamegrid-game-player-y
+                             my-gamegrid-game-floor)
+          (gamegrid-set-cell nx ny my-gamegrid-game-player)
+          (setq my-gamegrid-game-player-x nx
+                my-gamegrid-game-player-y ny
+                my-gamegrid-game-moved nil))))))
+
+(defun my-gamegrid-game-start-game ()
+  (interactive)
+  (unless (string= (buffer-name (current-buffer))
+                   my-gamegrid-game-buffer-name)
+    (error "To start a new game, switch to the game buffer."))
+  (my-gamegrid-game-reset-game)
+  (use-local-map my-gamegrid-game-mode-map)
+  (gamegrid-start-timer my-gamegrid-game-tick
+                        #'my-gamegrid-game-update-game))
+
+;; ── Major Mode ──
+
+(define-derived-mode my-gamegrid-game-mode special-mode "Gamegrid Game"
+  (add-hook 'kill-buffer-hook #'gamegrid-kill-timer nil t)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-init (my-gamegrid-game-display-options)))
+
+;; ── 入口 ──
+
+(defun my-gamegrid-game ()
+  (interactive)
+  (switch-to-buffer my-gamegrid-game-buffer-name)
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-mode)
+  (my-gamegrid-game-start-game))
+#+end_src
+
+* 收尾
+
+至此，gamegrid.el 的四个核心模块都讲完了：搭框架、初始化、输入处理、显示系统。Emacs 不只是编辑器，还是一个有自己图形系统的游戏引擎。
+
+本文代码基于 vannilla.org 四篇系列教程整合：[[https://vannilla.org/write/1533394929/article.html][Part 1]]、[[https://vannilla.org/write/1533740728/article.html][Part 2]]、[[https://vannilla.org/write/1533913392/article.html][Part 3]]、[[https://vannilla.org/write/1535488871/article.html][Part 4]]。
