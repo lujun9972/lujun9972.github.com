@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: 把 Emacs Buffer 打印成图片 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="description" content="两种把 Emacs buffer 打印成 PNG 图片的方法：cups-pdf 虚拟打印机（中文友好）和 ps-print（保留语法高亮）。包含 Arch Linux 上的完整踩坑记录。" />
+  <meta name="keywords" content="Emacs, TIL, cups-pdf, ps-print, Ghostscript" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: 把 Emacs Buffer 打印成图片</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgf6698f7">路线一：cups-pdf 虚拟打印机（推荐，中文友好）</a>
+<ul>
+<li><a href="#org087a6ee">安装并启动</a></li>
+<li><a href="#orgda7086a">创建打印机队列</a></li>
+<li><a href="#org0ad8ce5">修改输出目录</a></li>
+<li><a href="#orgd0102fa">配置 Emacs</a></li>
+<li><a href="#orgd443627">打印并转图</a></li>
+</ul>
+</li>
+<li><a href="#orgcb430ce">路线二：ps-print（保留语法高亮）</a>
+<ul>
+<li><a href="#org00c3ceb">基本用法（纯英文）</a></li>
+<li><a href="#org4516d8b">有中文的情况</a></li>
+</ul>
+</li>
+<li><a href="#org085c897">两条路线怎么选</a></li>
+</ul>
+</div>
+</div>
+<p>
+想把 Emacs buffer 的内容变成一张 PNG 图片——分享代码片段、做文档插图、存档都挺方便。试下来有两条路，各有取舍。
+</p>
+
+<div id="outline-container-orgf6698f7" class="outline-2">
+<h2 id="orgf6698f7">路线一：cups-pdf 虚拟打印机（推荐，中文友好）</h2>
+<div class="outline-text-2" id="text-orgf6698f7">
+<p>
+思路是装一个虚拟 PDF 打印机，Emacs 往这个"打印机"输出，实际得到 PDF 文件，再把 PDF 转成图片。走系统 fontconfig 渲染字体，中文开箱即用。
+</p>
+</div>
+
+<div id="outline-container-org087a6ee" class="outline-3">
+<h3 id="org087a6ee">安装并启动</h3>
+<div class="outline-text-3" id="text-org087a6ee">
+<div class="org-src-container">
+<pre class="src src-shell">sudo pacman -S cups-pdf   <span class="org-comment-delimiter"># </span><span class="org-comment">Arch</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudo systemctl start cups
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgda7086a" class="outline-3">
+<h3 id="orgda7086a">创建打印机队列</h3>
+<div class="outline-text-3" id="text-orgda7086a">
+<p>
+Arch 上装完 <code>cups-pdf</code> 包 <b>不会</b> 自动创建打印机队列，需要手动添加：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">lpadmin -p PDF -E -v cups-pdf:/ -m CUPS-PDF_noopt.ppd
+</pre>
+</div>
+
+<p>
+执行后用 <code>lpstat -p PDF</code> 确认打印机状态为"空闲"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0ad8ce5" class="outline-3">
+<h3 id="org0ad8ce5">修改输出目录</h3>
+<div class="outline-text-3" id="text-org0ad8ce5">
+<p>
+默认输出到 <code>/var/spool/cups-pdf/${USER}/</code> ，改成 <code>~/PDF/</code> 方便找：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sudoedit /etc/cups/cups-pdf.conf
+</pre>
+</div>
+
+<p>
+把：
+</p>
+
+<pre class="example" id="orgef404e7">
+#Out /var/spool/cups-pdf/${USER}
+</pre>
+
+<p>
+改成：
+</p>
+
+<pre class="example" id="org43c1b07">
+Out /home/${USER}/PDF
+</pre>
+
+<p>
+改完立即生效，不用重启 CUPS 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd0102fa" class="outline-3">
+<h3 id="orgd0102fa">配置 Emacs</h3>
+<div class="outline-text-3" id="text-orgd0102fa">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> printer-name <span class="org-string">"PDF"</span>)
+</pre>
+</div>
+
+<p>
+加到配置文件里，或者只在当前会话中 <code>eval</code> 也行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd443627" class="outline-3">
+<h3 id="orgd443627">打印并转图</h3>
+<div class="outline-text-3" id="text-orgd443627">
+<p>
+在目标 buffer 里执行 <code>M-x print-buffer</code> ，PDF 会出现在 <code>~/PDF/</code> 目录下。然后终端里转换：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pdftoppm -png -r 300 ~/PDF/output.pdf ~/buffer-image
+</pre>
+</div>
+
+<p>
+<code>-r 300</code> 是 DPI，数值越大图片越清晰。输出文件名会自动加页码后缀，比如 <code>buffer-image-1.png</code> 。
+</p>
+
+<pre class="example" id="org9a6f84f">
+pdftoppm 来自 poppler 包，Arch 上默认就有。
+转换时会输出大量 "Bad bounding box in Type 3 glyph" 警告，这是 CJK 字体的 Type 3 字形边界不精确导致的，不影响渲染结果，可以无视。
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgcb430ce" class="outline-2">
+<h2 id="orgcb430ce">路线二：ps-print（保留语法高亮）</h2>
+<div class="outline-text-2" id="text-orgcb430ce">
+<p>
+上面那条路输出的是纯文本，没有颜色。想要语法高亮，得用 Emacs 内置的 <code>ps-print</code> 。
+</p>
+</div>
+
+<div id="outline-container-org00c3ceb" class="outline-3">
+<h3 id="org00c3ceb">基本用法（纯英文）</h3>
+<div class="outline-text-3" id="text-org00c3ceb">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">C-u &#21069;&#32512;&#35753; ps-print-buffer &#25552;&#31034;&#20320;&#36755;&#20837;&#25991;&#20214;&#21517;
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">C-u M-x ps-print-buffer RET /tmp/output.ps RET</span>
+</pre>
+</div>
+
+<p>
+然后转 PNG ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">gs -q -dNOPAUSE -dBATCH -sDEVICE=png256 -r300 -sOutputFile=output.png /tmp/output.ps
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4516d8b" class="outline-3">
+<h3 id="org4516d8b">有中文的情况</h3>
+<div class="outline-text-3" id="text-org4516d8b">
+<p>
+<code>ps-print</code> 自己生成 PostScript ，不调用系统字体。没有配置 CJK 支持的话，遇到中文字符会生成 <code>^B</code> （ ASCII 0x02 ）占位符，最终渲染出来就是空白。
+</p>
+
+<p>
+需要加载 <code>ps-mule</code> 模块并指定中文字体：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">ps-mule</span>)
+(<span class="org-keyword">setq</span> ps-multibyte-buffer 'non-latin-printer)
+(<span class="org-keyword">setq</span> ps-mule-font-info-database
+      '((chinese-gbk
+         (nil . <span class="org-string">"Noto Sans CJK SC"</span>)
+         nil 1 1 1 1 nil)))
+</pre>
+</div>
+
+<p>
+你可能会问：文件明明是 UTF-8 编码，为什么不是 <code>unicode</code> ？这里有个容易混淆的概念—— <b>编码（encoding）</b> 和 <b>字符集（charset）</b> 是两回事。UTF-8 是编码方式，决定字节怎么存；charset 是字符分类，决定字符属于哪个集合。 <code>ps-mule</code> 按 charset 分组查找字体，不按编码。现代 Emacs 中，即使文件是 UTF-8 编码的，中文简体字符依然归类在 <code>chinese-gbk</code> 这个 charset 下。可以在 Emacs 里验证：光标放在中文字上， <code>M-x describe-char</code> ，看 <code>charset</code> 那一行的值。
+</p>
+
+<p>
+配置好之后，同样的操作： <code>C-u M-x ps-print-buffer</code> → 转换 PS → 得到带高亮和中文的 PNG 。
+</p>
+
+<p>
+字体要确认系统上装了 <code>noto-fonts-cjk</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pacman -Q noto-fonts-cjk
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org085c897" class="outline-2">
+<h2 id="org085c897">两条路线怎么选</h2>
+<div class="outline-text-2" id="text-org085c897">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">&#xa0;</th>
+<th scope="col" class="org-left">cups-pdf</th>
+<th scope="col" class="org-left">ps-print</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">中文支持</td>
+<td class="org-left">开箱即用</td>
+<td class="org-left">需配 <code>ps-mule</code> 字体</td>
+</tr>
+
+<tr>
+<td class="org-left">语法高亮</td>
+<td class="org-left">无</td>
+<td class="org-left">有</td>
+</tr>
+
+<tr>
+<td class="org-left">依赖</td>
+<td class="org-left">cups-pdf 、 poppler</td>
+<td class="org-left">Ghostscript</td>
+</tr>
+
+<tr>
+<td class="org-left">自定义排版</td>
+<td class="org-left">少</td>
+<td class="org-left">多（行号、页眉、字体大小等）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+简单记：*要中文选 cups-pdf ，要高亮选 ps-print* 。
+</p>
+
+<p>
+ps-print 的排版选项可以通过 <code>M-x customize-group RET ps-print</code> 精细调整，包括页眉内容、行号显示、字体大小等。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-18</span>
+    <span class="post-info">2026-05-18</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/til">TIL</a> : <a href="../../../../../tags/cups-pdf">cups-pdf</a> : <a href="../../../../../tags/ps-print">ps-print</a> : <a href="../../../../../tags/ghostscript">Ghostscript</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; ghs03yo5c4judosebpamfexzwa &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

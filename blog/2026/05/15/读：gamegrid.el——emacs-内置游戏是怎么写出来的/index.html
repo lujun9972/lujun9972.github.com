@@ -1,0 +1,1265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：gamegrid.el——Emacs 内置游戏是怎么写出来的 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="系统解读 Emacs 内置的 gamegrid.el 游戏库。从零开始讲解如何用 Elisp 写出网格游戏——搭框架、初始化 buffer、处理输入事件、配置显示系统，每一步都带代码示例和通俗解释，面向 Emacs 新手。" />
+  <meta name="keywords" content="Emacs,Elisp,gamegrid" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：gamegrid.el——Emacs 内置游戏是怎么写出来的</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org1658af7">核心概念：gamegrid 能做什么</a></li>
+<li><a href="#orgcdb7c80">搭框架：buffer、mode、keymap</a>
+<ul>
+<li><a href="#orgf055c40">Step 1：定义游戏 buffer</a></li>
+<li><a href="#org485e93e">Step 2：定义启动函数</a></li>
+<li><a href="#org1e83066">Step 3：定义 major mode</a></li>
+<li><a href="#orgefa934a">Step 4：两套 keymap</a></li>
+</ul>
+</li>
+<li><a href="#orge9847cc">启动游戏与初始化 buffer</a>
+<ul>
+<li><a href="#org4f9cd9b">启动函数与游戏循环</a></li>
+<li><a href="#org6c96947">重置游戏状态</a></li>
+<li><a href="#org4c5289e">初始化 buffer：画网格</a></li>
+</ul>
+</li>
+<li><a href="#org7ad4a0f">处理输入：push/pop 解耦模式（重点）</a>
+<ul>
+<li><a href="#orgf810e34">游戏中的 keymap</a></li>
+<li><a href="#orgf7c7567">结束游戏</a></li>
+<li><a href="#org44dcc0e">核心问题：为什么不能直接在按键回调里改游戏状态？</a></li>
+<li><a href="#org8a79b20">解决方案：push/pop 解耦</a></li>
+<li><a href="#org4f8a419">暂停的实现</a></li>
+<li><a href="#org5ad0338">update 函数</a></li>
+</ul>
+</li>
+<li><a href="#orgdf91c3e">显示系统：三层 display options</a>
+<ul>
+<li><a href="#org6306587">实体标识与显示向量</a></li>
+<li><a href="#orge62e01c">三层结构</a>
+<ul>
+<li><a href="#org5c51948">第一层：显示形式</a></li>
+</ul>
+</li>
+<li><a href="#org01fb505">第二层：face 配置</a></li>
+<li><a href="#org0aa382a">第三层：颜色配置</a></li>
+<li><a href="#orgadf0ae8">三层结构回顾</a></li>
+</ul>
+</li>
+<li><a href="#orgb9dfd74">附录：完整代码组装</a></li>
+<li><a href="#org0bd09b8">收尾</a></li>
+</ul>
+</div>
+</div>
+<p>
+vannilla.org 上有一个关于 Emacs 内置 gamegrid.el 库的四篇系列教程。Tetris、Snake、Pong 这些 Emacs 内置游戏，背后用的都是这一个核心库。但这个库没有手册，大量函数没有文档，作者是照着源码逆向才搞清楚它怎么工作。本文将四篇教程的内容合并梳理，从零开始讲解 gamegrid.el 的设计思路和用法。
+</p>
+
+<p>
+<b>阅读提示</b> ：本文代码分散在不同的讲解段落中，是为说明每个概念而拆开的。文末你会得到一个完整可运行的游戏骨架，但中间阅读时不用急着拼装，先理解每个部分在做什么。
+</p>
+
+<div id="outline-container-org1658af7" class="outline-2">
+<h2 id="org1658af7">核心概念：gamegrid 能做什么</h2>
+<div class="outline-text-2" id="text-org1658af7">
+<p>
+Gamegrid 库的核心职责是帮游戏处理显示。Emacs 本身是文本编辑器，而且能在纯文本终端里运行，用 Gamegrid 写游戏意味着同一份代码既能在图形 Emacs 里显示图片，也能在终端里用字符代替。
+</p>
+
+<p>
+这类游戏有个限制：必须是基于网格的。元素不能重叠，移动也只能是网格大小的整数倍。所以它叫 gamegrid。
+</p>
+
+<p>
+除了显示，Gamegrid 还管两件事：一是自动更新游戏状态（内置了游戏循环，你只需要写 update 函数），二是分数管理（提供保存和加载分数的功能）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgcdb7c80" class="outline-2">
+<h2 id="orgcdb7c80">搭框架：buffer、mode、keymap</h2>
+<div class="outline-text-2" id="text-orgcdb7c80">
+<p>
+使用 gamegrid 之前，需要先把"舞台"搭好。
+</p>
+</div>
+
+<div id="outline-container-orgf055c40" class="outline-3">
+<h3 id="orgf055c40">Step 1：定义游戏 buffer</h3>
+<div class="outline-text-3" id="text-orgf055c40">
+<p>
+大部分 gamegrid 函数需要一个特定的 buffer 才能工作，所以第一步是定义这个 buffer 的名字：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">require</span> '<span class="org-constant">gamegrid</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-name</span> <span class="org-string">"Gamegrid Game"</span>
+  <span class="org-doc">"Name of the game buffer."</span>)
+</pre>
+</div>
+
+<p>
+gamegrid 的大部分函数依赖 buffer-local 变量。所谓 buffer-local，就是变量的值只在特定 buffer 里生效，切到其他 buffer 就变回默认值。因为这一点，在调用 gamegrid 更新显示之前，最好检查一下当前 buffer 是不是游戏 buffer。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org485e93e" class="outline-3">
+<h3 id="org485e93e">Step 2：定义启动函数</h3>
+<div class="outline-text-3" id="text-org485e93e">
+<p>
+启动函数是玩家入口，M-x 调用它开始游戏：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game</span> ()
+  <span class="org-doc">"How to play the game should be placed in the docstring."</span>
+  (<span class="org-keyword">interactive</span>)
+  (switch-to-buffer my-gamegrid-game-buffer-name)
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-mode)
+  (my-gamegrid-game-start-game))
+</pre>
+</div>
+
+<p>
+做的事包括：切到游戏 buffer，关掉可能残留的旧定时器，激活 major mode，启动新游戏。
+</p>
+
+<p>
+<code>gamegrid-kill-timer</code> 的作用是停掉上一次可能还在跑的游戏循环，相当于"所有东西从头来"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1e83066" class="outline-3">
+<h3 id="org1e83066">Step 3：定义 major mode</h3>
+<div class="outline-text-3" id="text-org1e83066">
+<p>
+major mode 是 Emacs 里每个 buffer 的"模式身份"，它决定这个 buffer 里有哪些快捷键、语法高亮怎么显示、kill buffer 时做哪些清理工作。gamegrid 游戏的 major mode 通常从 <code>special-mode</code> 派生（ <code>special-mode</code> 是 Emacs 给只读展示类 buffer 准备的基类）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">define-derived-mode</span> <span class="org-function-name">my-gamegrid-game-mode</span> special-mode <span class="org-string">"Gamegrid Game"</span>
+  <span class="org-doc">"Mode for my Gamegrid Game."</span>
+  (add-hook 'kill-buffer-hook #'gamegrid-kill-timer nil t)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-init (my-gamegrid-game-display-options)))
+</pre>
+</div>
+
+<p>
+做三件事：
+</p>
+
+<ol class="org-ol">
+<li><code>add-hook</code> 挂了一个钩子：kill buffer 时自动停掉游戏循环。少了这行的话，buffer 关了游戏还在后台跑。</li>
+<li><code>use-local-map</code> 设置初始快捷键。用的是"空 map"，只有"开始新游戏"和"关闭 buffer"两个键。</li>
+<li><code>gamegrid-init</code> 初始化显示（这个最复杂，放到最后讲）。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-orgefa934a" class="outline-3">
+<h3 id="orgefa934a">Step 4：两套 keymap</h3>
+<div class="outline-text-3" id="text-orgefa934a">
+<p>
+Gamegrid 的设计里用了两套快捷键映射：
+</p>
+
+<ul class="org-ul">
+<li><b>空 map</b> ：游戏开始前/结束后使用，只有 <code>n</code> 开始新游戏、 <code>q</code> 关闭 buffer</li>
+<li><b>游戏 map</b> ：游戏中使用的完整操作键</li>
+</ul>
+
+<p>
+好处是游戏结束（比如"死"了）后，玩家可以选择再来一局或关掉 buffer，而不会不小心触发游戏操作。
+</p>
+
+<p>
+空 map 长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-null-map</span>
+  (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+    (define-key map (kbd <span class="org-string">"q"</span>) #'bury-buffer)
+    (define-key map (kbd <span class="org-string">"n"</span>) #'my-gamegrid-game-start-game)
+    map)
+  <span class="org-doc">"Gamegrid Game's menu keymap."</span>)
+</pre>
+</div>
+
+<p>
+<code>bury-buffer</code> 不关闭 buffer，只是把它从当前窗口移走沉到底部，下次想玩了可以再找出来。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge9847cc" class="outline-2">
+<h2 id="orge9847cc">启动游戏与初始化 buffer</h2>
+<div class="outline-text-2" id="text-orge9847cc">
+</div>
+<div id="outline-container-org4f9cd9b" class="outline-3">
+<h3 id="org4f9cd9b">启动函数与游戏循环</h3>
+<div class="outline-text-3" id="text-org4f9cd9b">
+<p>
+<code>my-gamegrid-game-start-game</code> 负责切换到"游戏中"状态：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-tick</span> 0.5
+  <span class="org-doc">"Time interval between each updates."</span>)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-start-game</span> ()
+  <span class="org-doc">"Start a new game."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> (string= (buffer-name (current-buffer))
+                   my-gamegrid-game-buffer-name)
+    (<span class="org-warning">error</span> <span class="org-string">"To start a new game, switch to the game buffer."</span>))
+  (my-gamegrid-game-reset-game)
+  (use-local-map my-gamegrid-game-mode-map)
+  (gamegrid-start-timer my-gamegrid-game-tick
+                        #'my-gamegrid-game-update-game))
+</pre>
+</div>
+
+<p>
+做的事情：
+</p>
+
+<ol class="org-ol">
+<li>检查当前 buffer 是不是游戏 buffer，不是就报错（防止在别的 buffer 里误启动）。这属于防御性编程： <code>n</code> 键只在游戏 buffer 的 keymap 里绑了 <code>start-game</code> ，正常不会触发，但万一有别的代码直接调用了这个函数，至少不会在错误的 buffer 里搞乱游戏状态</li>
+<li><code>my-gamegrid-game-reset-game</code> 重置游戏状态</li>
+<li><code>use-local-map</code> 把快捷键从空 map 换成游戏 map。切换 keymap 是游戏"开始"与"结束"之间的分界线</li>
+<li><code>gamegrid-start-timer</code> 启动游戏循环</li>
+</ol>
+
+<p>
+<code>my-gamegrid-game-tick</code> 的值 0.5 表示每 0.5 秒执行一次 update 函数。值越小游戏越快。作为参考，Emacs 内置的 Snake 用的是 0.2 秒。
+</p>
+
+<p>
+<code>gamegrid-start-timer</code> 的本质是一个 <b>固定间隔的 Emacs 定时器</b> 。定时器就是"每过一段时间自动调某个函数"，这里的 update 函数就是游戏的"心跳"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6c96947" class="outline-3">
+<h3 id="org6c96947">重置游戏状态</h3>
+<div class="outline-text-3" id="text-org6c96947">
+<p>
+<code>my-gamegrid-game-reset-game</code> 负责初始化 buffer 并重置状态：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-reset-game</span> ()
+  <span class="org-doc">"Reset the game."</span>
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-init-buffer))
+</pre>
+</div>
+
+<p>
+先关掉旧定时器，再初始化 buffer。为什么要有独立的 reset 函数而不是直接写在 start-game 里？因为如果重置逻辑很长很复杂（比如一个大型 Roguelike），拆出来更好维护。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4c5289e" class="outline-3">
+<h3 id="org4c5289e">初始化 buffer：画网格</h3>
+<div class="outline-text-3" id="text-org4c5289e">
+<p>
+Gamegrid 初始化 buffer 时，本质上是定义了一个矩形区域，里面布满网格单元。这跟用 SDL 或 GTK 写游戏时指定窗口尺寸是同样的概念，只是这里的单位不是像素，是"单元格数量"。
+</p>
+
+<p>
+下面是初始化函数，画一个四面围墙的空房间（代码中用到的 <code>my-gamegrid-game-player</code> 和 <code>my-gamegrid-game-player-x/y</code> 在后面的"处理输入"章节定义，这里先知道它们代表玩家实体的编号和坐标即可）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-width</span> 16
+  <span class="org-doc">"Width of the game grid in cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-height</span> 16
+  <span class="org-doc">"Height of the game grid in cells."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-empty</span> 0
+  <span class="org-doc">"Entity ID for empty/uninitialized cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-floor</span> 1
+  <span class="org-doc">"Entity ID for floor cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-wall</span> 2
+  <span class="org-doc">"Entity ID for wall cells."</span>)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-init-buffer</span> ()
+  <span class="org-doc">"Initialize the buffer."</span>
+  (gamegrid-init-buffer my-gamegrid-game-buffer-width
+                        my-gamegrid-game-buffer-height
+                        my-gamegrid-game-empty)
+  (<span class="org-keyword">let</span> ((buffer-read-only nil))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20808;&#25226;&#25152;&#26377;&#26684;&#23376;&#35774;&#20026;&#22681;
+</span>    (<span class="org-keyword">dotimes</span> (y my-gamegrid-game-buffer-height)
+      (<span class="org-keyword">dotimes</span> (x my-gamegrid-game-buffer-width)
+        (gamegrid-set-cell x y my-gamegrid-game-wall)))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#20877;&#25226;&#20869;&#37096;&#21306;&#22495;&#38210;&#31354;&#20026;&#22320;&#26495;
+</span>    (<span class="org-keyword">let</span> ((y 1)
+          (wmax (1- my-gamegrid-game-buffer-width))
+          (hmax (1- my-gamegrid-game-buffer-height)))
+      (<span class="org-keyword">while</span> (&lt; y hmax)
+        (<span class="org-keyword">let</span> ((x 1))
+          (<span class="org-keyword">while</span> (&lt; x wmax)
+            (gamegrid-set-cell x y my-gamegrid-game-floor)
+            (<span class="org-keyword">setq</span> x (1+ x))))
+        (<span class="org-keyword">setq</span> y (1+ y))))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312;&#31354;&#22320;&#19978;&#25918;&#32622;&#29609;&#23478;
+</span>    (gamegrid-set-cell my-gamegrid-game-player-x
+                       my-gamegrid-game-player-y
+                       my-gamegrid-game-player)))
+</pre>
+</div>
+
+<p>
+逐段解释：
+</p>
+
+<ul class="org-ul">
+<li><code>gamegrid-init-buffer</code> 的第一个参数 16 是每行 16 个格子，第二个 16 是每列 16 个格子，第三个参数 <code>my-gamegrid-game-empty (0)</code> 是"默认填充值"，后面会被覆盖掉</li>
+<li><code>buffer-read-only</code> 用 <code>let</code> 临时设为 <code>nil</code> ：major mode 从 <code>special-mode</code> 派生，而 <code>special-mode</code> 默认把 buffer 设成只读，不临时解开就没法写入内容</li>
+<li>第一个双重循环用 <code>gamegrid-set-cell</code> 把所有格子设为墙（ <code>2</code> ）</li>
+<li>第二个双重循环从 <code>y=1, x=1</code> 到 <code>y=14, x=14</code> ，把内部区域改成地板（ <code>1</code> ）。最终效果是外面一圈墙、中间是空地</li>
+</ul>
+
+<p>
+<code>gamegrid-set-cell</code> 的三个参数是：x 坐标、y 坐标、内容标识（数字）。坐标从 0 开始，(0, 0) 是 buffer 左上角。往坐标传负数或超过初始化尺寸的值会报错。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7ad4a0f" class="outline-2">
+<h2 id="org7ad4a0f">处理输入：push/pop 解耦模式（重点）</h2>
+<div class="outline-text-2" id="text-org7ad4a0f">
+<p>
+这是整个系列里最有意思的设计。
+</p>
+</div>
+
+<div id="outline-container-orgf810e34" class="outline-3">
+<h3 id="orgf810e34">游戏中的 keymap</h3>
+<div class="outline-text-3" id="text-orgf810e34">
+<p>
+首先定义游戏中使用的 keymap：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-score-file-name</span> <span class="org-string">"gamegrid-game-scores"</span>
+  <span class="org-doc">"File name for storing high scores."</span>)
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-score</span> 0)
+
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-mode-map</span>
+  (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+    (define-key map (kbd <span class="org-string">"q"</span>) #'my-gamegrid-game-end-game)
+    (define-key map (kbd <span class="org-string">"n"</span>) #'my-gamegrid-game-start-game)
+    (define-key map (kbd <span class="org-string">"p"</span>) #'my-gamegrid-game-pause-game)
+    (define-key map (kbd <span class="org-string">"a"</span>) #'my-gamegrid-game-move-left)
+    (define-key map (kbd <span class="org-string">"s"</span>) #'my-gamegrid-game-move-down)
+    (define-key map (kbd <span class="org-string">"d"</span>) #'my-gamegrid-game-move-right)
+    (define-key map (kbd <span class="org-string">"w"</span>) #'my-gamegrid-game-move-up)
+    map)
+  <span class="org-doc">"The in-game keymap."</span>)
+</pre>
+</div>
+
+<p>
+WASD 移动、 <code>p</code> 暂停、 <code>n</code> 开始新游戏、 <code>q</code> 结束游戏。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf7c7567" class="outline-3">
+<h3 id="orgf7c7567">结束游戏</h3>
+<div class="outline-text-3" id="text-orgf7c7567">
+<p>
+结束游戏时需要做三件事：停止游戏循环、切换回空 keymap、保存分数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-end-game</span> ()
+  <span class="org-doc">"End the current game."</span>
+  (<span class="org-keyword">interactive</span>)
+  (gamegrid-kill-timer)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-add-score my-gamegrid-game-score-file-name
+                      my-gamegrid-game-score))
+</pre>
+</div>
+
+<p>
+<code>gamegrid-add-score</code> 把分数写入指定的分数文件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org44dcc0e" class="outline-3">
+<h3 id="org44dcc0e">核心问题：为什么不能直接在按键回调里改游戏状态？</h3>
+<div class="outline-text-3" id="text-org44dcc0e">
+<p>
+这是理解 Gamegrid 输入处理的关键。
+</p>
+
+<p>
+<code>gamegrid-start-timer</code> 底层用的是 <code>run-with-timer</code> ，即非空闲定时器——理想情况下每隔固定时间触发一次。但这有两个问题叠加在一起：
+</p>
+
+<ol class="org-ol">
+<li>Emacs 是单线程事件循环，处理按键命令时定时器不会触发。如果你在按键回调里做耗时操作，定时器会被推迟到所有输入处理完才执行。</li>
+<li>即使回调本身很快，按键自动重复的频率（每秒二三十次）也远高于定时器间隔（0.5 秒才一次）。</li>
+</ol>
+
+<p>
+结果就是：按住 <code>d</code> 键不松手，角色会在一个更新周期内跳好几个格子——游戏逻辑完全跟着按键频率走，跟原本设好的"每 tick 走一格"的节奏脱节。这在有自动移动物体的游戏里（比如 Pong 的球）尤其糟糕：球的更新跟玩家输入搅在一起，根本无法预测行为。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8a79b20" class="outline-3">
+<h3 id="org8a79b20">解决方案：push/pop 解耦</h3>
+<div class="outline-text-3" id="text-org8a79b20">
+<p>
+Gamegrid 内置游戏的解决方法是：
+</p>
+
+<ol class="org-ol">
+<li><b>输入函数只做一件事</b> ：往全局列表里 push 一个操作指令，然后立刻返回</li>
+<li><b>update 函数</b> 在定时器回调中 pop 这个操作指令，真正执行游戏逻辑</li>
+</ol>
+
+<p>
+输入函数几微秒就完成（只是往列表塞个 cons），不拖慢 Emacs 的命令循环。
+</p>
+
+<p>
+方向移动函数长这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-update-list</span> ())
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-moved</span> nil)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-left</span> ()
+  <span class="org-doc">"Move the player left."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons -1 0) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-down</span> ()
+  <span class="org-doc">"Move the player down."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 0 1) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-right</span> ()
+  <span class="org-doc">"Move the player right."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 1 0) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-up</span> ()
+  <span class="org-doc">"Move the player up."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 0 -1) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+</pre>
+</div>
+
+<p>
+每个方向函数往 <code>my-gamegrid-game-update-list</code> 里 push 一个 <code>(X增量 . Y增量)</code> 的 cons cell。
+</p>
+
+<p>
+<code>unless</code> 检查配 <code>setq</code> 的作用是 <b>防止长按</b> ：没有这个保护的话，按住键不放会往列表里塞几十上百个操作，玩家松开键后角色还会自己走半天。加了这个 flag 之后，每个更新周期只接收一次方向输入。等 update 函数消费了这个操作，flag 被重置，才能接收下一次输入。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4f8a419" class="outline-3">
+<h3 id="org4f8a419">暂停的实现</h3>
+<div class="outline-text-3" id="text-org4f8a419">
+<p>
+暂停的实现只用一个布尔变量：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-paused</span> nil)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-pause-game</span> ()
+  <span class="org-doc">"Pause the game."</span>
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">if</span> my-gamegrid-game-paused
+      (<span class="org-keyword">setq</span> my-gamegrid-game-paused nil)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-paused t)))
+</pre>
+</div>
+
+<p>
+<code>my-gamegrid-game-paused</code> 在 update 函数里被检查：如果为 <code>t</code> ，update 函数就不 pop 操作列表，也就不处理输入。输入函数本身仍然可以 push（不过有 moved flag 挡着，实际上 push 不了），但不会被消费。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5ad0338" class="outline-3">
+<h3 id="org5ad0338">update 函数</h3>
+<div class="outline-text-3" id="text-org5ad0338">
+<p>
+更新函数是整个游戏的核心逻辑。示例游戏的目标很简单：用 WASD 移动一个彩色方块在房间里走，撞到墙就不动：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-player</span> 3
+  <span class="org-doc">"Entity ID for the player."</span>)
+
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-player-x</span> 4)
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-player-y</span> 5)
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-update-game</span> (buffer)
+  <span class="org-doc">"Update the game.
+BUFFER is the buffer in which the function is called."</span>
+  (<span class="org-keyword">unless</span> (<span class="org-keyword">or</span> my-gamegrid-game-paused
+              (not (string= (buffer-name buffer)
+                            my-gamegrid-game-buffer-name))
+              (null my-gamegrid-game-update-list))
+    (<span class="org-keyword">let</span> ((action (<span class="org-keyword">pop</span> my-gamegrid-game-update-list)))
+      (<span class="org-keyword">let</span> ((nx (+ my-gamegrid-game-player-x (car action)))
+            (ny (+ my-gamegrid-game-player-y (cdr action))))
+        (<span class="org-keyword">unless</span> (= (gamegrid-get-cell nx ny)
+                   my-gamegrid-game-wall)
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">&#25830;&#25481;&#26087;&#20301;&#32622;
+</span>          (gamegrid-set-cell my-gamegrid-game-player-x
+                             my-gamegrid-game-player-y
+                             my-gamegrid-game-floor)
+          <span class="org-comment-delimiter">;; </span><span class="org-comment">&#30011;&#19978;&#26032;&#20301;&#32622;
+</span>          (gamegrid-set-cell nx ny my-gamegrid-game-player)
+          (<span class="org-keyword">setq</span> my-gamegrid-game-player-x nx
+                my-gamegrid-game-player-y ny
+                my-gamegrid-game-moved nil))))))
+</pre>
+</div>
+
+<p>
+注意函数签名里的 <code>buffer</code> 参数： <code>gamegrid-start-timer</code> 传的是函数符号 <code>#'my-gamegrid-game-update-game</code> ，gamegrid 内部会自动把当前游戏 buffer 作为第一个参数传进来，不需要你手动传。
+</p>
+
+<p>
+逐段解释：
+</p>
+
+<ol class="org-ol">
+<li>最外层的 <code>unless</code> 检查三个条件是否 <b>任一</b> 为真，为真就跳过本次更新：
+<ul class="org-ul">
+<li>游戏已暂停</li>
+<li>当前 buffer 不是游戏 buffer（防止后台误更新）</li>
+<li>操作列表为空</li>
+</ul></li>
+
+<li><code>pop</code> 从列表里取出一个 cons，同时从列表中移除</li>
+
+<li>算出新坐标 <code>nx, ny</code> ，用 <code>gamegrid-get-cell</code> 检查目标位置是不是墙。 <code>gamegrid-get-cell</code> 返回的就是之前用 <code>gamegrid-set-cell</code> 设进去的那个数字标识（0/1/2/3），用 <code>=</code> 直接比，很快</li>
+
+<li>不是墙的话：先把旧位置擦成地板，再把新位置画成玩家，最后更新坐标变量，把 <code>moved</code> 置 <code>nil</code> 。这步很关键， <code>moved</code> 复位后输入函数才能接收下一个方向操作</li>
+</ol>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgdf91c3e" class="outline-2">
+<h2 id="orgdf91c3e">显示系统：三层 display options</h2>
+<div class="outline-text-2" id="text-orgdf91c3e">
+<p>
+这是整个 gamegrid.el 最复杂的部分，原作者花了一整篇文章才讲清楚。
+</p>
+</div>
+
+<div id="outline-container-org6306587" class="outline-3">
+<h3 id="org6306587">实体标识与显示向量</h3>
+<div class="outline-text-3" id="text-org6306587">
+<p>
+前面用数字 0、1、2、3 标识"空""地板""墙""玩家"。这些数字不光当标签用，它们在显示系统里还是数组索引。Gamegrid 用一个 <b>固定 256 个元素</b> 的向量（Elisp 里的向量就是方括号写的数组 <code>[a b c]</code> ）来存储每个实体的显示信息。256 这个数字不能改，也就是说一个 gamegrid 游戏最多有 256 种可显示元素。
+</p>
+
+<p>
+把实体编号映射到显示选项的函数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-display-options</span> ()
+  <span class="org-doc">"Return a vector with display informations."</span>
+  (<span class="org-keyword">let</span> ((vec (make-vector 256 nil)))
+    (<span class="org-keyword">dotimes</span> (c 256)
+      (aset vec c
+            (<span class="org-keyword">cond</span> ((= c my-gamegrid-game-empty)
+                   my-gamegrid-game-empty-options)
+                  ((= c my-gamegrid-game-floor)
+                   my-gamegrid-game-floor-options)
+                  ((= c my-gamegrid-game-wall)
+                   my-gamegrid-game-wall-options)
+                  ((= c my-gamegrid-game-player)
+                   my-gamegrid-game-player-options)
+                  (t
+                   '(nil nil nil)))))
+    vec))
+</pre>
+</div>
+
+<p>
+索引就是实体编号（0/1/2/3），值是对应的显示选项变量。 <code>t</code> 分支的 <code>'(nil nil nil)</code> 是兜底值，用了无效索引时什么都不显示。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge62e01c" class="outline-3">
+<h3 id="orge62e01c">三层结构</h3>
+<div class="outline-text-3" id="text-orge62e01c">
+<p>
+每个实体的显示选项是一个 <b>包含三个元素的列表</b> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">'((&#31532;&#19968;&#23618;)   <span class="org-comment-delimiter">; </span><span class="org-comment">&#26174;&#31034;&#24418;&#24335;
+</span>  (&#31532;&#20108;&#23618;)   <span class="org-comment-delimiter">; </span><span class="org-comment">face &#37197;&#32622;
+</span>  (&#31532;&#19977;&#23618;))  <span class="org-comment-delimiter">; </span><span class="org-comment">&#39068;&#33394;&#37197;&#32622;</span>
+</pre>
+</div>
+
+<p>
+逐层来看。
+</p>
+</div>
+
+<div id="outline-container-org5c51948" class="outline-4">
+<h4 id="org5c51948">第一层：显示形式</h4>
+<div class="outline-text-4" id="text-org5c51948">
+<p>
+决定实体"长什么样"。里面是一个嵌套列表，可能包含：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">第一个元素</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>t</code></td>
+<td class="org-left">用字符显示，第二个元素是字符的编码（如 32 = 空格， <code>?+</code>  = 加号）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>glyph</code></td>
+<td class="org-left">用图片显示，第二个元素是图片规格</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>emacs-tty</code></td>
+<td class="org-left">终端模式下覆盖 <code>t</code> 的显示</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<code>t</code> 列表是"兜底"列表，必须放在最后。如果 Gamegrid 找不到合适的图形方式，就用字符代替。
+</p>
+
+<p>
+最简单的例子：空实体（未初始化的格子），就显示一个空格：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-empty-options</span>
+  '(((t 32))
+    nil
+    nil)
+  <span class="org-doc">"Display options for empty cells."</span>)
+</pre>
+</div>
+
+<p>
+32 是空格字符的 ASCII 码，写成数字比写成 =? = 更直观。
+</p>
+
+<p>
+如果想用 gamegrid 内置的 3D 方块图（XPM 格式），要写成：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">((glyph colorize)
+ (t 32))
+</pre>
+</div>
+
+<p>
+<code>colorize</code> 表示"用默认 XPM 方块图，但可以重新着色"。Emacs 内置的 Tetris、Snake、Pong 用的就是这个技巧：同一张方块图，通过改颜色来区分不同的实体。
+</p>
+
+<p>
+墙用 <code>?+</code> 号兜底，这样在纯文本终端里至少能看到加号组成的边界。第一层写成：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">((glyph colorize)
+ (t ?+))
+</pre>
+</div>
+
+<p>
+如果需要自定义图片，把 <code>colorize</code> 换成图片规格列表：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">((glyph ((<span class="org-builtin">:type</span> xpm <span class="org-builtin">:file</span> <span class="org-string">"my-player.xpm"</span>)))
+ (t ?P))
+</pre>
+</div>
+
+<p>
+这会用一个自定义 XPM 文件显示玩家，如果图形不可用就用字符 <code>P</code> 替代。Gamegrid 支持的图片格式跟 Emacs 一样，Emacs 能显示 PNG，Gamegrid 就能用 PNG。
+</p>
+
+<p>
+不过原作者提醒：自定义图片是"实验性"功能，他测试时偶尔会出奇怪的结果，简单用的话通常没事。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org01fb505" class="outline-3">
+<h3 id="org01fb505">第二层：face 配置</h3>
+<div class="outline-text-3" id="text-org01fb505">
+<p>
+Emacs 里的 face 决定文字的字体、颜色、粗细等外观属性。当 glyph 不可用时，gamegrid 回退到这一层，用字符 + face 的组合来显示实体。
+</p>
+
+<p>
+第二层是嵌套列表，每个子列表都包含两个元素：第一个元素指定"什么时候用"，第二个元素指定"用哪个 face"。
+</p>
+
+<p>
+什么时候用（四种显示类型，按功能从高到低排列）：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">显示类型</th>
+<th scope="col" class="org-left">环境</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>color-x</code></td>
+<td class="org-left">图形界面 + 支持颜色但不支持图片</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>mono-x</code></td>
+<td class="org-left">图形界面 + 不支持颜色和图片</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>color-tty</code></td>
+<td class="org-left">终端 + 支持颜色</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>mono-tty</code></td>
+<td class="org-left">终端 + 单色（实际上几乎永远不会触发，源码实现可能有 bug）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+face 的可选值由 Gamegrid 预设，不能自定义。除了跟显示类型同名的 face（ <code>color-x</code>, <code>mono-x</code>, <code>color-tty</code>, <code>mono-tty</code> ），还有一个特殊的 <code>grid-x</code> 给墙之类的东西在单色模式下用。
+</p>
+
+<p>
+地板和墙的 face 层实际都长一样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">((color-x color-x)
+ (mono-x mono-x)
+ (color-tty color-tty))
+</pre>
+</div>
+
+<p>
+每种显示类型匹配对应的同名 face。 <code>mono-tty</code> 没写是因为前面说的，它几乎永远不会被触发。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0aa382a" class="outline-3">
+<h3 id="org0aa382a">第三层：颜色配置</h3>
+<div class="outline-text-3" id="text-org0aa382a">
+<p>
+决定实体在支持颜色时的具体颜色。第三个元素也是列表，但结构跟前面不同：它包含 <b>两个子列表</b> ，分别对应图形环境和终端的颜色规格。
+</p>
+
+<p>
+图形环境用 RGB 浮点向量 <code>[红 绿 蓝]</code> ，每个值从 0 到 1：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">((glyph color-x) [0 0 0])  <span class="org-comment-delimiter">; </span><span class="org-comment">&#32431;&#40657;</span>
+</pre>
+</div>
+
+<p>
+终端用颜色名字符串（一般是 ANSI 颜色名）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(color-tty <span class="org-string">"black"</span>)
+</pre>
+</div>
+
+<p>
+RGB 向量用于给 XPM 方块重新着色。3D 方块的不同面会自动变深或变浅，你只需要给定基准色。
+</p>
+
+<p>
+完整的地板和墙显示选项：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-floor-options</span>
+  '(((glyph colorize)
+     (t 32))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0 0 0])
+     (color-tty <span class="org-string">"black"</span>)))
+  <span class="org-doc">"Display options for floor cells."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-wall-options</span>
+  '(((glyph colorize)
+     (t ?+))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.5 0.5 0.5])
+     (color-tty <span class="org-string">"gray"</span>)))
+  <span class="org-doc">"Display options for wall cells."</span>)
+</pre>
+</div>
+
+<p>
+地板黑色、墙灰色。终端模式下地板不显示（空格看不见），墙用加号。
+</p>
+
+<p>
+玩家实体的完整选项：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-player-options</span>
+  '(((glyph ((<span class="org-builtin">:type</span> xpm <span class="org-builtin">:file</span> <span class="org-string">"my-player.xpm"</span>)))
+     (t ?P))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.9 0.3 0.7])
+     (color-tty <span class="org-string">"yellow"</span>)))
+  <span class="org-doc">"Display options for the player (using a custom XPM image)."</span>)
+</pre>
+</div>
+
+<p>
+图形环境用自定义 XPM 图 + 粉红色，终端用黄色字符 <code>P</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgadf0ae8" class="outline-3">
+<h3 id="orgadf0ae8">三层结构回顾</h3>
+<div class="outline-text-3" id="text-orgadf0ae8">
+<p>
+Gamegrid 选择实体的显示方式时从上往下尝试：先看第一层有没有合适的显示形式（glyph &gt; emacs-tty &gt; t 字符）；没有 glyph 就看第二层的 face；有了 face 再看第三层的颜色。这是一套完整的多级回退机制，让游戏在图形 Emacs 和纯文本终端里都能正常玩。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb9dfd74" class="outline-2">
+<h2 id="orgb9dfd74">附录：完整代码组装</h2>
+<div class="outline-text-2" id="text-orgb9dfd74">
+<p>
+以下是按依赖顺序排列的完整代码。新建一个 <code>my-game.el</code> 文件，把下面的内容全部粘贴进去， <code>M-x eval-buffer</code> 后再 <code>M-x my-gamegrid-game</code> 就能开始玩了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;;; </span><span class="org-comment">my-game.el --- &#19968;&#20010; Gamegrid &#31034;&#20363;&#28216;&#25103;
+</span>
+(<span class="org-keyword">require</span> '<span class="org-constant">gamegrid</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#22522;&#30784;&#24120;&#37327; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-name</span> <span class="org-string">"Gamegrid Game"</span>
+  <span class="org-doc">"Name of the game buffer."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-width</span> 16
+  <span class="org-doc">"Width of the game grid in cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-buffer-height</span> 16
+  <span class="org-doc">"Height of the game grid in cells."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-empty</span> 0
+  <span class="org-doc">"Entity ID for empty/uninitialized cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-floor</span> 1
+  <span class="org-doc">"Entity ID for floor cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-wall</span> 2
+  <span class="org-doc">"Entity ID for wall cells."</span>)
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-player</span> 3
+  <span class="org-doc">"Entity ID for the player."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-tick</span> 0.5)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-score-file-name</span> <span class="org-string">"gamegrid-game-scores"</span>
+  <span class="org-doc">"File name for storing high scores."</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#20840;&#23616;&#21464;&#37327; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-score</span> 0)
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-update-list</span> ())
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-moved</span> nil)
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-paused</span> nil)
+
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-player-x</span> 4)
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-player-y</span> 5)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#26174;&#31034;&#36873;&#39033; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-empty-options</span>
+  '(((t 32))
+    nil
+    nil)
+  <span class="org-doc">"Display options for empty cells."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-floor-options</span>
+  '(((glyph colorize)
+     (t 32))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0 0 0])
+     (color-tty <span class="org-string">"black"</span>)))
+  <span class="org-doc">"Display options for floor cells."</span>)
+
+(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-wall-options</span>
+  '(((glyph colorize)
+     (t ?+))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.5 0.5 0.5])
+     (color-tty <span class="org-string">"gray"</span>)))
+  <span class="org-doc">"Display options for wall cells."</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#29609;&#23478;&#20063;&#29992; colorize&#65288;&#40664;&#35748;&#26041;&#22359;&#65289;&#65292;&#38752;&#39068;&#33394;&#21306;&#20998;&#12290;
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">&#27491;&#25991;&#20013;&#23637;&#31034;&#20102;&#22914;&#20309;&#26367;&#25442;&#20026;&#33258;&#23450;&#20041;&#22270;&#29255;&#12290;
+</span>(<span class="org-keyword">defconst</span> <span class="org-variable-name">my-gamegrid-game-player-options</span>
+  '(((glyph colorize)
+     (t ?P))
+    ((color-x color-x)
+     (mono-x mono-x)
+     (color-tty color-tty))
+    (((glyph color-x) [0.9 0.3 0.7])
+     (color-tty <span class="org-string">"yellow"</span>)))
+  <span class="org-doc">"Display options for the player."</span>)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#26174;&#31034;&#36873;&#39033;&#21521;&#37327; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-display-options</span> ()
+  (<span class="org-keyword">let</span> ((vec (make-vector 256 nil)))
+    (<span class="org-keyword">dotimes</span> (c 256)
+      (aset vec c
+            (<span class="org-keyword">cond</span> ((= c my-gamegrid-game-empty)
+                   my-gamegrid-game-empty-options)
+                  ((= c my-gamegrid-game-floor)
+                   my-gamegrid-game-floor-options)
+                  ((= c my-gamegrid-game-wall)
+                   my-gamegrid-game-wall-options)
+                  ((= c my-gamegrid-game-player)
+                   my-gamegrid-game-player-options)
+                  (t
+                   '(nil nil nil)))))
+    vec))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; Keymap &#9472;&#9472;
+</span>
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-null-map</span>
+  (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+    (define-key map (kbd <span class="org-string">"q"</span>) #'bury-buffer)
+    (define-key map (kbd <span class="org-string">"n"</span>) #'my-gamegrid-game-start-game)
+    map))
+
+(<span class="org-keyword">defvar</span> <span class="org-variable-name">my-gamegrid-game-mode-map</span>
+  (<span class="org-keyword">let</span> ((map (make-sparse-keymap)))
+    (define-key map (kbd <span class="org-string">"q"</span>) #'my-gamegrid-game-end-game)
+    (define-key map (kbd <span class="org-string">"n"</span>) #'my-gamegrid-game-start-game)
+    (define-key map (kbd <span class="org-string">"p"</span>) #'my-gamegrid-game-pause-game)
+    (define-key map (kbd <span class="org-string">"a"</span>) #'my-gamegrid-game-move-left)
+    (define-key map (kbd <span class="org-string">"s"</span>) #'my-gamegrid-game-move-down)
+    (define-key map (kbd <span class="org-string">"d"</span>) #'my-gamegrid-game-move-right)
+    (define-key map (kbd <span class="org-string">"w"</span>) #'my-gamegrid-game-move-up)
+    map))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#36755;&#20837;&#20989;&#25968; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-left</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons -1 0) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-down</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 0 1) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-right</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 1 0) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-move-up</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> my-gamegrid-game-moved
+    (<span class="org-keyword">push</span> (cons 0 -1) my-gamegrid-game-update-list)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-moved t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-pause-game</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">if</span> my-gamegrid-game-paused
+      (<span class="org-keyword">setq</span> my-gamegrid-game-paused nil)
+    (<span class="org-keyword">setq</span> my-gamegrid-game-paused t)))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-end-game</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (gamegrid-kill-timer)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-add-score my-gamegrid-game-score-file-name
+                      my-gamegrid-game-score))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; Buffer &#21021;&#22987;&#21270; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-init-buffer</span> ()
+  (gamegrid-init-buffer my-gamegrid-game-buffer-width
+                        my-gamegrid-game-buffer-height
+                        my-gamegrid-game-empty)
+  (<span class="org-keyword">let</span> ((buffer-read-only nil))
+    (<span class="org-keyword">dotimes</span> (y my-gamegrid-game-buffer-height)
+      (<span class="org-keyword">dotimes</span> (x my-gamegrid-game-buffer-width)
+        (gamegrid-set-cell x y my-gamegrid-game-wall)))
+    (<span class="org-keyword">let</span> ((y 1)
+          (wmax (1- my-gamegrid-game-buffer-width))
+          (hmax (1- my-gamegrid-game-buffer-height)))
+      (<span class="org-keyword">while</span> (&lt; y hmax)
+        (<span class="org-keyword">let</span> ((x 1))
+          (<span class="org-keyword">while</span> (&lt; x wmax)
+            (gamegrid-set-cell x y my-gamegrid-game-floor)
+            (<span class="org-keyword">setq</span> x (1+ x))))
+        (<span class="org-keyword">setq</span> y (1+ y))))
+    (gamegrid-set-cell my-gamegrid-game-player-x
+                       my-gamegrid-game-player-y
+                       my-gamegrid-game-player)))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#28216;&#25103;&#24490;&#29615; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-reset-game</span> ()
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-init-buffer))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-update-game</span> (buffer)
+  (<span class="org-keyword">unless</span> (<span class="org-keyword">or</span> my-gamegrid-game-paused
+              (not (string= (buffer-name buffer)
+                            my-gamegrid-game-buffer-name))
+              (null my-gamegrid-game-update-list))
+    (<span class="org-keyword">let</span> ((action (<span class="org-keyword">pop</span> my-gamegrid-game-update-list)))
+      (<span class="org-keyword">let</span> ((nx (+ my-gamegrid-game-player-x (car action)))
+            (ny (+ my-gamegrid-game-player-y (cdr action))))
+        (<span class="org-keyword">unless</span> (= (gamegrid-get-cell nx ny)
+                   my-gamegrid-game-wall)
+          (gamegrid-set-cell my-gamegrid-game-player-x
+                             my-gamegrid-game-player-y
+                             my-gamegrid-game-floor)
+          (gamegrid-set-cell nx ny my-gamegrid-game-player)
+          (<span class="org-keyword">setq</span> my-gamegrid-game-player-x nx
+                my-gamegrid-game-player-y ny
+                my-gamegrid-game-moved nil))))))
+
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game-start-game</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (<span class="org-keyword">unless</span> (string= (buffer-name (current-buffer))
+                   my-gamegrid-game-buffer-name)
+    (<span class="org-warning">error</span> <span class="org-string">"To start a new game, switch to the game buffer."</span>))
+  (my-gamegrid-game-reset-game)
+  (use-local-map my-gamegrid-game-mode-map)
+  (gamegrid-start-timer my-gamegrid-game-tick
+                        #'my-gamegrid-game-update-game))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; Major Mode &#9472;&#9472;
+</span>
+(<span class="org-keyword">define-derived-mode</span> <span class="org-function-name">my-gamegrid-game-mode</span> special-mode <span class="org-string">"Gamegrid Game"</span>
+  (add-hook 'kill-buffer-hook #'gamegrid-kill-timer nil t)
+  (use-local-map my-gamegrid-game-null-map)
+  (gamegrid-init (my-gamegrid-game-display-options)))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#9472;&#9472; &#20837;&#21475; &#9472;&#9472;
+</span>
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-gamegrid-game</span> ()
+  (<span class="org-keyword">interactive</span>)
+  (switch-to-buffer my-gamegrid-game-buffer-name)
+  (gamegrid-kill-timer)
+  (my-gamegrid-game-mode)
+  (my-gamegrid-game-start-game))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0bd09b8" class="outline-2">
+<h2 id="org0bd09b8">收尾</h2>
+<div class="outline-text-2" id="text-org0bd09b8">
+<p>
+至此，gamegrid.el 的四个核心模块都讲完了：搭框架、初始化、输入处理、显示系统。Emacs 不只是编辑器，还是一个有自己图形系统的游戏引擎。
+</p>
+
+<p>
+本文代码基于 vannilla.org 四篇系列教程整合：<a href="https://vannilla.org/write/1533394929/article.html">Part 1</a>、<a href="https://vannilla.org/write/1533740728/article.html">Part 2</a>、<a href="https://vannilla.org/write/1533913392/article.html">Part 3</a>、<a href="https://vannilla.org/write/1535488871/article.html">Part 4</a>。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-15</span>
+    <span class="post-info">2026-05-18</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/gamegrid">gamegrid</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; ghs03yo5c4judosebpamfexzwa &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
