@@ -1,0 +1,133 @@
+#+TITLE: TIL: 把 Emacs Buffer 打印成图片
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, TIL, cups-pdf, ps-print, Ghostscript
+#+DATE: [2026-05-18 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 两种把 Emacs buffer 打印成 PNG 图片的方法：cups-pdf 虚拟打印机（中文友好）和 ps-print（保留语法高亮）。包含 Arch Linux 上的完整踩坑记录。
+
+想把 Emacs buffer 的内容变成一张 PNG 图片——分享代码片段、做文档插图、存档都挺方便。试下来有两条路，各有取舍。
+
+* 路线一：cups-pdf 虚拟打印机（推荐，中文友好）
+
+思路是装一个虚拟 PDF 打印机，Emacs 往这个"打印机"输出，实际得到 PDF 文件，再把 PDF 转成图片。走系统 fontconfig 渲染字体，中文开箱即用。
+
+** 安装并启动
+
+#+BEGIN_SRC shell :dir /sudo::
+sudo pacman -S cups-pdf   # Arch
+#+END_SRC
+
+#+BEGIN_SRC shell :dir /sudo::
+sudo systemctl start cups
+#+END_SRC
+
+** 创建打印机队列
+
+Arch 上装完 =cups-pdf= 包 *不会* 自动创建打印机队列，需要手动添加：
+
+#+BEGIN_SRC shell :dir /sudo::
+lpadmin -p PDF -E -v cups-pdf:/ -m CUPS-PDF_noopt.ppd
+#+END_SRC
+
+执行后用 =lpstat -p PDF= 确认打印机状态为"空闲"。
+
+** 修改输出目录
+
+默认输出到 =/var/spool/cups-pdf/${USER}/= ，改成 =~/PDF/= 方便找：
+
+#+BEGIN_SRC shell :dir /sudo::
+sudoedit /etc/cups/cups-pdf.conf
+#+END_SRC
+
+把：
+
+#+BEGIN_EXAMPLE
+#Out /var/spool/cups-pdf/${USER}
+#+END_EXAMPLE
+
+改成：
+
+#+BEGIN_EXAMPLE
+Out /home/${USER}/PDF
+#+END_EXAMPLE
+
+改完立即生效，不用重启 CUPS 。
+
+** 配置 Emacs
+
+#+BEGIN_SRC emacs-lisp
+(setq printer-name "PDF")
+#+END_SRC
+
+加到配置文件里，或者只在当前会话中 =eval= 也行。
+
+** 打印并转图
+
+在目标 buffer 里执行 =M-x print-buffer= ，PDF 会出现在 =~/PDF/= 目录下。然后终端里转换：
+
+#+BEGIN_SRC shell
+pdftoppm -png -r 300 ~/PDF/output.pdf ~/buffer-image
+#+END_SRC
+
+=-r 300= 是 DPI，数值越大图片越清晰。输出文件名会自动加页码后缀，比如 =buffer-image-1.png= 。
+
+#+BEGIN_EXAMPLE
+pdftoppm 来自 poppler 包，Arch 上默认就有。
+转换时会输出大量 "Bad bounding box in Type 3 glyph" 警告，这是 CJK 字体的 Type 3 字形边界不精确导致的，不影响渲染结果，可以无视。
+#+END_EXAMPLE
+
+* 路线二：ps-print（保留语法高亮）
+
+上面那条路输出的是纯文本，没有颜色。想要语法高亮，得用 Emacs 内置的 =ps-print= 。
+
+** 基本用法（纯英文）
+
+#+BEGIN_SRC emacs-lisp
+;; C-u 前缀让 ps-print-buffer 提示你输入文件名
+;; C-u M-x ps-print-buffer RET /tmp/output.ps RET
+#+END_SRC
+
+然后转 PNG ：
+
+#+BEGIN_SRC shell
+gs -q -dNOPAUSE -dBATCH -sDEVICE=png256 -r300 -sOutputFile=output.png /tmp/output.ps
+#+END_SRC
+
+** 有中文的情况
+
+=ps-print= 自己生成 PostScript ，不调用系统字体。没有配置 CJK 支持的话，遇到中文字符会生成 =^B= （ ASCII 0x02 ）占位符，最终渲染出来就是空白。
+
+需要加载 =ps-mule= 模块并指定中文字体：
+
+#+BEGIN_SRC emacs-lisp
+(require 'ps-mule)
+(setq ps-multibyte-buffer 'non-latin-printer)
+(setq ps-mule-font-info-database
+      '((chinese-gbk
+         (nil . "Noto Sans CJK SC")
+         nil 1 1 1 1 nil)))
+#+END_SRC
+
+你可能会问：文件明明是 UTF-8 编码，为什么不是 =unicode= ？这里有个容易混淆的概念—— *编码（encoding）* 和 *字符集（charset）* 是两回事。UTF-8 是编码方式，决定字节怎么存；charset 是字符分类，决定字符属于哪个集合。 =ps-mule= 按 charset 分组查找字体，不按编码。现代 Emacs 中，即使文件是 UTF-8 编码的，中文简体字符依然归类在 =chinese-gbk= 这个 charset 下。可以在 Emacs 里验证：光标放在中文字上， =M-x describe-char= ，看 =charset= 那一行的值。
+
+配置好之后，同样的操作： =C-u M-x ps-print-buffer= → 转换 PS → 得到带高亮和中文的 PNG 。
+
+字体要确认系统上装了 =noto-fonts-cjk= ：
+
+#+BEGIN_SRC shell
+pacman -Q noto-fonts-cjk
+#+END_SRC
+
+* 两条路线怎么选
+
+| | cups-pdf | ps-print |
+|---|---|---|
+| 中文支持 | 开箱即用 | 需配 =ps-mule= 字体 |
+| 语法高亮 | 无 | 有 |
+| 依赖 | cups-pdf 、 poppler | Ghostscript |
+| 自定义排版 | 少 | 多（行号、页眉、字体大小等） |
+
+简单记：*要中文选 cups-pdf ，要高亮选 ps-print* 。
+
+ps-print 的排版选项可以通过 =M-x customize-group RET ps-print= 精细调整，包括页眉内容、行号显示、字体大小等。
