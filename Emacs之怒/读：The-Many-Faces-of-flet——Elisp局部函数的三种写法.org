@@ -1,0 +1,156 @@
+#+TITLE: 读：The Many Faces of flet——Elisp 局部函数的三种写法
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, Elisp, cl-lib
+#+DATE: [2026-05-19 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 本文介绍 cl-flet、cl-labels、cl-letf 三个宏的区别和使用场景。旧 flet 废弃后，Elisp 用这三个宏分别解决"定义局部函数""局部递归"和"动态覆盖全局函数"三个不同的问题。
+
+设想这样一个场景：你想在某个函数内部临时定义一个 helper，又或者你在写测试时需要 stub 掉某个全局函数。你隐约记得有个叫 =flet= 的东西，但 Emacs 告诉你它已经废弃了。那现在该用什么？
+
+其实 =cl-lib= 里躺着三个名字很像的宏： =cl-flet= 、 =cl-labels= 、 =cl-letf= 。三者功能类似但是各司其职。
+
+* 旧 flet 做了什么，为什么被废弃
+
+旧 =flet= （来自古老的 =cl= 包）的行为很简单：临时替换一个函数的 =symbol-function= ，退出时恢复。
+
+什么叫"替换一个函数的 =symbol-function="？在 Elisp 里，每个符号（symbol）有多个"槽位"：value cell 存变量的值，function cell 存函数定义。当你在 Elisp 里写 ~(defun foo () ...)~ 时，实际是把函数体放进了 =foo= 这个符号的 function cell 里。 =symbol-function= 就是用来读写这个槽位的函数。
+
+旧 =flet= 做的事情就是：在进入 body 之前，把某个符号 function cell 里的旧定义保存起来，然后塞一个新定义进去；body 执行完后，再把旧定义恢复回去。整个过程是运行时发生的，所有能访问到这个符号的代码都会受影响。
+
+这看起来挺方便，但它把两件性质完全不同的事搅在了一起：
+
+- *定义局部 helper 函数* ：我需要一个临时函数，只在当前这段代码内部用，出去就失效。本质上跟 ~(let ((x 1)) ...)~ 里定义局部变量一样，属于词法作用域的范畴。
+- *临时覆盖全局函数* ：我需要让某个函数在整个运行期间"换一个实现"，不管调用者是谁。这属于动态作用域的范畴。
+
+这两件事在动态作用域的年代相安无事，因为那时 Elisp 默认是动态作用域：函数引用在运行时才解析，改 function cell 的行为自然能被所有调用者看到。
+
+但 Emacs 24 之后默认开启了词法作用域（ =lexical-binding: t= ）。在词法作用域下，编译器在编译时就已经决定了某个函数调用引用的是哪个函数，也就是看的是源代码中的定义位置，而不是运行时 function cell 里的内容。这时候旧 =flet= 的行为就变得不可预测了：它去改 function cell，但编译器可能根本不去读 function cell。一个函数调用最终到底看到的是原始版本还是替换版本，取决于这个调用是在哪里定义的、编译器怎么处理的，光看代码表面已经没办法确定了。
+
+所以 Emacs 24.3 把 =cl= 重组为 =cl-lib= 时，将 =flet= 拆成了三个各司其职的宏：想定义局部 helper 用 =cl-flet= ，需要递归用 =cl-labels= ，真要动态覆盖全局函数用 =cl-letf= 。
+
+* cl-flet：最常用的局部函数
+
+=cl-flet= 的行为和 =let= 一样，只不过它绑定的是函数而非变量。定义只在 =cl-flet= 的 body 内部可见：
+
+#+begin_src emacs-lisp
+(cl-flet ((double (n) (* n 2)))
+  (double 21))
+#+end_src
+
+#+begin_example
+42
+#+end_example
+
+关键陷阱在这里： =cl-flet= 的绑定是词法作用域的，也就是说，被调用的其他函数看不到这个覆盖：
+
+#+begin_src emacs-lisp
+(defun my-helper () (+ 1 2))
+(defun my-caller () (my-helper))
+
+(cl-flet ((my-helper () 999))
+  (my-caller))
+#+end_src
+
+#+begin_example
+3
+#+end_example
+
+=my-caller= 内部调用 =my-helper= 时，看到的仍然是全局定义的那个版本，返回 3 而不是 999。
+
+为什么会这样？因为 =cl-flet= 用的是词法作用域：它定义的 =my-helper= 只在 =cl-flet= 的 body 源代码文本里可见。编译器在编译 =my-caller= 时， =my-caller= 的源代码里写的是 =(my-helper)= ，编译器在它所在的作用域里找到了全局的那个 =my-helper= ，于是把这个引用固定下来了。后面 =cl-flet= 再怎么定义局部的 =my-helper= ，都跟已经编译好的 =my-caller= 没关系了。
+
+这和旧 =flet= 的行为完全相反。旧 =flet= 直接去改全局 function cell 里的内容，所有函数在运行时查找 =my-helper= 时都会找到那个被替换的版本，不管调用者是谁、在哪里定义的。
+
+同理， =cl-flet= 定义的函数在自己的定义体内也看不到自己：
+
+#+begin_src emacs-lisp
+(cl-flet ((fact (n)
+            (if (<= n 1)
+                1
+              (* n (fact (- n 1)))))) ;; 这里 fact 未定义！
+  (fact 5))
+#+end_src
+
+#+begin_example
+Symbol's function definition is void: fact
+#+end_example
+
+=cl-flet= 还有一个变体 =cl-flet*= ，行为就像 =let*= 之于 =let= ：后面的绑定可以引用前面的。
+
+日常使用中， =cl-flet= 是最常用的那个。当你只需要一个简单的局部 helper、不需要递归时，用它就对了。
+
+* cl-labels：需要递归时用它
+
+=cl-labels= 和 =cl-flet= 几乎一样，只有一个关键区别：函数在自己的定义体内也可见。这让递归和互递归成为可能：
+
+#+begin_src emacs-lisp
+(cl-labels ((factorial (n)
+              (if (<= n 1)
+                  1
+                (* n (factorial (- n 1))))))
+  (factorial 10))
+#+end_src
+
+#+begin_example
+3628800
+#+end_example
+
+互递归也能用：
+
+#+begin_src emacs-lisp
+(cl-labels ((my-even-p (n) (if (= n 0) t (my-odd-p (- n 1))))
+            (my-odd-p (n) (if (= n 0) nil (my-even-p (- n 1)))))
+  (list (my-even-p 4) (my-odd-p 3)))
+#+end_src
+
+#+begin_example
+(t t)
+#+end_example
+
+使用 =cl-labels= 的前提是文件开启了词法绑定，也就是文件头部有 ~lexical-binding: t~ 。现代 Elisp 代码都应该开这个，所以这个前提一般不是问题。
+
+简单记法： =cl-flet= 是默认选择；需要递归或互递归时，换成 =cl-labels= 。
+
+* cl-letf：真要覆盖全局函数时用它
+
+前面两个宏都是词法作用域的，如果你确实需要旧 =flet= 那种"临时替换全局函数定义"的行为，用 =cl-letf= 。
+
+=cl-letf= 的机制很直接：通过 =symbol-function= 这个广义变量（generalized variable）直接修改函数的 function cell，退出 body 时自动恢复。因为改的是全局的函数槽，所有调用路径都会看到这个替换：
+
+#+begin_src emacs-lisp
+(defun my-helper () (+ 1 2))
+(defun my-caller () (my-helper))
+
+(cl-letf (((symbol-function 'my-helper) (lambda () 999)))
+  (my-caller))
+#+end_src
+
+#+begin_example
+999
+#+end_example
+
+这一次， =my-caller= 看到的确实是替换后的版本了。即使 body 内部抛了异常， =cl-letf= 也会保证恢复原始定义。
+
+语法上， =cl-letf= 不是专为函数设计的，它是一个通用的"临时替换任意可赋值位置"的宏。 =(symbol-function 'name)= 只是它支持的众多位置中的一种。比如你还可以用它暂时静默消息输出：
+
+#+begin_src emacs-lisp
+(cl-letf (((symbol-function 'message) #'ignore))
+  (do-something-noisy))
+#+end_src
+
+=cl-letf= 的主要用途是测试（stub 掉副作用函数）和临时压制/重定向行为。修改全局函数槽是一把利刃，用起来要小心。
+
+* 一句话速查
+
+| 宏          | 作用域 | 支持递归 | 覆盖全局 |
+|-------------|--------|----------|----------|
+| =cl-flet=   | 词法   | 否       | 否       |
+| =cl-labels= | 词法   | 是       | 否       |
+| =cl-letf=   | 动态   | N/A      | 是       |
+
+- 日常写个局部 helper，用 =cl-flet= 。
+- helper 需要递归或互递归，换 =cl-labels= 。
+- 测试中需要 stub 全局函数，上 =cl-letf= 。
+
+搞清楚了这三个宏的分工，从此跟旧 =flet= 说再见。
