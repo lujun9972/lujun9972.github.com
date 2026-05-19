@@ -1,0 +1,201 @@
+#+TITLE: 读：df 与 du——为什么两个磁盘用量命令数字对不上
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux,df,du,磁盘,lsof,运维
+#+DATE: [2026-05-19 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: df 说磁盘 80% 满了，du 说才用了一半——两个命令都没撒谎，只是量的不是同一个东西。本文讲清 df 读超级块、du 遍历目录树的机制差异，以及除了"已删除但被进程持有的文件"之外，reserved blocks、隐藏挂载点、容器 overlay 这些同样会让数字对不上的原因。
+
+半夜三点，监控告警：磁盘 80%。你登上服务器，顺手跑了 =du -sh /= ，结果回了个 50%。又跑了两遍，数字还是对不上。你没看错，命令也没坏。
+
+TecMint 上有篇[[https://www.tecmint.com/df-du-disk-usage-difference-linux/][文章]]把这个现象拆得很清楚： =df= 和 =du= 量的根本是两件不同的事。数字对不上不是 bug，是 Linux 文件系统的设计使然。知道差在哪，排查方向就有了。
+
+* 机制：两个命令量的不是同一个东西
+
+=df= 不扫描目录，不检查文件。它直接读文件系统的超级块（superblock），问内核一句话："当前有多少磁盘块被标记为'已分配'？"
+
+超级块是文件系统的账本，记录着整个分区的块分配情况。内核分配一个块、释放一个块，都更新超级块。 =df= 只是在某个瞬间翻了一下这本账。
+
+=du= 的工作方式完全相反。它从你指定的路径出发，一颗一颗地遍历目录树，统计每一个能看见的文件和目录的大小，最后加总。
+
+=df= 量的是"文件系统层面"——哪些块被占了。 =du= 量的是"目录树层面"——哪些文件我能看见。
+
+这两层之间的灰色地带，就是差异的来源：磁盘块在文件系统层面被标记为"已分配"，但在目录树里找不到对应的文件。 =df= 能看到这些块， =du= 看不到。
+
+* 最常见原因：删了文件，但进程还抓着不放
+
+#+begin_src shell
+sudo lsof +L1 | sort -k7 -rn
+#+end_src
+
+=rm= 删除文件时，Linux 只做了两件事：
+1. 从目录里拿掉这个文件名
+2. 把 inode 的 link count 减 1
+
+磁盘上的数据本身没有动。
+
+此时 =du= 立刻看不到这个文件了。但如果有个进程在 =rm= 之前就打开了这个文件（比如 nginx 正在写 =access.log= ），内核不会释放那些磁盘块——进程还在用。 =df= 仍然把它们计为"已分配"。
+
+直到进程关闭文件描述符（退出或重启），内核才释放磁盘块， =df= 的数字才降下来。
+
+典型场景：运维看到磁盘快满了， =rm= 掉一个几十 GB 的日志文件， =df= 一看——数字完全没动。
+
+关于这个话题，之前写过一篇[[https://lujun9972.github.com/2026/05/07/linux-shan-wen-jian-de-zhen-xiang/][Linux 删文件的真相——用 /proc 恢复被进程持有的已删除文件]]，讲了 =lsof +L1= 的输出怎么读、怎么从 =/proc/PID/fd/= 把数据捞回来、怎么用 hard link 预防。本文不再重复，重点讲已删除文件之外的其他原因。
+
+** 一个检测脚本：有没有已删除但未释放的文件
+
+在说其他原因之前，先把检查封装成一个脚本。放到服务器上，半夜三点直接跑：
+
+#+begin_src shell :tangle check-deleted-files.sh
+#!/bin/bash
+# check-deleted-files.sh —— 检查是否存在已删除但仍占磁盘空间的文件
+
+set -e
+
+echo "=== 已删除但进程仍持有的文件 ==="
+echo
+
+TEMP=$(mktemp)
+
+sudo lsof +L1 2>/dev/null | awk '
+NR>1 {
+  size = $7
+  if (size ~ /^[0-9]+$/) {
+    total += size
+    # 从第10个字段开始拼文件名（lsof 的 NAME 列从字段10开始）
+    name = ""
+    for (i = 10; i <= NF; i++) name = name $i " "
+    printf "  %-10s  PID=%-8s  FD=%-5s  %s\n", humansize(size), $2, $4, name
+  }
+}
+function humansize(s,    u, v) {
+  u = "BKMGTP"
+  v = s
+  while (v >= 1024 && length(u) > 1) {
+    v /= 1024
+    u = substr(u, 2)
+  }
+  return sprintf("%.1f%s", v, substr(u, 1, 1))
+}
+END {
+  if (total == 0) {
+    print "  没有发现已删除但仍被持有的文件。"
+  } else {
+    printf "\n  总计占用: %s\n", humansize(total)
+    printf "  (这部分空间 df 计入，du 看不到)\n"
+  }
+}' > "$TEMP"
+
+cat "$TEMP"
+rm -f "$TEMP"
+#+end_src
+
+脚本做的事：遍历 =lsof +L1= 的输出，把每个文件的 SIZE 列加起来，换算成人类可读的大小，末尾汇总一个总计。那个总计数字，就是 =df= 能看到但 =du= 看不到的空间。
+
+* 其他让数字对不上的原因
+
+** 文件系统保留块
+
+ext 系列文件系统默认把 5% 的磁盘空间预留给 root 用户。这部分空间不属于任何文件， =du= 根本看不到它们；而 =df= 虽然不把它们列入"Used"列，但 =df= 的"Available"列已经扣掉了这部分——也就是说， =du= 加总出来的数字永远够不到 =df= 的"Size"，差值里有 5% 是文件系统提前圈走的。
+
+查看保留块大小（仅 ext2/3/4，XFS 用 =xfs_info= ，Btrfs 无直接等价命令）：
+
+#+begin_src shell :dir /sudo::
+sudo tune2fs -l /dev/sda1 | grep -i "reserved block"
+#+end_src
+
+#+RESULTS:
+
+#+begin_example
+Reserved block count:     655360
+Reserved blocks uid:      0 (user root)
+#+end_example
+
+如果磁盘很大（TB 级），5% 是一个可观的数字。非系统盘可以考虑调低这个比例：
+
+#+begin_src shell
+sudo tune2fs -m 1 /dev/sdb1
+#+end_src
+
+-m 1 的意思是只保留 1%。但别在根分区上这么干——/ 一旦满了连 root 都写不进去，系统就没法操作了。
+
+** 隐藏挂载点
+
+如果你先在一个目录里写满了数据，后来又在这个目录上挂载了其他分区，那么即使原来的数据还在，你已经看不到了：
+
+#+begin_src shell
+# 先写数据
+dd if=/dev/zero of=/tmp/bigfile bs=1M count=500
+
+# 之后 /tmp 又挂载了独立分区
+sudo mount /dev/sdb1 /tmp
+#+end_src
+
+此时 =du -sh /= 看不到 =/tmp/bigfile= ，因为 =/tmp= 现在指向的是新分区的根。但 =df= 看的是 / 所在的分区——那个 500MB 的文件块还在上面，占着空间。
+
+排查方法：用 bind mount 把 / 重新暴露到一个干净路径下，再看一遍：
+
+#+begin_src shell
+sudo mkdir /mnt/root_inspect
+sudo mount --bind / /mnt/root_inspect
+du -sh /mnt/root_inspect/tmp
+#+end_src
+
+如果数字比 =du -sh /tmp= 大很多，挂载点底下有被遮住的数据。
+
+** 容器和 overlay 文件系统
+
+容器运行时（Docker、Podman 等）用 overlay 文件系统把多个层叠在一起。容器的写操作存在 upper 层，删除操作用"白文件"标记。overlay 自己的空间统计机制和底层文件系统的超级块统计不完全对齐，尤其是在大量删除容器镜像层之后。
+
+这种情况排查比前几种复杂，通常先确认前三种原因都不成立，再看是不是容器导致的。
+
+* 排查三步
+
+先找出已删除但仍占空间的文件，按大小排：
+
+#+begin_src shell
+sudo lsof +L1 | sort -k7 -rn | head -10
+#+end_src
+
+九成情况到这一步就找到了——基本都是一个被 rm 掉的日志，nginx 或 Java 进程还抓着 fd 往里写。
+
+然后释放空间。两条路。
+
+能重启的话，干净利落：
+
+#+begin_src shell
+sudo systemctl restart nginx
+#+end_src
+
+进程重启关闭所有文件描述符，内核回收磁盘块， =df= 马上反映。
+
+如果生产环境不能停服，从 =/proc= 把文件清掉：
+
+#+begin_src shell
+# 从 lsof 输出拿到 PID 和 FD，比如 PID=1423, FD=10
+sudo truncate -s 0 /proc/1423/fd/10
+#+end_src
+
+=truncate -s 0= 把文件大小设为零。进程的 fd 还开着，继续往里写，但原来的空间已经释放， =df= 立刻见效。
+
+警告：数据库 write-ahead log、任何进程用于 crash recovery 的文件都别碰。数据会坏。只对普通应用日志用这一招，因为丢了内容也无所谓。
+
+最后确认空间回来了：
+
+#+begin_src shell
+df -h /var/log
+#+end_src
+
+如果还是没降，回头看看是不是还有别的进程也持有已删除文件，或者检查保留块和隐藏挂载点。
+
+* 工具速查表
+
+| 场景 | 命令 |
+|------|------|
+| 文件系统到底满没满 | =df -h= |
+| 哪个目录吃空间最多 | du -sh /* \vert sort -rh |
+| 为什么删了文件空间没回来 | =sudo lsof +L1 | sort -k7 -rn= |
+| 文件系统给自己留了多少余量 | =sudo tune2fs -l /dev/sdX | grep -i reserved= |
+| 挂载点底下有没有藏着数据 | =sudo mount --bind / /mnt/inspect && du -sh /mnt/inspect/ 挂载点路径= |
+
+再碰到半夜三点磁盘告警，先跑检测脚本，再看工具速查表。九成情况， =lsof +L1= 的前几行就把答案摊在你面前。
