@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL-etags扫描外部库头文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="LSP 需要装语言服务器、吃内存、有些语言还没有像样的实现。etags 是 Emacs 内置的，生成一个 TAGS 文件就能跳转和补全，零依赖。问题在于它默认只扫项目源码，外部库的头文件不在里面。用 pkg-config 找到路径，传给 etags 加 --declarations，就能补上这块。" />
+  <meta name="keywords" content="Emacs,etags,Xref,代码导航" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL-etags扫描外部库头文件</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge741d59">怎么做</a></li>
+<li><a href="#org89e9eee">批量处理多个库</a></li>
+</ul>
+</div>
+</div>
+<p>
+现在写代码基本都靠 LSP 做跳转和补全，但 LSP 有时不省心：每种语言得装对应的服务器，有些小众语言还没有像样的实现，大项目启动也慢。etags 是 Emacs 自带的，跑一遍命令生成一个 TAGS 文件就能用，零依赖。
+</p>
+
+<p>
+vannilla.org 有一篇 <a href="https://vannilla.org/write/1680013839/article.html">短文</a> 指出了 etags 的一个短板：默认只扫项目源码，外部库（比如 libpng）的头文件不在 TAGS 里，Xref 跳转找不到，补全也用不了。补上这一块就好用了。
+</p>
+
+<div id="outline-container-orge741d59" class="outline-2">
+<h2 id="orge741d59">怎么做</h2>
+<div class="outline-text-2" id="text-orge741d59">
+<p>
+两步：先找头文件在哪，再让 etags 扫。
+</p>
+
+<p>
+第一步，用 pkg-config 找到头文件路径：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pkg-config --cflags-only-I libpng
+</pre>
+</div>
+
+<p>
+输出类似：
+</p>
+
+<pre class="example" id="orgeb58346">
+-I/usr/include/libpng16
+</pre>
+
+<p>
+第二步，把头文件追加到项目的 TAGS 文件里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">etags.emacs --declarations --append -o TAGS /usr/include/libpng16/*.h
+</pre>
+</div>
+
+<p>
+<code>--declarations</code> 是关键。头文件里只有函数声明（原型），没有完整定义。不加这个标志，etags 会跳过它们。注意：有些系统上 <code>etags</code> 指向 Universal Ctags（不支持这个标志），Debian/Ubuntu 上需要用 <code>etags.emacs</code> 。
+</p>
+
+<p>
+<code>--append</code> 在已有的 TAGS 文件上追加，不覆盖项目源码的索引。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org89e9eee" class="outline-2">
+<h2 id="org89e9eee">批量处理多个库</h2>
+<div class="outline-text-2" id="text-org89e9eee">
+<p>
+如果项目依赖多个外部库，可以写个 Shell 函数一次搞定：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-function-name">addlib</span>() {
+    <span class="org-builtin">local</span> <span class="org-variable-name">inc</span>=$(<span class="org-sh-quoted-exec">pkg-config --cflags-only-I "$1" | sed 's/-I//g; s/ //g'</span>)
+    etags.emacs --declarations --append -o TAGS <span class="org-string">"${inc}"</span>/*.h
+}
+addlib libpng
+addlib zlib
+</pre>
+</div>
+
+<p>
+注意：这个函数只适用于 pkg-config 返回单个 include 路径的情况。如果返回多个路径（如 <code>-I/path1 -I/path2</code> ），需要额外处理。
+</p>
+
+<p>
+把这段加到 Makefile 里，每次 <code>make tags</code> 自动更新：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-makefile"><span class="org-makefile-targets">tags</span>: TAGS
+
+<span class="org-makefile-targets">TAGS</span>:
+        etags.emacs --declarations -o $$(find . -name <span class="org-string">"*.c"</span> -o -name <span class="org-string">"*.h"</span>)
+        addlib libpng
+        addlib zlib
+</pre>
+</div>
+
+<p>
+TAGS 文件生成后，Emacs 通过 <code>M-x visit-tags-table</code> 加载，之后 <code>xref-find-definitions</code> （默认 <code>M-.</code> ）就能跳转到外部库头文件了。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-19</span>
+    <span class="post-info">2026-05-19</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/etags">etags</a> : <a href="../../../../../tags/xref">Xref</a> : <a href="../../../../../tags/代码导航">代码导航</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; 1joi1osonwlubklurnmqjjibde &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
