@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：The Many Faces of flet——Elisp 局部函数的三种写法 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="本文介绍 cl-flet、cl-labels、cl-letf 三个宏的区别和使用场景。旧 flet 废弃后，Elisp 用这三个宏分别解决&quot;定义局部函数&quot;&quot;局部递归&quot;和&quot;动态覆盖全局函数&quot;三个不同的问题。" />
+  <meta name="keywords" content="Emacs, Elisp, cl-lib" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：The Many Faces of flet——Elisp 局部函数的三种写法</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org4dbc428">旧 flet 做了什么，为什么被废弃</a></li>
+<li><a href="#org1118b32">cl-flet：最常用的局部函数</a></li>
+<li><a href="#orgc85fb96">cl-labels：需要递归时用它</a></li>
+<li><a href="#orgb9db690">cl-letf：真要覆盖全局函数时用它</a></li>
+<li><a href="#org3512873">一句话速查</a></li>
+</ul>
+</div>
+</div>
+<p>
+设想这样一个场景：你想在某个函数内部临时定义一个 helper，又或者你在写测试时需要 stub 掉某个全局函数。你隐约记得有个叫 <code>flet</code> 的东西，但 Emacs 告诉你它已经废弃了。那现在该用什么？
+</p>
+
+<p>
+其实 <code>cl-lib</code> 里躺着三个名字很像的宏： <code>cl-flet</code> 、 <code>cl-labels</code> 、 <code>cl-letf</code> 。三者功能类似但是各司其职。
+</p>
+
+<div id="outline-container-org4dbc428" class="outline-2">
+<h2 id="org4dbc428">旧 flet 做了什么，为什么被废弃</h2>
+<div class="outline-text-2" id="text-org4dbc428">
+<p>
+旧 <code>flet</code> （来自古老的 <code>cl</code> 包）的行为很简单：临时替换一个函数的 <code>symbol-function</code> ，退出时恢复。
+</p>
+
+<p>
+什么叫"替换一个函数的 <code>symbol-function</code>"？在 Elisp 里，每个符号（symbol）有多个"槽位"：value cell 存变量的值，function cell 存函数定义。当你在 Elisp 里写 <code>(defun foo () ...)</code> 时，实际是把函数体放进了 <code>foo</code> 这个符号的 function cell 里。 <code>symbol-function</code> 就是用来读写这个槽位的函数。
+</p>
+
+<p>
+旧 <code>flet</code> 做的事情就是：在进入 body 之前，把某个符号 function cell 里的旧定义保存起来，然后塞一个新定义进去；body 执行完后，再把旧定义恢复回去。整个过程是运行时发生的，所有能访问到这个符号的代码都会受影响。
+</p>
+
+<p>
+这看起来挺方便，但它把两件性质完全不同的事搅在了一起：
+</p>
+
+<ul class="org-ul">
+<li><b>定义局部 helper 函数</b> ：我需要一个临时函数，只在当前这段代码内部用，出去就失效。本质上跟 <code>(let ((x 1)) ...)</code> 里定义局部变量一样，属于词法作用域的范畴。</li>
+<li><b>临时覆盖全局函数</b> ：我需要让某个函数在整个运行期间"换一个实现"，不管调用者是谁。这属于动态作用域的范畴。</li>
+</ul>
+
+<p>
+这两件事在动态作用域的年代相安无事，因为那时 Elisp 默认是动态作用域：函数引用在运行时才解析，改 function cell 的行为自然能被所有调用者看到。
+</p>
+
+<p>
+但 Emacs 24 之后默认开启了词法作用域（ <code>lexical-binding: t</code> ）。在词法作用域下，编译器在编译时就已经决定了某个函数调用引用的是哪个函数，也就是看的是源代码中的定义位置，而不是运行时 function cell 里的内容。这时候旧 <code>flet</code> 的行为就变得不可预测了：它去改 function cell，但编译器可能根本不去读 function cell。一个函数调用最终到底看到的是原始版本还是替换版本，取决于这个调用是在哪里定义的、编译器怎么处理的，光看代码表面已经没办法确定了。
+</p>
+
+<p>
+所以 Emacs 24.3 把 <code>cl</code> 重组为 <code>cl-lib</code> 时，将 <code>flet</code> 拆成了三个各司其职的宏：想定义局部 helper 用 <code>cl-flet</code> ，需要递归用 <code>cl-labels</code> ，真要动态覆盖全局函数用 <code>cl-letf</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1118b32" class="outline-2">
+<h2 id="org1118b32">cl-flet：最常用的局部函数</h2>
+<div class="outline-text-2" id="text-org1118b32">
+<p>
+<code>cl-flet</code> 的行为和 <code>let</code> 一样，只不过它绑定的是函数而非变量。定义只在 <code>cl-flet</code> 的 body 内部可见：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-flet</span> ((double (n) (* n 2)))
+  (double 21))
+</pre>
+</div>
+
+<pre class="example" id="orge61d30a">
+42
+</pre>
+
+<p>
+关键陷阱在这里： <code>cl-flet</code> 的绑定是词法作用域的，也就是说，被调用的其他函数看不到这个覆盖：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-helper</span> () (+ 1 2))
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-caller</span> () (my-helper))
+
+(<span class="org-keyword">cl-flet</span> ((my-helper () 999))
+  (my-caller))
+</pre>
+</div>
+
+<pre class="example" id="org0f4d6a1">
+3
+</pre>
+
+<p>
+<code>my-caller</code> 内部调用 <code>my-helper</code> 时，看到的仍然是全局定义的那个版本，返回 3 而不是 999。
+</p>
+
+<p>
+为什么会这样？因为 <code>cl-flet</code> 用的是词法作用域：它定义的 <code>my-helper</code> 只在 <code>cl-flet</code> 的 body 源代码文本里可见。编译器在编译 <code>my-caller</code> 时， <code>my-caller</code> 的源代码里写的是 <code>(my-helper)</code> ，编译器在它所在的作用域里找到了全局的那个 <code>my-helper</code> ，于是把这个引用固定下来了。后面 <code>cl-flet</code> 再怎么定义局部的 <code>my-helper</code> ，都跟已经编译好的 <code>my-caller</code> 没关系了。
+</p>
+
+<p>
+这和旧 <code>flet</code> 的行为完全相反。旧 <code>flet</code> 直接去改全局 function cell 里的内容，所有函数在运行时查找 <code>my-helper</code> 时都会找到那个被替换的版本，不管调用者是谁、在哪里定义的。
+</p>
+
+<p>
+同理， <code>cl-flet</code> 定义的函数在自己的定义体内也看不到自己：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-flet</span> ((fact (n)
+            (<span class="org-keyword">if</span> (&lt;= n 1)
+                1
+              (* n (fact (- n 1)))))) <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#37324; fact &#26410;&#23450;&#20041;&#65281;
+</span>  (fact 5))
+</pre>
+</div>
+
+<pre class="example" id="org07e7e0b">
+Symbol's function definition is void: fact
+</pre>
+
+<p>
+<code>cl-flet</code> 还有一个变体 <code>cl-flet*</code> ，行为就像 <code>let*</code> 之于 <code>let</code> ：后面的绑定可以引用前面的。
+</p>
+
+<p>
+日常使用中， <code>cl-flet</code> 是最常用的那个。当你只需要一个简单的局部 helper、不需要递归时，用它就对了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc85fb96" class="outline-2">
+<h2 id="orgc85fb96">cl-labels：需要递归时用它</h2>
+<div class="outline-text-2" id="text-orgc85fb96">
+<p>
+<code>cl-labels</code> 和 <code>cl-flet</code> 几乎一样，只有一个关键区别：函数在自己的定义体内也可见。这让递归和互递归成为可能：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-labels</span> ((factorial (n)
+              (<span class="org-keyword">if</span> (&lt;= n 1)
+                  1
+                (* n (factorial (- n 1))))))
+  (factorial 10))
+</pre>
+</div>
+
+<pre class="example" id="orgd8b440c">
+3628800
+</pre>
+
+<p>
+互递归也能用：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-labels</span> ((my-even-p (n) (<span class="org-keyword">if</span> (= n 0) t (my-odd-p (- n 1))))
+            (my-odd-p (n) (<span class="org-keyword">if</span> (= n 0) nil (my-even-p (- n 1)))))
+  (list (my-even-p 4) (my-odd-p 3)))
+</pre>
+</div>
+
+<pre class="example" id="orgedf08b6">
+(t t)
+</pre>
+
+<p>
+使用 <code>cl-labels</code> 的前提是文件开启了词法绑定，也就是文件头部有 <code>lexical-binding: t</code> 。现代 Elisp 代码都应该开这个，所以这个前提一般不是问题。
+</p>
+
+<p>
+简单记法： <code>cl-flet</code> 是默认选择；需要递归或互递归时，换成 <code>cl-labels</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb9db690" class="outline-2">
+<h2 id="orgb9db690">cl-letf：真要覆盖全局函数时用它</h2>
+<div class="outline-text-2" id="text-orgb9db690">
+<p>
+前面两个宏都是词法作用域的，如果你确实需要旧 <code>flet</code> 那种"临时替换全局函数定义"的行为，用 <code>cl-letf</code> 。
+</p>
+
+<p>
+<code>cl-letf</code> 的机制很直接：通过 <code>symbol-function</code> 这个广义变量（generalized variable）直接修改函数的 function cell，退出 body 时自动恢复。因为改的是全局的函数槽，所有调用路径都会看到这个替换：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">my-helper</span> () (+ 1 2))
+(<span class="org-keyword">defun</span> <span class="org-function-name">my-caller</span> () (my-helper))
+
+(<span class="org-keyword">cl-letf</span> (((symbol-function 'my-helper) (<span class="org-keyword">lambda</span> () 999)))
+  (my-caller))
+</pre>
+</div>
+
+<pre class="example" id="org717eb8c">
+999
+</pre>
+
+<p>
+这一次， <code>my-caller</code> 看到的确实是替换后的版本了。即使 body 内部抛了异常， <code>cl-letf</code> 也会保证恢复原始定义。
+</p>
+
+<p>
+语法上， <code>cl-letf</code> 不是专为函数设计的，它是一个通用的"临时替换任意可赋值位置"的宏。 <code>(symbol-function 'name)</code> 只是它支持的众多位置中的一种。比如你还可以用它暂时静默消息输出：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">cl-letf</span> (((symbol-function 'message) #'ignore))
+  (do-something-noisy))
+</pre>
+</div>
+
+<p>
+<code>cl-letf</code> 的主要用途是测试（stub 掉副作用函数）和临时压制/重定向行为。修改全局函数槽是一把利刃，用起来要小心。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3512873" class="outline-2">
+<h2 id="org3512873">一句话速查</h2>
+<div class="outline-text-2" id="text-org3512873">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">宏</th>
+<th scope="col" class="org-left">作用域</th>
+<th scope="col" class="org-left">支持递归</th>
+<th scope="col" class="org-left">覆盖全局</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>cl-flet</code></td>
+<td class="org-left">词法</td>
+<td class="org-left">否</td>
+<td class="org-left">否</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>cl-labels</code></td>
+<td class="org-left">词法</td>
+<td class="org-left">是</td>
+<td class="org-left">否</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>cl-letf</code></td>
+<td class="org-left">动态</td>
+<td class="org-left">N/A</td>
+<td class="org-left">是</td>
+</tr>
+</tbody>
+</table>
+
+<ul class="org-ul">
+<li>日常写个局部 helper，用 <code>cl-flet</code> 。</li>
+<li>helper 需要递归或互递归，换 <code>cl-labels</code> 。</li>
+<li>测试中需要 stub 全局函数，上 <code>cl-letf</code> 。</li>
+</ul>
+
+<p>
+搞清楚了这三个宏的分工，从此跟旧 <code>flet</code> 说再见。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-19</span>
+    <span class="post-info">2026-05-19</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/cl-lib">cl-lib</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; zrqr2oex231ezjigm0txkepa0a &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
