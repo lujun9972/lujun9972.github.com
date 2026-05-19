@@ -1,0 +1,49 @@
+#+TITLE: TIL: elisp-fontify-semantically——让 Emacs 看懂你的 Elisp 代码
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, Elisp, font-lock, TIL
+#+DATE: [2026-05-19 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs 31 新增 elisp-fontify-semantically，启用后 Emacs 能区分每个符号的角色——函数、宏、局部变量、feature 名——各自用不同 face 渲染。不再是传统 font-lock 那种"看到关键字就上色"的语法高亮。
+
+Emacs 的传统 font-lock 是 *语法高亮*——看到括号、字符串、关键字就上色，但它不区分 =foo= 到底是函数、变量还是一个宏。Emacs 31 新增了一个用户选项 =elisp-fontify-semantically= ，把这事改了。
+
+* 什么是语义高亮
+
+语义高亮和语法高亮的区别很简单：
+
+- *语法高亮* ：看到 =defun= 上色、看到字符串上色、看到注释上色。不关心符号的*角色* 。
+- *语义高亮* ：分析代码结构，搞清楚每个符号是干什么的——函数名、局部变量、全局变量、宏、feature 名、face 名……各自用不同的 face 渲染。
+
+比如下面这段代码：
+
+#+BEGIN_SRC emacs-lisp
+(defun greet (name)
+  (message "Hello, %s" name))
+#+END_SRC
+
+开了语义高亮后， =defun= 、 =message= 和 =name= 会用 *三种不同颜色* 显示——定义关键字、函数调用、局部变量，一目了然。而传统 font-lock 对这三个符号一视同仁。
+
+* 怎么开
+
+一行配置：
+
+#+BEGIN_SRC emacs-lisp
+(setopt elisp-fontify-semantically t)
+#+END_SRC
+
+打开任意 Elisp buffer 就能看到效果。如果代码属于 =trusted-content-p= （Emacs 认为可信的代码文件，如自己项目的源码、已安装的包等），完整分析会开启；不可信 buffer 里部分宏参数可能不会高亮。
+
+配套的还有 =elisp-add-help-echo= （默认开启），鼠标悬停在函数名上会弹出它的 docstring。
+
+开了 =cursor-sensor-mode= （=M-x cursor-sensor-mode= ）后，当前光标所在局部变量的所有出现位置也会被高亮。
+
+* 版本要求
+
+这个变量是 Emacs 31（当前 master 分支）新增的，Emacs 30 上没有。
+
+如果你在用 Emacs 30 但想尝鲜，MELPA 上有个 =lisp-semantic-hl= 包是类似功能的 backport（向后移植）。不过语义分析依赖 Emacs 31 内置的 =scope.el= ，backport（向后移植） 版本功能可能不完整。
+
+* 一个小提醒
+
+编辑非常大的 =defun= 时语义分析会有点慢，这是 emacs-devel 上确认过的。日常 Elisp 配置文件的体量不会有感觉。
