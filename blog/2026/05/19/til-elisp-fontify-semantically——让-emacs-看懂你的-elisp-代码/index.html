@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL: elisp-fontify-semantically——让 Emacs 看懂你的 Elisp 代码 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="description" content="Emacs 31 新增 elisp-fontify-semantically，启用后 Emacs 能区分每个符号的角色——函数、宏、局部变量、feature 名——各自用不同 face 渲染。不再是传统 font-lock 那种&quot;看到关键字就上色&quot;的语法高亮。" />
+  <meta name="keywords" content="Emacs, Elisp, font-lock, TIL" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL: elisp-fontify-semantically——让 Emacs 看懂你的 Elisp 代码</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgb763506">什么是语义高亮</a></li>
+<li><a href="#org83d846f">怎么开</a></li>
+<li><a href="#orgb144e1e">版本要求</a></li>
+<li><a href="#org6bcce81">一个小提醒</a></li>
+</ul>
+</div>
+</div>
+<p>
+Emacs 的传统 font-lock 是 *语法高亮*——看到括号、字符串、关键字就上色，但它不区分 <code>foo</code> 到底是函数、变量还是一个宏。Emacs 31 新增了一个用户选项 <code>elisp-fontify-semantically</code> ，把这事改了。
+</p>
+
+<div id="outline-container-orgb763506" class="outline-2">
+<h2 id="orgb763506">什么是语义高亮</h2>
+<div class="outline-text-2" id="text-orgb763506">
+<p>
+语义高亮和语法高亮的区别很简单：
+</p>
+
+<ul class="org-ul">
+<li><b>语法高亮</b> ：看到 <code>defun</code> 上色、看到字符串上色、看到注释上色。不关心符号的*角色* 。</li>
+<li><b>语义高亮</b> ：分析代码结构，搞清楚每个符号是干什么的——函数名、局部变量、全局变量、宏、feature 名、face 名……各自用不同的 face 渲染。</li>
+</ul>
+
+<p>
+比如下面这段代码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">defun</span> <span class="org-function-name">greet</span> (name)
+  (message <span class="org-string">"Hello, %s"</span> name))
+</pre>
+</div>
+
+<p>
+开了语义高亮后， <code>defun</code> 、 <code>message</code> 和 <code>name</code> 会用 <b>三种不同颜色</b> 显示——定义关键字、函数调用、局部变量，一目了然。而传统 font-lock 对这三个符号一视同仁。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org83d846f" class="outline-2">
+<h2 id="org83d846f">怎么开</h2>
+<div class="outline-text-2" id="text-org83d846f">
+<p>
+一行配置：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setopt</span> elisp-fontify-semantically t)
+</pre>
+</div>
+
+<p>
+打开任意 Elisp buffer 就能看到效果。如果代码属于 <code>trusted-content-p</code> （Emacs 认为可信的代码文件，如自己项目的源码、已安装的包等），完整分析会开启；不可信 buffer 里部分宏参数可能不会高亮。
+</p>
+
+<p>
+配套的还有 <code>elisp-add-help-echo</code> （默认开启），鼠标悬停在函数名上会弹出它的 docstring。
+</p>
+
+<p>
+开了 <code>cursor-sensor-mode</code> （=M-x cursor-sensor-mode= ）后，当前光标所在局部变量的所有出现位置也会被高亮。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb144e1e" class="outline-2">
+<h2 id="orgb144e1e">版本要求</h2>
+<div class="outline-text-2" id="text-orgb144e1e">
+<p>
+这个变量是 Emacs 31（当前 master 分支）新增的，Emacs 30 上没有。
+</p>
+
+<p>
+如果你在用 Emacs 30 但想尝鲜，MELPA 上有个 <code>lisp-semantic-hl</code> 包是类似功能的 backport（向后移植）。不过语义分析依赖 Emacs 31 内置的 <code>scope.el</code> ，backport（向后移植） 版本功能可能不完整。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6bcce81" class="outline-2">
+<h2 id="org6bcce81">一个小提醒</h2>
+<div class="outline-text-2" id="text-org6bcce81">
+<p>
+编辑非常大的 <code>defun</code> 时语义分析会有点慢，这是 emacs-devel 上确认过的。日常 Elisp 配置文件的体量不会有感觉。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-19</span>
+    <span class="post-info">2026-05-19</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/font-lock">font-lock</a> : <a href="../../../../../tags/til">TIL</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; f5ckgwuhno0ebkjf23bdyvgvpg &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
