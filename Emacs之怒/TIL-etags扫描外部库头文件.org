@@ -1,0 +1,65 @@
+#+TITLE: TIL-etags扫描外部库头文件
+#+AUTHOR: darksun,Claude Code
+#+TAGS: Emacs,etags,Xref,代码导航
+#+DATE: [2026-05-19 Mon]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: LSP 需要装语言服务器、吃内存、有些语言还没有像样的实现。etags 是 Emacs 内置的，生成一个 TAGS 文件就能跳转和补全，零依赖。问题在于它默认只扫项目源码，外部库的头文件不在里面。用 pkg-config 找到路径，传给 etags 加 --declarations，就能补上这块。
+
+现在写代码基本都靠 LSP 做跳转和补全，但 LSP 有时不省心：每种语言得装对应的服务器，有些小众语言还没有像样的实现，大项目启动也慢。etags 是 Emacs 自带的，跑一遍命令生成一个 TAGS 文件就能用，零依赖。
+
+vannilla.org 有一篇 [[https://vannilla.org/write/1680013839/article.html][短文]] 指出了 etags 的一个短板：默认只扫项目源码，外部库（比如 libpng）的头文件不在 TAGS 里，Xref 跳转找不到，补全也用不了。补上这一块就好用了。
+
+* 怎么做
+
+两步：先找头文件在哪，再让 etags 扫。
+
+第一步，用 pkg-config 找到头文件路径：
+
+#+begin_src shell
+pkg-config --cflags-only-I libpng
+#+end_src
+
+输出类似：
+
+#+begin_example
+-I/usr/include/libpng16
+#+end_example
+
+第二步，把头文件追加到项目的 TAGS 文件里：
+
+#+begin_src shell
+etags.emacs --declarations --append -o TAGS /usr/include/libpng16/*.h
+#+end_src
+
+=--declarations= 是关键。头文件里只有函数声明（原型），没有完整定义。不加这个标志，etags 会跳过它们。注意：有些系统上 =etags= 指向 Universal Ctags（不支持这个标志），Debian/Ubuntu 上需要用 =etags.emacs= 。
+
+=--append= 在已有的 TAGS 文件上追加，不覆盖项目源码的索引。
+
+* 批量处理多个库
+
+如果项目依赖多个外部库，可以写个 Shell 函数一次搞定：
+
+#+begin_src shell
+addlib() {
+    local inc=$(pkg-config --cflags-only-I "$1" | sed 's/-I//g; s/ //g')
+    etags.emacs --declarations --append -o TAGS "${inc}"/*.h
+}
+addlib libpng
+addlib zlib
+#+end_src
+
+注意：这个函数只适用于 pkg-config 返回单个 include 路径的情况。如果返回多个路径（如 =-I/path1 -I/path2= ），需要额外处理。
+
+把这段加到 Makefile 里，每次 =make tags= 自动更新：
+
+#+begin_src makefile
+tags: TAGS
+
+TAGS:
+	etags.emacs --declarations -o $$(find . -name "*.c" -o -name "*.h")
+	addlib libpng
+	addlib zlib
+#+end_src
+
+TAGS 文件生成后，Emacs 通过 =M-x visit-tags-table= 加载，之后 =xref-find-definitions= （默认 =M-.= ）就能跳转到外部库头文件了。
