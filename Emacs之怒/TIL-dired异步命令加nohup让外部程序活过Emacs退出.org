@@ -1,0 +1,25 @@
+#+TITLE: TIL: 给 dired 异步命令加 nohup，让外部程序活过 Emacs 退出
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, dired, nohup, TIL
+#+DATE: [2026-05-19 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 在 dired 中用 W 启动的外部程序（如 mpv），在关闭 Emacs 后程序也跟着死了。原因是子进程收到 SIGHUP 信号。用 advice 给命令自动加 nohup 即可解决。
+
+看到 [[https://emacs.dyerdwelling.family/emacs/20260512184707-emacs--a-tiny-nohup-keeping-media-alive-when-emacs-exits/][一篇短文]] 提到一个小问题：在 dired 中按 =W= （ =dired-do-async-shell-command= ）用 mpv 播放视频，关掉 Emacs 后视频也停了。
+
+=dired-do-async-shell-command= 虽然名字叫"async"，但其实进程并没有真正独立于 Emacs。因为进程树是 Emacs → shell → mpv，Emacs 退出时杀掉子进程，shell 死了，mpv 在被 init 接管之前收到了 SIGHUP 信号，于是也跟着死了。关于 SIGHUP 为什么会杀掉后台进程，之前的 [[file:nohup,setsid与disown的不同之处.org][nohup、setsid 与 disown 的不同之处]] 里有详细解释。
+
+解法是用 =advice-add= 给 =dired-do-async-shell-command= 包一层，在命令前面自动加 =nohup= ：
+
+#+BEGIN_SRC emacs-lisp
+(defun my/dired-async-shell-command-nohup (orig-fun command &optional arg file-list)
+  "在 COMMAND 前加 nohup，让子进程活过 Emacs 退出。"
+  (funcall orig-fun (concat "nohup " command) arg file-list))
+
+(with-eval-after-load 'dired
+  (advice-add 'dired-do-async-shell-command
+              :around #'my/dired-async-shell-command-nohup))
+#+END_SRC
+
+加了之后，从 dired 启动的 mpv、firefox、gimp 等程序都不会再因为关 Emacs 而被杀。
