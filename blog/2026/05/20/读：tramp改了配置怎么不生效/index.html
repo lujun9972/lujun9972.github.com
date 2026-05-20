@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Tramp改了配置怎么不生效 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Tramp 改了 tramp-remote-path 配置后不生效，重启 Emacs 都没用。原因是 Tramp 会在 ~/.emacs.d/tramp 里持久化缓存第一次连接时的远程 PATH，必须清理缓存或用 tramp-cleanup-all-connections 才行。本文从这个问题出发，梳理 Tramp 对远程 shell 环境的隐含要求、PATH 管理机制，以及正确的配置挂载方式。" />
+  <meta name="keywords" content="emacs,tramp,远程编辑,排障" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Tramp改了配置怎么不生效</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgf0f9db9">前置知识：Tramp 不只是编辑远程文件</a></li>
+<li><a href="#orgd9f10ce">故障回顾</a>
+<ul>
+<li><a href="#org463e3d7">改了 tramp-remote-path 为什么没反应？</a></li>
+<li><a href="#orgd40f571">原因</a></li>
+<li><a href="#org657a598">解决之道</a></li>
+</ul>
+</li>
+<li><a href="#org2941c81">ssh 和 sshx：两种连法，两种要求</a></li>
+<li><a href="#org884c96f">tramp-remote-path 的正确用法</a></li>
+<li><a href="#orgb1ae1e2">Tramp 配置应该放在哪里？</a></li>
+<li><a href="#org6c0354a">排障速查</a></li>
+</ul>
+</div>
+</div>
+<p>
+Chris Siebenmann 在 <a href="https://utcc.utoronto.ca/~cks/space/blog/programming/EmacsTrampNotes">Notes on using GNU Emacs' Tramp system in an unusual shell environment</a> 中记录了他让 Tramp 工作起来的完整排障过程。他的发现里最有价值的一条是：Tramp 会在本地持久化缓存远程主机的 PATH 信息，改了配置重启 Emacs 都不够，必须手动清理缓存。
+</p>
+
+<p>
+我以前写过一篇 <a href="tramp的一般用法.html">Tramp 的一般用法</a> 讲基础操作，这篇补上排障和配置层面容易踩的坑。
+</p>
+
+<div id="outline-container-orgf0f9db9" class="outline-2">
+<h2 id="orgf0f9db9">前置知识：Tramp 不只是编辑远程文件</h2>
+<div class="outline-text-2" id="text-orgf0f9db9">
+<p>
+很多人以为 Tramp 只能远程打开文件编辑，其实它对所有需要执行命令的操作都生效。当你通过 Tramp 访问远程主机时，以下操作都会自动在远程机器上执行：
+</p>
+
+<ul class="org-ul">
+<li><code>M-x shell</code> / <code>M-x eshell</code> ：打开的 shell 运行在远程机器上，你输入的命令都在远程执行</li>
+<li><code>M-x compile</code> ：编译命令在远程环境运行</li>
+<li><code>M-x rgrep</code> ：find 和 grep 在远程文件系统中搜索</li>
+<li>dired 中操作文件：复制、重命名、删除都在远程完成</li>
+</ul>
+
+<p>
+这意味着远程机器上能不能找到程序（比如 <code>go</code> 、 <code>gcc</code> 、 <code>rg</code> ）直接决定了这些操作能不能正常工作，而 Tramp 用什么路径去找程序，就是本文要讲的核心问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd9f10ce" class="outline-2">
+<h2 id="orgd9f10ce">故障回顾</h2>
+<div class="outline-text-2" id="text-orgd9f10ce">
+</div>
+<div id="outline-container-org463e3d7" class="outline-3">
+<h3 id="org463e3d7">改了 tramp-remote-path 为什么没反应？</h3>
+<div class="outline-text-3" id="text-org463e3d7">
+<p>
+Tramp 不会直接用远程机器的 <code>$PATH</code> 。它自己维护了一份远程路径列表，存在变量 <code>tramp-remote-path</code> 里。默认值包含 <code>/bin</code> 、 <code>/usr/bin</code> 这类系统目录，但不一定包含你自己装的程序所在的路径。
+</p>
+
+<p>
+你想加一个路径，比如 Go 的 bin 目录，操作如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'tramp-remote-path <span class="org-string">"/home/you/go/bin"</span>)
+</pre>
+</div>
+
+<p>
+加完之后连接远程主机，发现还是找不到 <code>go</code> 命令。你可能以为要重启 Emacs，结果重启之后还是找不到。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd40f571" class="outline-3">
+<h3 id="orgd40f571">原因</h3>
+<div class="outline-text-3" id="text-orgd40f571">
+<p>
+原因是 Tramp 在第一次连接每台远程主机时，会验证当时的 <code>tramp-remote-path</code> 里哪些目录实际存在，然后把这个结果 <b>持久化到文件</b> 里（默认是 <code>~/.emacs.d/tramp</code> ）。后续再连同一台主机，Tramp 直接读缓存，不管你后来怎么改 <code>tramp-remote-path</code> 。
+</p>
+
+<p>
+这就导致一个诡异的现象：你改了配置，重连上远程主机，发现没变化。你以为配置写错了，又改了一版，还是没变。直道偶尔哪次清了缓存，突然好了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org657a598" class="outline-3">
+<h3 id="org657a598">解决之道</h3>
+<div class="outline-text-3" id="text-org657a598">
+<p>
+<b>解决方法有两个：</b>
+</p>
+
+<ol class="org-ol">
+<li>清理所有连接的缓存： <code>M-x tramp-cleanup-all-connections</code> 。这个命令清掉的是内存里的缓存，磁盘上的持久化文件还在，下次启动 Emacs 时缓存会从文件恢复。</li>
+<li>如果还不行，关掉 Emacs，删掉 <code>~/.emacs.d/tramp</code> 文件，再重启。这个文件就是持久化缓存的存储位置。</li>
+</ol>
+
+<p>
+如果你想一劳永逸地禁用这个持久化缓存，不能直接用 <code>customize</code> 把 <code>tramp-persistency-file-name</code> 设为 <code>nil</code> （customize 只接受文件名），也不能在 Tramp 加载之前 <code>setq</code> 。正确做法是在 Tramp 加载 <b>之后</b> 设置这个变量为nil：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-eval-after-load</span> 'tramp
+  (<span class="org-keyword">setq</span> tramp-persistency-file-name nil))
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2941c81" class="outline-2">
+<h2 id="org2941c81">ssh 和 sshx：两种连法，两种要求</h2>
+<div class="outline-text-2" id="text-org2941c81">
+<p>
+Tramp 最常用的连接方法是 <code>ssh</code> 和 <code>sshx</code> ，写法分别是 <code>/ssh:host:</code> 和 <code>/sshx:host:</code> 。
+</p>
+
+<p>
+<code>ssh</code> 方法会先走一遍完整的登录流程（执行你的 <code>.profile</code> 、 <code>.bashrc</code> 之类），然后切到 <code>/bin/sh</code> 并设置特殊的提示符。注意，走登录流程的目的是让 Tramp 能在远程 shell 里正确执行初始化命令，并不是为了继承你 <code>.profile</code> 里设置的 <code>$PATH</code> 。初始化完成后，Tramp 用自己的 <code>tramp-remote-path</code> 来决定去哪些目录找程序。
+</p>
+
+<p>
+所以 Tramp 对远程 shell 有几个要求：
+</p>
+
+<ol class="org-ol">
+<li>**提示符格式要常规**。如果你的提示符里有多行内容、ANSI 颜色码、或者特殊字符，Tramp 可能认不出来。它用 <code>tramp-shell-prompt-pattern</code> 这个正则来匹配提示符，不匹配就会被当作命令输出的一部分，导致 Tramp 的命令解析乱掉。</li>
+<li>**要支持反斜杠转义**。Tramp 发给远程 shell 的命令会用反斜杠转义特殊字符（通过 <code>shell-quote-argument</code> 函数）。只有 <code>-</code> 、 <code>.</code> 、 <code>/</code> 、数字和字母不会加反斜杠。如果你的 shell 不按这个规则处理转义，命令就会出错。</li>
+<li>**登录过程不能停**。如果你的 <code>.profile</code> 里有个 <code>read</code> 等待用户输入，或者打印了一段很长的欢迎信息后没有马上出现提示符，Tramp 会卡住。</li>
+</ol>
+
+<p>
+<code>sshx</code> 方法直接运行 <code>/bin/sh</code> ，跳过整个登录流程。对 shell 环境几乎没要求，连接也更快。但 <code>.profile</code> 没执行，远程机器上的环境变量（包括 <code>$PATH</code> ）不会被设置。
+</p>
+
+<p>
+如果你的远程 shell 环境不太常规（比如用了 zsh 配了一堆花哨的提示符，或者 <code>.profile</code> 里有交互式的东西）， <code>sshx</code> 是更稳的选择。因为 sshx 直接跑 <code>/bin/sh</code> ，不经过你的登录流程，所以那些花哨提示符和交互式内容根本没机会干扰 Tramp。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org884c96f" class="outline-2">
+<h2 id="org884c96f">tramp-remote-path 的正确用法</h2>
+<div class="outline-text-2" id="text-org884c96f">
+<p>
+<code>tramp-remote-path</code> 是一个路径列表，Tramp 在连接远程主机时会逐个检查列表里的目录是否存在于远程机器上，只保留存在的那些。
+</p>
+
+<p>
+注意几个坑：
+</p>
+
+<p>
+<b><b><code>~</code> 和 <code>$HOME</code> 不能用。</b></b> Tramp 文档里有些示例暗示你可以在路径里用 <code>~</code> ，但实际上不行。Tramp 在检查目录是否存在时，会对路径加引号再发给远程 shell，加了引号之后 shell 就不会展开 <code>~</code> 和 <code>$HOME</code> 了。所以下面这样写是没有效果的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#26679;&#20889;&#19981;&#29983;&#25928;&#65292;~ &#19981;&#20250;&#34987;&#23637;&#24320;
+</span>(add-to-list 'tramp-remote-path <span class="org-string">"~/go/bin"</span>)
+(add-to-list 'tramp-remote-path <span class="org-string">"$HOME/go/bin"</span>)
+</pre>
+</div>
+
+<p>
+必须写完整路径：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'tramp-remote-path <span class="org-string">"/home/you/go/bin"</span>)
+</pre>
+</div>
+
+<p>
+**如果你的用户名在不同机器上不一样**，或者主目录路径不统一（有的是 <code>/home/xxx</code> ，有的是 <code>/u/xxx</code> ），就得把所有可能的路径都加上：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">dolist</span> (dir '(<span class="org-string">"/home/you/go/bin"</span>
+               <span class="org-string">"/home/you/.local/bin"</span>
+               <span class="org-string">"/u/you/go/bin"</span>))
+  (add-to-list 'tramp-remote-path dir))
+</pre>
+</div>
+
+<p>
+**如果你想直接用远程机器自己的 <code>$PATH=**，可以把 =tramp-own-remote-path</code> 加到 <code>tramp-remote-path</code> 里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+</pre>
+</div>
+
+<p>
+这会让 Tramp 在远程机器上运行 <code>/bin/sh -l -c 'echo $PATH'</code> 来获取路径。前提是你的 <code>.profile</code> 在非交互式执行时不能出问题，比如不能有 <code>read</code> 等待输入、不能有 <code>select</code> 菜单、不能因为检测不到终端就报错退出。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb1ae1e2" class="outline-2">
+<h2 id="orgb1ae1e2">Tramp 配置应该放在哪里？</h2>
+<div class="outline-text-2" id="text-orgb1ae1e2">
+<p>
+Tramp 不是 mode，没有 <code>tramp-mode-hook</code> 。它是一个在你第一次访问远程文件路径时才加载的模块。所以你不能在加载之前就指望配置生效，也不能用 <code>with-eval-after-load</code> 之前的 <code>setq</code> 来设置某些变量。
+</p>
+
+<p>
+<code>use-package</code> 的 <code>:config</code> 块正好在包加载后执行，是挂载 Tramp 配置的好地方：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> tramp
+  <span class="org-builtin">:defer</span> t
+  <span class="org-builtin">:config</span>
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#31105;&#29992;&#25345;&#20037;&#21270;&#32531;&#23384;
+</span>  (<span class="org-keyword">setq</span> tramp-persistency-file-name nil)
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#28155;&#21152;&#33258;&#23450;&#20041;&#36828;&#31243;&#36335;&#24452;
+</span>  (<span class="org-keyword">dolist</span> (dir '(<span class="org-string">"/home/you/go/bin"</span>
+                 <span class="org-string">"/home/you/.local/bin"</span>))
+    (add-to-list 'tramp-remote-path dir))
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#28165;&#29702;&#24050;&#26377;&#30340;&#32531;&#23384;&#36830;&#25509;
+</span>  (tramp-cleanup-all-connections))
+</pre>
+</div>
+
+<p>
+如果你不用 <code>use-package</code> ，等价写法是：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">with-eval-after-load</span> 'tramp
+  (<span class="org-keyword">setq</span> tramp-persistency-file-name nil)
+  (<span class="org-keyword">dolist</span> (dir '(<span class="org-string">"/home/you/go/bin"</span>
+                 <span class="org-string">"/home/you/.local/bin"</span>))
+    (add-to-list 'tramp-remote-path dir))
+  (tramp-cleanup-all-connections))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org6c0354a" class="outline-2">
+<h2 id="org6c0354a">排障速查</h2>
+<div class="outline-text-2" id="text-org6c0354a">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">症状</th>
+<th scope="col" class="org-left">可能原因</th>
+<th scope="col" class="org-left">检查方法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">连接超时或卡住</td>
+<td class="org-left">远程 <code>.profile</code> 有交互式内容</td>
+<td class="org-left">试用 <code>/sshx:</code> 代替 <code>/ssh:</code></td>
+</tr>
+
+<tr>
+<td class="org-left">命令解析错误</td>
+<td class="org-left">提示符格式不匹配</td>
+<td class="org-left">检查 <code>tramp-shell-prompt-pattern</code> 是否能匹配你的提示符</td>
+</tr>
+
+<tr>
+<td class="org-left">改了 <code>tramp-remote-path</code> 没效果</td>
+<td class="org-left">持久化缓存</td>
+<td class="org-left"><code>M-x tramp-cleanup-all-connections</code> ，或删 <code>~/.emacs.d/tramp</code></td>
+</tr>
+
+<tr>
+<td class="org-left">远程找不到程序</td>
+<td class="org-left">路径不在 <code>tramp-remote-path</code> 里</td>
+<td class="org-left"><code>M-:</code> <code>(tramp-get-remote-path nil)</code> 查看当前路径列表</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>~/</code> 写进路径不生效</td>
+<td class="org-left"><code>~</code> 不展开</td>
+<td class="org-left">改用完整路径 <code>/home/you/...</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-20</span>
+    <span class="post-info">2026-05-20</span>
+    <a href="../../../../../tags/emacs">emacs</a> : <a href="../../../../../tags/tramp">tramp</a> : <a href="../../../../../tags/远程编辑">远程编辑</a> : <a href="../../../../../tags/排障">排障</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmrw5os &lt;dot&gt; xj5td0mgn5we1gkitghk2bohxc &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
