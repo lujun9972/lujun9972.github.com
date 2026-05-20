@@ -1,0 +1,149 @@
+#+TITLE: 读：Tramp改了配置怎么不生效
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: emacs,tramp,远程编辑,排障
+#+DATE: [2026-05-20 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Tramp 改了 tramp-remote-path 配置后不生效，重启 Emacs 都没用。原因是 Tramp 会在 ~/.emacs.d/tramp 里持久化缓存第一次连接时的远程 PATH，必须清理缓存或用 tramp-cleanup-all-connections 才行。本文从这个问题出发，梳理 Tramp 对远程 shell 环境的隐含要求、PATH 管理机制，以及正确的配置挂载方式。
+
+Chris Siebenmann 在 [[https://utcc.utoronto.ca/~cks/space/blog/programming/EmacsTrampNotes][Notes on using GNU Emacs' Tramp system in an unusual shell environment]] 中记录了他让 Tramp 工作起来的完整排障过程。他的发现里最有价值的一条是：Tramp 会在本地持久化缓存远程主机的 PATH 信息，改了配置重启 Emacs 都不够，必须手动清理缓存。
+
+我以前写过一篇 [[file:tramp的一般用法.org][Tramp 的一般用法]] 讲基础操作，这篇补上排障和配置层面容易踩的坑。
+
+* 前置知识：Tramp 不只是编辑远程文件
+
+很多人以为 Tramp 只能远程打开文件编辑，其实它对所有需要执行命令的操作都生效。当你通过 Tramp 访问远程主机时，以下操作都会自动在远程机器上执行：
+
+- =M-x shell= / =M-x eshell= ：打开的 shell 运行在远程机器上，你输入的命令都在远程执行
+- =M-x compile= ：编译命令在远程环境运行
+- =M-x rgrep= ：find 和 grep 在远程文件系统中搜索
+- dired 中操作文件：复制、重命名、删除都在远程完成
+
+这意味着远程机器上能不能找到程序（比如 =go= 、 =gcc= 、 =rg= ）直接决定了这些操作能不能正常工作，而 Tramp 用什么路径去找程序，就是本文要讲的核心问题。
+
+* 故障回顾
+** 改了 tramp-remote-path 为什么没反应？
+
+Tramp 不会直接用远程机器的 =$PATH= 。它自己维护了一份远程路径列表，存在变量 =tramp-remote-path= 里。默认值包含 =/bin= 、 =/usr/bin= 这类系统目录，但不一定包含你自己装的程序所在的路径。
+
+你想加一个路径，比如 Go 的 bin 目录，操作如下：
+
+#+begin_src emacs-lisp
+(add-to-list 'tramp-remote-path "/home/you/go/bin")
+#+end_src
+
+加完之后连接远程主机，发现还是找不到 =go= 命令。你可能以为要重启 Emacs，结果重启之后还是找不到。
+
+** 原因
+
+原因是 Tramp 在第一次连接每台远程主机时，会验证当时的 =tramp-remote-path= 里哪些目录实际存在，然后把这个结果 *持久化到文件* 里（默认是 =~/.emacs.d/tramp= ）。后续再连同一台主机，Tramp 直接读缓存，不管你后来怎么改 =tramp-remote-path= 。
+
+这就导致一个诡异的现象：你改了配置，重连上远程主机，发现没变化。你以为配置写错了，又改了一版，还是没变。直道偶尔哪次清了缓存，突然好了。
+
+** 解决之道
+
+*解决方法有两个：*
+
+1. 清理所有连接的缓存： =M-x tramp-cleanup-all-connections= 。这个命令清掉的是内存里的缓存，磁盘上的持久化文件还在，下次启动 Emacs 时缓存会从文件恢复。
+2. 如果还不行，关掉 Emacs，删掉 =~/.emacs.d/tramp= 文件，再重启。这个文件就是持久化缓存的存储位置。
+
+如果你想一劳永逸地禁用这个持久化缓存，不能直接用 =customize= 把 =tramp-persistency-file-name= 设为 =nil= （customize 只接受文件名），也不能在 Tramp 加载之前 =setq= 。正确做法是在 Tramp 加载 *之后* 设置这个变量为nil：
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'tramp
+  (setq tramp-persistency-file-name nil))
+#+end_src
+
+* ssh 和 sshx：两种连法，两种要求
+
+Tramp 最常用的连接方法是 =ssh= 和 =sshx= ，写法分别是 =/ssh:host:= 和 =/sshx:host:= 。
+
+=ssh= 方法会先走一遍完整的登录流程（执行你的 =.profile= 、 =.bashrc= 之类），然后切到 =/bin/sh= 并设置特殊的提示符。注意，走登录流程的目的是让 Tramp 能在远程 shell 里正确执行初始化命令，并不是为了继承你 =.profile= 里设置的 =$PATH= 。初始化完成后，Tramp 用自己的 =tramp-remote-path= 来决定去哪些目录找程序。
+
+所以 Tramp 对远程 shell 有几个要求：
+
+1. **提示符格式要常规**。如果你的提示符里有多行内容、ANSI 颜色码、或者特殊字符，Tramp 可能认不出来。它用 =tramp-shell-prompt-pattern= 这个正则来匹配提示符，不匹配就会被当作命令输出的一部分，导致 Tramp 的命令解析乱掉。
+2. **要支持反斜杠转义**。Tramp 发给远程 shell 的命令会用反斜杠转义特殊字符（通过 =shell-quote-argument= 函数）。只有 =-= 、 =.= 、 =/= 、数字和字母不会加反斜杠。如果你的 shell 不按这个规则处理转义，命令就会出错。
+3. **登录过程不能停**。如果你的 =.profile= 里有个 =read= 等待用户输入，或者打印了一段很长的欢迎信息后没有马上出现提示符，Tramp 会卡住。
+
+=sshx= 方法直接运行 =/bin/sh= ，跳过整个登录流程。对 shell 环境几乎没要求，连接也更快。但 =.profile= 没执行，远程机器上的环境变量（包括 =$PATH= ）不会被设置。
+
+如果你的远程 shell 环境不太常规（比如用了 zsh 配了一堆花哨的提示符，或者 =.profile= 里有交互式的东西）， =sshx= 是更稳的选择。因为 sshx 直接跑 =/bin/sh= ，不经过你的登录流程，所以那些花哨提示符和交互式内容根本没机会干扰 Tramp。
+
+* tramp-remote-path 的正确用法
+
+=tramp-remote-path= 是一个路径列表，Tramp 在连接远程主机时会逐个检查列表里的目录是否存在于远程机器上，只保留存在的那些。
+
+注意几个坑：
+
+**=~= 和 =$HOME= 不能用。** Tramp 文档里有些示例暗示你可以在路径里用 =~= ，但实际上不行。Tramp 在检查目录是否存在时，会对路径加引号再发给远程 shell，加了引号之后 shell 就不会展开 =~= 和 =$HOME= 了。所以下面这样写是没有效果的：
+
+#+begin_src emacs-lisp
+;; 这样写不生效，~ 不会被展开
+(add-to-list 'tramp-remote-path "~/go/bin")
+(add-to-list 'tramp-remote-path "$HOME/go/bin")
+#+end_src
+
+必须写完整路径：
+
+#+begin_src emacs-lisp
+(add-to-list 'tramp-remote-path "/home/you/go/bin")
+#+end_src
+
+**如果你的用户名在不同机器上不一样**，或者主目录路径不统一（有的是 =/home/xxx= ，有的是 =/u/xxx= ），就得把所有可能的路径都加上：
+
+#+begin_src emacs-lisp
+(dolist (dir '("/home/you/go/bin"
+               "/home/you/.local/bin"
+               "/u/you/go/bin"))
+  (add-to-list 'tramp-remote-path dir))
+#+end_src
+
+**如果你想直接用远程机器自己的 =$PATH=**，可以把 =tramp-own-remote-path= 加到 =tramp-remote-path= 里：
+
+#+begin_src emacs-lisp
+(add-to-list 'tramp-remote-path 'tramp-own-remote-path)
+#+end_src
+
+这会让 Tramp 在远程机器上运行 =/bin/sh -l -c 'echo $PATH'= 来获取路径。前提是你的 =.profile= 在非交互式执行时不能出问题，比如不能有 =read= 等待输入、不能有 =select= 菜单、不能因为检测不到终端就报错退出。
+
+* Tramp 配置应该放在哪里？
+
+Tramp 不是 mode，没有 =tramp-mode-hook= 。它是一个在你第一次访问远程文件路径时才加载的模块。所以你不能在加载之前就指望配置生效，也不能用 =with-eval-after-load= 之前的 =setq= 来设置某些变量。
+
+=use-package= 的 =:config= 块正好在包加载后执行，是挂载 Tramp 配置的好地方：
+
+#+begin_src emacs-lisp
+(use-package tramp
+  :defer t
+  :config
+  ;; 禁用持久化缓存
+  (setq tramp-persistency-file-name nil)
+  ;; 添加自定义远程路径
+  (dolist (dir '("/home/you/go/bin"
+                 "/home/you/.local/bin"))
+    (add-to-list 'tramp-remote-path dir))
+  ;; 清理已有的缓存连接
+  (tramp-cleanup-all-connections))
+#+end_src
+
+如果你不用 =use-package= ，等价写法是：
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'tramp
+  (setq tramp-persistency-file-name nil)
+  (dolist (dir '("/home/you/go/bin"
+                 "/home/you/.local/bin"))
+    (add-to-list 'tramp-remote-path dir))
+  (tramp-cleanup-all-connections))
+#+end_src
+
+* 排障速查
+
+| 症状 | 可能原因 | 检查方法 |
+|------|----------|----------|
+| 连接超时或卡住 | 远程 =.profile= 有交互式内容 | 试用 =/sshx:= 代替 =/ssh:= |
+| 命令解析错误 | 提示符格式不匹配 | 检查 =tramp-shell-prompt-pattern= 是否能匹配你的提示符 |
+| 改了 =tramp-remote-path= 没效果 | 持久化缓存 | =M-x tramp-cleanup-all-connections= ，或删 =~/.emacs.d/tramp= |
+| 远程找不到程序 | 路径不在 =tramp-remote-path= 里 | =M-:= =(tramp-get-remote-path nil)= 查看当前路径列表 |
+| =~/= 写进路径不生效 | =~= 不展开 | 改用完整路径 =/home/you/...= |
