@@ -1,0 +1,32 @@
+#+TITLE: TIL: minibuffer 激活时也能操作其他窗口
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, minibuffer, other-window, TIL
+#+DATE: [2026-05-20 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: minibuffer 提示框弹出后，光标不一定非得锁在里面。用 C-x o 跳出去操作其他窗口，确认完了还可以再跳回来按回车提交。
+
+编程序时经常会碰到这种情况：按了 =M-x compile= ，minibuffer 弹出命令行让你确认，这时候你突然想看看刚改的代码有没有明显错误。
+
+传统做法是 =C-g= 取消，检查完再重新调一次命令。如果命令参数是手敲的，还得重新输入或从历史记录里翻。 vannilla.org 的 [[https://vannilla.org/write/1778277936/article.html][一篇 Emacs Carnival 文章]] 提到了一个实用技巧：minibuffer 弹出提示后，若你想先做其他操作，不必 =C-g= 先取消命令，可以直接 =C-x o= 跳到其他窗口继续操作。
+
+* 怎么用
+
+通过下面配置
+
+#+BEGIN_SRC emacs-lisp
+;; 默认情况下，minibuffer 激活时不能再开新的 minibuffer
+;; 如果你想在 minibuffer 里还能 C-x C-f 打开文件之类的，需要开启递归 minibuffer
+(setq enable-recursive-minibuffers t)
+#+END_SRC
+
+这样一来，minibuffer 激活时，绝大多数提示都会等你按回车才继续执行。这个间隙里 =C-x o= (=other-window=) 可以把光标移到其他窗口。你可以在那些窗口里滚动内容、复制文本、删除区域，把复制的选项粘贴回 minibuffer 的命令行里。
+
+开启 =enable-recursive-minibuffers= 后，即使已经在 minibuffer 里输东西了，还能再调 =C-x C-f= 之类需要 minibuffer 的命令，执行完自动回到之前那个提示。
+
+* 两类逃不出去的提示
+
+有两类提示不支持 =C-x o= 逃逸：
+
+1. =map-y-or-n-p= 类提示： =save-some-buffers= 等批量操作用的特殊提示，要么逐个回答，要么按 =!= 全部选"是"，不能跳出去
+2. =transient= 菜单（Magit 等包用的层叠菜单）：菜单占据 minibuffer 后，你要么一路选到底，要么 =C-g= 逐层退出。如果已经在三层菜单里了，发现上面要改个东西，只能按三次 =C-g= 全部退出再重新来

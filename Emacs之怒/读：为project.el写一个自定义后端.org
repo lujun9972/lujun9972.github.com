@@ -1,0 +1,120 @@
+#+TITLE: 读：为 project.el 写一个自定义后端
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, project.el, cl-defmethod, Makefile
+#+DATE: [2026-05-20 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 介绍如何为 Emacs 内置的 project.el 编写自定义后端。以 Makefile 项目为例，展示 cl-defmethod 分派机制、project-find-functions hook、以及 project-root/project-files/project-ignores/project-external-roots 四个泛型函数的实现。
+
+看到 [[https://vannilla.org/write/1609258895/article.html][vannilla.org 的这篇教程]]，讲的是如何为 Emacs 内置的 =project.el= 编写自定义后端。 =project.el= 从 Emacs 27.1 开始内置，用来管理"项目"这个概念：用于解决在一个项目内快速跳转文件、搜索、运行命令的问题。默认后端基于 VC（版本控制），对 Git/Mercurial 管理的项目开箱即用。但如果项目不用版本控制呢？
+
+* project.el 的工作原理
+
+=project.el= 的核心是 =cl-defgeneric= 和 =cl-defmethod= 。后端的接口就是四个泛型函数：
+
+- =project-root= — 返回项目的根目录
+- =project-files= — 返回项目内的所有文件
+- =project-ignores= — 返回要排除的文件模式列表
+- =project-external-roots= — 返回不属于项目但相关的外部目录
+
+后端的识别靠的是数据类型分派：每个后端用一个特定格式的列表来表示项目实例， =cl-defmethod= 根据实例的第一个元素（符号）选择对应的方法实现。内置的 VC 后端用 =(vc . root-dir)= 这个 cons cell。
+
+而决定"当前目录属于哪个项目"的，是 =project-find-functions= 这个 hook。Emacs 会依次调用 hook 里的函数，第一个返回非 =nil= 的结果就是项目实例。
+
+#+BEGIN_SRC emacs-lisp
+;; 当前默认值
+project-find-functions
+;; => (project-try-vc)
+#+END_SRC
+
+* Makefile 后端的实现
+
+原文的场景是：一个不用版本控制、但每个目录（含根目录）都有 Makefile 的项目。后端的逻辑是"往上级找 Makefile，找不到为止的那一层就是项目根"。
+
+** 定义项目实例格式。
+
+一个项目实例是一个列表：第一个元素是类型符号，例如 =makefile= ，第二个是根目录字符串，第三个是要忽略的文件模式列表，第四个是外部根目录列表。
+
+project.el 源码头部有一段写自定义后端的规范，其中对实例格式有三条约束：
+
+- 不要用其他后端已经用过的格式（别跟 VC 后端的 =(vc . dir)= 撞车）
+- 格式可以任意，但必须是 =cl-defmethod= 能分派的数据类型。
+- 值用 =equal= 比较下相同，即同一个项目的不同 buffer 调用发现函数必须返回 =equal= 为 =t= 的结果
+
+这里我们用一个列表来表示。
+
+#+BEGIN_SRC emacs-lisp
+;; 实例格式：(makefile root-dir ignores external-roots)
+#+END_SRC
+
+** 实现项目发现函数。
+
+这个函数挂在 =project-find-functions= 上，负责从当前目录向上搜索 Makefile，同时处理递归 Makefile 的情况（比如 autotools 项目每层都有 Makefile）：
+
+#+BEGIN_SRC emacs-lisp
+  (defun project-makefile-try (dir)
+    "从 DIR 向上查找最顶层的 Makefile 目录作为项目根。"
+    (let ((dominating (locate-dominating-file dir "Makefile")))
+      (when dominating
+        ;; 处理递归 Makefile：一直向上找，直到没有 Makefile 为止
+        (let* ((above (file-name-directory (directory-file-name dominating)))
+               (dominating2 (locate-dominating-file above "Makefile")))
+          (while dominating2
+            (setq dominating dominating2
+                  above (file-name-directory (directory-file-name dominating))
+                  dominating2 (locate-dominating-file above "Makefile")))
+          ;; 读取 .project 文件中的忽略模式和外部根目录
+          (let ((igns nil) (extr nil) (dotfile (concat dominating ".project")))
+            (when (and (file-exists-p dotfile) (file-readable-p dotfile))
+              (with-temp-buffer
+                (insert-file-contents-literally dotfile)
+                (goto-char (point-min))
+                (while (not (eobp))
+                  (let* ((line (buffer-substring-no-properties
+                                (line-beginning-position) (line-end-position)))
+                         (split (split-string line ":")))
+                    (when (= 2 (length split))
+                      (if (string= (car split) "#")
+                          (push (cadr split) igns)
+                        (push (cadr split) extr))))
+                  (forward-line 1))))
+            ;; 返回项目实例
+            (list 'makefile dominating igns extr))))))
+#+END_SRC
+
+=.project= 文件的格式很简单：每行一个条目，用冒号分隔。 =:= 开头的行是外部根目录， =#:= 开头的行是要忽略的模式。例如：
+
+#+BEGIN_EXAMPLE
+#:*.o
+#:*~
+:/usr/include
+:../shared-libs
+#+END_EXAMPLE
+
+** 实现四个泛型方法。
+
+#+BEGIN_SRC emacs-lisp
+;; project-root: 返回根目录（实例的第二个元素）
+(cl-defmethod project-root ((project (head makefile)))
+  (cadr project))
+
+;; project-external-roots: 返回外部根目录（实例的第四个元素）
+(cl-defmethod project-external-roots ((project (head makefile)))
+  (cadddr project))
+
+;; project-ignores: 返回忽略模式（实例的第三个元素 + 通用忽略列表）
+(cl-defmethod project-ignores ((project (head makefile)) _dir)
+  (append (caddr project) grep-find-ignored-files))
+#+END_SRC
+
+=project-files= 没有实现，因为 Makefile 项目没法像 Git 那样用 =git ls-files= 快速列出文件，只能回退到默认实现（用 =find= 命令扫描文件系统）。
+
+** 注册到 hook。
+
+#+BEGIN_SRC emacs-lisp
+(add-hook 'project-find-functions #'project-makefile-try t)
+#+END_SRC
+
+末尾的 =t= 表示追加到 hook 列表末尾，这样 VC 后端优先。有些项目既有 Makefile 又有 =.git= ，让 VC 后端先匹配可以避免误判。
+
+配置好之后， =C-x p p= （ =project-switch-project= ）就会自动识别你的 Makefile 项目了。切换到项目目录（或项目内的任意文件）， =C-x p f= 跳转文件、 =C-x p g= 搜索文本都能用。
