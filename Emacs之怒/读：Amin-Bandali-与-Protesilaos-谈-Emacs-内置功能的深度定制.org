@@ -1,0 +1,115 @@
+#+TITLE: 读：Amin Bandali 与 Protesilaos 谈 Emacs 内置功能的深度定制
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, display-buffer-alist, isearch, diary, org-agenda
+#+DATE: [2026-05-23 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Amin Bandali 与 Protesilaos 进行了一场 Emacs 教练会议，讨论了 display-buffer-alist、isearch、Diary vs Org Agenda 等主题。本文提炼会议中关于"Emacs 内置功能深度定制"的三个案例，补充实际可操作的代码示例。
+
+最近看了 [[https://kelar.org/~bandali/gnu/emacs/ffs-emacs-ext-prot.html][Amin Bandali]] 和 [[https://protesilaos.com/codelog/2026-05-15-emacs-amin-bandali-ffs-display-buffer-org-capture/][Protesilaos]]（下称 Prot）的一场 Emacs 教练会议录像。两人聊了很多话题：窗口管理、搜索、日程管理。看起来互不相关，但底层都指向同一件事：Emacs 的内置功能本身就有很深的定制空间，只是这些接口藏在文档里，很少有人翻到。
+
+下面从会议中提炼三个案例，每个都配上实际可用的代码。
+
+* 案例一： =display-buffer-alist= — 掌控窗口布局
+
+Prot 在会议中说：=display-buffer-alist= 是让 Emacs 有归属感的"唯一最重要的变量"。这个变量控制 Emacs 在什么条件下、把新 buffer 显示在什么位置。
+
+**默认行为的问题。** Emacs 默认的窗口管理比较粗暴：按 =C-h f= 查函数文档，help buffer 直接抢占你当前窗口；运行 =M-x compile=，编译输出也抢占当前窗口。如果你同时开着代码和 shell，查个文档回来窗口布局就乱了。
+
+**配置示例：让 help buffer 侧边弹出，不抢占当前窗口。**
+
+#+begin_src emacs-lisp
+(add-to-list 'display-buffer-alist
+             '("\\*Help\\*"
+               (display-buffer-reuse-window display-buffer-pop-to-window)
+               (window-width . 0.4)
+               (side . right)
+               (slot . 0)
+               (window-parameters . ((no-delete-other-windows . t)))))
+#+end_src
+
+当 buffer 名匹配 =\*Help\*= 时，Emacs 会优先复用已有的 help 窗口（=display-buffer-reuse-window=）；如果没有已有窗口，就在右侧弹出宽度为 40% 的新窗口（=display-buffer-pop-to-window= + =side . right= + =window-width . 0.4=）。
+
+**配置示例：让编译输出显示在底部，不抢占焦点。**
+
+#+begin_src emacs-lisp
+(add-to-list 'display-buffer-alist
+             '("\\*compilation\\*"
+               (display-buffer-reuse-window display-buffer-at-bottom)
+               (window-height . 0.25)
+               (body-function . (lambda (window) (select-window window nil)))))
+#+end_src
+
+=display-buffer-at-bottom= 把 buffer 放在底部，高度占屏幕 25%。=body-function= 让光标跳到编译窗口，方便直接查看输出。
+
+=display-buffer-alist= 本质上是一个匹配规则列表：每条规则由 buffer 名的正则表达式和一组 action 函数组成。针对不同类型的 buffer 可以设置不同的显示策略，不需要为每种情况单独写 Elisp 函数。Emacs 内置了十几种 action 函数（=display-buffer-same-window=、=display-buffer-pop-up-frame= 等），日常的窗口布局需求基本都能覆盖。
+
+* 案例二：isearch — 被低估的内置搜索
+
+会议中 Prot 展示了几个 isearch 的定制技巧。isearch 是 Emacs 内置的增量搜索（按 =C-s= 触发），比起 consult-line 或者 swiper 名气小一些，但配好了完全够用。
+
+**空格当通配符。**
+
+默认情况下，isearch 里输入空格就是匹配空格。但如果你把空格配置为匹配"任意字符"，搜索 =hello world= 就能匹配 =hello, something world=、=helloxyzworld= 等包含中间内容的行：
+
+#+begin_src emacs-lisp
+(setq search-whitespace-regexp ".*?")
+(setq isearch-lax-whitespace t)
+(setq isearch-regexp-lax-whitespace nil)
+#+end_src
+
+这三行配置的含义：
+- =search-whitespace-regexp= 设置空格匹配的正则表达式， =".*?"= 是非贪婪匹配任意字符
+- =isearch-lax-whitespace= 设为 =t= ，让普通搜索（非正则模式）中空格被替换为通配符
+- =isearch-regexp-lax-whitespace= 设为 =nil= ，正则模式下不替换空格，保留正则的精确控制
+
+**显示匹配计数。**
+
+isearch 默认不显示"第几个匹配/共几个匹配"。开启 =isearch-lazy-count= 后，minibuffer 里会显示类似"5/12"的计数：
+
+#+begin_src emacs-lisp
+(setq isearch-lazy-count t)
+(setq lazy-count-prefix-format "(%s/%s) ")
+(setq lazy-count-suffix-format nil)
+#+end_src
+
+**什么时候用 isearch，什么时候用 consult-line？**
+
+Prot 提到 isearch 在录制键盘宏时特别有用，因为搜索过程是增量的、可回退的。consult-line（配合 vertico 和 orderless）的优势在于候选列表可视化、支持多关键词排序匹配。简单总结：
+
+- 需要逐个跳转、特别是录制键盘宏时，isearch 更合适
+- 需要一眼看到所有匹配行、用多关键词过滤时，consult-line 更方便
+- 不想装额外包的情况下，配置后的 isearch 已经够用
+
+* 案例三：Diary vs Org Agenda — 轻量与重量之间
+
+会议中两人讨论了一个选择题：用 Emacs 内置的 Diary 还是 Org Agenda 来管理日程。
+
+**Diary 是什么？** Diary 是 Emacs 内置的日程管理工具，不依赖任何外部包。它的数据就是一个纯文本文件 =~/diary=，格式简单：
+
+#+begin_src example
+May 23, 2026  团队周会
+Monday        每周一的固定检查
+%%(diary-float t 1 3)  每月第三个周二的性能报告
+#+end_src
+
+Diary 文件可以配合 Emacs 日历（=M-x calendar=）使用，在日历上标记日程。也可以直接用 =M-x diary= 查看今天的日程。
+
+**Org Agenda 的定位。** Org Agenda 是 Org-mode 的一部分，功能比 Diary 丰富得多：TODO 状态流转、优先级、时间戳、重复任务、多文件聚合视图。代价是必须用 Org 文件管理任务，文件结构有要求（至少需要 TODO 关键词和时间戳）。
+
+**各自的适用场景。**
+
+|          | Diary               | Org Agenda                         |
+|----------+---------------------+------------------------------------|
+| 启动成本 | 零配置，打开就写    | 需要结构化的 Org 文件              |
+| 数据格式 | 纯文本，一行一条    | Org 标题 + 属性 + 时间戳           |
+| 功能范围 | 日程标记 + 日历显示 | TODO 管理 + 日程 + 时间追踪 + 报表 |
+| 适合人群 | 只需要简单日程提醒  | 需要 GTD 或项目管理级的工作流      |
+
+Prot 在会议中的观点是：Diary 和 Org Agenda 可以并用。用 Diary 记录简单的时间点事件（节假日、固定会议），用 Org Agenda 管理需要追踪进度的任务。两者都能在 Emacs 日历中显示。
+
+* 小结
+
+这场会议还讨论了其他话题：Amin 展示了他为个人网站开发的自定义 Org HTML 导出后端（继承自内置的 =ox-html=），已有静态站方案的同学可以参考他的思路。
+
+回到核心主题：Emacs 的可扩展性不光体现在"你可以写 Elisp"。很多内置功能本身就暴露了配置接口，从窗口管理（=display-buffer-alist=）到搜索（isearch 变量）到日程（Diary 格式），不装额外包也能深度定制。这些接口一直都在文档里，这场教练会议只是把它们翻了出来。
