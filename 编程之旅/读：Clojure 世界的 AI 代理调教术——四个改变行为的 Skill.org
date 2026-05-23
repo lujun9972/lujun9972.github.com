@@ -1,0 +1,82 @@
+#+TITLE: 读：Clojure 世界的 AI 代理调教术——四个改变行为的 Skill
+#+AUTHOR: darksun,Claude Code
+#+TAGS: clojure, ai-agent, claude-code, skill
+#+DATE: [2026-05-23 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 解读一篇关于如何用 skill 让 AI 代理写出专家级 Clojure 代码的文章。作者发现代理的问题不在知识不足而在行为模式不对，为此设计了四个 skill 来重定向代理的默认行为。这个"行为重定向"的思路不限于 Clojure，适用于所有语言的 AI 代理优化。
+
+* 起因：陪 AI 写 Clojure 时发现的三个行为缺陷
+
+作者在 [[https://humorless.github.io/posts-output/agent-skill][原文]] 中描述了自己的经历：用 Claude Code 开发一个叫 lite-crm 的 Clojure 项目时，他没有开启 =--dangerously-skip-permissions= 模式，而是坐在旁边观察 AI 代理的工作方式。这种"配对编程"式的观察暴露了三个反复出现的问题。
+
+** 无视 Clojure 生态的包装库
+
+当 AI 代理需要调用 Java 库时，它直接写 Java interop 代码，从来不会先问一句"有没有现成的 Clojure wrapper？"。Clojure 社区有大量对 Java 库的包装库，它们提供了更函数式、更符合 Clojure 习惯的 API。一个有经验的 Clojure 开发者遇到 Java 类时，第一反应是搜索对应的 wrapper，而不是直接上手 interop。代理的这种直接跳过包装库的做法，导致代码不够地道，维护成本更高。
+
+** 格式化工具导致替换操作连环失败
+
+Clojure 项目普遍使用 cljfmt 之类的代码格式化工具。当代码被修改后，格式化工具可能调整缩进，哪怕只移动了一个空格，代理后续基于文本匹配的 =str_replace= 操作就会因为空白字符不匹配而失败。作者观察到代理的行为模式是：替换失败、重试、再次失败、最终放弃并重写整个文件。这造成了巨大的 token 浪费。
+
+** 用 println 调试，无视 REPL
+
+测试失败时，代理的调试手段非常原始：在代码里插入 =println= 语句，跑测试，看输出，删掉 =println= ，恢复代码，循环往复。这种调试方式在任何语言中都很低效，在 Clojure 项目中尤其浪费，因为 Clojure 有 REPL（一种交互式编程环境，让你可以在不修改源代码的情况下即时执行表达式、检查变量值、测试假设）。作者已经通过 brepl 命令行工具给代理提供了 REPL 访问能力，但代理从来没有主动用过。
+
+* 关键洞察：知识盲区 vs 行为盲区
+
+作者对这三个问题的定性很有意思：它们属于 *行为盲区* ，跟知识盲区是两回事。
+
+知识盲区好办，代理不知道某个功能存在，补上信息就行。行为盲区不一样，代理明明知道某个功能却从来不用，比如知道有 REPL 却坚持 =println= 调试，知道可能有 wrapper 却直接写 interop。它缺的是正确的默认行为，不是更多的 API 文档。
+
+所以给代理堆参考手册没用。有用的做法是在它即将犯错时拦截，把它重定向到正确的路径上。Claude Code 的 skill 机制正好干这个。
+
+* 四个 Skill 详解
+
+顺着这个思路，作者设计了四个 skill。前三个在代理遇到问题时自动激活，第四个由用户手动触发。
+
+** clj-debug：从打印调试到 REPL 探索
+
+这个 skill 解决的是第三个问题：代理用 =println= 调试。
+
+Clojure 的正确做法是用 REPL 调试，步骤是这样的：
+1. 用 =def= 把函数的返回值绑定到一个变量上（比如 =(def result (fetch-user id))=），这样 =result= 就固定住了，随时可以查看
+2. 用 =(keys result)= 看这个值有哪些字段
+3. 用关键字当函数来取值（比如 =(:name result)= ），逐层深入查看内部结构
+
+全程不用动源代码。
+
+clj-debug 在代理准备插入调试日志时介入，把它引向 REPL 的工作流：先把可疑的值用 =def= 绑定住，再逐步探索它的结构。代理不再需要反复编辑代码、跑测试、查输出、再恢复代码，直接在 REPL 里交互就够了。
+
+** clj-discover：从直接 interop 到先调研再集成
+
+这个 skill 对应第一个问题：代理直接写 interop 代码。
+
+有经验的 Clojure 开发者遵循一个明确的探索流程：先搜索有没有 Clojure wrapper 库（通常都有），没有的话通过反射（一种在运行时检查类的方法和字段等结构的技术）探查 Java 类，如果是宏就先展开它看它生成什么代码。
+
+clj-discover 把这个流程写进规则，强制代理在写集成代码之前先调研。效果很明显：代理不再一股脑写 interop，代码干净多了，也好维护。
+
+** clj-replace：从文本匹配到结构匹配
+
+这个 skill 解决第二个问题：格式化工具导致的替换失败。
+
+这里利用了 Clojure 的一个核心特性：同像性（homoiconicity，代码即数据）。两个 S 表达式在语义上是等价的，即使它们的格式不同。专业的编辑器通过结构化编辑来自动处理这种差异。
+
+clj-replace 用 [[https://cljdoc.org/d/rewrite-clj/rewrite-clj/1.1.45/doc/user-guide][rewrite-clj]] 库，按 S 表达式的结构来比较和替换，忽略空白差异，同时保留原文件的格式风格。格式化工具怎么改缩进都不影响替换操作。
+
+** clj-refactor：从混合纠缠到机制/策略分离
+
+前三个 skill 是自动触发的，这个不同，需要用户主动调用。
+
+它针对的问题是：代理把可复用的机制和业务策略混在一起。这里的区分来自 [[https://lambdaisland.com/blog/2022-03-10-mechanism-vs-policy][Arne Brasseur 的机制/ 策略分离原则]]：机制（mechanism）是与业务无关的、稳定的、可复用的代码；策略（policy）是特定于某个场景的、多变的代码。两者混在一起，代码就僵硬且难以维护。
+
+clj-refactor 扫描代码寻找提取机会：硬编码的值变成参数，隐式的上下文依赖变成显式的函数参数，把可复用的逻辑独立出来。纠缠在一起的一坨函数拆成可组合的机制后，更容易测试、复用和推理。
+
+* 给我们的启示
+
+四个 skill 背后有一条通用原则：衡量一个 skill 好不好的标准很简单，看它改变了代理的什么行为。传递了多少知识反倒不重要。
+
+给自己的技术栈设计 skill 时，别写成参考手册。找出代理的行为盲区，在它即将犯错时拦截，重定向到正确的行为路径。
+
+这个原则不限于 Clojure。Python 代理可能坚持 print 调试而不用 ipdb，JavaScript 代理可能手写数组操作而不知道有 Lodash（一个提供数组、对象等常用操作的工具函数库），Go 代理可能忽视标准库的便利函数。识别这些行为盲区，然后设计对应的重定向 skill，就能让代理从"懂语法的打字员"变成"懂行的搭档"。
+
+原文的四个 skill 托管在 [[https://github.com/humorless/clj-native-agent][GitHub: humorless/clj-native-agent]]。
