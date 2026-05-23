@@ -1,0 +1,220 @@
+#+TITLE: 读：tetris-sql——用一条SQL查询实现俄罗斯方块
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: SQL, PostgreSQL, 递归CTE, 图灵完备, tetris
+#+DATE: [2026-05-24 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: GitHub 上的 tetris-sql 项目用一条 PostgreSQL 查询实现了完整的俄罗斯方块。本文从中提炼出四个值得学习的 SQL 技巧：递归 CTE 充当游戏循环、RAISE NOTICE 实时输出、dblink 绕过 MVCC 快照隔离、一维数组表示棋盘。
+
+GitHub 上的 [[https://github.com/nuno-faria/tetris-sql][tetris-sql]] 项目用一条 PostgreSQL 查询实现了完整的俄罗斯方块。听起来像炫技，但拆开看，里面的几个 SQL 技巧在日常工作中真能用上。本文从中提炼四个最值得学的知识点，跳过 Tetris 的游戏逻辑，只讲 SQL。
+
+* 技巧一：递归 CTE 充当游戏循环
+
+递归公共表表达式（Recursive CTE）在 SQL:1999 标准中引入。它包含两部分：一个非递归项生成初始行，一个递归项反复引用前一次的结果。当递归项不再产生新行时，循环停止。有了递归 CTE，SQL 就成了图灵完备的语言，理论上可以实现任意算法。
+
+一个最简单的例子，用递归 CTE 生成 1 到 5 的数列：
+
+#+begin_src sql
+WITH RECURSIVE t(i) AS (
+    SELECT 1
+    UNION ALL
+    SELECT i + 1
+    FROM t
+    WHERE i < 5
+)
+SELECT * FROM t;
+#+end_src
+
+#+begin_example
+ i
+---
+ 1
+ 2
+ 3
+ 4
+ 5
+(5 rows)
+#+end_example
+
+递归 CTE 的语法拆开看就几个部分： =WITH RECURSIVE 名称(列名) AS (= 开头；第一个 =SELECT= 是种子行（非递归项）； =UNION ALL= 把种子行和后续行拼起来； =SELECT ... FROM 名称 WHERE 条件 = 是递归项，其中 =FROM 名称 = 引用上一轮的结果， =WHERE 条件 = 不满足时循环结束；最外层的 =SELECT * FROM 名称= 输出所有累积的行。
+
+这个模式天然适合做游戏循环。非递归项初始化游戏状态（棋盘、分数、当前方块），递归项在每次迭代中读取输入、更新状态、渲染画面，WHERE 子句判断游戏是否结束。tetris-sql 的核心结构长这样：
+
+#+begin_src sql
+WITH RECURSIVE main AS (
+    -- 初始化游戏状态
+    SELECT ...
+    UNION ALL
+    -- 读取输入 → 更新状态 → 渲染画面
+    SELECT ...,
+        pg_sleep(...)  -- 控制帧率
+    FROM main, ...
+    WHERE NOT game_over
+)
+...
+#+end_src
+
+注意 =pg_sleep= 的作用：没有它，循环会以最快速度执行，玩家根本来不及反应。
+
+* 技巧二：RAISE NOTICE 实现实时输出
+
+游戏循环有一个问题：PostgreSQL 的递归 CTE 只有在整个循环结束后才返回结果。如果你把终止条件去掉，查询会一直挂着，什么都不输出。这跟 C 语言里的 =while(1) { print(...); }= 完全不同，后者至少能看到输出。
+
+解决方案是利用 PostgreSQL 的 =RAISE NOTICE= 命令，它可以在查询执行过程中向 =psql= 客户端实时输出消息，不需要等查询结束。
+
+问题是， =RAISE NOTICE= 是 PL/pgSQL（PostgreSQL 的过程语言扩展）的语句，不是 SQL 命令。在 SQL 里写 =SELECT RAISE NOTICE 'hello'= 会直接报语法错误，CTE 里也一样。唯一的办法是：把 =RAISE NOTICE= 包在一个 PL/pgSQL 函数里，在 CTE 里调用这个函数。SQL 可以调用函数，函数体用 PL/pgSQL 写，而 PL/pgSQL 认识 =RAISE NOTICE= ，这就打通了。
+
+#+begin_src sql
+CREATE OR REPLACE FUNCTION notify(str varchar) RETURNS void AS $$
+BEGIN
+    RAISE NOTICE '%', str;
+END
+$$ LANGUAGE PLPGSQL;
+#+end_src
+
+简单解释一下这个函数的语法： =CREATE OR REPLACE FUNCTION= 创建或替换一个函数（有则替换，没有则创建）； =notify(str varchar)= 是函数名和参数，参数需要声明类型； =RETURNS void= 表示不返回值； =$$ ... $$= 之间是函数体，用 =BEGIN ... END= 包裹； =LANGUAGE PLPGSQL= 声明函数体用的是 PL/pgSQL 语言。
+
+然后在递归 CTE 的每一轮迭代中调用这个函数，就能实时输出游戏画面。唯一的副作用是每条消息前面会带 =NOTICE:= 前缀，用几个换行符就能藏起来。
+
+跑耗时很长的查询时， =RAISE NOTICE= 是唯一能在执行过程中实时反馈进度的手段。
+
+* 技巧三：dblink 绕过 MVCC 快照隔离
+
+这是整个项目中最有教育价值的技巧。
+
+游戏需要实时读取玩家的按键输入。自然想到的做法是创建一张输入表，让另一个进程往里写，查询在里面读：
+
+#+begin_src sql
+CREATE TABLE Input (cmd char, ts timestamp);
+#+end_src
+
+但这里有一个坑。PostgreSQL 使用 MVCC（多版本并发控制，Multi-Version Concurrency Control）来管理并发访问。在默认的 =READ COMMITTED= 隔离级别下，每个语句能看到语句开始前已提交的数据。关键在于"语句开始前"这几个字。一条递归 CTE 就是一条语句，所以它始终看到的是语句开始时的数据快照。即使另一个进程往 Input 表写了新数据，递归 CTE 也看不到。
+
+下面这个例子能清楚说明问题。初始数据是 ='a'= ，循环过程中另一个客户端把值改成了 ='b'= 再改成 ='c'= ，但循环始终只看到 ='a'= ：
+
+#+begin_src sql
+INSERT INTO Input VALUES ('a', now());
+
+WITH RECURSIVE main AS (
+    SELECT notify('')
+    UNION ALL
+    SELECT notify(input.cmd)
+    FROM main, input
+)
+SELECT * FROM main;
+#+end_src
+
+#+begin_example
+NOTICE:  a
+NOTICE:  a  -- 第一个 UPDATE 之后，仍然看到 a
+NOTICE:  a  -- 第二个 UPDATE 之后，仍然看到 a
+#+end_example
+
+tetris-sql 的解法是用 PostgreSQL 的 =dblink= 扩展（使用前需要先执行 =CREATE EXTENSION IF NOT EXISTS dblink= 安装）。这个扩展本来是查询远程数据库用的，但可以换个用法：每次迭代通过 =dblink= 建立一个新连接，发一次独立查询，这个查询在全新的事务快照中执行，所以能看到最新的输入数据。
+
+#+begin_src sql
+WITH RECURSIVE main AS (
+    WITH conn AS (
+        SELECT 'conn' as name,
+               dblink_connect('conn', 'dbname=' || current_database())
+    )
+    SELECT 1 as i, notify('')
+    UNION ALL
+    SELECT i + 1, notify(input.cmd)
+    FROM main,
+        conn,
+        dblink(conn.name, 'SELECT * FROM Input --' || i)
+            input(c char, ts timestamp)
+)
+SELECT * FROM main;
+#+end_src
+
+#+begin_example
+NOTICE:  a
+NOTICE:  b  -- 第一个 UPDATE 后，看到了 b
+NOTICE:  c  -- 第二个 UPDATE 后，看到了 c
+#+end_example
+
+还有一个细节：dblink 查询末尾拼了 =-- || i= 。这看起来像个注释，实际上是为了防止 PostgreSQL 缓存查询结果。如果不加这个后缀，PostgreSQL 会发现每轮迭代的 SQL 文本完全相同，就只执行一次然后把结果缓存起来。加上递增的 =i= 后，每轮迭代的 SQL 文本都不同，PostgreSQL 就必须每轮都真正执行一次。
+
+遇到"为什么我的查询看不到最新数据"这种问题时，首先要想到 MVCC 快照隔离。 =dblink= 提供了一种在单个长查询中读取最新数据的逃生通道。
+
+* 技巧四：一维数组表示棋盘
+
+棋盘是一个 10 列 20 行的网格。直觉上应该用二维数组，但 tetris-sql 选择了展平成一维数组。
+
+原因是 PostgreSQL 的二维数组操作不太方便。比如用下标取第一个元素：
+
+#+begin_src sql
+SELECT (ARRAY[1,2,3])[1];  -- 一维数组，PostgreSQL 数组从 1 开始编号
+#+end_src
+
+#+begin_example
+ array
+-------
+     1
+(1 row)
+#+end_example
+
+一维数组直接返回第一个元素，符合预期。但二维数组就出了意外：
+
+#+begin_src sql
+SELECT (ARRAY[[1,2,3], [4,5,6]])[1];  -- 想取第一个元素
+#+end_src
+
+#+begin_example
+ array
+-------
+
+(1 row)
+#+end_example
+
+要取到值得写 =(ARRAY[[1,2,3], [4,5,6]])[1][:]= ：
+
+#+begin_src sql
+SELECT (ARRAY[[1,2,3], [4,5,6]])[1][:];
+#+end_src
+
+#+begin_example
+   array
+-----------
+ {{1,2,3}}
+(1 row)
+#+end_example
+
+返回的是一个二维切片 ={{1,2,3}}= ，而不是单个值。 =unnest= 展开二维数组时会直接拍平成一行，丢失行列结构。
+
+所以 tetris-sql 用一维布尔数组表示棋盘： =true= 表示该格已填， =false= 表示空格。第 0 个元素对应左上角，最后一个元素对应右下角。
+
+棋盘还有一个巧妙的设计：实际存储 11 列而不是 10 列，第 11 列始终为 =true= 。这个额外的"墙"简化了边界碰撞检测，方块向右移动时不需要额外判断是否碰到右边界，因为第 11 列的 =true= 自然会触发碰撞。
+
+玩家看到的棋盘（左）和实际存储的棋盘（右）：
+
+#+begin_example
+|                    |   |                    []|
+|                    |   |                    []|
+|                    |   |                    []|
+|    [][]        [][]|   |    [][]        [][][]|
+|  [][][][]    [][][]|   |  [][][][]    [][][][]|
+|  [][][][][][][][][]|   |  [][][][][][][][][][]|
++--------------------+   +----------------------+
+#+end_example
+
+消行的逻辑也很简洁：把棋盘按行切片，过滤掉全 =true= 的行（用 =WHERE NOT line <@ ARRAY[true]= ，其中 =<@= 是 PostgreSQL 的"被包含"运算符，整句意思是排除只包含 =true= 的行），再把剩余行重新拼接成棋盘，顶部补上空行。第 11 列始终为 =true= 不影响这个算法，因为它在每一行里都存在，不会影响"该行是否全部填满"的判断。
+
+* 性能特征
+
+在 Ryzen 5 3600 上以 60 FPS 运行时，查询的 CPU 占用约为单线程的 4%。但内存方面有问题：PostgreSQL 无法丢弃递归 CTE 中不再需要的中间结果，所有中间数据都被保留。游戏运行时间越长，内存占用越大。
+
+这是因为递归 CTE 最终只投影了最高分数，理论上 PostgreSQL 可以只保留当前行和最高分来优化内存。但目前的实现没有做这个优化。不过正如作者所说，连原版 NES 俄罗斯方块在长时间运行后也会崩溃，所以这个问题可以当作"feature"。
+
+* 小结
+
+tetris-sql 的真正价值是把几个平时不太容易遇到的 SQL 问题集中到了一起：
+
+1. 递归 CTE 不仅能遍历树形结构，还能实现通用的迭代计算
+2. =RAISE NOTICE= 是长时间查询中唯一能实时输出调试信息的方式
+3. 理解 MVCC 快照隔离对排查"看不到最新数据"的问题至关重要
+4. PostgreSQL 的二维数组有坑，一维数组加索引计算更可靠
+
+这些技巧在数据迁移、ETL 管道、复杂报表查询等场景中都能派上用场。
