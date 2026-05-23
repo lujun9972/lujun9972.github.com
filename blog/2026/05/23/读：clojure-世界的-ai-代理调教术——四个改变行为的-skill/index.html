@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Clojure 世界的 AI 代理调教术——四个改变行为的 Skill - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="解读一篇关于如何用 skill 让 AI 代理写出专家级 Clojure 代码的文章。作者发现代理的问题不在知识不足而在行为模式不对，为此设计了四个 skill 来重定向代理的默认行为。这个&quot;行为重定向&quot;的思路不限于 Clojure，适用于所有语言的 AI 代理优化。" />
+  <meta name="keywords" content="clojure, ai-agent, claude-code, skill" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Clojure 世界的 AI 代理调教术——四个改变行为的 Skill</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2874fdb">起因：陪 AI 写 Clojure 时发现的三个行为缺陷</a>
+<ul>
+<li><a href="#orge5dc668">无视 Clojure 生态的包装库</a></li>
+<li><a href="#org2582740">格式化工具导致替换操作连环失败</a></li>
+<li><a href="#orgefe6353">用 println 调试，无视 REPL</a></li>
+</ul>
+</li>
+<li><a href="#org7cd82c5">关键洞察：知识盲区 vs 行为盲区</a></li>
+<li><a href="#org77671e3">四个 Skill 详解</a>
+<ul>
+<li><a href="#org2930d8e">clj-debug：从打印调试到 REPL 探索</a></li>
+<li><a href="#org508dcd1">clj-discover：从直接 interop 到先调研再集成</a></li>
+<li><a href="#org46e9b91">clj-replace：从文本匹配到结构匹配</a></li>
+<li><a href="#orga960c05">clj-refactor：从混合纠缠到机制/策略分离</a></li>
+</ul>
+</li>
+<li><a href="#org2b8db63">给我们的启示</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2874fdb" class="outline-2">
+<h2 id="org2874fdb">起因：陪 AI 写 Clojure 时发现的三个行为缺陷</h2>
+<div class="outline-text-2" id="text-org2874fdb">
+<p>
+作者在 <a href="https://humorless.github.io/posts-output/agent-skill">原文</a> 中描述了自己的经历：用 Claude Code 开发一个叫 lite-crm 的 Clojure 项目时，他没有开启 <code>--dangerously-skip-permissions</code> 模式，而是坐在旁边观察 AI 代理的工作方式。这种"配对编程"式的观察暴露了三个反复出现的问题。
+</p>
+</div>
+
+<div id="outline-container-orge5dc668" class="outline-3">
+<h3 id="orge5dc668">无视 Clojure 生态的包装库</h3>
+<div class="outline-text-3" id="text-orge5dc668">
+<p>
+当 AI 代理需要调用 Java 库时，它直接写 Java interop 代码，从来不会先问一句"有没有现成的 Clojure wrapper？"。Clojure 社区有大量对 Java 库的包装库，它们提供了更函数式、更符合 Clojure 习惯的 API。一个有经验的 Clojure 开发者遇到 Java 类时，第一反应是搜索对应的 wrapper，而不是直接上手 interop。代理的这种直接跳过包装库的做法，导致代码不够地道，维护成本更高。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2582740" class="outline-3">
+<h3 id="org2582740">格式化工具导致替换操作连环失败</h3>
+<div class="outline-text-3" id="text-org2582740">
+<p>
+Clojure 项目普遍使用 cljfmt 之类的代码格式化工具。当代码被修改后，格式化工具可能调整缩进，哪怕只移动了一个空格，代理后续基于文本匹配的 <code>str_replace</code> 操作就会因为空白字符不匹配而失败。作者观察到代理的行为模式是：替换失败、重试、再次失败、最终放弃并重写整个文件。这造成了巨大的 token 浪费。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgefe6353" class="outline-3">
+<h3 id="orgefe6353">用 println 调试，无视 REPL</h3>
+<div class="outline-text-3" id="text-orgefe6353">
+<p>
+测试失败时，代理的调试手段非常原始：在代码里插入 <code>println</code> 语句，跑测试，看输出，删掉 <code>println</code> ，恢复代码，循环往复。这种调试方式在任何语言中都很低效，在 Clojure 项目中尤其浪费，因为 Clojure 有 REPL（一种交互式编程环境，让你可以在不修改源代码的情况下即时执行表达式、检查变量值、测试假设）。作者已经通过 brepl 命令行工具给代理提供了 REPL 访问能力，但代理从来没有主动用过。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7cd82c5" class="outline-2">
+<h2 id="org7cd82c5">关键洞察：知识盲区 vs 行为盲区</h2>
+<div class="outline-text-2" id="text-org7cd82c5">
+<p>
+作者对这三个问题的定性很有意思：它们属于 <b>行为盲区</b> ，跟知识盲区是两回事。
+</p>
+
+<p>
+知识盲区好办，代理不知道某个功能存在，补上信息就行。行为盲区不一样，代理明明知道某个功能却从来不用，比如知道有 REPL 却坚持 <code>println</code> 调试，知道可能有 wrapper 却直接写 interop。它缺的是正确的默认行为，不是更多的 API 文档。
+</p>
+
+<p>
+所以给代理堆参考手册没用。有用的做法是在它即将犯错时拦截，把它重定向到正确的路径上。Claude Code 的 skill 机制正好干这个。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org77671e3" class="outline-2">
+<h2 id="org77671e3">四个 Skill 详解</h2>
+<div class="outline-text-2" id="text-org77671e3">
+<p>
+顺着这个思路，作者设计了四个 skill。前三个在代理遇到问题时自动激活，第四个由用户手动触发。
+</p>
+</div>
+
+<div id="outline-container-org2930d8e" class="outline-3">
+<h3 id="org2930d8e">clj-debug：从打印调试到 REPL 探索</h3>
+<div class="outline-text-3" id="text-org2930d8e">
+<p>
+这个 skill 解决的是第三个问题：代理用 <code>println</code> 调试。
+</p>
+
+<p>
+Clojure 的正确做法是用 REPL 调试，步骤是这样的：
+</p>
+<ol class="org-ol">
+<li>用 <code>def</code> 把函数的返回值绑定到一个变量上（比如 <code>(def result (fetch-user id))=），这样 =result</code> 就固定住了，随时可以查看</li>
+<li>用 <code>(keys result)</code> 看这个值有哪些字段</li>
+<li>用关键字当函数来取值（比如 <code>(:name result)</code> ），逐层深入查看内部结构</li>
+</ol>
+
+<p>
+全程不用动源代码。
+</p>
+
+<p>
+clj-debug 在代理准备插入调试日志时介入，把它引向 REPL 的工作流：先把可疑的值用 <code>def</code> 绑定住，再逐步探索它的结构。代理不再需要反复编辑代码、跑测试、查输出、再恢复代码，直接在 REPL 里交互就够了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org508dcd1" class="outline-3">
+<h3 id="org508dcd1">clj-discover：从直接 interop 到先调研再集成</h3>
+<div class="outline-text-3" id="text-org508dcd1">
+<p>
+这个 skill 对应第一个问题：代理直接写 interop 代码。
+</p>
+
+<p>
+有经验的 Clojure 开发者遵循一个明确的探索流程：先搜索有没有 Clojure wrapper 库（通常都有），没有的话通过反射（一种在运行时检查类的方法和字段等结构的技术）探查 Java 类，如果是宏就先展开它看它生成什么代码。
+</p>
+
+<p>
+clj-discover 把这个流程写进规则，强制代理在写集成代码之前先调研。效果很明显：代理不再一股脑写 interop，代码干净多了，也好维护。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org46e9b91" class="outline-3">
+<h3 id="org46e9b91">clj-replace：从文本匹配到结构匹配</h3>
+<div class="outline-text-3" id="text-org46e9b91">
+<p>
+这个 skill 解决第二个问题：格式化工具导致的替换失败。
+</p>
+
+<p>
+这里利用了 Clojure 的一个核心特性：同像性（homoiconicity，代码即数据）。两个 S 表达式在语义上是等价的，即使它们的格式不同。专业的编辑器通过结构化编辑来自动处理这种差异。
+</p>
+
+<p>
+clj-replace 用 <a href="https://cljdoc.org/d/rewrite-clj/rewrite-clj/1.1.45/doc/user-guide">rewrite-clj</a> 库，按 S 表达式的结构来比较和替换，忽略空白差异，同时保留原文件的格式风格。格式化工具怎么改缩进都不影响替换操作。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga960c05" class="outline-3">
+<h3 id="orga960c05">clj-refactor：从混合纠缠到机制/策略分离</h3>
+<div class="outline-text-3" id="text-orga960c05">
+<p>
+前三个 skill 是自动触发的，这个不同，需要用户主动调用。
+</p>
+
+<p>
+它针对的问题是：代理把可复用的机制和业务策略混在一起。这里的区分来自 <a href="https://lambdaisland.com/blog/2022-03-10-mechanism-vs-policy">Arne Brasseur 的机制/ 策略分离原则</a>：机制（mechanism）是与业务无关的、稳定的、可复用的代码；策略（policy）是特定于某个场景的、多变的代码。两者混在一起，代码就僵硬且难以维护。
+</p>
+
+<p>
+clj-refactor 扫描代码寻找提取机会：硬编码的值变成参数，隐式的上下文依赖变成显式的函数参数，把可复用的逻辑独立出来。纠缠在一起的一坨函数拆成可组合的机制后，更容易测试、复用和推理。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2b8db63" class="outline-2">
+<h2 id="org2b8db63">给我们的启示</h2>
+<div class="outline-text-2" id="text-org2b8db63">
+<p>
+四个 skill 背后有一条通用原则：衡量一个 skill 好不好的标准很简单，看它改变了代理的什么行为。传递了多少知识反倒不重要。
+</p>
+
+<p>
+给自己的技术栈设计 skill 时，别写成参考手册。找出代理的行为盲区，在它即将犯错时拦截，重定向到正确的行为路径。
+</p>
+
+<p>
+这个原则不限于 Clojure。Python 代理可能坚持 print 调试而不用 ipdb，JavaScript 代理可能手写数组操作而不知道有 Lodash（一个提供数组、对象等常用操作的工具函数库），Go 代理可能忽视标准库的便利函数。识别这些行为盲区，然后设计对应的重定向 skill，就能让代理从"懂语法的打字员"变成"懂行的搭档"。
+</p>
+
+<p>
+原文的四个 skill 托管在 <a href="https://github.com/humorless/clj-native-agent">GitHub: humorless/clj-native-agent</a>。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-23</span>
+    <span class="post-info">2026-05-23</span>
+    <a href="../../../../../tags/clojure">clojure</a> : <a href="../../../../../tags/ai-agent">ai-agent</a> : <a href="../../../../../tags/claude-code">claude-code</a> : <a href="../../../../../tags/skill">skill</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; 3xce53gm0elutgphy0h0ubmfqf &lt;dot&gt; gx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
