@@ -1,0 +1,122 @@
+#+TITLE: TIL: dired 里按时间标记文件——dired-mark-if 与夏令时陷阱
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, dired, TIL, Elisp
+#+DATE: [2026-05-24 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Marcin Borkowski 写了一个 dired-mark-recent 命令，按修改时间标记文件。本文记录 dired-mark-if 宏的用法和一个容易被忽略的夏令时陷阱。
+
+Marcin Borkowski 在他的 [[https://mbork.pl/2026-05-18_Marking_today%e2%80%99s_files_in_Dired][博客]] 上分享了一个实用技巧：在 Dired 中按修改时间标记文件。irreal 也做了[[https://irreal.org/blog/?p=13818][摘要]]。代码不长，但藏着两个容易忽略的细节： =dired-mark-if= 宏怎么用，以及时间计算里的一个 DST（夏令时）陷阱。
+
+* dired-mark-if：Dired 标记命令的内脏
+
+Dired 有不少内置标记命令：按后缀（ =*.h= ）、按正则匹配文件名、按正则匹配内容。还有一个"万能"的 =dired-mark-sexp= （ =M-x dired-mark-sexp= ），让你写一个 Elisp 表达式当谓词，满足条件的文件全标上。
+
+但每次手写谓词太麻烦。Borkowski 的做法是直接用 =dired-mark-if= 宏写一个专用命令。这个宏接受两个参数：一个谓词表达式和一个描述字符串。宏会遍历 Dired buffer 中的每一行，对每个文件求值谓词，为真就标记。
+
+核心就是这一行：
+
+#+begin_src emacs-lisp
+(dired-mark-if
+ (and (time-less-p
+       cutoff
+       (file-attribute-modification-time
+        (file-attributes (dired-get-filename t t))))
+      (not (looking-at-p dired-re-dot)))
+ msg)
+#+end_src
+
+=(dired-get-filename t t)= 获取当前行的文件名。第一个 =t= 表示返回相对路径，第二个 =t= 表示不在文件行上时不报错。但副作用是 =.= 和 =..= 也会被当成普通文件处理，所以用 =(not (looking-at-p dired-re-dot))= 排除掉。 =dired-re-dot= 是 =dired.el= 里一个未文档化的变量，专门匹配这两个目录项。
+
+* 夏令时陷阱：先减天数，再清零时分秒
+
+这个函数的前缀参数设计挺讲究：
+
+| 前缀参数     | 行为                               |
+|--------------+------------------------------------|
+| 无（默认 1） | 标记今天（从午夜零点起）修改的文件 |
+| 正数 N       | 标记最近 N 天内修改的文件          |
+| 负数 -N      | 取消最近 N 天内文件的标记          |
+| 0            | 标记最近 60 分钟内修改的文件       |
+
+关于"最近 1 天"的语义，Borkowski 选择了"从午夜零点算"而非"从 24 小时前算"。原因很实际：早上工作时，你可能只关心今天改了什么，昨天下午的不算。如果按 24 小时算，昨天下午的文件也会被标记进来。
+
+计算截止时间时有个容易踩的坑。Borkowski 的第一版写法是：
+
+#+begin_src emacs-lisp
+;; 错误写法：先清零，再减天数
+(let ((time (decode-time (current-time))))
+  (setf (decoded-time-hour time) 0
+        (decoded-time-minute time) 0
+        (decoded-time-second time) 0)
+  (encode-time (time-add (encode-time time) (* (1- absn) 60 60 24 -1))))
+#+end_src
+
+#+begin_example
+先拿到当前时间 → 清零时分秒得到"今天零点" → 再往前减 N 天
+#+end_example
+
+问题出在夏令时切换的那天。假设 DST 在凌晨 2:00 结束，时钟回拨到 1:00。你先清零得到 0:00，此时系统可能还在夏令时偏移里。接下来往前减一天，减出来的时间戳就可能偏移到前一天的 23:00 或 1:00，取决于减的那一刻是不是踩在 DST 边界上。
+
+正确写法是反过来：先减天数，再清零时分秒。
+
+#+begin_src emacs-lisp
+;; 正确写法：先减天数，再清零
+(let ((time (decode-time
+             (time-add (current-time)
+                       (* (1- absn) 60 60 24 -1)))))
+  (setf (decoded-time-hour time) 0
+        (decoded-time-minute time) 0
+        (decoded-time-second time) 0)
+  (encode-time time))
+#+end_src
+
+#+begin_example
+先拿到当前时间 → 往前减 N 天（时间戳运算，不受时区影响） → 再清零时分秒得到那一天的零点
+#+end_example
+
+=decode-time= 把时间戳拆成年月日时分秒（已经考虑了时区和 DST），清零只影响当天内部的时间，不会跨 DST 边界。
+
+* 完整代码
+
+#+begin_src emacs-lisp
+(defun dired-mark-recent (days)
+  "Mark files last modified at most (abs(DAYS)-1) days ago.
+This means files modified since midnight if DAYS=1.  Unmark if DAYS is
+negative. If DAYS=0, mark files last modified within the last 60 minutes."
+  (interactive "P" dired-mode)
+  (let* ((n (prefix-numeric-value days))
+         (absn (abs n))
+         (msg (format "recent (last %s) file"
+                      (if (zerop n)
+                          "60 minutes"
+                        (format "%s day%s"
+                                absn
+                                (if (= absn 1) "" "s")))))
+         (dired-marker-char (if (minusp n) ?\s dired-marker-char))
+         (cutoff (if (zerop n)
+                     (time-add (current-time) -3600) ; now - 60 minutes
+                   (let ((time (decode-time
+                                (time-add (current-time)
+                                          (* (1- absn)
+                                             60 60 24 -1)))))
+                     (setf (decoded-time-hour time) 0
+                           (decoded-time-minute time) 0
+                           (decoded-time-second time) 0)
+                     (encode-time time)))))
+    (dired-mark-if
+     (and (time-less-p
+           cutoff
+           (file-attribute-modification-time
+            (file-attributes (dired-get-filename t t))))
+          (not (looking-at-p dired-re-dot)))
+     msg)))
+#+end_src
+
+绑定到 =* r= （ =*= 前缀是 Dired 标记命令的地盘， =r= 代表 recent ）：
+
+#+begin_src emacs-lisp
+(bind-key "* r" #'dired-mark-recent dired-mode-map)
+#+end_src
+
+=bind-key= 来自 =use-package= 。如果不用 =use-package= ，换成 =(define-key dired-mode-map (kbd "* r") #'dired-mark-recent)= 也行。
