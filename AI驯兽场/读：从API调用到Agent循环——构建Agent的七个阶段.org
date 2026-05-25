@@ -1,0 +1,138 @@
+#+TITLE: 读：从API调用到Agent循环——构建 Agent 的七个阶段
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI, Agent, LLM, Python, 工具调用
+#+DATE: [2026-05-25 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 解读 belderbos.dev 的 Agentic AI 教学路径。从最基础的 API 调用出发，逐步构建对话记忆、工具调用、可测试架构、人工审核，直到通用 Agent 循环。每个阶段都配有关键设计决策的解释——为什么 content 是列表而不是字符串，为什么工具结果要放在 user 消息里，为什么置信度阈值决定生产就绪。
+
+原文：[[https://belderbos.dev/blog/learn-agentic-ai-python-10-step-journey/][Learn Agentic AI in Python: A 10-Step Journey]] 把从"调一次 API"到"写一个完整 Agent 循环"拆成十个递进练习，再归纳成七个概念阶段。这篇文章是它的配套讲解，逐层解读每个阶段的设计决策，回答一个核心问题：从调一次 API 到写一个完整的 Agent，中间到底要补哪些东西？
+
+* Stage 1：最简调用
+
+每个 LLM 应用的起点都一样：创建客户端，调用 API，读取返回文本。以 Anthropic Python SDK 为例：
+
+#+begin_src python
+import anthropic
+
+client = anthropic.Anthropic()
+msg = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=256,
+    messages=[{"role": "user", "content": "Say hi"}],
+)
+print(msg.content[0].text)
+#+end_src
+
+注意 =content[0].text= 而不是 =.text= 。 =content= 是一个列表，每个元素是一个"块"（block），比如文本块、工具调用块等。现在你拿到的是 =[{"type": "text", "text": "Hello!"}]= ，后面引入工具调用时就会变成 =[{"type": "text", ...}, {"type": "tool_use", ...}]= ，但外层还是同一个列表。早点建立这个心智模型，后面加功能才不会措手不及。
+
+* Stage 2：让输出可解析
+
+Stage 1 拿到了模型的文本回复，但输出的文本没有定式，模型今天可能输出"餐饮"，明天可能输出"类别：餐饮（食品）"，你没法直接用它做后续处理。解决方案是通过提示词明确输出格式，同时用 Pydantic 模型在收到结果后验证 LLM 返回是否符合格式。
+
+#+begin_src python
+from pydantic import BaseModel
+
+class ExpenseResult(BaseModel):
+    category: str
+    confidence: float
+
+result = ExpenseResult.model_validate_json(msg.content[0].text)
+#+end_src
+
+系统提示词要像 API 契约一样严格：说清楚"只输出 JSON"，给出具体的字段结构，并禁止任何多余内容。"禁止多余内容"这几个字很重要，没有这几个字LLM总喜欢在 JSON 后面加一句友好的总结。
+
+** 评注：** 系统提示词就是契约，跟传统软件开发里的接口定义是一个道理。你不是在跟模型聊天，你是在给它写规格说明书。传统接口靠编译器检查，LLM 的"接口"靠提示词约束 + 输出验证来保证：提示词引导模型输出正确格式，Pydantic 在模型不配合时兜底报错，两道防线少了哪一道都会出问题。
+
+* Stage 3：让它记住对话
+
+Stage 1 和 2 解决了单次调用的问题——你能拿到结构化的回复了。但实际应用中用户会连续提问，模型需要理解上下文。可问题在于：LLM 本身没有状态、没有记忆，当前调用之外的上下文它一概不知。我们感知到的"连续对话"，其实是你每次调用时把完整的消息历史重新发给它。
+
+#+begin_src python
+history = []
+
+def ask(user_msg):
+    history.append({"role": "user", "content": user_msg})
+    reply = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=512,
+        messages=history,
+    ).content[0].text
+    history.append({"role": "assistant", "content": reply})
+    return reply
+#+end_src
+
+操作很简单：调用前追加用户消息，调用后追加助手回复。角色必须交替（user → assistant → user → ...）。数据存在你的请求里，不存在模型里。理解这一点，大部分关于"上下文窗口"和"记忆"的困惑就自然消解了。
+
+** 评注：** 理解 LLM 无状态，是搞清楚 LLM 应用设计的关键一步。很多人刚意识到这件事时会觉得"这怎么用"，但换个角度想：正因为无状态，控制权全在你手里。对话历史由你管理，想截断就截断，想摘要就摘要，想让模型"忘掉"前面说的什么，直接不发给它就行。
+
+* Stage 4：工具调用
+
+Stage 1-3 构建了一个能记住上下文的聊天机器人，但它只能聊天，不能做事。工具调用把聊天机器人变成能执行动作的程序。核心循环比很多人想象的更简单：
+
+#+begin_src python
+while True:
+    response = client.messages.create(
+        ..., tools=TOOLS, messages=messages
+    )
+    if response.stop_reason == "end_turn":
+        return response.content[0].text
+    # 否则：处理工具调用，把结果追加到消息列表，继续循环
+#+end_src
+
+上面这段伪代码省略了工具调用的处理逻辑，有两个需要注意的细节：
+
+1. 助手的回复要完整追加 =response.content= （不是只取文本），因为里面包含模型发出的工具调用块，下一轮循环模型需要看到这些块才能继续
+2. 工具执行结果要包在 =user= 角色的消息里返回，不是 =assistant= 。这看起来反直觉，但角色交替的规则要求这样做
+
+** 评注：** 工具调用的本质是让 LLM 当"决策者"，你的代码当"执行者"。模型决定调什么工具、传什么参数，你的代码负责实际执行并把结果喂回去。这个分工把 LLM 的能力（理解意图、生成参数）和程序的可靠性（确定性执行、错误处理）结合了起来。循环本身是通用的，从后面后面 Stage 7 可以看出，不管工具是做加法还是查数据库，循环逻辑一模一样。
+
+* Stage 5：可替换、可测试
+
+到这一步聊天机器人能跑了，但代码通常也缠成一团，业务逻辑直接依赖 =anthropic= 和 =sqlite3= 等外部库，没法单独测试。常见的解耦模式有三个：
+
+1. *Protocol 模式* 给 LLM 提供者定义接口，测试时可以传入一个带 =.calls= 列表的 =MockProvider= 替代真实 API
+2. *Repository 模式* 给持久层定义接口，内存字典和数据库后端实现同一个接口
+3. *Service 层* 通过构造函数接受上述两个依赖，负责编排：调 LLM → 解析结果 → 存储 → 返回
+
+三个模式组合起来就是一套可测试的 Agent 架构，每一层职责单一，可以独立替换和测试。
+
+** 评注：** 这些模式都不是 AI 领域的新发明。Protocol 就是依赖倒置（DIP），Repository 就是数据访问抽象，Service 层就是业务编排。有后端开发经验的读者应该觉得很眼熟。原文的好处在于把这些经典模式落到了 LLM 应用的具体场景里。把"调 API"和"存数据"从业务逻辑中拔出来之后，你就可以给核心逻辑写单元测试了，而不用每次都真的去调一次 LLM。
+
+* Stage 6：人在回路中
+
+Stage 2 用 Pydantic 模型从 LLM 输出中解析出了 =confidence= 字段，但一直没说这个分数拿来干什么。拿到置信度之后，可以用它来决定是否需要人工介入：
+
+#+begin_src python
+def process(result, threshold=0.8):
+    if result.confidence >= threshold:
+        return result.category
+    answer = input(f"Accept '{result.category}'? (Enter to confirm): ").strip()
+    return answer or result.category
+#+end_src
+
+设计要点：让"接受"路径的操作成本最低（直接回车就行），只有用户不认同模型的分类时才需要手动输入修正。原文认为，有没有这一步，是"可信助手"和"偷偷把事情搞错的 AI"的分界线，也是"演示项目"和"生产级工作流"的差距。
+
+** 评注：** 置信度阈值是生产级 AI 应用中容易被忽视的设计决策。阈值设高了，模型几乎都要人工确认，自动化失去意义；设低了，错误静默溜过，用户失去信任。原文用的 0.8 只是个起点，实际项目中这个值需要根据业务场景的错误容忍度来调整。核心原则：让机器在它拿得准的时候自主行动，在它犹豫的时候及时交出控制权。
+
+* Stage 7：通用化循环
+
+前面 Stage 4 的工具循环里，工具名和函数的对应关系是写死的。这最后一步只改了一个地方，即把硬编码的函数调用替换成一个字典查找：
+
+#+begin_src python
+  TOOL_FUNCTIONS = {
+      "add": lambda a, b: a + b,
+      "multiply": lambda a, b: a * b,
+
+  }
+
+  content = str(TOOL_FUNCTIONS[block.name](**block.input))
+#+end_src
+
+新增一个工具只需要加一条 schema 定义 + 一个字典条目。把 =add= / =multiply= 换成 =search_web= 、 =query_db= 、 =send_email= ，循环逻辑完全一样。原文指出，LangChain、OpenAI Assistants 等框架底层也是这个模式。
+
+** 评注：** 这一阶段揭示了一个重要的认知：Agent 框架的核心逻辑并不复杂。本质上就是一个 while 循环 + 工具注册表 + 消息历史管理。框架真正值钱的是周边的工程化细节:错误重试、并发控制、日志追踪、安全沙箱。理解了这一点之后，选择用框架还是自己写循环，就变成了一个工程决策：你的场景复杂到需要框架的周边能力吗？如果不需要，自己写一个循环可能比引入框架更合适。
+
+* 总结：这条学习路径教会了什么
+
+原文的结论很明确：框架在你能够自己写出底层之后才有意义。跳过底层直接上框架，一旦框架的行为跟你预期不一致，你连问题出在哪都查不出来。七个阶段都很小，单个看没什么特别的，串起来才构成完整的学习路径。做完之后，"Agentic AI" 的底牌就清楚了：一个循环、一套 schema、加上几个常见的设计模式。
