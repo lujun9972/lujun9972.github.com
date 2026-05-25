@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：把 JSON 当编程语言执行——一个迷你解释器的构造过程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="description" content="一篇有趣的技术实验：用 JSON 语法写程序，然后喂给一个 JavaScript 写的解释器执行。文章从 reader/evaluator/printer 三段式架构出发，逐步构建一个支持变量、函数、条件、循环的迷你解释器，本质上是在 JSON 里塞了一个微型 Lisp。" />
+  <meta name="keywords" content="编程之旅, interpreter, json, javascript" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：把 JSON 当编程语言执行——一个迷你解释器的构造过程</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org32c42df">Reader 和 Printer：最简单的两个组件</a></li>
+<li><a href="#org668ba8e">Evaluator：类型标签分发</a></li>
+<li><a href="#orgfcdca74">环境与作用域：用 __parent 链实现静态作用域</a></li>
+<li><a href="#org3fd0108">函数：闭包的本质就是捕获环境</a></li>
+<li><a href="#org2f74411">条件与循环</a></li>
+<li><a href="#org116bafc">算术与逻辑：设计原始操作时的取舍</a></li>
+<li><a href="#org69c36f4">完整示例</a></li>
+<li><a href="#org8246480">为什么说它是"微型 Lisp"</a></li>
+<li><a href="#org270ec6c">如何自己跑一遍</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://vannilla.org/write/1571500127/article.html">原文</a> 做了一个有趣的技术实验：把 JSON 当编程语言用。你写一个 JSON 数组，里面每个对象带一个 <code>type</code> 属性标明"这句是干什么的"，然后喂给一个 JavaScript 写的解释器，它就会按顺序执行并返回结果。
+</p>
+
+<p>
+本质上，这是在 JSON 语法里塞了一个微型 Lisp 解释器。原文的副标题 "With a Lithp" 也暗示了这一点（Lithp = Lisp 的大舌头读法）。
+</p>
+
+<p>
+"怎么用 JS 写解释器"的教程已经很多了。这篇有意思的地方是：它用 JSON 做了一个具体的、可运行的"代码即数据"实例。数据格式本身什么都没变，只是有人写了个解释器按特定方式去解读它，JSON 就突然能执行了。
+</p>
+
+<p>
+解释器的架构是经典三段式：reader → evaluator → printer。代码用 JavaScript，逻辑直白，不写 JS 也能看懂。
+</p>
+
+<div id="outline-container-org32c42df" class="outline-2">
+<h2 id="org32c42df">Reader 和 Printer：最简单的两个组件</h2>
+<div class="outline-text-2" id="text-org32c42df">
+<p>
+Reader 的任务是把用户输入转成解释器能处理的数据结构。因为已经定好了"输入就是 JSON"，reader 只需要做一件事：调 =JSON.parse=，解析失败就当普通字符串原样返回。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jread</span>(<span class="org-variable-name">v</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">ret</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">try</span> {
+    ret = JSON.parse(v);
+  } <span class="org-keyword">catch</span> (e) {
+    ret = v;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#35299;&#26512;&#22833;&#36133;&#23601;&#24403;&#23383;&#31526;&#20018;&#22788;&#29702;
+</span>  }
+  <span class="org-keyword">return</span> ret;
+}
+</pre>
+</div>
+
+<p>
+Printer 更简单：直接返回计算结果。因为假设解释器在命令行里跑，命令行自己会负责显示。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jprint</span>(<span class="org-variable-name">v</span>) {
+  <span class="org-keyword">return</span> v;
+}
+</pre>
+</div>
+
+<p>
+解释器的主体骨架就是把这两个组件串起来，遍历输入数组，逐条读取、求值、打印：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">interpreter</span>(<span class="org-variable-name">input</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">ret</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; input.length; ++i) {
+    ret = jread(input[i]);
+    ret = jeval(ret, env);   <span class="org-comment-delimiter">// </span><span class="org-comment">&#26680;&#24515;&#65306;&#27714;&#20540;
+</span>    ret = jprint(ret);
+  }
+  <span class="org-keyword">return</span> ret;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org668ba8e" class="outline-2">
+<h2 id="org668ba8e">Evaluator：类型标签分发</h2>
+<div class="outline-text-2" id="text-org668ba8e">
+<p>
+Evaluator 是整个解释器的核心。它的逻辑是：遇到"简单值"（数字、字符串、数组）直接返回；遇到"对象"就检查 <code>type</code> 属性，按类型标签分发到不同的处理逻辑。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jeval</span>(<span class="org-variable-name">v</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-comment-delimiter">// </span><span class="org-comment">&#21407;&#23376;&#20540;&#65306;&#30452;&#25509;&#36820;&#22238;&#65288;null &#38656;&#21333;&#29420;&#21028;&#26029;&#65292;&#22240;&#20026; typeof null === 'object'&#65289;
+</span>  <span class="org-keyword">if</span> (v === <span class="org-constant">null</span> || <span class="org-keyword">typeof</span> v !== <span class="org-string">'object'</span> || v <span class="org-keyword">instanceof</span> <span class="org-type">Array</span>) {
+    <span class="org-keyword">return</span> v;
+  }
+
+  <span class="org-keyword">let</span> <span class="org-variable-name">ev</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">switch</span> (v.type) {
+    <span class="org-keyword">case</span> <span class="org-string">'num'</span>:
+    <span class="org-keyword">case</span> <span class="org-string">'str'</span>:
+    <span class="org-keyword">case</span> <span class="org-string">'vec'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#21464;&#37327;&#23450;&#20041;&#65306;&#20808;&#27714;&#20540;&#65292;&#20877;&#23384;&#20837;&#29615;&#22659;
+</span>      ev = jeval(v.value, env);
+      <span class="org-keyword">if</span> (v.name) {
+        jupdate(v.name, ev, env);
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'var'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#21464;&#37327;&#24341;&#29992;&#65306;&#20174;&#29615;&#22659;&#37324;&#21462;
+</span>      ev = jlook(v.name, env);
+      <span class="org-keyword">if</span> (<span class="org-keyword">typeof</span> ev === <span class="org-string">'object'</span> &amp;&amp; ev !== <span class="org-constant">null</span> &amp;&amp; !(ev <span class="org-keyword">instanceof</span> <span class="org-type">Array</span>)) {
+        <span class="org-keyword">return</span> <span class="org-string">'&lt;function '</span> + v.name + <span class="org-string">'&gt;'</span>;
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'fn'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#20989;&#25968;&#23450;&#20041;&#65306;&#25429;&#33719;&#24403;&#21069;&#29615;&#22659;&#65292;&#23384;&#20837;&#21464;&#37327;
+</span>      ev = jfn(v.value, env);
+      <span class="org-keyword">if</span> (v.name) {
+        jupdate(v.name, ev, env);
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'call'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#20989;&#25968;&#35843;&#29992;&#65306;&#26597;&#25214;&#20989;&#25968;&#65292;&#20256;&#20837;&#21442;&#25968;&#27714;&#20540;
+</span>      ev = jcall(jlook(v.name, env), v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'if'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#26465;&#20214;&#65306;null &#20026;&#20551;&#65292;&#38750; null &#20026;&#30495;
+</span>      ev = jif(v.cond, v.then, v.<span class="org-keyword">else</span>, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'while'</span>:
+      <span class="org-comment-delimiter">// </span><span class="org-comment">&#24490;&#29615;&#65306;&#26465;&#20214;&#20026;&#30495;&#26102;&#37325;&#22797;&#25191;&#34892;
+</span>      ev = jloop(v.cond, v.body, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">default</span>:
+      ev = <span class="org-constant">null</span>;
+      <span class="org-keyword">break</span>;
+  }
+  <span class="org-keyword">return</span> ev;
+}
+</pre>
+</div>
+
+<p>
+变量定义用的标签包括三种 *值的类型*（=num=、=str=、=vec=），和一个统一的 =var=。这样做的好处是 evaluator 可以在定义变量时顺手做类型检查，代价是标签列表会随类型增加而膨胀。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfcdca74" class="outline-2">
+<h2 id="orgfcdca74">环境与作用域：用 __parent 链实现静态作用域</h2>
+<div class="outline-text-2" id="text-orgfcdca74">
+<p>
+变量存在哪里？存在"环境"（environment）里。环境就是一个普通的 JS 对象，key 是变量名，value 是值。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jlook</span>(<span class="org-variable-name">key</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">e</span> = env;
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = <span class="org-constant">undefined</span>;
+  <span class="org-keyword">while</span> (r === <span class="org-constant">undefined</span> &amp;&amp; e !== <span class="org-constant">undefined</span>) {
+    r = e[key];
+    <span class="org-keyword">if</span> (r === <span class="org-constant">undefined</span>) e = e.__parent;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#25214;&#19981;&#21040;&#25165;&#21521;&#29238;&#29615;&#22659;&#25214;
+</span>  }
+  <span class="org-keyword">return</span> r;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jupdate</span>(<span class="org-variable-name">key</span>, <span class="org-variable-name">val</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">e</span> = env;
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = <span class="org-constant">undefined</span>;
+  <span class="org-keyword">while</span> (r === <span class="org-constant">undefined</span> &amp;&amp; e !== <span class="org-constant">undefined</span>) {
+    r = e[key];
+    <span class="org-keyword">if</span> (r === <span class="org-constant">undefined</span>) e = e.__parent;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#25214;&#21040;&#20102;&#23601;&#19981;&#20877;&#19978;&#31227;
+</span>  }
+  <span class="org-keyword">if</span> (e === <span class="org-constant">undefined</span>) e = env;  <span class="org-comment-delimiter">// </span><span class="org-comment">&#25214;&#19981;&#21040;&#23601;&#22312;&#24403;&#21069;&#29615;&#22659;&#21019;&#24314;
+</span>  e[key] = val;
+  <span class="org-keyword">return</span> val;
+}
+</pre>
+</div>
+
+<p>
+关键机制是 <code>__parent</code> 指针。每个环境对象可以有一个 <code>__parent</code> 指向父环境，查找变量时沿着这条链一路向上。这正是静态作用域（lexical scoping）的标准实现方式：函数定义时捕获的环境链决定了它运行时能看到哪些变量。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3fd0108" class="outline-2">
+<h2 id="org3fd0108">函数：闭包的本质就是捕获环境</h2>
+<div class="outline-text-2" id="text-org3fd0108">
+<p>
+函数的定义分两步：先用 <code>fn</code> 标签声明，值是一个包含 <code>args=（参数列表）和 =body=（函数体）的对象。解释器收到 =fn</code> 表达式后，调用 <code>jfn</code> 创建一个"函数对象"，把当前环境挂到 <code>__parent</code> 上：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jfn</span>(<span class="org-variable-name">v</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">f</span> = {};
+  f.env = { __parent: env };  <span class="org-comment-delimiter">// </span><span class="org-comment">&#25429;&#33719;&#23450;&#20041;&#26102;&#30340;&#29615;&#22659;
+</span>  f.args = v.args;
+  f.body = v.body;
+  <span class="org-keyword">return</span> f;
+}
+</pre>
+</div>
+
+<p>
+调用函数时（=call= 标签），=jcall= 创建一个新环境来存参数，然后把函数体里的表达式逐条求值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jcall</span>(<span class="org-variable-name">f</span>, <span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">e</span> = { __parent: f.env };  <span class="org-comment-delimiter">// </span><span class="org-comment">&#26032;&#29615;&#22659;&#38142;&#21040;&#20989;&#25968;&#23450;&#20041;&#26102;&#25429;&#33719;&#30340;&#29615;&#22659;
+</span>  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; f.args.length; ++i) {
+    e[f.args[i]] = jeval(args[i], env);  <span class="org-comment-delimiter">// </span><span class="org-comment">&#21442;&#25968;&#22312;&#35843;&#29992;&#29615;&#22659;&#20013;&#27714;&#20540;
+</span>  }
+  <span class="org-keyword">let</span> <span class="org-variable-name">ret</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; f.body.length; ++i) {
+    ret = jeval(f.body[i], e);  <span class="org-comment-delimiter">// </span><span class="org-comment">&#20989;&#25968;&#20307;&#22312;&#26032;&#29615;&#22659;&#20013;&#25191;&#34892;
+</span>  }
+  <span class="org-keyword">return</span> ret;
+}
+</pre>
+</div>
+
+<p>
+这就是闭包的本质：函数对象带着一个 <code>__parent</code> 指针，指向它定义时所在的环境。以后无论在哪里调用，变量查找都从自己环境开始，沿 <code>__parent</code> 链向上。JavaScript 的闭包、Lisp 的词法作用域，跟这是同一套机制。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2f74411" class="outline-2">
+<h2 id="org2f74411">条件与循环</h2>
+<div class="outline-text-2" id="text-org2f74411">
+<p>
+条件表达式用 <code>if</code> 标签，=cond= 是条件，=then= 和 <code>else</code> 各是一个表达式数组。关于"真"和"假"的约定很简单：=null= 是假，任何非 <code>null</code> 值都是真。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jif</span>(<span class="org-variable-name">cond</span>, <span class="org-variable-name">thenExpr</span>, <span class="org-variable-name">elseExpr</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">c</span> = jeval(cond, env);
+  <span class="org-keyword">let</span> <span class="org-variable-name">branch</span> = (c === <span class="org-constant">null</span>) ? elseExpr : thenExpr;
+  <span class="org-keyword">let</span> <span class="org-variable-name">ret</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; branch.length; ++i) {
+    ret = jeval(branch[i], env);
+  }
+  <span class="org-keyword">return</span> ret;
+}
+</pre>
+</div>
+
+<p>
+循环用 <code>while</code> 标签：只要条件不等于 =null=，就重复执行 body。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jloop</span>(<span class="org-variable-name">cond</span>, <span class="org-variable-name">body</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">while</span> (jeval(cond, env) !== <span class="org-constant">null</span>) {
+    <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; body.length; ++i) {
+      r = jeval(body[i], env);
+    }
+  }
+  <span class="org-keyword">return</span> r;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org116bafc" class="outline-2">
+<h2 id="org116bafc">算术与逻辑：设计原始操作时的取舍</h2>
+<div class="outline-text-2" id="text-org116bafc">
+<p>
+JSON 语法不能直接写 <code>"a + b"</code> 这样的表达式，所以算术和逻辑运算也必须用类型标签（或内置函数）来实现。两种方案各有代价：
+</p>
+
+<ul class="org-ul">
+<li>*做成类型标签*：运算行为不可被用户覆盖，但没法作为参数传给高阶函数</li>
+<li>*做成内置函数*：可以传给高阶函数，但用户可能意外覆盖它们</li>
+</ul>
+
+<p>
+原文选了类型标签方案（只展示了实现，没展开讨论）。
+</p>
+
+<p>
+**算术运算**中，加减乘除各有语义设计。加法和乘法最直接，累加/累乘所有参数。减法和除法有趣一些：一个参数时取负/取倒数，多个参数时从左到右依次运算。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jadd</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = 0;
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; args.length; ++i) {
+    r = r + jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> r;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jsub</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">if</span> (args.length === 1) {
+    <span class="org-keyword">return</span> -(jeval(args[0], env));
+  }
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length; ++i) {
+    r = r - jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> r;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jmul</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = 1;
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 0; i &lt; args.length; ++i) {
+    r = r * jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> r;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jdiv</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">if</span> (args.length === 1) {
+    <span class="org-keyword">return</span> 1 / jeval(args[0], env);
+  }
+  <span class="org-keyword">let</span> <span class="org-variable-name">r</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length; ++i) {
+    r = r / jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> r;
+}
+</pre>
+</div>
+
+<p>
+**比较运算**（小于、大于等）按序检查参数：只要发现一对违反顺序的就立即返回 =null=，全部通过则返回 ="true"=。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jlt</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">m</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length; ++i) {
+    <span class="org-keyword">let</span> <span class="org-variable-name">n</span> = jeval(args[i], env);
+    <span class="org-keyword">if</span> (!(m &lt; n)) <span class="org-keyword">return</span> <span class="org-constant">null</span>;
+    m = n;
+  }
+  <span class="org-keyword">return</span> <span class="org-string">'true'</span>;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jgt</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">m</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length; ++i) {
+    <span class="org-keyword">let</span> <span class="org-variable-name">n</span> = jeval(args[i], env);
+    <span class="org-keyword">if</span> (!(m &gt; n)) <span class="org-keyword">return</span> <span class="org-constant">null</span>;
+    m = n;
+  }
+  <span class="org-keyword">return</span> <span class="org-string">'true'</span>;
+}
+</pre>
+</div>
+
+<p>
+**逻辑运算**也是短路求值，跟 JS 的语义一致：=and= 遇到 <code>null</code> 就停，=or= 遇到非 <code>null</code> 就停，=not= 把 <code>null</code> 和非 <code>null</code> 互换。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-keyword">function</span> <span class="org-function-name">jand</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">c</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length &amp;&amp; c !== <span class="org-constant">null</span>; ++i) {
+    c = jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> c;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jor</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">let</span> <span class="org-variable-name">c</span> = jeval(args[0], env);
+  <span class="org-keyword">for</span> (<span class="org-keyword">let</span> <span class="org-variable-name">i</span> = 1; i &lt; args.length &amp;&amp; c === <span class="org-constant">null</span>; ++i) {
+    c = jeval(args[i], env);
+  }
+  <span class="org-keyword">return</span> c;
+}
+
+<span class="org-keyword">function</span> <span class="org-function-name">jnot</span>(<span class="org-variable-name">args</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">return</span> (jeval(args[0], env) === <span class="org-constant">null</span>) ? <span class="org-string">'true'</span> : <span class="org-constant">null</span>;
+}
+</pre>
+</div>
+
+<p>
+这些运算函数需要在 <code>jeval</code> 里注册为对应的类型标签。把以下 case 加入 <code>jeval</code> 的 switch：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#20197;&#19979;&#20195;&#30721;&#20250;&#35206;&#30422;&#21069;&#38754;&#30340; jeval &#23450;&#20041;&#65292;&#34917;&#20805;&#31639;&#26415;&#21644;&#36923;&#36753;&#36816;&#31639;&#30340; case
+</span><span class="org-keyword">function</span> <span class="org-function-name">jeval</span>(<span class="org-variable-name">v</span>, <span class="org-variable-name">env</span>) {
+  <span class="org-keyword">if</span> (v === <span class="org-constant">null</span> || <span class="org-keyword">typeof</span> v !== <span class="org-string">'object'</span> || v <span class="org-keyword">instanceof</span> <span class="org-type">Array</span>) {
+    <span class="org-keyword">return</span> v;
+  }
+
+  <span class="org-keyword">let</span> <span class="org-variable-name">ev</span> = <span class="org-constant">null</span>;
+  <span class="org-keyword">switch</span> (v.type) {
+    <span class="org-keyword">case</span> <span class="org-string">'num'</span>:
+    <span class="org-keyword">case</span> <span class="org-string">'str'</span>:
+    <span class="org-keyword">case</span> <span class="org-string">'vec'</span>:
+      ev = jeval(v.value, env);
+      <span class="org-keyword">if</span> (v.name) {
+        jupdate(v.name, ev, env);
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'var'</span>:
+      ev = jlook(v.name, env);
+      <span class="org-keyword">if</span> (<span class="org-keyword">typeof</span> ev === <span class="org-string">'object'</span> &amp;&amp; ev !== <span class="org-constant">null</span> &amp;&amp; !(ev <span class="org-keyword">instanceof</span> <span class="org-type">Array</span>)) {
+        <span class="org-keyword">return</span> <span class="org-string">'&lt;function '</span> + v.name + <span class="org-string">'&gt;'</span>;
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'fn'</span>:
+      ev = jfn(v.value, env);
+      <span class="org-keyword">if</span> (v.name) {
+        jupdate(v.name, ev, env);
+      }
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'call'</span>:
+      ev = jcall(jlook(v.name, env), v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'if'</span>:
+      ev = jif(v.cond, v.then, v.<span class="org-keyword">else</span>, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'while'</span>:
+      ev = jloop(v.cond, v.body, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'add'</span>:
+      ev = jadd(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'sub'</span>:
+      ev = jsub(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'mul'</span>:
+      ev = jmul(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'div'</span>:
+      ev = jdiv(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'lt'</span>:
+      ev = jlt(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'gt'</span>:
+      ev = jgt(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'and'</span>:
+      ev = jand(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'or'</span>:
+      ev = jor(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> <span class="org-string">'not'</span>:
+      ev = jnot(v.args, env);
+      <span class="org-keyword">break</span>;
+    <span class="org-keyword">default</span>:
+      ev = <span class="org-constant">null</span>;
+      <span class="org-keyword">break</span>;
+  }
+  <span class="org-keyword">return</span> ev;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org69c36f4" class="outline-2">
+<h2 id="org69c36f4">完整示例</h2>
+<div class="outline-text-2" id="text-org69c36f4">
+<p>
+把以上组件拼起来，用测试案例覆盖解释器的全部运算单元。
+</p>
+
+<p>
+<b><b>四则混合运算：</b></b> 一个嵌套表达式覆盖加、减、乘、除四种运算，相当于 =(1+2)*3 - 4/2 = 7=。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js">console.log(<span class="org-string">"(1+2)*3 - 4/2 ="</span>, interpreter([{ type: <span class="org-string">'sub'</span>, args: [
+  { type: <span class="org-string">'mul'</span>, args: [{ type: <span class="org-string">'add'</span>, args: [1, 2] }, 3] },
+  { type: <span class="org-string">'div'</span>, args: [4, 2] }
+]}], {}));
+</pre>
+</div>
+
+<pre class="example" id="orgd427cc2">
+(1+2)*3 - 4/2 = 7
+</pre>
+
+<p>
+<b><b>比较和逻辑运算：</b></b> 小于/大于按序检查，=and= 短路到 <code>null=，=or</code> 短路到非 <code>null=，=not</code> 互换真假。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#27604;&#36739;&#36816;&#31639;
+</span>console.log(<span class="org-string">"1&lt;2&lt;3 ="</span>, interpreter([{ type: <span class="org-string">'lt'</span>, args: [1, 2, 3] }], {}));
+console.log(<span class="org-string">"1&lt;3&lt;2 ="</span>, interpreter([{ type: <span class="org-string">'lt'</span>, args: [1, 3, 2] }], {}));
+console.log(<span class="org-string">"3&gt;2&gt;1 ="</span>, interpreter([{ type: <span class="org-string">'gt'</span>, args: [3, 2, 1] }], {}));
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36923;&#36753;&#36816;&#31639;
+</span>console.log(<span class="org-string">"and(1,2,3) ="</span>, interpreter([{ type: <span class="org-string">'and'</span>, args: [1, 2, 3] }], {}));
+console.log(<span class="org-string">"and(1,null,3) ="</span>, interpreter([{ type: <span class="org-string">'and'</span>, args: [1, <span class="org-constant">null</span>, 3] }], {}));
+console.log(<span class="org-string">"or(null,null,42) ="</span>, interpreter([{ type: <span class="org-string">'or'</span>, args: [<span class="org-constant">null</span>, <span class="org-constant">null</span>, 42] }], {}));
+console.log(<span class="org-string">"not(null) ="</span>, interpreter([{ type: <span class="org-string">'not'</span>, args: [<span class="org-constant">null</span>] }], {}));
+console.log(<span class="org-string">"not(1) ="</span>, interpreter([{ type: <span class="org-string">'not'</span>, args: [1] }], {}));
+</pre>
+</div>
+
+<pre class="example" id="org096499e">
+1&lt;2&lt;3 = true
+1&lt;3&lt;2 = null
+3&gt;2&gt;1 = true
+and(1,2,3) = 3
+and(1,null,3) = null
+or(null,null,42) = 42
+not(null) = true
+not(1) = null
+</pre>
+
+<p>
+<b><b>条件表达式：</b></b> <code>null</code> 为假走 <code>else=，非 =null</code> 为真走 =then=。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#26465;&#20214;
+</span>console.log(<span class="org-string">"if(null) ="</span>, interpreter([
+  { type: <span class="org-string">'if'</span>, cond: <span class="org-constant">null</span>,
+    then: [{ type: <span class="org-string">'str'</span>, value: <span class="org-string">'yes'</span> }],
+    <span class="org-keyword">else</span>: [{ type: <span class="org-string">'str'</span>, value: <span class="org-string">'no'</span> }] }
+], {}));
+console.log(<span class="org-string">"if(gt(42,0)) ="</span>, interpreter([
+  { type: <span class="org-string">'if'</span>, cond: { type: <span class="org-string">'gt'</span>, args: [42, 0] },
+    then: [{ type: <span class="org-string">'str'</span>, value: <span class="org-string">'positive'</span> }],
+    <span class="org-keyword">else</span>: [{ type: <span class="org-string">'str'</span>, value: <span class="org-string">'non-positive'</span> }] }
+], {}));
+</pre>
+</div>
+
+<pre class="example" id="orgd053d5e">
+if(null) = no
+if(gt(42,0)) = positive
+</pre>
+
+<p>
+<b><b>变量 + 循环：</b></b> 用 <code>while</code> 累加求和 =1+2+...+5=。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#32047;&#21152; 1+2+...+5
+</span><span class="org-keyword">let</span> <span class="org-variable-name">sumExample</span> = [
+  { type: <span class="org-string">'num'</span>, name: <span class="org-string">'i'</span>, value: 0 },
+  { type: <span class="org-string">'num'</span>, name: <span class="org-string">'n'</span>, value: 5 },
+  { type: <span class="org-string">'num'</span>, name: <span class="org-string">'sum'</span>, value: 0 },
+  { type: <span class="org-string">'while'</span>,
+    cond: { type: <span class="org-string">'lt'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'i'</span> }, { type: <span class="org-string">'var'</span>, name: <span class="org-string">'n'</span> }] },
+    body: [
+      { type: <span class="org-string">'num'</span>, name: <span class="org-string">'i'</span>, value: { type: <span class="org-string">'add'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'i'</span> }, 1] } },
+      { type: <span class="org-string">'num'</span>, name: <span class="org-string">'sum'</span>, value: { type: <span class="org-string">'add'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'sum'</span> }, { type: <span class="org-string">'var'</span>, name: <span class="org-string">'i'</span> }] } },
+    ]
+  },
+  { type: <span class="org-string">'var'</span>, name: <span class="org-string">'sum'</span> }
+];
+console.log(<span class="org-string">"1+2+...+5 ="</span>, interpreter(sumExample, {}));
+</pre>
+</div>
+
+<pre class="example" id="org9e1b863">
+1+2+...+5 = 15
+</pre>
+
+<p>
+<b><b>函数 + 闭包：</b></b> 定义一个阶乘函数 <code>fact(5)=，内部用 =while</code> 循环。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#38454;&#20056; fact(5) = 120
+</span><span class="org-keyword">let</span> <span class="org-variable-name">factExample</span> = [
+  { type: <span class="org-string">'fn'</span>, name: <span class="org-string">'fact'</span>,
+    value: { args: [<span class="org-string">'n'</span>],
+             body: [
+               { type: <span class="org-string">'num'</span>, name: <span class="org-string">'result'</span>, value: 1 },
+               { type: <span class="org-string">'while'</span>,
+                 cond: { type: <span class="org-string">'gt'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'n'</span> }, 0] },
+                 body: [
+                   { type: <span class="org-string">'num'</span>, name: <span class="org-string">'result'</span>,
+                     value: { type: <span class="org-string">'mul'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'result'</span> }, { type: <span class="org-string">'var'</span>, name: <span class="org-string">'n'</span> }] } },
+                   { type: <span class="org-string">'num'</span>, name: <span class="org-string">'n'</span>,
+                     value: { type: <span class="org-string">'sub'</span>, args: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'n'</span> }, 1] } },
+                 ]
+               },
+               { type: <span class="org-string">'var'</span>, name: <span class="org-string">'result'</span> }
+             ]
+           }
+  },
+  { type: <span class="org-string">'call'</span>, name: <span class="org-string">'fact'</span>, args: [5] },
+];
+console.log(<span class="org-string">"fact(5) ="</span>, interpreter(factExample, {}));
+</pre>
+</div>
+
+<pre class="example" id="org8241d16">
+fact(5) = 120
+</pre>
+
+<p>
+<b><b>字符串 + 数组：</b></b> 字符串变量和数组变量都能正确定义和引用。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-js"><span class="org-comment-delimiter">// </span><span class="org-comment">&#23383;&#31526;&#20018; + &#25968;&#32452;
+</span>console.log(interpreter([
+  { type: <span class="org-string">'str'</span>, name: <span class="org-string">'msg'</span>, value: <span class="org-string">'Hello World!'</span> },
+  { type: <span class="org-string">'fn'</span>, name: <span class="org-string">'greet'</span>, value: { args: [], body: [{ type: <span class="org-string">'var'</span>, name: <span class="org-string">'msg'</span> }] } },
+  { type: <span class="org-string">'call'</span>, name: <span class="org-string">'greet'</span>, args: [] },
+], {}));
+console.log(interpreter([
+  { type: <span class="org-string">'vec'</span>, name: <span class="org-string">'xs'</span>, value: [1, 2, 3] },
+  { type: <span class="org-string">'var'</span>, name: <span class="org-string">'xs'</span> }
+], {}));
+</pre>
+</div>
+
+<pre class="example" id="org1975310">
+Hello World!
+[ 1, 2, 3 ]
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org8246480" class="outline-2">
+<h2 id="org8246480">为什么说它是"微型 Lisp"</h2>
+<div class="outline-text-2" id="text-org8246480">
+<p>
+回头看这个解释器的结构，它跟 Lisp 解释器的相似之处不是巧合：
+</p>
+
+<ul class="org-ul">
+<li>Lisp 的 S-expression 是 =(fn arg1 arg2...)=，这里的 JSON 表达是 ={type: "fn", args: [...], body: [...]}=。本质相同，只是穿了一层 JSON 的外衣</li>
+<li>Lisp 用 <code>car/cdr</code> 取列表头和尾，这里用 <code>v.type/v.name/v.value</code> 取对象属性</li>
+<li>Lisp 的词法作用域通过环境链实现，这里用 <code>__parent</code> 指针，机制一模一样</li>
+<li>Lisp 的 <code>eval</code> 和 <code>apply</code> 循环，对应这里的 <code>jeval</code> 和 <code>jcall</code></li>
+</ul>
+
+<p>
+原文把 Lisp 写成了"Lithp"，大舌头发不准 <code>s</code> 音的梗。但玩笑归玩笑，这确实是一个"代码即数据"的微型演示：JSON 既是数据格式，又因为解释器的存在变成了可执行的语言。格式本身没有变，变的是解读它的方式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org270ec6c" class="outline-2">
+<h2 id="org270ec6c">如何自己跑一遍</h2>
+<div class="outline-text-2" id="text-org270ec6c">
+<p>
+文中所有代码块都设置了 <code>:tangle json-interpreter.js=。如果你在用 Emacs 读这篇博文，在任意一个代码块里按 =C-c C-v t=，Org-mode 会把所有代码块拼接成一个完整的 =json-interpreter.js</code> 文件。
+</p>
+
+<p>
+如果不用 Emacs，可以直接下载我拼好的完整文件 <a href="../../../../../assets/blog/2026/05/20/读：把-json-当编程语言执行——一个迷你解释器的构造过程/json-interpreter.js">json-interpreter.js</a>（跟这篇博文在同一个目录下），然后：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">node json-interpreter.js
+</pre>
+</div>
+
+<pre class="example" id="orgb8b6bc6">
+Hello World!
+</pre>
+
+<p>
+你也可以改 <code>helloworld</code> 数组里的内容，试试文中的其他表达式（=if=、=while= 等）。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-20</span>
+    <span class="post-info">2026-05-25</span>
+    <a href="../../../../../tags/编程之旅">编程之旅</a> : <a href="../../../../../tags/interpreter">interpreter</a> : <a href="../../../../../tags/json">json</a> : <a href="../../../../../tags/javascript">javascript</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; askkogcowbeexaxaijjtd4dtkg &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
