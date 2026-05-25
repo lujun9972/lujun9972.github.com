@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Querying Without a Query Language——不用查询语言的查询 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="Jan Nilsson 在 DZone 上提出：查询是&quot;设计&quot;出来的，不是&quot;构建&quot;出来的。用属性-操作符-值三元组，按领域结构组织过滤条件，把拼接 SQL 的脏活从客户端挪到系统内部。本文用 Clojure 把这个概念翻译成可运行的代码，展示两阶段执行（先选根对象，再构建结果）的具体实现。" />
+  <meta name="keywords" content="Clojure,查询设计,领域驱动" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Querying Without a Query Language——不用查询语言的查询</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgaa8e67c">问题：查询为什么越写越乱</a></li>
+<li><a href="#org84e51ed">核心理念：属性、操作符、值</a>
+<ul>
+<li><a href="#org49832f8">"构建"和"设计"到底差在哪</a></li>
+</ul>
+</li>
+<li><a href="#org132644f">两阶段执行</a></li>
+<li><a href="#org6da8999">Clojure 实现</a>
+<ul>
+<li><a href="#org63b3843">数据定义</a></li>
+<li><a href="#org5e8fc5b">操作符</a></li>
+<li><a href="#org0fbb9a6">匹配判断</a></li>
+<li><a href="#orga86478b">查询执行</a></li>
+<li><a href="#orga5d9a51">跑几个查询</a></li>
+<li><a href="#org795cfc8">组合过滤——根级别 + 关联级别：</a></li>
+<li><a href="#orgf619386"><code>IN</code> 操作符：</a></li>
+<li><a href="#org4ed129c"><code>LIKE</code> 操作符：</a></li>
+</ul>
+</li>
+<li><a href="#org7fa9a72">刻意限制的设计哲学</a></li>
+<li><a href="#org8dc5c9d">局限</a></li>
+<li><a href="#org71d7113">结语</a></li>
+</ul>
+</div>
+</div>
+<p>
+Jan Nilsson 在 <a href="https://dzone.com/articles/querying-without-a-query-language">Querying Without a Query Language</a> 里提了一个和直觉对着干的观点：查询是"设计"出来的，不是"构建"出来的。用"属性-操作符-值"三元组，按领域模型的结构来组织过滤条件，把拼接 SQL、组装 Criteria API 的脏活从客户端挪到系统内部。
+</p>
+
+<p>
+这个思路有意思，但原文全是概念描述，没有一行代码。本文用 Clojure 把它翻译成可运行的实现，看看"不用查询语言的查询"到底长什么样。
+</p>
+
+<div id="outline-container-orgaa8e67c" class="outline-2">
+<h2 id="orgaa8e67c">问题：查询为什么越写越乱</h2>
+<div class="outline-text-2" id="text-orgaa8e67c">
+<p>
+一个后端系统的查询逻辑，通常不是设计出来的，是长出来的。
+</p>
+
+<p>
+一开始只要过滤课程名 = "数学"。ORM 里加个 <code>where</code> 就搞定。然后要加学分过滤、要过滤关联的学生名字、要按学生成绩排序……每一步看起来都合理，但累积到某个点，你会发现代码里到处都是拼接条件、手动 join、处理分页和去重的逻辑。想搞清楚"这个接口到底查了什么"，得把分散在多个文件里的查询构建代码全读一遍。
+</p>
+
+<p>
+Nilsson 的观察是：框架本身没问题，问题是我们从来没把查询当成需要设计的东西。 <b>如果查询的结构跟随领域结构，很多拼接逻辑就消失了。</b>
+</p>
+</div>
+</div>
+
+<div id="outline-container-org84e51ed" class="outline-2">
+<h2 id="org84e51ed">核心理念：属性、操作符、值</h2>
+<div class="outline-text-2" id="text-org84e51ed">
+<p>
+这个模型把查询化简到三个要素：
+</p>
+
+<ul class="org-ul">
+<li>一个 <b>属性</b> （domain 里的字段名）</li>
+<li>一个 <b>操作符</b> （ <code>EQ</code> 、 <code>GT</code> 、 <code>LT</code> 、 <code>IN</code> 、 <code>LIKE</code> ，就这几个）</li>
+<li>一个 <b>值</b></li>
+</ul>
+
+<p>
+组合起来就是这样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">;; 查询：课程名 = "高等数学"
+{:course {:title {:op :eq :value "高等数学"}}}
+
+;; 查询：学分 &gt; 2 且 有学生名叫"张三"
+{:course {:credits {:op :gt :value 2}}
+ :students {:name {:op :eq :value "张三"}}}
+</pre>
+</div>
+
+<p>
+注意第二个查询的写法：学生过滤条件放在了 <code>:students</code> 下面，查询结构就是领域结构的翻版（课程下面挂学生）。不需要写 <code>JOIN</code> 也不需要用子查询，因为系统已经知道课程和学生之间靠什么字段关联，客户端不用在查询里再声明一遍。
+</p>
+</div>
+
+<div id="outline-container-org49832f8" class="outline-3">
+<h3 id="org49832f8">"构建"和"设计"到底差在哪</h3>
+<div class="outline-text-3" id="text-org49832f8">
+<p>
+"查询是设计出来的"这个说法容易让人困惑。两个词的区别一句话就说清了： <code>领域结构的知识放在哪里</code> 。
+</p>
+
+<p>
+用具体查询对比。查"有学生叫张三的课程"：
+</p>
+
+<p>
+<code>构建查询</code> （现在大多数人做的）——每次写查询时，在代码里重新声明表怎么关联：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> c.* <span class="org-keyword">FROM</span> course c
+<span class="org-keyword">JOIN</span> student s <span class="org-keyword">ON</span> c.id = s.course_id
+<span class="org-keyword">WHERE</span> s.<span class="org-keyword">name</span> = <span class="org-string">'&#24352;&#19977;'</span>
+</pre>
+</div>
+
+<p>
+<code>设计查询</code> （Nilsson 的方案）——系统已知课程和学生的关系，你只声明过滤什么：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">{:students {:name {:op :eq :value "张三"}}}
+</pre>
+</div>
+
+<p>
+系统自己知道要 JOIN <code>student</code> 表、用 <code>course-id</code> 关联、过滤 <code>name</code> = "张三"。换一个查询（查成绩 &gt; 80 的学生的课程），构建方式得重写一遍 JOIN，设计方式只改过滤字段名。
+</p>
+
+<p>
+这里的"设计"，意思是： <b>花一次功夫把领域模型（实体、关系、关联字段）定义清楚，之后所有查询都复用这套结构</b> 。客户端只填过滤条件，不写查询语句。设计做在前面，后面的查询自然就简单了。
+</p>
+</div>
+</div>
+</div>
+
+
+
+<div id="outline-container-org132644f" class="outline-2">
+<h2 id="org132644f">两阶段执行</h2>
+<div class="outline-text-2" id="text-org132644f">
+<p>
+当查询包含关联过滤时（如"有成绩 &gt; 80 的学生的课程"），一次 SQL 搞不定。为什么？因为两个问题搅在了一起：一是"哪些课程符合条件"（这需要查学生表才知道），二是"每门课下面返回哪些学生"（被过滤的只返回匹配的，没被过滤的返回全部）。传统做法把这两个问题绑在一个 JOIN 查询里，两阶段执行把它们拆开：
+</p>
+
+<ol class="org-ol">
+<li><b>阶段一：确定匹配的根对象</b> 。把要返回哪些根实体这件事单独解决，包括去查关联表来确定。结果是匹配的根对象 ID 集合。</li>
+<li><b>阶段二：构建返回结果</b> 。加载选中的根对象，附加关联数据。关键规则是：查询里提了哪个关联的过滤条件，返回结果里那个关联就只包含匹配的子实体；查询里没提的关联，返回全部子实体。过滤条件同时做两件事：选根对象，切关联数据。</li>
+</ol>
+
+<p>
+举个例子："学分 &gt; 2 且 有成绩 &gt; 80 的学生的课程"——阶段一会把课程范围从全部 3 门缩到 2 门（高等数学、大学物理），阶段二给每门课程附上成绩 &gt; 80 的学生（高等数学有张三和李四，大学物理有赵六），成绩不达标的学生不出现在结果里。
+</p>
+
+<p>
+而"学分 &gt; 2 的课程"（查询里没提学生的事），阶段一会筛选出 2 门课程，阶段二给每门课返回它的全部学生（不管成绩多少），因为学生关联没有被过滤。
+</p>
+
+<p>
+这个拆分还顺手解决了一个分页的老毛病：传统 JOIN 查询里，一门课有 3 个学生就会出现在结果里 3 次，按行数翻页时同一门课可能被截到两页去。两阶段执行翻页翻的是阶段一选出来的根对象（课程），跟阶段二拼装关联数据（学生）完全解耦，所以不会出现这个问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6da8999" class="outline-2">
+<h2 id="org6da8999">Clojure 实现</h2>
+<div class="outline-text-2" id="text-org6da8999">
+<p>
+下面用 Clojure 从头实现。
+</p>
+</div>
+
+<div id="outline-container-org63b3843" class="outline-3">
+<h3 id="org63b3843">数据定义</h3>
+<div class="outline-text-3" id="text-org63b3843">
+<div class="org-src-container">
+<pre class="src src-clojure">(require '[clojure.string :as str])
+
+(def courses
+  [{:id 1 :title "高等数学" :credits 4}
+   {:id 2 :title "大学物理" :credits 3}
+   {:id 3 :title "中国近代史" :credits 2}])
+
+(def students
+  [{:id 1 :name "张三" :course-id 1 :grade 85}
+   {:id 2 :name "李四" :course-id 1 :grade 92}
+   {:id 3 :name "王五" :course-id 2 :grade 78}
+   {:id 4 :name "赵六" :course-id 2 :grade 88}
+   {:id 5 :name "孙七" :course-id 1 :grade 65}])
+</pre>
+</div>
+
+<p>
+课程和学生是一对多关系： <code>student</code> 的 <code>:course-id</code> 对应 <code>course</code> 的 <code>:id</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5e8fc5b" class="outline-3">
+<h3 id="org5e8fc5b">操作符</h3>
+<div class="outline-text-3" id="text-org5e8fc5b">
+<p>
+只支持五个操作符，够覆盖绝大多数查询场景：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(def ops
+  {:eq   (fn [field-val value] (= field-val value))
+   :gt   (fn [field-val value] (&gt; field-val value))
+   :lt   (fn [field-val value] (&lt; field-val value))
+   :in   (fn [field-val values] (boolean (some #(= field-val %) values)))
+   :like (fn [field-val pattern] (str/includes? (str field-val) (str pattern)))})
+</pre>
+</div>
+
+<p>
+每个操作符的第一个参数是实体的字段值，第二个参数是查询条件里写的值。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0fbb9a6" class="outline-3">
+<h3 id="org0fbb9a6">匹配判断</h3>
+<div class="outline-text-3" id="text-org0fbb9a6">
+<p>
+<code>match?</code> 检查一个实体是否满足一组过滤条件。一组条件之间是 AND 关系（全部满足才算匹配）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn match? [entity filters]
+  (every? (fn [[k {:keys [op value]}]]
+            (let [op-fn (get ops op)
+                  field-val (get entity k)]
+              (op-fn field-val value)))
+          filters))
+</pre>
+</div>
+
+<p>
+注意这个模型 <b>不支持</b> OR。不是漏了，是刻意不要。后面会解释。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga86478b" class="outline-3">
+<h3 id="orga86478b">查询执行</h3>
+<div class="outline-text-3" id="text-orga86478b">
+<p>
+两阶段执行的完整实现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(defn query [data q]
+  (let [course-filters (:course q)
+        student-filters (:students q)
+        all-courses (:courses data)
+        all-students (:students data)
+        ;; ---- Phase 1: 确定匹配的根对象 ID ----
+        ;; 1a. 应用根级别过滤
+        matched-courses (if course-filters
+                          (filter #(match? % course-filters) all-courses)
+                          all-courses)
+        ;; 1b. 如果有子实体过滤，筛选出关联了匹配子实体的根对象
+        matched-ids (if student-filters
+                      (let [matched-students (filter #(match? % student-filters) all-students)
+                            valid-course-ids (set (map :course-id matched-students))]
+                        (set (keep #(when (valid-course-ids (:id %)) (:id %))
+                                   matched-courses)))
+                      (set (map :id matched-courses)))
+        ;; ---- Phase 2: 构建返回结果 ----
+        final-courses (filter #(contains? matched-ids (:id %)) all-courses)]
+    {:count (count final-courses)
+     :results (mapv (fn [c]
+                      (let [cs (filter #(= (:course-id %) (:id c)) all-students)]
+                        (assoc c :students
+                               ;; 被过滤的关联只包含匹配项，否则包含全部
+                               (if student-filters
+                                 (filterv #(match? % student-filters) cs)
+                                 (vec cs)))))
+                    final-courses)}))
+</pre>
+</div>
+
+<p>
+核心逻辑不到 20 行。关键在阶段一的 1b 和阶段二的 <code>if student-filters</code> 分支。前者保证只有"确实关联了匹配子实体的根对象"才被选中，后者保证被过滤的关联里只出现匹配的子实体。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga5d9a51" class="outline-3">
+<h3 id="orga5d9a51">跑几个查询</h3>
+<div class="outline-text-3" id="text-orga5d9a51">
+<div class="org-src-container">
+<pre class="src src-clojure">(def data {:courses courses :students students})
+</pre>
+</div>
+
+<p>
+先来个最简单的——查特定课程名：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(query data {:course {:title {:op :eq :value "高等数学"}}})
+</pre>
+</div>
+
+<pre class="example" id="orge5dc36c">
+{:count 1,
+ :results
+ [{:id 1, :title "高等数学", :credits 4,
+   :students
+   [{:id 1, :name "张三", :course-id 1, :grade 85}
+    {:id 2, :name "李四", :course-id 1, :grade 92}
+    {:id 5, :name "孙七", :course-id 1, :grade 65}]}]}
+</pre>
+
+<p>
+没有学生过滤条件，所以返回了课程的全部 3 个学生。
+</p>
+
+<p>
+查有特定学生的课程——过滤关联：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-clojure">(query data {:students {:name {:op :eq :value "张三"}}})
+</pre>
+</div>
+
+<pre class="example" id="org7621fc6">
+{:count 1,
+ :results
+ [{:id 1, :title "高等数学", :credits 4,
+   :students
+   [{:id 1, :name "张三", :course-id 1, :grade 85}]}]}
+</pre>
+
+<p>
+注意返回的学生列表只有张三，不是全部 3 个。因为学生关联被过滤了，只有匹配的子实体被包含。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org795cfc8" class="outline-3">
+<h3 id="org795cfc8">组合过滤——根级别 + 关联级别：</h3>
+<div class="outline-text-3" id="text-org795cfc8">
+<div class="org-src-container">
+<pre class="src src-clojure">(query data {:course {:credits {:op :gt :value 2}}
+             :students {:grade {:op :gt :value 80}}})
+</pre>
+</div>
+
+<pre class="example" id="orge1f2bd5">
+{:count 2,
+ :results
+ [{:id 1, :title "高等数学", :credits 4,
+   :students
+   [{:id 1, :name "张三", :course-id 1, :grade 85}
+    {:id 2, :name "李四", :course-id 1, :grade 92}]}
+  {:id 2, :title "大学物理", :credits 3,
+   :students
+   [{:id 4, :name "赵六", :course-id 2, :grade 88}]}]}
+</pre>
+
+<p>
+高等数学里孙七被排除了（成绩 65 不达标），大学物理里王五被排除了（成绩 78 不达标）。中国近代史根本没出现（学分 = 2，不满足 &gt; 2 的条件）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf619386" class="outline-3">
+<h3 id="orgf619386"><code>IN</code> 操作符：</h3>
+<div class="outline-text-3" id="text-orgf619386">
+<div class="org-src-container">
+<pre class="src src-clojure">(query data {:course {:title {:op :in :value ["高等数学" "大学物理"]}}})
+</pre>
+</div>
+
+<pre class="example" id="orga7c69cd">
+{:count 2,
+ :results
+ [{:id 1, :title "高等数学", :credits 4, :students [...]}
+  {:id 2, :title "大学物理", :credits 3, :students [...]}]}
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org4ed129c" class="outline-3">
+<h3 id="org4ed129c"><code>LIKE</code> 操作符：</h3>
+<div class="outline-text-3" id="text-org4ed129c">
+<div class="org-src-container">
+<pre class="src src-clojure">(query data {:course {:title {:op :like :value "数学"}}})
+</pre>
+</div>
+
+<pre class="example" id="org7e36dbb">
+{:count 1,
+ :results
+ [{:id 1, :title "高等数学", :credits 4, :students [...]}]}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7fa9a72" class="outline-2">
+<h2 id="org7fa9a72">刻意限制的设计哲学</h2>
+<div class="outline-text-2" id="text-org7fa9a72">
+<p>
+这个模型有几个"缺失"的功能，但它们是 <b>故意</b> 的：
+</p>
+
+<ol class="org-ol">
+<li><b>不支持 OR</b> 。过滤条件之间只能是 AND。
+Nilsson 的观点是：一旦引入 OR，查询的可理解性就崩塌了。A AND B 的语义没有歧义，A OR B 会迅速演变成嵌套布尔表达式。如果需要 OR，回到 SQL 或 Criteria API 手写去。这个模型不拦着你，它只管默认路径。</li>
+
+<li><b>不支持聚合</b> 。没有 <code>COUNT</code> 、 <code>SUM</code> 、 <code>GROUP BY</code> 。&lt;br/&gt;
+聚合查询和过滤查询的目标不同：前者做统计，后者取数据。混在一起会让语义变模糊。</li>
+
+<li><b>不追求覆盖所有场景</b> 。
+这个模型定义了一条"默认路径"。80% 的查询场景（按属性过滤、跨关联过滤、按领域结构返回数据）用这套就够了。超出这个范围的，回退到手写查询。</li>
+</ol>
+
+<p>
+这不是"功能缺失"，是"有意的约束"。跟前端的受控组件、数据库的约束检查一样，限制表达能力，换来一致性和可理解性。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8dc5c9d" class="outline-2">
+<h2 id="org8dc5c9d">局限</h2>
+<div class="outline-text-2" id="text-org8dc5c9d">
+<p>
+这个模型的适用场景有明显的边界：
+</p>
+
+<ul class="org-ul">
+<li><b>领域结构简单清晰</b> 。实体之间的关系是已知的、稳定的。如果领域模型本身就一团乱，用它来做查询结构只会更乱。</li>
+<li><b>查询模式以"过滤 + 关联"为主</b> 。如果系统里有大量统计报表、跨实体聚合，这套模型帮不上忙。</li>
+<li><b>对性能的控制更弱</b> 。查询执行逻辑封装在系统里，DBA 或开发者没法针对单个查询做索引优化，除非系统本身足够智能。</li>
+</ul>
+
+<p>
+Nilsson 自己也说了，这个模式来自一个"领域被描述为元数据并提供给系统"的真实项目。也就是说，它假设系统已经知道实体和关系的完整定义。如果你的项目没有这套元数据基础设施，直接在现有 ORM 上实现这个模式会比较吃力。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org71d7113" class="outline-2">
+<h2 id="org71d7113">结语</h2>
+<div class="outline-text-2" id="text-org71d7113">
+<p>
+这个模型的价值不在于"取代 SQL 或 Criteria API"，它也没这个野心。它真正的价值在于让你想清楚一件事：你的查询，到底是在"描述要什么数据"，还是在"教数据库怎么取数据"？
+</p>
+
+<p>
+描述要什么数据，声明式的，跟着领域结构走。教数据库怎么取数据，过程式的，跟着存储结构走。大多数后端系统把这两种东西混在一个方法里写，不乱才怪。
+</p>
+
+<p>
+Jan Nilsson 的文章把这两个东西拆开了。二十行代码就能验证这种拆分的可行性。下次设计查询接口时，值得多想一步。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-25</span>
+    <span class="post-info">2026-05-25</span>
+    <a href="../../../../../tags/clojure">Clojure</a> : <a href="../../../../../tags/查询设计">查询设计</a> : <a href="../../../../../tags/领域驱动">领域驱动</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; v3ihfjvwhs4u3n4ykftcpx3mia &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
