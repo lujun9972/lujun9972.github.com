@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：用 SonarQube 检测 Java 代码中的 Bug 和安全漏洞 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="安全审计发现硬编码密钥后，团队将 SonarQube 集成到 CI/CD 管线中自动扫描每一次提交。本文梳理了从本地手工扫描到 Quality Gate 的完整操作路径，包括 java:S2068 规则和误报处理策略。" />
+  <meta name="keywords" content="Java, SonarQube, 静态代码分析, 安全" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：用 SonarQube 检测 Java 代码中的 Bug 和安全漏洞</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org296bfb7">一次安全审计的警钟</a></li>
+<li><a href="#orgd4ea6c3">测试的盲区：为什么功能测试发现不了安全问题</a></li>
+<li><a href="#orgac71a61">先跑起来：手工用 SonarQube 检查代码</a>
+<ul>
+<li><a href="#org9c09ac8">启动 SonarQube Server</a></li>
+<li><a href="#org70c3276">准备扫描配置</a></li>
+<li><a href="#org4058ff9">执行扫描</a></li>
+</ul>
+</li>
+<li><a href="#org7209b43">嵌入 CI/CD：让每一次提交都被检查</a></li>
+<li><a href="#org3330367">一条规则救了我们：java:S2068</a></li>
+<li><a href="#org2902e06">Quality Gate：代码合并前的最后一道门</a></li>
+<li><a href="#org36dd061">误报怎么办</a></li>
+<li><a href="#org2255a55">结语</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文来自 DZone：<a href="https://dzone.com/articles/detecting-bugs-vulnerabilities-java-sonarqube">Detecting Bugs and Vulnerabilities in Java With SonarQube</a>，作者 Ramya vani Rayala。
+</p>
+
+<div id="outline-container-org296bfb7" class="outline-2">
+<h2 id="org296bfb7">一次安全审计的警钟</h2>
+<div class="outline-text-2" id="text-org296bfb7">
+<p>
+原文作者经历了一次真实的翻车：安全审计团队在例行报告中，标记了支付处理模块的一个关键漏洞——一个硬编码的第三方支付网关 API key，就躺在某个 utility 类里。所有人都能通过代码仓库看到它。
+</p>
+
+<p>
+讽刺的是，这段代码通过了所有测试。单元测试过了，集成测试过了，code review 也没人注意到。三位"守门员"全部漏球。要不是审计团队发现，这个 key 会一直暴露在生产环境中。
+</p>
+
+<p>
+这个事故暴露了一个系统性的盲区：常规测试和审查 <b>覆盖不到</b> 这类安全问题。这不是"某人犯了低级错误"能解释的，整个流程里没有任何一道关卡会检查"代码里有没有不该出现的东西"。靠更仔细的肉眼审查也解决不了这个问题，需要一台能自动扫描每一次提交的机器。于是他们引入了 SonarQube。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd4ea6c3" class="outline-2">
+<h2 id="orgd4ea6c3">测试的盲区：为什么功能测试发现不了安全问题</h2>
+<div class="outline-text-2" id="text-orgd4ea6c3">
+<p>
+问题不在测试质量，在于测试的 <b>目的</b> 不一样。
+</p>
+
+<p>
+单元测试和集成测试验证的是"功能对不对":给定输入，是否返回预期输出。但安全问题常常不表现为"功能错误"：硬编码密钥的代码在功能上完全正常，调用支付网关、返回成功，一切如常。问题在于 <b>不该出现在代码里的东西出现在了代码里</b> 。
+</p>
+
+<p>
+常规测试验证的是代码的"正确性"这一个维度——输入对不对、输出对不对。但安全问题不在这个维度上，它在另一个维度——代码里有没有不该出现的东西。打个比方：测试像机场安检，查的是你有没有带违禁品；静态扫描像建筑质检，查的是墙体里有没有裂缝。安检通过不代表墙体没裂缝。
+</p>
+
+<ul class="org-ul">
+<li>硬编码密钥 → 功能正常，纯文本泄露</li>
+<li>SQL 注入 → 功能正常（拼接字符串本身不是功能 bug），但可以被利用</li>
+<li>日志中打印敏感信息 → 功能正常，但日志文件成了信息泄露点</li>
+</ul>
+
+<p>
+这些问题的共同点：在运行时行为上都没有异常。你需要一个不需要运行代码、直接读源码的工具来发现它们。这正是静态代码分析（SAST）的用武之地。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgac71a61" class="outline-2">
+<h2 id="orgac71a61">先跑起来：手工用 SonarQube 检查代码</h2>
+<div class="outline-text-2" id="text-orgac71a61">
+<p>
+在嵌入 CI/CD 之前，最自然的起步是先在本地跑一次，看看自己的项目有什么问题。SonarQube 的架构是 <code>Server + Scanner</code> 模式：Server 负责分析、存储结果、展示报告；Scanner 负责读取项目源码发给 Server。
+</p>
+</div>
+
+<div id="outline-container-org9c09ac8" class="outline-3">
+<h3 id="org9c09ac8">启动 SonarQube Server</h3>
+<div class="outline-text-3" id="text-org9c09ac8">
+<p>
+最快速的方式是用 Docker：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">docker run -d --name sonarqube <span class="org-sh-escaped-newline">\</span>
+  -p 9000:9000 <span class="org-sh-escaped-newline">\</span>
+  sonarqube:lts-community
+</pre>
+</div>
+
+<p>
+启动后等一两分钟（服务需要初始化），访问 <code>http://localhost:9000</code> ，默认账号密码都是 <code>admin</code> 。首次登录会要求改密码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org70c3276" class="outline-3">
+<h3 id="org70c3276">准备扫描配置</h3>
+<div class="outline-text-3" id="text-org70c3276">
+<p>
+在项目根目录创建一个 <code>sonar-project.properties</code> 文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-conf"><span class="org-variable-name">sonar.projectKey</span>=my-java-project
+<span class="org-variable-name">sonar.projectName</span>=My Java Project
+<span class="org-variable-name">sonar.sources</span>=src/main/java
+<span class="org-variable-name">sonar.java.binaries</span>=target/classes
+</pre>
+</div>
+
+<p>
+这里的关键参数：
+</p>
+
+<ul class="org-ul">
+<li><code>sonar.projectKey</code> ：项目的唯一标识，用来在 Server 上区分不同项目</li>
+<li><code>sonar.sources</code> ：源码路径</li>
+<li><code>sonar.java.binaries</code> ：编译后的 <code>.class</code> 文件路径。Maven 项目通常是 <code>target/classes</code> ，Gradle 项目是 <code>build/classes</code> 。一个反直觉的发现：指向一个空的 /tmp 目录也能跑——Scanner 会跳过类型解析类规则，但仍会执行所有文本级规则（包括安全规则 java:S2068 等）。如果只是想快速看安全扫描结果，根本不用编译</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org4058ff9" class="outline-3">
+<h3 id="org4058ff9">执行扫描</h3>
+<div class="outline-text-3" id="text-org4058ff9">
+<p>
+如果用的是 Maven，直接在项目目录下跑：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">mvn sonar:sonar <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.host.url=http://localhost:9000 <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.login=admin <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.password=&#20320;&#30340;&#26032;&#23494;&#30721;
+</pre>
+</div>
+
+<p>
+如果不用 Maven 插件，也可以用独立的 Scanner：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">sonar-scanner <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.host.url=http://localhost:9000 <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.login=admin <span class="org-sh-escaped-newline">\</span>
+  -Dsonar.password=&#20320;&#30340;&#26032;&#23494;&#30721;
+</pre>
+</div>
+
+<p>
+扫描完成后，打开 <a href="http://localhost:9000/dashboard?id=my-java-project">http://localhost:9000/dashboard?id=my-java-project</a> 就能看到报告。报告按严重程度分类：Bug（影响功能正确性）、漏洞（安全隐患）、Code Smell（可维护性问题）。每一条都附带了规则编号、问题描述和修复建议。
+</p>
+
+<p>
+以下是我用 MobileOrg Android 项目（104 个 Java 文件，12,671 行代码）在本地 SonarQube 9.9.8 上验证的实际输出。先用 Docker 起了 SonarQube Server，然后不编译直接扫描源码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-variable-name">SQ_CONTAINER</span>=sonarqube-verify
+<span class="org-variable-name">SQ_PORT</span>=9000
+<span class="org-variable-name">SQ_URL</span>=<span class="org-string">"http://localhost:${SQ_PORT}"</span>
+<span class="org-variable-name">SCANNER_DIR</span>=/tmp/sonar-scanner-6.2.1.4610-linux-x64
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21551;&#21160; Server
+</span>docker run -d --name ${<span class="org-variable-name">SQ_CONTAINER</span>} -p ${<span class="org-variable-name">SQ_PORT</span>}:${<span class="org-variable-name">SQ_PORT</span>} sonarqube:lts-community
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29983;&#25104; Token
+</span><span class="org-variable-name">TOKEN</span>=$(<span class="org-sh-quoted-exec">curl -s -u admin:admin -X POST "${SQ_URL}/api/user_tokens/generate" \</span>
+    -d <span class="org-string">"name=verify-$(</span><span class="org-sh-quoted-exec">date +%s</span><span class="org-string">)"</span> <span class="org-sh-escaped-newline">\</span>
+    | python3 -c <span class="org-string">"import sys,json; print(json.load(sys.stdin)['token'])"</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20934;&#22791;&#31354; binaries &#30446;&#24405;&#8212;&#8212;&#20851;&#38190;&#65292;&#19981;&#32534;&#35793;&#20063;&#33021;&#25195;&#25551;
+</span>mkdir -p /tmp/empty-binaries
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25195;&#25551;
+</span><span class="org-builtin">cd</span> ~/github/mobileorg-android
+<span class="org-string">"${SCANNER_DIR}/bin/sonar-scanner"</span> <span class="org-sh-escaped-newline">\</span>
+    -Dsonar.projectKey=mobileorg-android <span class="org-sh-escaped-newline">\</span>
+    -Dsonar.sources=MobileOrg/src/main/java <span class="org-sh-escaped-newline">\</span>
+    -Dsonar.java.binaries=/tmp/empty-binaries <span class="org-sh-escaped-newline">\</span>
+    -Dsonar.host.url=<span class="org-string">"${SQ_URL}"</span> <span class="org-sh-escaped-newline">\</span>
+    -Dsonar.login=<span class="org-string">"${TOKEN}"</span>
+</pre>
+</div>
+
+<p>
+扫描输出：
+</p>
+
+<pre class="example" id="org69231d9">
+11:48:28  INFO  104 files indexed
+11:48:28  INFO  Quality profile for java: Sonar way
+11:49:24  INFO  Sensor JavaSensor [java] (done) | time=56194ms
+11:49:24  INFO  ANALYSIS SUCCESSFUL
+11:49:24  INFO  results at: http://localhost:9000/dashboard?id=mobileorg-android
+11:49:24  INFO  EXECUTION SUCCESS
+</pre>
+
+<p>
+Dashboard 显示：14 个 Bug、3 个漏洞、835 个 Code Smell、14 个安全热点，共 852 个问题。
+</p>
+
+<p>
+注意 <code>sonar.java.binaries</code> 指向了一个空目录——Scanner 没有编译任何 <code>.class</code> 文件，但它照样跑了所有文本级规则（包括 java:S2068、java:S6418 等安全规则）。这意味着 <b>SonarQube 的 Java 扫描不强制编译</b> ：如果你想快速看安全扫描结果，可以跳过编译直接扫源码。当然，依赖类型解析的规则（比如空指针检测）在这种模式下效果会打折扣，但对安全规则来说完全够用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7209b43" class="outline-2">
+<h2 id="org7209b43">嵌入 CI/CD：让每一次提交都被检查</h2>
+<div class="outline-text-2" id="text-org7209b43">
+<p>
+手工扫描适合"自己先看看"，但靠人记着跑扫描是不可靠的。原文团队的做法是直接把 SonarQube 扫描作为一个 stage 嵌入 Jenkins 流水线，每次提交自动触发。
+</p>
+
+<p>
+原文展示的 <code>Jenkinsfile</code> 配置大致如下（根据文中截图和描述重建）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-groovy">pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn clean compile'
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+}
+</pre>
+</div>
+
+<p>
+展开说几个关键点：
+</p>
+
+<ol class="org-ol">
+<li><code>SonarQube Analysis</code> 阶段和 <code>Test</code> 阶段是并行的——实际配置中可以用 <code>parallel</code> 让扫描和测试同时跑，不增加总体构建时间。</li>
+<li><code>withSonarQubeEnv('SonarQube')</code> 是 Jenkins SonarQube 插件的语法，它自动注入了 Server URL 和认证 token，不需要在脚本里硬编码。</li>
+<li><code>waitForQualityGate</code> 这一步是 *关键*——它不是在等扫描完成（扫描本身在前一个 step 就结束了），而是在等 SonarQube Server 端的 Quality Gate 计算结果。Quality Gate 是预先设定的一组质量条件（下一节会展开讲），如果扫描结果不满足这些条件——比如新增了一个 Bug 或漏洞——门禁就判定为失败，pipeline 直接中断，代码不能合并。</li>
+</ol>
+
+<p>
+国内团队如果用的是 GitLab CI 或 GitHub Actions，思路完全一样——在 <code>.gitlab-ci.yml</code> 或 workflow yaml 里加一个 job 跑 <code>mvn sonar:sonar</code> 即可。本质都是在代码合入主线之前，额外跑一次自动审查。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3330367" class="outline-2">
+<h2 id="org3330367">一条规则救了我们：java:S2068</h2>
+<div class="outline-text-2" id="text-org3330367">
+<p>
+SonarQube 内置了上千条规则。原文团队没有一上来全开，而是从 <code>Sonar Way</code> 这个默认规则集开始——它包含了一组精选的核心规则，覆盖常见安全问题和 bug 模式。
+</p>
+
+<p>
+其中有一条规则直接命中了他们的硬编码密钥问题： <code>java:S2068</code> 。这条规则的逻辑很朴素：扫描字符串字面量，如果值看起来像密码、密钥或 token，就标记为严重漏洞。
+</p>
+
+<p>
+触发问题的代码类似这样（根据原文截图重建）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-keyword">public</span> <span class="org-keyword">class</span> <span class="org-type">PaymentGatewayUtil</span> {
+    <span class="org-keyword">private</span> <span class="org-keyword">static</span> <span class="org-keyword">final</span> <span class="org-type">String</span> <span class="org-variable-name">API_KEY</span> = <span class="org-string">"sk_live_a1b2c3d4e5f6g7h8i9j0"</span>;
+
+    <span class="org-keyword">public</span> <span class="org-type">void</span> <span class="org-function-name">processPayment</span>(<span class="org-type">Payment</span> <span class="org-variable-name">payment</span>) {
+        <span class="org-comment-delimiter">// </span><span class="org-comment">&#30452;&#25509;&#20351;&#29992;&#30828;&#32534;&#30721;&#30340; API_KEY
+</span>        <span class="org-type">GatewayClient</span> <span class="org-variable-name">client</span> = <span class="org-keyword">new</span> <span class="org-type">GatewayClient</span>(API_KEY);
+        client.charge(payment);
+    }
+}
+</pre>
+</div>
+
+<p>
+SonarQube 在这行的 <code>sk_live_a1b2c3d4e5f6g7h8i9j0</code> 上标了一个 <code>Critical</code> 级别的漏洞标记，并给出修复建议：把密钥移到环境变量或配置文件中。
+</p>
+
+<p>
+修复后的写法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-keyword">public</span> <span class="org-keyword">class</span> <span class="org-type">PaymentGatewayUtil</span> {
+    <span class="org-keyword">private</span> <span class="org-keyword">static</span> <span class="org-keyword">final</span> <span class="org-type">String</span> <span class="org-variable-name">API_KEY</span> = System.getenv(<span class="org-string">"PAYMENT_GATEWAY_API_KEY"</span>);
+
+    <span class="org-keyword">public</span> <span class="org-type">void</span> <span class="org-function-name">processPayment</span>(<span class="org-type">Payment</span> <span class="org-variable-name">payment</span>) {
+        <span class="org-keyword">if</span> (API_KEY == <span class="org-constant">null</span>) {
+            <span class="org-keyword">throw</span> <span class="org-keyword">new</span> <span class="org-type">IllegalStateException</span>(<span class="org-string">"PAYMENT_GATEWAY_API_KEY &#29615;&#22659;&#21464;&#37327;&#26410;&#35774;&#32622;"</span>);
+        }
+        <span class="org-type">GatewayClient</span> <span class="org-variable-name">client</span> = <span class="org-keyword">new</span> <span class="org-type">GatewayClient</span>(API_KEY);
+        client.charge(payment);
+    }
+}
+</pre>
+</div>
+
+<p>
+改动很小：把 <code>String</code> 字面量换成 <code>System.getenv()</code> 调用，再补一个 null 检查。安全性的提升却是质的改变。即使有人拿到了代码仓库的完整访问权限，也看不到实际的密钥值。
+</p>
+
+<p>
+原文提到一个细节：他们团队之所以漏掉这个硬编码密钥，是因为写这段代码的开发者先写死方便调试，想着后面再改成读环境变量，然后就忘了。这种"临时代码变永久代码"的剧本太常见了。SonarQube 的价值不在于发现什么高深的漏洞，而在于它不会忘。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2902e06" class="outline-2">
+<h2 id="org2902e06">Quality Gate：代码合并前的最后一道门</h2>
+<div class="outline-text-2" id="text-org2902e06">
+<p>
+找到问题只是第一步。更关键的是，不能让问题代码溜进主分支。
+</p>
+
+<p>
+SonarQube 的 <code>Quality Gate</code> 就是干这个的——它是一组条件，一个待合并的 PR 必须全部满足才算通过。原文团队在 <code>main</code> 分支上设了四条硬性条件：
+</p>
+
+<ol class="org-ol">
+<li>新引入的 Bug：必须为零</li>
+<li>新引入的漏洞：必须为零</li>
+<li>新标记的安全热点：必须完成审查</li>
+<li>代码覆盖率：不低于 80%</li>
+</ol>
+
+<p>
+注意，这些条件针对的是 <b>新代码</b> ，不是存量代码的历史包袱。如果你给一个老项目接入 SonarQube，它不会因为历史遗留问题而把所有构建都标红。SonarQube 的 <code>New Code</code> 机制会根据 Git 提交记录（也就是代码版本管理信息）自动区分"这次 PR 引入的问题"和"之前就存在的问题"，Quality Gate 只检查前者。
+</p>
+
+<p>
+原文作者特别强调了一点：他们团队把门禁失败当成 <b>编译错误</b> 来处理——不修好就不让合并。这种态度上的转变比工具本身更重要。工具只负责发现问题，但如果你允许带着问题合并，那工具就等于不存在。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org36dd061" class="outline-2">
+<h2 id="org36dd061">误报怎么办</h2>
+<div class="outline-text-2" id="text-org36dd061">
+<p>
+任何一个静态分析工具都会产生误报，SonarQube 也不例外。原文团队遇到的典型场景是：某个工具方法处理的字符串恰好长得像密码，但实际上不是。
+</p>
+
+<p>
+SonarQube 对误报的处理方式有两种途径：
+</p>
+
+<ol class="org-ol">
+<li><code>在 Web Dashboard 上手动标记</code> ：右键某条告警 → "标记为误报"并填原因</li>
+<li><code>在代码中加注解静默 = ：用 Java 的 =@SuppressWarnings</code> 注解，括号里写明要跳过的规则 key</li>
+</ol>
+
+<p>
+原文展示的第二种方式（根据截图重建）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-java"><span class="org-c-annotation">@SuppressWarnings</span>(<span class="org-string">"java:S2068"</span>)
+<span class="org-keyword">public</span> <span class="org-type">String</span> <span class="org-function-name">generateFakeToken</span>() {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#36825;&#19981;&#26159;&#30495;&#23454;&#23494;&#38053;&#65292;&#26159;&#27979;&#35797;&#29992;&#20551;&#25968;&#25454;
+</span>    <span class="org-keyword">return</span> <span class="org-string">"fake_token_for_unit_test"</span>;
+}
+</pre>
+</div>
+
+<p>
+这个注解告诉 SonarQube：在这一行， <code>java:S2068</code> 规则不适用。但原文团队有一个硬性约束——*必须写注释解释为什么要 suppress* 。没有理由的 suppress 视为违规，code review 也要过一遍所有 suppress 标记。
+</p>
+
+<p>
+这个约束很重要。没有它，开发者会习惯性地 suppress 掉所有看着不顺眼的告警，"静默"把有问题的静默点了一起关掉。有了强制写理由的机制后，每次 suppress 都是一次有意识的决策，而不是肌肉记忆式操作。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2255a55" class="outline-2">
+<h2 id="org2255a55">结语</h2>
+<div class="outline-text-2" id="text-org2255a55">
+<p>
+SonarQube 不能替代渗透测试，不能发现业务逻辑错误，也不能帮你写安全的代码——它只是一个自动化的静态扫描工具。但它的价值在于：把"会不会忘"这个不确定因素从安全流程中排除掉。
+</p>
+
+<p>
+原文作者的团队在接入 SonarQube 后，硬编码密钥这类低级但高危的问题再也没进过生产环境。不是因为开发者不会犯错了，而是因为这些错误在合并之前就被机器拦截了。
+</p>
+
+<p>
+如果你刚做完一个 Java 项目的重构，跑一次 SonarQube 扫描可能是最高性价比的后续动作——几分钟的时间，换来一份系统性的代码质量全景报告，包括你重构过程中可能引入的新问题。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-24</span>
+    <span class="post-info">2026-05-25</span>
+    <a href="../../../../../tags/java">Java</a> : <a href="../../../../../tags/sonarqube">SonarQube</a> : <a href="../../../../../tags/静态代码分析">静态代码分析</a> : <a href="../../../../../tags/安全">安全</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; y1d5uzqg4p1u3jznlhajqvjm4e &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
