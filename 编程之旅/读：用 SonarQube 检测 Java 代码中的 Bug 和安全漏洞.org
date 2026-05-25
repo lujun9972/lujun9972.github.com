@@ -1,0 +1,265 @@
+#+TITLE: 读：用 SonarQube 检测 Java 代码中的 Bug 和安全漏洞
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Java, SonarQube, 静态代码分析, 安全
+#+DATE: [2026-05-24 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 安全审计发现硬编码密钥后，团队将 SonarQube 集成到 CI/CD 管线中自动扫描每一次提交。本文梳理了从本地手工扫描到 Quality Gate 的完整操作路径，包括 java:S2068 规则和误报处理策略。
+
+原文来自 DZone：[[https://dzone.com/articles/detecting-bugs-vulnerabilities-java-sonarqube][Detecting Bugs and Vulnerabilities in Java With SonarQube]]，作者 Ramya vani Rayala。
+
+* 一次安全审计的警钟
+
+原文作者经历了一次真实的翻车：安全审计团队在例行报告中，标记了支付处理模块的一个关键漏洞——一个硬编码的第三方支付网关 API key，就躺在某个 utility 类里。所有人都能通过代码仓库看到它。
+
+讽刺的是，这段代码通过了所有测试。单元测试过了，集成测试过了，code review 也没人注意到。三位"守门员"全部漏球。要不是审计团队发现，这个 key 会一直暴露在生产环境中。
+
+这个事故暴露了一个系统性的盲区：常规测试和审查 *覆盖不到* 这类安全问题。这不是"某人犯了低级错误"能解释的，整个流程里没有任何一道关卡会检查"代码里有没有不该出现的东西"。靠更仔细的肉眼审查也解决不了这个问题，需要一台能自动扫描每一次提交的机器。于是他们引入了 SonarQube。
+
+* 测试的盲区：为什么功能测试发现不了安全问题
+
+问题不在测试质量，在于测试的 *目的* 不一样。
+
+单元测试和集成测试验证的是"功能对不对":给定输入，是否返回预期输出。但安全问题常常不表现为"功能错误"：硬编码密钥的代码在功能上完全正常，调用支付网关、返回成功，一切如常。问题在于 *不该出现在代码里的东西出现在了代码里* 。
+
+常规测试验证的是代码的"正确性"这一个维度——输入对不对、输出对不对。但安全问题不在这个维度上，它在另一个维度——代码里有没有不该出现的东西。打个比方：测试像机场安检，查的是你有没有带违禁品；静态扫描像建筑质检，查的是墙体里有没有裂缝。安检通过不代表墙体没裂缝。
+
+- 硬编码密钥 → 功能正常，纯文本泄露
+- SQL 注入 → 功能正常（拼接字符串本身不是功能 bug），但可以被利用
+- 日志中打印敏感信息 → 功能正常，但日志文件成了信息泄露点
+
+这些问题的共同点：在运行时行为上都没有异常。你需要一个不需要运行代码、直接读源码的工具来发现它们。这正是静态代码分析（SAST）的用武之地。
+
+* 先跑起来：手工用 SonarQube 检查代码
+
+在嵌入 CI/CD 之前，最自然的起步是先在本地跑一次，看看自己的项目有什么问题。SonarQube 的架构是 =Server + Scanner= 模式：Server 负责分析、存储结果、展示报告；Scanner 负责读取项目源码发给 Server。
+
+** 启动 SonarQube Server
+
+最快速的方式是用 Docker：
+
+#+begin_src shell
+docker run -d --name sonarqube \
+  -p 9000:9000 \
+  sonarqube:lts-community
+#+end_src
+
+启动后等一两分钟（服务需要初始化），访问 =http://localhost:9000= ，默认账号密码都是 =admin= 。首次登录会要求改密码。
+
+** 准备扫描配置
+
+在项目根目录创建一个 =sonar-project.properties= 文件：
+
+#+begin_src conf
+sonar.projectKey=my-java-project
+sonar.projectName=My Java Project
+sonar.sources=src/main/java
+sonar.java.binaries=target/classes
+#+end_src
+
+这里的关键参数：
+
+- =sonar.projectKey= ：项目的唯一标识，用来在 Server 上区分不同项目
+- =sonar.sources= ：源码路径
+- =sonar.java.binaries= ：编译后的 =.class= 文件路径。Maven 项目通常是 =target/classes= ，Gradle 项目是 =build/classes= 。一个反直觉的发现：指向一个空的 /tmp 目录也能跑——Scanner 会跳过类型解析类规则，但仍会执行所有文本级规则（包括安全规则 java:S2068 等）。如果只是想快速看安全扫描结果，根本不用编译
+
+** 执行扫描
+
+如果用的是 Maven，直接在项目目录下跑：
+
+#+begin_src shell
+mvn sonar:sonar \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.login=admin \
+  -Dsonar.password=你的新密码
+#+end_src
+
+如果不用 Maven 插件，也可以用独立的 Scanner：
+
+#+begin_src shell
+sonar-scanner \
+  -Dsonar.host.url=http://localhost:9000 \
+  -Dsonar.login=admin \
+  -Dsonar.password=你的新密码
+#+end_src
+
+扫描完成后，打开 http://localhost:9000/dashboard?id=my-java-project 就能看到报告。报告按严重程度分类：Bug（影响功能正确性）、漏洞（安全隐患）、Code Smell（可维护性问题）。每一条都附带了规则编号、问题描述和修复建议。
+
+以下是我用 MobileOrg Android 项目（104 个 Java 文件，12,671 行代码）在本地 SonarQube 9.9.8 上验证的实际输出。先用 Docker 起了 SonarQube Server，然后不编译直接扫描源码：
+
+#+begin_src shell :tangle sonarqube-verify.sh
+#!/bin/bash
+SQ_CONTAINER=sonarqube-verify
+SQ_PORT=9000
+SQ_URL="http://localhost:${SQ_PORT}"
+SCANNER_DIR=/tmp/sonar-scanner-6.2.1.4610-linux-x64
+
+# 启动 Server
+docker run -d --name ${SQ_CONTAINER} -p ${SQ_PORT}:${SQ_PORT} sonarqube:lts-community
+
+# 生成 Token
+TOKEN=$(curl -s -u admin:admin -X POST "${SQ_URL}/api/user_tokens/generate" \
+    -d "name=verify-$(date +%s)" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+# 准备空 binaries 目录——关键，不编译也能扫描
+mkdir -p /tmp/empty-binaries
+
+# 扫描
+cd ~/github/mobileorg-android
+"${SCANNER_DIR}/bin/sonar-scanner" \
+    -Dsonar.projectKey=mobileorg-android \
+    -Dsonar.sources=MobileOrg/src/main/java \
+    -Dsonar.java.binaries=/tmp/empty-binaries \
+    -Dsonar.host.url="${SQ_URL}" \
+    -Dsonar.login="${TOKEN}"
+#+end_src
+
+扫描输出：
+
+#+begin_example
+11:48:28  INFO  104 files indexed
+11:48:28  INFO  Quality profile for java: Sonar way
+11:49:24  INFO  Sensor JavaSensor [java] (done) | time=56194ms
+11:49:24  INFO  ANALYSIS SUCCESSFUL
+11:49:24  INFO  results at: http://localhost:9000/dashboard?id=mobileorg-android
+11:49:24  INFO  EXECUTION SUCCESS
+#+end_example
+
+Dashboard 显示：14 个 Bug、3 个漏洞、835 个 Code Smell、14 个安全热点，共 852 个问题。
+
+注意 =sonar.java.binaries= 指向了一个空目录——Scanner 没有编译任何 =.class= 文件，但它照样跑了所有文本级规则（包括 java:S2068、java:S6418 等安全规则）。这意味着 *SonarQube 的 Java 扫描不强制编译* ：如果你想快速看安全扫描结果，可以跳过编译直接扫源码。当然，依赖类型解析的规则（比如空指针检测）在这种模式下效果会打折扣，但对安全规则来说完全够用。
+
+* 嵌入 CI/CD：让每一次提交都被检查
+
+手工扫描适合"自己先看看"，但靠人记着跑扫描是不可靠的。原文团队的做法是直接把 SonarQube 扫描作为一个 stage 嵌入 Jenkins 流水线，每次提交自动触发。
+
+原文展示的 =Jenkinsfile= 配置大致如下（根据文中截图和描述重建）：
+
+#+begin_src groovy
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                sh 'mvn clean compile'
+            }
+        }
+        stage('Test') {
+            steps {
+                sh 'mvn test'
+            }
+        }
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh 'mvn sonar:sonar'
+                }
+            }
+        }
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+    }
+}
+#+end_src
+
+展开说几个关键点：
+
+1. =SonarQube Analysis= 阶段和 =Test= 阶段是并行的——实际配置中可以用 =parallel= 让扫描和测试同时跑，不增加总体构建时间。
+2. =withSonarQubeEnv('SonarQube')= 是 Jenkins SonarQube 插件的语法，它自动注入了 Server URL 和认证 token，不需要在脚本里硬编码。
+3. =waitForQualityGate= 这一步是 *关键*——它不是在等扫描完成（扫描本身在前一个 step 就结束了），而是在等 SonarQube Server 端的 Quality Gate 计算结果。Quality Gate 是预先设定的一组质量条件（下一节会展开讲），如果扫描结果不满足这些条件——比如新增了一个 Bug 或漏洞——门禁就判定为失败，pipeline 直接中断，代码不能合并。
+
+国内团队如果用的是 GitLab CI 或 GitHub Actions，思路完全一样——在 =.gitlab-ci.yml= 或 workflow yaml 里加一个 job 跑 =mvn sonar:sonar= 即可。本质都是在代码合入主线之前，额外跑一次自动审查。
+
+* 一条规则救了我们：java:S2068
+
+SonarQube 内置了上千条规则。原文团队没有一上来全开，而是从 =Sonar Way= 这个默认规则集开始——它包含了一组精选的核心规则，覆盖常见安全问题和 bug 模式。
+
+其中有一条规则直接命中了他们的硬编码密钥问题： =java:S2068= 。这条规则的逻辑很朴素：扫描字符串字面量，如果值看起来像密码、密钥或 token，就标记为严重漏洞。
+
+触发问题的代码类似这样（根据原文截图重建）：
+
+#+begin_src java
+public class PaymentGatewayUtil {
+    private static final String API_KEY = "sk_live_a1b2c3d4e5f6g7h8i9j0";
+
+    public void processPayment(Payment payment) {
+        // 直接使用硬编码的 API_KEY
+        GatewayClient client = new GatewayClient(API_KEY);
+        client.charge(payment);
+    }
+}
+#+end_src
+
+SonarQube 在这行的 =sk_live_a1b2c3d4e5f6g7h8i9j0= 上标了一个 =Critical= 级别的漏洞标记，并给出修复建议：把密钥移到环境变量或配置文件中。
+
+修复后的写法：
+
+#+begin_src java
+public class PaymentGatewayUtil {
+    private static final String API_KEY = System.getenv("PAYMENT_GATEWAY_API_KEY");
+
+    public void processPayment(Payment payment) {
+        if (API_KEY == null) {
+            throw new IllegalStateException("PAYMENT_GATEWAY_API_KEY 环境变量未设置");
+        }
+        GatewayClient client = new GatewayClient(API_KEY);
+        client.charge(payment);
+    }
+}
+#+end_src
+
+改动很小：把 =String= 字面量换成 =System.getenv()= 调用，再补一个 null 检查。安全性的提升却是质的改变。即使有人拿到了代码仓库的完整访问权限，也看不到实际的密钥值。
+
+原文提到一个细节：他们团队之所以漏掉这个硬编码密钥，是因为写这段代码的开发者先写死方便调试，想着后面再改成读环境变量，然后就忘了。这种"临时代码变永久代码"的剧本太常见了。SonarQube 的价值不在于发现什么高深的漏洞，而在于它不会忘。
+
+* Quality Gate：代码合并前的最后一道门
+
+找到问题只是第一步。更关键的是，不能让问题代码溜进主分支。
+
+SonarQube 的 =Quality Gate= 就是干这个的——它是一组条件，一个待合并的 PR 必须全部满足才算通过。原文团队在 =main= 分支上设了四条硬性条件：
+
+1. 新引入的 Bug：必须为零
+2. 新引入的漏洞：必须为零
+3. 新标记的安全热点：必须完成审查
+4. 代码覆盖率：不低于 80%
+
+注意，这些条件针对的是 *新代码* ，不是存量代码的历史包袱。如果你给一个老项目接入 SonarQube，它不会因为历史遗留问题而把所有构建都标红。SonarQube 的 =New Code= 机制会根据 Git 提交记录（也就是代码版本管理信息）自动区分"这次 PR 引入的问题"和"之前就存在的问题"，Quality Gate 只检查前者。
+
+原文作者特别强调了一点：他们团队把门禁失败当成 *编译错误* 来处理——不修好就不让合并。这种态度上的转变比工具本身更重要。工具只负责发现问题，但如果你允许带着问题合并，那工具就等于不存在。
+
+* 误报怎么办
+
+任何一个静态分析工具都会产生误报，SonarQube 也不例外。原文团队遇到的典型场景是：某个工具方法处理的字符串恰好长得像密码，但实际上不是。
+
+SonarQube 对误报的处理方式有两种途径：
+
+1. =在 Web Dashboard 上手动标记= ：右键某条告警 → "标记为误报"并填原因
+2. =在代码中加注解静默 = ：用 Java 的 =@SuppressWarnings= 注解，括号里写明要跳过的规则 key
+
+原文展示的第二种方式（根据截图重建）：
+
+#+begin_src java
+@SuppressWarnings("java:S2068")
+public String generateFakeToken() {
+    // 这不是真实密钥，是测试用假数据
+    return "fake_token_for_unit_test";
+}
+#+end_src
+
+这个注解告诉 SonarQube：在这一行， =java:S2068= 规则不适用。但原文团队有一个硬性约束——*必须写注释解释为什么要 suppress* 。没有理由的 suppress 视为违规，code review 也要过一遍所有 suppress 标记。
+
+这个约束很重要。没有它，开发者会习惯性地 suppress 掉所有看着不顺眼的告警，"静默"把有问题的静默点了一起关掉。有了强制写理由的机制后，每次 suppress 都是一次有意识的决策，而不是肌肉记忆式操作。
+
+* 结语
+
+SonarQube 不能替代渗透测试，不能发现业务逻辑错误，也不能帮你写安全的代码——它只是一个自动化的静态扫描工具。但它的价值在于：把"会不会忘"这个不确定因素从安全流程中排除掉。
+
+原文作者的团队在接入 SonarQube 后，硬编码密钥这类低级但高危的问题再也没进过生产环境。不是因为开发者不会犯错了，而是因为这些错误在合并之前就被机器拦截了。
+
+如果你刚做完一个 Java 项目的重构，跑一次 SonarQube 扫描可能是最高性价比的后续动作——几分钟的时间，换来一份系统性的代码质量全景报告，包括你重构过程中可能引入的新问题。
