@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：从API调用到Agent循环——构建 Agent 的七个阶段 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="解读 belderbos.dev 的 Agentic AI 教学路径。从最基础的 API 调用出发，逐步构建对话记忆、工具调用、可测试架构、人工审核，直到通用 Agent 循环。每个阶段都配有关键设计决策的解释——为什么 content 是列表而不是字符串，为什么工具结果要放在 user 消息里，为什么置信度阈值决定生产就绪。" />
+  <meta name="keywords" content="AI, Agent, LLM, Python, 工具调用" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：从API调用到Agent循环——构建 Agent 的七个阶段</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org6c7e298">Stage 1：最简调用</a></li>
+<li><a href="#orgf6652fa">Stage 2：让输出可解析</a>
+<ul>
+<li><a href="#orgcf674ed">评注：** 系统提示词就是契约，跟传统软件开发里的接口定义是一个道理。你不是在跟模型聊天，你是在给它写规格说明书。传统接口靠编译器检查，LLM 的"接口"靠提示词约束 + 输出验证来保证：提示词引导模型输出正确格式，Pydantic 在模型不配合时兜底报错，两道防线少了哪一道都会出问题。</a></li>
+</ul>
+</li>
+<li><a href="#org4a572c0">Stage 3：让它记住对话</a>
+<ul>
+<li><a href="#org588a507">评注：** 理解 LLM 无状态，是搞清楚 LLM 应用设计的关键一步。很多人刚意识到这件事时会觉得"这怎么用"，但换个角度想：正因为无状态，控制权全在你手里。对话历史由你管理，想截断就截断，想摘要就摘要，想让模型"忘掉"前面说的什么，直接不发给它就行。</a></li>
+</ul>
+</li>
+<li><a href="#org7a439ec">Stage 4：工具调用</a>
+<ul>
+<li><a href="#org49c5b4a">评注：** 工具调用的本质是让 LLM 当"决策者"，你的代码当"执行者"。模型决定调什么工具、传什么参数，你的代码负责实际执行并把结果喂回去。这个分工把 LLM 的能力（理解意图、生成参数）和程序的可靠性（确定性执行、错误处理）结合了起来。循环本身是通用的，从后面后面 Stage 7 可以看出，不管工具是做加法还是查数据库，循环逻辑一模一样。</a></li>
+</ul>
+</li>
+<li><a href="#orge81450c">Stage 5：可替换、可测试</a>
+<ul>
+<li><a href="#org0a98eb4">评注：** 这些模式都不是 AI 领域的新发明。Protocol 就是依赖倒置（DIP），Repository 就是数据访问抽象，Service 层就是业务编排。有后端开发经验的读者应该觉得很眼熟。原文的好处在于把这些经典模式落到了 LLM 应用的具体场景里。把"调 API"和"存数据"从业务逻辑中拔出来之后，你就可以给核心逻辑写单元测试了，而不用每次都真的去调一次 LLM。</a></li>
+</ul>
+</li>
+<li><a href="#org15ed419">Stage 6：人在回路中</a>
+<ul>
+<li><a href="#orge058d66">评注：** 置信度阈值是生产级 AI 应用中容易被忽视的设计决策。阈值设高了，模型几乎都要人工确认，自动化失去意义；设低了，错误静默溜过，用户失去信任。原文用的 0.8 只是个起点，实际项目中这个值需要根据业务场景的错误容忍度来调整。核心原则：让机器在它拿得准的时候自主行动，在它犹豫的时候及时交出控制权。</a></li>
+</ul>
+</li>
+<li><a href="#org38df24c">Stage 7：通用化循环</a>
+<ul>
+<li><a href="#orgd4a2977">评注：** 这一阶段揭示了一个重要的认知：Agent 框架的核心逻辑并不复杂。本质上就是一个 while 循环 + 工具注册表 + 消息历史管理。框架真正值钱的是周边的工程化细节:错误重试、并发控制、日志追踪、安全沙箱。理解了这一点之后，选择用框架还是自己写循环，就变成了一个工程决策：你的场景复杂到需要框架的周边能力吗？如果不需要，自己写一个循环可能比引入框架更合适。</a></li>
+</ul>
+</li>
+<li><a href="#org189a06f">总结：这条学习路径教会了什么</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://belderbos.dev/blog/learn-agentic-ai-python-10-step-journey/">Learn Agentic AI in Python: A 10-Step Journey</a> 把从"调一次 API"到"写一个完整 Agent 循环"拆成十个递进练习，再归纳成七个概念阶段。这篇文章是它的配套讲解，逐层解读每个阶段的设计决策，回答一个核心问题：从调一次 API 到写一个完整的 Agent，中间到底要补哪些东西？
+</p>
+
+<div id="outline-container-org6c7e298" class="outline-2">
+<h2 id="org6c7e298">Stage 1：最简调用</h2>
+<div class="outline-text-2" id="text-org6c7e298">
+<p>
+每个 LLM 应用的起点都一样：创建客户端，调用 API，读取返回文本。以 Anthropic Python SDK 为例：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> anthropic
+
+<span class="org-variable-name">client</span> <span class="org-operator">=</span> anthropic.Anthropic()
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> client.messages.create(
+    model<span class="org-operator">=</span><span class="org-string">"claude-sonnet-4-6"</span>,
+    max_tokens<span class="org-operator">=</span>256,
+    messages<span class="org-operator">=</span>[{<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: <span class="org-string">"Say hi"</span>}],
+)
+<span class="org-builtin">print</span>(msg.content[0].text)
+</pre>
+</div>
+
+<p>
+注意 <code>content[0].text</code> 而不是 <code>.text</code> 。 <code>content</code> 是一个列表，每个元素是一个"块"（block），比如文本块、工具调用块等。现在你拿到的是 <code>[{"type": "text", "text": "Hello!"}]</code> ，后面引入工具调用时就会变成 <code>[{"type": "text", ...}, {"type": "tool_use", ...}]</code> ，但外层还是同一个列表。早点建立这个心智模型，后面加功能才不会措手不及。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf6652fa" class="outline-2">
+<h2 id="orgf6652fa">Stage 2：让输出可解析</h2>
+<div class="outline-text-2" id="text-orgf6652fa">
+<p>
+Stage 1 拿到了模型的文本回复，但输出的文本没有定式，模型今天可能输出"餐饮"，明天可能输出"类别：餐饮（食品）"，你没法直接用它做后续处理。解决方案是通过提示词明确输出格式，同时用 Pydantic 模型在收到结果后验证 LLM 返回是否符合格式。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> pydantic <span class="org-keyword">import</span> BaseModel
+
+<span class="org-keyword">class</span> <span class="org-type">ExpenseResult</span>(BaseModel):
+    category: <span class="org-builtin">str</span>
+    confidence: <span class="org-builtin">float</span>
+
+<span class="org-variable-name">result</span> <span class="org-operator">=</span> ExpenseResult.model_validate_json(msg.content[0].text)
+</pre>
+</div>
+
+<p>
+系统提示词要像 API 契约一样严格：说清楚"只输出 JSON"，给出具体的字段结构，并禁止任何多余内容。"禁止多余内容"这几个字很重要，没有这几个字LLM总喜欢在 JSON 后面加一句友好的总结。
+</p>
+</div>
+
+<div id="outline-container-orgcf674ed" class="outline-3">
+<h3 id="orgcf674ed">评注：** 系统提示词就是契约，跟传统软件开发里的接口定义是一个道理。你不是在跟模型聊天，你是在给它写规格说明书。传统接口靠编译器检查，LLM 的"接口"靠提示词约束 + 输出验证来保证：提示词引导模型输出正确格式，Pydantic 在模型不配合时兜底报错，两道防线少了哪一道都会出问题。</h3>
+</div>
+</div>
+
+<div id="outline-container-org4a572c0" class="outline-2">
+<h2 id="org4a572c0">Stage 3：让它记住对话</h2>
+<div class="outline-text-2" id="text-org4a572c0">
+<p>
+Stage 1 和 2 解决了单次调用的问题——你能拿到结构化的回复了。但实际应用中用户会连续提问，模型需要理解上下文。可问题在于：LLM 本身没有状态、没有记忆，当前调用之外的上下文它一概不知。我们感知到的"连续对话"，其实是你每次调用时把完整的消息历史重新发给它。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">history</span> <span class="org-operator">=</span> []
+
+<span class="org-keyword">def</span> <span class="org-function-name">ask</span>(user_msg):
+    history.append({<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: user_msg})
+    <span class="org-variable-name">reply</span> <span class="org-operator">=</span> client.messages.create(
+        model<span class="org-operator">=</span><span class="org-string">"claude-sonnet-4-6"</span>,
+        max_tokens<span class="org-operator">=</span>512,
+        messages<span class="org-operator">=</span>history,
+    ).content[0].text
+    history.append({<span class="org-string">"role"</span>: <span class="org-string">"assistant"</span>, <span class="org-string">"content"</span>: reply})
+    <span class="org-keyword">return</span> reply
+</pre>
+</div>
+
+<p>
+操作很简单：调用前追加用户消息，调用后追加助手回复。角色必须交替（user → assistant → user → ...）。数据存在你的请求里，不存在模型里。理解这一点，大部分关于"上下文窗口"和"记忆"的困惑就自然消解了。
+</p>
+</div>
+
+<div id="outline-container-org588a507" class="outline-3">
+<h3 id="org588a507">评注：** 理解 LLM 无状态，是搞清楚 LLM 应用设计的关键一步。很多人刚意识到这件事时会觉得"这怎么用"，但换个角度想：正因为无状态，控制权全在你手里。对话历史由你管理，想截断就截断，想摘要就摘要，想让模型"忘掉"前面说的什么，直接不发给它就行。</h3>
+</div>
+</div>
+
+<div id="outline-container-org7a439ec" class="outline-2">
+<h2 id="org7a439ec">Stage 4：工具调用</h2>
+<div class="outline-text-2" id="text-org7a439ec">
+<p>
+Stage 1-3 构建了一个能记住上下文的聊天机器人，但它只能聊天，不能做事。工具调用把聊天机器人变成能执行动作的程序。核心循环比很多人想象的更简单：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">while</span> <span class="org-constant">True</span>:
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> client.messages.create(
+        ..., tools<span class="org-operator">=</span>TOOLS, messages<span class="org-operator">=</span>messages
+    )
+    <span class="org-keyword">if</span> response.stop_reason <span class="org-operator">==</span> <span class="org-string">"end_turn"</span>:
+        <span class="org-keyword">return</span> response.content[0].text
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#21542;&#21017;&#65306;&#22788;&#29702;&#24037;&#20855;&#35843;&#29992;&#65292;&#25226;&#32467;&#26524;&#36861;&#21152;&#21040;&#28040;&#24687;&#21015;&#34920;&#65292;&#32487;&#32493;&#24490;&#29615;</span>
+</pre>
+</div>
+
+<p>
+上面这段伪代码省略了工具调用的处理逻辑，有两个需要注意的细节：
+</p>
+
+<ol class="org-ol">
+<li>助手的回复要完整追加 <code>response.content</code> （不是只取文本），因为里面包含模型发出的工具调用块，下一轮循环模型需要看到这些块才能继续</li>
+<li>工具执行结果要包在 <code>user</code> 角色的消息里返回，不是 <code>assistant</code> 。这看起来反直觉，但角色交替的规则要求这样做</li>
+</ol>
+</div>
+
+<div id="outline-container-org49c5b4a" class="outline-3">
+<h3 id="org49c5b4a">评注：** 工具调用的本质是让 LLM 当"决策者"，你的代码当"执行者"。模型决定调什么工具、传什么参数，你的代码负责实际执行并把结果喂回去。这个分工把 LLM 的能力（理解意图、生成参数）和程序的可靠性（确定性执行、错误处理）结合了起来。循环本身是通用的，从后面后面 Stage 7 可以看出，不管工具是做加法还是查数据库，循环逻辑一模一样。</h3>
+</div>
+</div>
+
+<div id="outline-container-orge81450c" class="outline-2">
+<h2 id="orge81450c">Stage 5：可替换、可测试</h2>
+<div class="outline-text-2" id="text-orge81450c">
+<p>
+到这一步聊天机器人能跑了，但代码通常也缠成一团，业务逻辑直接依赖 <code>anthropic</code> 和 <code>sqlite3</code> 等外部库，没法单独测试。常见的解耦模式有三个：
+</p>
+
+<ol class="org-ol">
+<li><b>Protocol 模式</b> 给 LLM 提供者定义接口，测试时可以传入一个带 <code>.calls</code> 列表的 <code>MockProvider</code> 替代真实 API</li>
+<li><b>Repository 模式</b> 给持久层定义接口，内存字典和数据库后端实现同一个接口</li>
+<li><b>Service 层</b> 通过构造函数接受上述两个依赖，负责编排：调 LLM → 解析结果 → 存储 → 返回</li>
+</ol>
+
+<p>
+三个模式组合起来就是一套可测试的 Agent 架构，每一层职责单一，可以独立替换和测试。
+</p>
+</div>
+
+<div id="outline-container-org0a98eb4" class="outline-3">
+<h3 id="org0a98eb4">评注：** 这些模式都不是 AI 领域的新发明。Protocol 就是依赖倒置（DIP），Repository 就是数据访问抽象，Service 层就是业务编排。有后端开发经验的读者应该觉得很眼熟。原文的好处在于把这些经典模式落到了 LLM 应用的具体场景里。把"调 API"和"存数据"从业务逻辑中拔出来之后，你就可以给核心逻辑写单元测试了，而不用每次都真的去调一次 LLM。</h3>
+</div>
+</div>
+
+<div id="outline-container-org15ed419" class="outline-2">
+<h2 id="org15ed419">Stage 6：人在回路中</h2>
+<div class="outline-text-2" id="text-org15ed419">
+<p>
+Stage 2 用 Pydantic 模型从 LLM 输出中解析出了 <code>confidence</code> 字段，但一直没说这个分数拿来干什么。拿到置信度之后，可以用它来决定是否需要人工介入：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">process</span>(result, threshold<span class="org-operator">=</span>0.8):
+    <span class="org-keyword">if</span> result.confidence <span class="org-operator">&gt;=</span> threshold:
+        <span class="org-keyword">return</span> result.category
+    <span class="org-variable-name">answer</span> <span class="org-operator">=</span> <span class="org-builtin">input</span>(f<span class="org-string">"Accept '</span>{result.category}<span class="org-string">'? (Enter to confirm): "</span>).strip()
+    <span class="org-keyword">return</span> answer <span class="org-keyword">or</span> result.category
+</pre>
+</div>
+
+<p>
+设计要点：让"接受"路径的操作成本最低（直接回车就行），只有用户不认同模型的分类时才需要手动输入修正。原文认为，有没有这一步，是"可信助手"和"偷偷把事情搞错的 AI"的分界线，也是"演示项目"和"生产级工作流"的差距。
+</p>
+</div>
+
+<div id="outline-container-orge058d66" class="outline-3">
+<h3 id="orge058d66">评注：** 置信度阈值是生产级 AI 应用中容易被忽视的设计决策。阈值设高了，模型几乎都要人工确认，自动化失去意义；设低了，错误静默溜过，用户失去信任。原文用的 0.8 只是个起点，实际项目中这个值需要根据业务场景的错误容忍度来调整。核心原则：让机器在它拿得准的时候自主行动，在它犹豫的时候及时交出控制权。</h3>
+</div>
+</div>
+
+<div id="outline-container-org38df24c" class="outline-2">
+<h2 id="org38df24c">Stage 7：通用化循环</h2>
+<div class="outline-text-2" id="text-org38df24c">
+<p>
+前面 Stage 4 的工具循环里，工具名和函数的对应关系是写死的。这最后一步只改了一个地方，即把硬编码的函数调用替换成一个字典查找：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">TOOL_FUNCTIONS</span> <span class="org-operator">=</span> {
+    <span class="org-string">"add"</span>: <span class="org-keyword">lambda</span> a, b: a <span class="org-operator">+</span> b,
+    <span class="org-string">"multiply"</span>: <span class="org-keyword">lambda</span> a, b: a <span class="org-operator">*</span> b,
+
+}
+
+<span class="org-variable-name">content</span> <span class="org-operator">=</span> <span class="org-builtin">str</span>(TOOL_FUNCTIONS[block.name](<span class="org-operator">**</span>block.<span class="org-builtin">input</span>))
+</pre>
+</div>
+
+<p>
+新增一个工具只需要加一条 schema 定义 + 一个字典条目。把 <code>add</code> / <code>multiply</code> 换成 <code>search_web</code> 、 <code>query_db</code> 、 <code>send_email</code> ，循环逻辑完全一样。原文指出，LangChain、OpenAI Assistants 等框架底层也是这个模式。
+</p>
+</div>
+
+<div id="outline-container-orgd4a2977" class="outline-3">
+<h3 id="orgd4a2977">评注：** 这一阶段揭示了一个重要的认知：Agent 框架的核心逻辑并不复杂。本质上就是一个 while 循环 + 工具注册表 + 消息历史管理。框架真正值钱的是周边的工程化细节:错误重试、并发控制、日志追踪、安全沙箱。理解了这一点之后，选择用框架还是自己写循环，就变成了一个工程决策：你的场景复杂到需要框架的周边能力吗？如果不需要，自己写一个循环可能比引入框架更合适。</h3>
+</div>
+</div>
+
+<div id="outline-container-org189a06f" class="outline-2">
+<h2 id="org189a06f">总结：这条学习路径教会了什么</h2>
+<div class="outline-text-2" id="text-org189a06f">
+<p>
+原文的结论很明确：框架在你能够自己写出底层之后才有意义。跳过底层直接上框架，一旦框架的行为跟你预期不一致，你连问题出在哪都查不出来。七个阶段都很小，单个看没什么特别的，串起来才构成完整的学习路径。做完之后，"Agentic AI" 的底牌就清楚了：一个循环、一套 schema、加上几个常见的设计模式。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-25</span>
+    <span class="post-info">2026-05-25</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/agent">Agent</a> : <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/工具调用">工具调用</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; hpnvzbvpfeou1f45zichf0mtaa &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
