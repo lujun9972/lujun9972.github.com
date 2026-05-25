@@ -1,0 +1,183 @@
+#+TITLE: 读：REST更新的三态问题——你的后端分得清"没发"和"发了个null"吗
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: REST, API设计, Clojure, JSON, PATCH
+#+DATE: [2026-05-25 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: REST 更新操作中，JSON 的"字段缺失"和"字段为 null"承载不同的意图，但大多数后端框架无法区分。本文从 Jan Nilsson 的分析出发，展示 Java 的笨拙解法和 Clojure 的天然优势。
+
+[[https://dzone.com/articles/rest-update-problem][原文：The Update Problem REST Doesn't Solve]] 指出了一个很多后端开发者踩过但没细想的坑，收到一个 JSON 更新请求时，后端能不能分清"客户端没发这个字段"和"客户端故意把这个字段设为 null"？
+
+别觉得这是小事，数据被错误覆盖往往就出在这种地方。
+
+* 问题，三个状态，两种表示
+
+考虑这两个请求：
+
+#+begin_src json
+{}
+#+end_src
+
+#+begin_src json
+{ "email": null }
+#+end_src
+
+JSON 语法里，第一个什么都没说，第二个明确写了"把 email 设为 null"。一个合理的后端应该这样理解：
+
+- 字段没出现 → 客户端没有表达意图 → 不动
+- 字段出现了，值是 null → 客户端要清空这个字段
+- 字段出现了，有值 → 客户端要更新这个字段
+
+三种状态，三种意图。但大多数后端框架只看到两种值，null 和非 null。字段"没发过来"在反序列化之后也变成了 null，三态变成了两态，信息丢了。
+
+* Java 的痛点
+
+假设数据库里有一条用户记录 ~name="Anna"~ ， ~email="anna@example.com"~ 。
+
+客户端只想改名字，发了 ={ "name": "Anna" }= 。一个典型的 Java 后端会这样做：
+
+#+begin_src java
+public void updateUser(UserDTO dto, User entity) {
+    entity.setName(dto.getName());
+    entity.setEmail(dto.getEmail());
+}
+#+end_src
+
+=email= 字段客户端没发，反序列化后 =dto.getEmail()= 返回 null，于是 =entity.setEmail(null)= 把数据库里的 email 清掉了。
+
+这是后端自己在"猜"客户端没表达的意思，客户端什么都没做错。
+
+原文的解决方案是给每个字段加一个 presence flag：
+
+#+begin_src java
+public class UserDTO {
+    private String email;
+    private boolean emailPresent;
+
+    public void setEmail(String email) {
+        this.email = email;
+        this.emailPresent = true;
+    }
+    public boolean isEmailPresent() {
+        return emailPresent;
+    }
+    public String getEmail() {
+        return email;
+    }
+}
+#+end_src
+
+更新逻辑就变成了这样：
+
+#+begin_src java
+public void updateUser(UserDTO dto, User entity) {
+    if (dto.isEmailPresent()) {
+        entity.setEmail(dto.getEmail());
+    }
+}
+#+end_src
+
+行为就清楚了：
+
+- =isEmailPresent()= 为 false（字段没发）→ 不动
+- =isEmailPresent()= 为 true， =getEmail()= 为 null（显式 null）→ 清空
+- =isEmailPresent()= 为 true， =getEmail()= 有值 → 更新
+
+方案管用，但每个字段都要加一个 boolean，setter 里还要额外维护。字段多了就是一堆样板代码。
+
+布尔值和集合更容易出问题。 ={"active": false}= 到底是"设为 false"还是"没发"？ ={"roles": []}= 是"清空角色列表"还是"忽略"？没有 presence flag，后端分不清。
+
+#+begin_src java
+if (dto.isRolesPresent()) {
+    entity.getRoles().clear();
+    entity.getRoles().addAll(dto.getRoles());
+}
+#+end_src
+
+有了 flag，语义才明确，没发 → 不动， =[] → 清空， =[x,y]= → 替换。
+
+* Clojure 的天然解法
+
+Clojure 的 map 天然就区分"key 不存在"和"key 存在但值为 nil"。不需要额外的 boolean，不需要改 setter，语言本身就搞定了。
+
+先看 Clojure 里 map 的基本行为：
+
+#+begin_src clojure
+;; 场景 1：key 不存在
+(def m1 {:name "Anna"})
+
+(contains? m1 :email)   ;; => false，key 不存在
+(find m1 :email)         ;; => nil，找不到
+(get m1 :email)          ;; => nil，没有值
+
+;; 场景 2：key 存在，值为 nil
+(def m2 {:name "Anna" :email nil})
+
+(contains? m2 :email)   ;; => true，key 存在
+(find m2 :email)         ;; => [:email nil]，key-value 对
+(get m2 :email)          ;; => nil，值是 nil
+#+end_src
+
+=(contains? m :k)= 只看 key 在不在，不管值是什么。 =(find m :k)= 返回 key-value 对（如果存在），能同时告诉你"在"和"值是什么"。而 =(get m :k)= 只能拿到值，无法区分"不在"和"值为 nil"。
+
+所以 =contains?= 和 =find= 就是 Clojure 自带的 presence flag，不需要写任何额外代码。
+
+用 Clojure 重写 updateUser：
+
+#+begin_src clojure
+(defn update-user
+  "根据请求 map 更新用户实体。
+  - key 不存在：不动
+  - key 存在且值为 nil：清空
+  - key 存在且有值：更新"
+  [request entity]
+  (cond-> entity
+    (contains? request :email) (assoc :email (:email request))
+    (contains? request :name)  (assoc :name  (:name request))
+    (contains? request :roles) (assoc :roles (:roles request))))
+#+end_src
+
+对比 Java 版本，没有 DTO 类，没有 boolean flag，没有改 setter。Clojure 的 map 自带 presence 信息， =contains?= 直接查。
+
+来验证一下：
+
+#+begin_src clojure
+(def user {:name "Anna" :email "anna@example.com" :roles [:admin]})
+
+;; 只改名字，email 和 roles 不动
+(update-user {:name "Anna"} user)
+;; => {:name "Anna" :email "anna@example.com" :roles [:admin]}
+
+;; 显式清空 email
+(update-user {:email nil} user)
+;; => {:name "Anna" :email nil :roles [:admin]}
+
+;; 替换 roles 为空列表
+(update-user {:roles []} user)
+;; => {:name "Anna" :email "anna@example.com" :roles []}
+
+;; 同时更新多个字段
+(update-user {:name "Bob" :email nil :roles [:user]} user)
+;; => {:name "Bob" :email nil :roles [:user]}
+#+end_src
+
+四种场景，行为都是确定的。没有歧义，没有猜测。
+
+说到底差异在数据模型上。Java 的对象用 null 表示"没值"，没法表达"没提这个字段"，只好用额外的 boolean 补。Clojure 的 map 用 key 的存在与否表达"提没提"，用值（可以是 nil）表达"值是什么"，两种信息天然分离。
+
+* 标准化方案的一瞥
+
+除了在应用层处理，IETF 也为这个问题制定了两个标准：
+
+- *JSON Merge Patch* （RFC 7396），缺失字段表示"不改"，null 表示"删除"。和本文讨论的语义一致，但只适用于 JSON 值能表达的变更，无法处理数组内的局部修改。
+- *JSON Patch* （RFC 6902），用一组操作指令描述变更，比如 ={"op": "replace", "path": "/email", "value": null}= 。更精确，但格式复杂，适合复杂的嵌套结构更新。
+
+两者解决的是同一个问题，怎么让客户端的意图在传输过程中不丢失。
+
+* 小结
+
+原文提出的设计原则很简洁：只对显式意图做变更。字段没发就是没意图，没意图就不应该有副作用。
+
+Clojure 的 map 语义天然支持这个原则，key 在不在是一种信息，值是什么是另一种信息。你不需要额外写代码来追踪字段是否存在，语言已经帮你做了。而 Java 需要手动为每个字段维护 presence flag，因为对象字段的 null 无法区分"没设过"和"设成了 null"。
+
+下次设计更新接口时，先问自己一个问题，后端能不能分清"客户端没发这个字段"和"客户端发了 null"？如果不能，你的更新接口就有隐患。
