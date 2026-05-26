@@ -1,0 +1,143 @@
+#+TITLE: 读：CUPID——从 Clojure 视角看代码设计
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: CUPID, SOLID, Clojure, 软件设计
+#+DATE: [2026-05-25 Mon]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Dan North 提出的 CUPID 不是取代 SOLID 的新规则，而是把代码审查的视角从"遵守规则"切换到"观察品质"。本文从 Clojure 视角对照五个属性，看看函数式编程是不是早就走在 CUPID 的路上。
+
+最近读到 DZone 上一篇 [[https://dzone.com/articles/beyond-solid-embracing-cupid-for-modern-software][Beyond SOLID: Embracing CUPID]]，介绍了 Dan North 提出的 CUPID 框架。其中有个观察挺有意思，代码质量的评价方式可以从"你遵守规则了吗"切换到"代码有这些品质吗"。本文想聊两件事，这个视角转换到底改了什么，以及从 Clojure 的角度看，CUPID 的五个属性长什么样。
+
+* 规则 vs 属性
+
+SOLID 是五条规则，单一职责、开闭原则、里氏替换、接口隔离、依赖倒置。规则的好处是可以对着清单打勾，linter 能检查。坏处也明显，规则是针对特定场景制定的（上世纪 90 年代的 C++/Java 单体应用），实际场景跟设想的不一样时，"遵守规则"和"解决问题"之间就开始打架。比如如果严格遵循接口隔离原则，那么一个 Spring 项目里能冒出几十个只有一个方法的接口，每个接口只有一个实现类，读代码的人要在接口和实现之间来回跳。
+
+CUPID 的五个字母代表五个 /属性 / ，Composable（可组合）、Unix-inspired（Unix 哲学）、Predictable（可预测）、Idiomatic（地道）、Domain-driven（领域驱动）。属性不是用来"遵守"的，是用来"观察"的，你审视代码时看它 / 有没有/ 这些品质就行。
+
+原文最有实用价值的部分是一组 code review 问题。下次审代码时，可以试试把"这个类符合开闭原则吗"换成：
+
+1. 可组合吗？这段逻辑能同时在 CLI 工具和 Web API 里用吗？
+2. Unix 风格吗？这个函数是在做一件事，还是在当万事通？
+3. 可预测吗？同样的输入，每次调用都能得到同样的输出吗？函数里有没有偷偷改全局状态？
+4. 地道吗？这段代码像官方文档里的写法，还是像从别的语言硬搬过来的？
+5. 领域驱动吗？变量名用的是业务术语还是数据库术语？
+
+Predictable 和 Idiomatic 跟 Clojure 的关系最深，会重点讲，其余三个点到为止。
+
+* Predictable，Clojure 把"不要有副作用"从建议变成了事实
+
+CUPID 说代码应该是可预测的，同样的输入必定产生同样的输出，没有隐藏的副作用。原文举了个例子， =get_user_balance()= 不该偷偷刷新 session token。
+
+在 Java 或 Python 里，"不要有副作用"只是一条建议。你可以在 getter 里塞一个 =refreshSession()= 调用，语言不会阻止你，单元测试也不一定能发现（测试通常只检查返回值，不检查副作用）。
+
+Clojure 不一样，数据默认不可变，"偷偷改"这个动作在语言层面就被堵死了。
+
+#+begin_src clojure
+(def user {:balance 100.0 :session-token "abc123"})
+;; => #'user/user
+
+(defn get-balance [user]
+  (:balance user))
+;; => #'user/get-balance
+#+end_src
+
+=get-balance= 拿到的 =user= 是一个不可变 map，函数体里没有任何语法能改变 =user= 的内容。想要更新数据，必须显式创建新的 map。
+
+#+begin_src clojure
+(def user-updated (assoc user :balance 200.0))
+;; => #'user/user-updated
+
+(:balance user)         ;; 原始数据没变
+;; => 100.0
+
+(:balance user-updated) ;; 新 map 有新值
+;; => 200.0
+#+end_src
+
+=assoc= 返回的是新 map，原始 =user= 纹丝不动。这不是约定，是语言强制。你写不出"偷偷改了 session token"的代码，因为 Clojure 里压根没有原地修改 map 的操作。原文说的"不要有副作用"只是一个原则，得靠自觉遵守。Clojure 把这条原则变成了不可能违反的事实。
+
+* Idiomatic，Clojure 社区有自己的写法
+
+CUPID 的 Idiomatic 属性说的是每门语言都有自己的惯用写法，用别的语言的思维模式来写，会让熟悉这门语言的人读起来别扭。原文用 Python 举了个例子，Java 风格的 class + for 循环过滤偶数，对比 Python 列表推导式。
+
+Clojure 也有类似的情况。来看一个实际点的场景，统计活跃用户按城市分布。从 Java 转 Clojure 的人可能会这样写（把可变状态的思维搬过来了）。
+
+#+begin_src clojure
+(def users
+  [{:name "Alice" :city "Beijing" :active true}
+   {:name "Bob" :city "Shanghai" :active false}
+   {:name "Carol" :city "Beijing" :active true}
+   {:name "Dave" :city "Shenzhen" :active true}])
+
+;; 不地道的写法：用 atom 维护可变状态，手动遍历
+(defn count-active-by-city-imperative [users]
+  (let [result (atom {})]
+    (doseq [user users]
+      (when (:active user)
+        (let [city (:city user)
+              current (get @result city 0)]
+          (swap! result assoc city (inc current)))))
+    @result))
+
+(count-active-by-city-imperative users)
+;; => {"Beijing" 2, "Shenzhen" 1}
+#+end_src
+
+这个版本能跑，但 =atom= + =doseq= + =swap!= 的组合是用可变状态模拟不可变操作，写起来啰嗦，读起来也得跟着 =atom= 的状态变化走。Clojure 的惯用写法是一个线程宏串起三个标准函数。
+
+#+begin_src clojure
+;; 地道的写法
+(defn count-active-by-city [users]
+  (->> users
+       (filter :active)
+       (map :city)
+       (frequencies)))
+
+(count-active-by-city users)
+;; => {"Beijing" 2, "Shenzhen" 1}
+#+end_src
+
+=->>= 宏把数据从左往右送进管道，先过滤出活跃用户，再提取城市名，最后统计频次。每一步只做一件事，组合起来完成整个任务。这正好也呼应了 Unix-inspired 属性，小工具各司其职，用管道串起来。
+
+* Composable 和 Unix-inspired，函数组合与管道
+
+CUPID 的 Composable 说代码应该像积木一样能自由组合，Unix-inspired 说每个模块只做一件事、用标准接口连接。这两个属性在 Clojure 里是基本操作，纯函数天然可组合（数据进、数据出，不依赖外部状态）， =->>= 和 =->= 宏提供了管道语法。
+
+关于 threading macro 的具体用法和踩坑经验，之前在 [[file:链式调用的代价.org][链式调用的代价]] 里详细写过，这里只看一个简短示例。
+
+#+begin_src clojure
+(defn apply-seasonal-discount [price] (* price 0.9))
+(defn apply-loyalty-discount [price] (- price 5.0))
+
+(-> 100.0
+    apply-seasonal-discount
+    apply-loyalty-discount)
+;; => 85.0
+#+end_src
+
+每个折扣函数只依赖价格这一个参数，返回新的价格。想加新的折扣规则，写一个同样签名的函数插进管道就行。不需要修改已有函数，也不需要引入接口和依赖注入。
+
+* Domain-driven，让代码说业务语言
+
+CUPID 的 Domain-driven 说的是变量名和函数名应该反映业务概念，少用技术实现层面的词。原文举了两个函数名的对比， =process_data_table_row()= vs =submit_insurance_claim()= 。
+
+Clojure 这方面没有特别的语言特性来强制，但 =clojure.spec= 提供了一种声明式语法来描述领域模型。
+
+#+begin_src clojure
+(require '[clojure.spec.alpha :as s])
+
+(s/def ::claim-id uuid?)
+(s/def ::claimant string?)
+(s/def ::amount (s/and decimal? pos?))
+
+(s/def ::insurance-claim
+  (s/keys :req [::claim-id ::claimant ::amount]))
+#+end_src
+
+这不是代码逻辑，是领域模型的声明。字段名和约束条件直接反映了业务概念（保险理赔有 ID、理赔人、金额），非技术人员虽然读不了代码，但能看懂 spec 里的字段名。业务概念变成了代码的一部分，不用藏在注释里。
+
+* 小结
+
+回过头看，CUPID 的五个属性在 Clojure 里并不陌生。Predictable 对应不可变数据和纯函数，Idiomatic 对应社区的编码风格，Composable 和 Unix-inspired 对应 threading macro 和函数组合。Domain-driven 是离 Clojure 日常最远的一个（ =clojure.spec= 的采用率并不高），但语言本身不排斥这个方向。
+
+如果你写过 Clojure，CUPID 的五个属性多半让你觉得眼熟。与其说 Dan North 提出了什么新东西，不如说他用一组好记的名字和可用于 code review 的提问框架，把函数式编程社区一直在实践的东西显式化了。提问框架才是实用的部分，下次审代码时，与其问"这符合 SOLID 吗"，不如问"这段代码可组合、可预测、地道吗"。
