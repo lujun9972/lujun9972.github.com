@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：为什么你的告警永远在喊狼来了 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="从&quot;告警噪音 vs 漏报&quot;的痛点出发，介绍监控分层的核心思路，告警应对准客户痛感而非 CPU 利用率，排查从业务层向下钻取。文中引入两个实用方法论 RED（请求量 / 错误率 / 延迟）和 USE（利用率 / 饱和度 / 错误），并展示一个从业务异常追到数据库连接池耗尽的完整排查案例。" />
+  <meta name="keywords" content="监控, SRE, 运维" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：为什么你的告警永远在喊狼来了</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org41efb6c">问题：监控很全，但出了事还是后知后觉</a></li>
+<li><a href="#org4c8deda">核心原则：告警对准客户痛感，排查向下钻取</a></li>
+<li><a href="#org6e42e08">两个排查工具：RED 和 USE</a></li>
+<li><a href="#org96e3184">一个排查案例：从业务异常追到数据库连接池</a></li>
+<li><a href="#orgdcaa4d0">高基数标签的陷阱</a></li>
+<li><a href="#org7ee0c8a">怎么落地：不用一步到位</a></li>
+<li><a href="#org8fe9f1f">理想和现实的差距</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://dzone.com/articles/five-layer-monitoring-framework">Stop Guessing, Start Seeing: A Five-Layer Framework for Monitoring Distributed Systems</a>
+</p>
+
+<div id="outline-container-org41efb6c" class="outline-2">
+<h2 id="org41efb6c">问题：监控很全，但出了事还是后知后觉</h2>
+<div class="outline-text-2" id="text-org41efb6c">
+<p>
+凌晨三点手机响了，CPU 超 80%。爬起来一看，业务完全正常，虚惊一场。第二天、第三天还是这样，后来干脆把告警通知静音了。然后某天客户投诉"我的报表生不出来"，你才发现这条告警被淹没在几十条 CPU、内存、磁盘的噪音里，根本没人注意。
+</p>
+
+<p>
+很多团队的监控就是这样运作的：CPU 超 80% 报一次，内存超 75% 报一次，磁盘超 60% 再报一次，告警一天响几十回，值班的人逐渐麻木。直到真出了事，还得翻遍六七块仪表盘才找到原因。
+</p>
+
+<p>
+问题出在监控没有层次。CPU 高不高和客户能不能用报表之间隔着好几层因果关系，告警系统不知道这层关系，只能对所有"看起来不对"的数值大喊大叫。
+</p>
+
+<p>
+Prashant Pathak 在 DZone 上发了一篇文章，提出把监控按业务交易、服务健康、容器行为、数据服务性能、容量规划五个层次组织起来，告警只对准最顶层（客户痛感），排查从上往下钻。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4c8deda" class="outline-2">
+<h2 id="org4c8deda">核心原则：告警对准客户痛感，排查向下钻取</h2>
+<div class="outline-text-2" id="text-org4c8deda">
+<p>
+如果你的告警系统在喊"CPU 80%"但没有客户受影响，这条告警就是噪音。反过来，客户已经在报障了但你的告警一声没吭，那就是漏报。
+</p>
+
+<p>
+要做到这一点，监控需要分成明确的层级，层与层之间有清晰的上下级关系：
+</p>
+
+<pre class="example" id="orgfbaf73f">
+Layer 1: 业务交易    ← 客户真正在经历什么
+Layer 2: 服务健康    ← 哪个服务出了问题
+Layer 3: 容器行为    ← 单个容器的资源状况
+Layer 4: 数据服务性能 ← 数据库和缓存的瓶颈
+Layer 5: 容量规划    ← 还能撑多久
+</pre>
+
+<p>
+告警设在 Layer 1。Layer 1 响了之后，到 Layer 2 找是哪个服务的问题，再到 Layer 3 看是不是个别容器在拖后腿，到 Layer 4 查数据库或缓存有没有瓶颈。每一层回答一个具体的问题，排查路径是确定的，不用猜。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6e42e08" class="outline-2">
+<h2 id="org6e42e08">两个排查工具：RED 和 USE</h2>
+<div class="outline-text-2" id="text-org6e42e08">
+<p>
+分层搭好之后，每一层具体看什么指标？原文推荐了两个方法论。
+</p>
+
+<p>
+**RED 方法**用在 Layer 2（服务健康），由 Tom Wilkie 提出，三个字母刚好拼成 RED：
+</p>
+
+<ul class="org-ul">
+<li>Rate（请求量）：流量正常吗？突然涨了还是突然跌了？</li>
+<li>Errors（错误率）：这个服务返回了多少错误？</li>
+<li>Duration（延迟）：响应变慢了吗？</li>
+</ul>
+
+<p>
+这三个指标能快速判断一个服务的整体状态。请求量跌了说明上游可能在出问题，错误率升了说明这个服务本身有问题，延迟高了说明可能在排队等资源。不过这三个指标经常联动，比如下游变慢会导致本服务延迟升高、错误率跟着涨、请求量反而跌（因为超时放弃），所以不能单独看某一个指标下结论，要三个放在一起对照。
+</p>
+
+<p>
+**USE 方法**用在 Layer 3 和 Layer 4（容器行为和数据服务性能），由 Brendan Gregg 提出：
+</p>
+
+<ul class="org-ul">
+<li>Utilization（利用率）：资源被用了多少？比如 CPU 75%。</li>
+<li>Saturation（饱和度）：有没有排队的、处理不过来的？比如线程池里 90% 的线程都在忙，新请求进来只能排队。</li>
+<li>Errors（错误）：有没有硬件级或系统级的错误计数在增长？</li>
+</ul>
+
+<p>
+这里有个容易忽略的区别：利用率和饱和度是两回事。CPU 75% 可能完全没问题，但线程池 90% 饱和意味着再多几个请求就处理不过来了。饱和度比利用率更适合当早期预警信号，因为它衡量的是"还有没有余力"，而利用率只告诉你"已经用了多少"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org96e3184" class="outline-2">
+<h2 id="org96e3184">一个排查案例：从业务异常追到数据库连接池</h2>
+<div class="outline-text-2" id="text-org96e3184">
+<p>
+原文给了一个实际的排查案例，跟着走一遍就知道分层怎么用。
+</p>
+
+<pre class="example" id="orgf8a89c1">
+Layer 1 报警：报表生成这个业务流程的错误率超过了 2%。
+→ 客户在受到影响，问题确认。
+
+Layer 2 定位：报表服务（report-service）的错误率升高，其他服务正常。
+→ 问题出在报表服务。
+
+Layer 3 钻取：五个报表服务容器里，有两个的线程池饱和度超过 90%。
+→ 不是所有容器都有问题，只有两个在扛不住。
+
+Layer 4 根因：报表服务用的数据库连接池已经占到了 95%。
+→ 真正的瓶颈在数据库连接。
+</pre>
+
+<p>
+原因追溯：上周发版引入了一条新查询，这条查询占用数据库连接的时间比预期长。平时流量不大时连接池够用，高峰期连接就不够分了，两个容器先扛不住开始报错，错误传导到客户那里就变成了"报表生不出来"。
+</p>
+
+<p>
+修复手段：加大连接池、优化查询的连接占用时长、在 Layer 4 加一条饱和度告警。整个排查不到 20 分钟，因为每一层该看什么、怎么往下追都有套路。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdcaa4d0" class="outline-2">
+<h2 id="orgdcaa4d0">高基数标签的陷阱</h2>
+<div class="outline-text-2" id="text-orgdcaa4d0">
+<p>
+如果你的监控工具用的是时间序列数据库，有一个常见的坑：把用户 ID、请求 URL 这些高基数值（也就是有无数种不同取值的字段）塞进指标标签里。比如给每个请求打上 <code>user_id</code> 标签，看起来很方便，能按用户查问题，但时间序列数据库的存储方式是每种标签组合生成一条独立的时间序列。三个服务各五十万用户，就是一百五十万条线，内存和查询性能扛不住。
+</p>
+
+<p>
+正确做法是：指标标签只用取值有限的字段（服务名、环境、状态码、业务类型），需要按具体用户或请求钻取的时候，去查日志系统。指标负责聚合和告警，日志负责下钻和取证，两者分工明确。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7ee0c8a" class="outline-2">
+<h2 id="org7ee0c8a">怎么落地：不用一步到位</h2>
+<div class="outline-text-2" id="text-org7ee0c8a">
+<p>
+原文建议了一个渐进式的落地方案：
+</p>
+
+<ol class="org-ol">
+<li>先做 Layer 2（服务健康）：给每个服务挂上 RED 指标，搞清楚哪个服务什么时候不健康。大多数团队已经有一些基础设施指标，把它们按 RED 三个维度整理成统一的仪表盘就能用。虽然 Layer 1 最重要，但 Layer 2 上手成本最低，先用 RED 把现有指标整理好，再做 Layer 1 的业务流程埋点会更容易。</li>
+<li>再做 Layer 1（业务交易）：定义出你的核心业务流程（比如"用户下单""报表生成""文件上传"），给每个流程挂上错误率和延迟指标，把触发值班通知的条件从"CPU 超 80%"改成"业务流程错误率超阈值"。业务错误率在正常情况下很稳定（接近 0%），不会像 CPU 那样上下波动，所以用业务指标当触发条件，噪音会降很多。</li>
+<li>向下铺开 Layer 3（容器行为）：加上容器级别的 USE 指标，关注线程池饱和度、连接池占用这些比 CPU 利用率更有预警价值的信号。</li>
+<li>继续向下到 Layer 4（数据服务性能）：监控数据库连接池、查询延迟、缓存命中率、GC 停顿时间。GC 停顿是个容易被忽略的指标，Java 应用出现不明原因的延迟毛刺时，先查 GC 日志。</li>
+<li>最后做 Layer 5（容量规划）：把 Layer 1 的业务增长趋势和 Layer 3-4 的资源消耗趋势关联起来，算出"按当前增长速度，连接池还够用多少天"。容量规划让扩容从"火烧眉毛才加机器"变成"提前排期"。</li>
+</ol>
+
+<p>
+不用等五层全做完才开始用。Layer 2 就能让你知道哪个服务不健康，Layer 1 就能让告警从"CPU 高了"变成"客户受影响了"，做一层有一层的效果。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8fe9f1f" class="outline-2">
+<h2 id="org8fe9f1f">理想和现实的差距</h2>
+<div class="outline-text-2" id="text-org8fe9f1f">
+<p>
+原文说"告警只设在 Layer 1，其他层用来排查"，但实际落地中很难做到这么纯粹。每一层的指标都可能触发告警，CPU 告警、线程池告警、连接池告警、业务错误率告警同时响是常态。
+</p>
+
+<p>
+有些监控工具支持根据 CMDB 关系做告警压缩，如果高层告警是底层告警引起的，只通知底层那一条。但告警压缩本身很难做好，依赖关系建模不准、压缩规则覆盖不全都会导致该报的没报或者不该压缩的被压缩了。所以现实中更常见的做法是：各层都设告警，通过优先级和通知渠道区分轻重，Layer 1 的业务告警走电话，底层的资源告警走消息。分层的主要价值不是决定"在哪层告警"，而是给排查提供一条确定的路径。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-26</span>
+    <span class="post-info">2026-05-26</span>
+    <a href="../../../../../tags/监控">监控</a> : <a href="../../../../../tags/sre">SRE</a> : <a href="../../../../../tags/运维">运维</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; 2xrq0wyeyqxelezmophrvlasqb &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
