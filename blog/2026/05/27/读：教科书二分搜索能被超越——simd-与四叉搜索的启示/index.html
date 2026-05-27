@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：教科书二分搜索能被超越——SIMD 与四叉搜索的启示 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="keywords" content="算法, SIMD, 二分搜索, 性能优化" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：教科书二分搜索能被超越——SIMD 与四叉搜索的启示</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org8607d19">二分搜索的隐含假设</a></li>
+<li><a href="#orge6f2299">洞察一，SIMD 让"逐个比较"变得浪费</a></li>
+<li><a href="#org3177ac0">洞察二，内存级并行让"二叉"不如"四叉"</a></li>
+<li><a href="#org744a499">把两个洞察组合起来，SIMD Quad 算法</a></li>
+<li><a href="#org5ae1f5b">基准测试的几个关键数据</a></li>
+<li><a href="#orgccf450f">更大的启示，算法设计应该从硬件出发</a></li>
+</ul>
+</div>
+</div>
+<p>
+Daniel Lemire 最近做了一组实验 (<a href="https://lemire.me/blog/2026/04/27/you-can-beat-the-binary-search">You Can Beat the Binary Search</a>)，结论很直接，教科书里的二分搜索可以被超越。他设计的 "SIMD Quad" 算法在所有测试场景下都比 <code>std::binary_search</code> 快，部分场景快了两倍以上。这篇博文不讲 C++ 实现细节（原文有完整源码），重点说清楚两件事，为什么教科书算法在今天不是最优的，以及现代处理器的哪些能力被白白浪费了。
+</p>
+
+<div id="outline-container-org8607d19" class="outline-2">
+<h2 id="org8607d19">二分搜索的隐含假设</h2>
+<div class="outline-text-2" id="text-org8607d19">
+<p>
+二分搜索的时间复杂度是 O(log n)，理论上已经很好了。但这个复杂度分析背后藏着一个假设，每次比较只能查一个值，每次内存访问只能读一个地址。1946 年提出二分搜索的时候，这个假设完全成立。今天不行了。
+</p>
+
+<p>
+现代处理器有两个能力是二分搜索压根没利用到的：
+</p>
+
+<ol class="org-ol">
+<li><b>SIMD（单指令多数据）</b> ，一条指令同时比较 8 个 16 位整数</li>
+<li><b>内存级并行</b> ，处理器可以同时等待多个内存地址返回数据，不用串行地一个一个等</li>
+</ol>
+
+<p>
+Lemire 的思路就是想办法把这两个能力用上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge6f2299" class="outline-2">
+<h2 id="orge6f2299">洞察一，SIMD 让"逐个比较"变得浪费</h2>
+<div class="outline-text-2" id="text-orge6f2299">
+<p>
+SIMD 是现代处理器的标配。x86 的 SSE2、ARM 的 NEON，都能用一条指令同时比较 8 个 16 位整数。
+</p>
+
+<p>
+对搜索来说这很关键。假设数组按 16 个元素一块来切，当搜索范围缩小到只剩一块的时候，没必要继续二分了，直接用 SIMD 把 16 个元素全部并行比较一遍，几条指令就能判断目标值在不在。
+</p>
+
+<p>
+二分搜索在最后几层其实就是在逐个比较，每次只剩一两个元素。有了 SIMD，这部分工作几条指令就能搞定。
+</p>
+
+<p>
+这里有一个自然的问题：SIMD 一次比较 8 个 16 位整数，为什么不按 8 个一组分块，而要按 16 个一组？多出来的 8 个元素需要多一次 SIMD 加载，但换来的是块数减半（4096 个元素从 512 块变成 256 块），四叉搜索少跑大约一轮。一轮四叉搜索要做 3 次内存访问，在冷缓存场景下每次访问要去主存取数据，延迟几百纳秒。而一次 SIMD 加载是从寄存器或 L1 缓存读，1 到 4 个时钟周期。两者差两三个数量级，所以这笔账是划算的。原文作者没有严格论证 16 vs 8 的选择，只是说了"16 个也不贵，顺手多查几个"，但从内存访问和 SIMD 计算的代价差异来看，这个选择是合理的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3177ac0" class="outline-2">
+<h2 id="org3177ac0">洞察二，内存级并行让"二叉"不如"四叉"</h2>
+<div class="outline-text-2" id="text-org3177ac0">
+<p>
+二分搜索每次只查一个中点，然后丢弃一半。所以每次循环只有一次内存访问，处理器必须等这次访问完成才能往下走。
+</p>
+
+<p>
+但现代处理器的内存子系统可以同时处理多个未完成的内存请求。与其一次查一个分界点，不如一次查三个分界点，把搜索空间直接分成四份，让三个内存请求同时飞出去。这就是"四叉搜索"（quaternary search）。
+</p>
+
+<p>
+四叉搜索每轮的比较次数比二分多（3 次而非 1 次），但三次比较是并行的，单轮的墙钟时间跟做一次访问差不多。关键是每轮砍掉 3/4 的搜索空间（二分只砍 1/2），总轮数更少，整体耗时更低。在冷缓存场景（数据不在 CPU 缓存里，每次访问都要去主存取，延迟比缓存命中高一个数量级）下这个优势更明显，因为每次内存访问的代价都很高，并行化能把多次访问"打包"成差不多一次的时间。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org744a499" class="outline-2">
+<h2 id="org744a499">把两个洞察组合起来，SIMD Quad 算法</h2>
+<div class="outline-text-2" id="text-org744a499">
+<p>
+Lemire 把上面两个思路组合成了 "SIMD Quad" 算法，三步走。四叉定位阶段用普通整数比较，SIMD 只在最后一步块内扫描时才出场：
+</p>
+
+<ol class="org-ol">
+<li><b>分块</b> ，把有序数组按 16 个元素切成若干块</li>
+<li><b>四叉定位</b> ，用每个块最后一个元素作为"上限标记"，执行四叉搜索，快速定位到目标所在的那一块。因为数组是有序的，块 i 的最后一个元素一定小于块 i+1 的第一个元素，所以只要找到"目标值落在哪两个上限之间"，就确定了目标所在的块</li>
+<li><b>SIMD 扫描</b> ，定位到具体块后，用 SIMD 指令一次比较块内 16 个元素</li>
+</ol>
+
+<p>
+这个过程很像查字典，先翻到大概的页码范围（四叉定位，粗筛），再在那一页上扫一眼所有字（SIMD，细查）。二分搜索相当于每次翻到中间页，看一个字确定目标在前半还是后半，然后把另一半扔了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5ae1f5b" class="outline-2">
+<h2 id="org5ae1f5b">基准测试的几个关键数据</h2>
+<div class="outline-text-2" id="text-org5ae1f5b">
+<p>
+Lemire 在两个平台上做了测试（Intel Emerald Rapids / GCC + Apple M4 / LLVM，数组大小 2 到 4096，分别测冷缓存和热缓存，每种配置 1000 万次查询），几个发现：
+</p>
+
+<ul class="org-ul">
+<li>SIMD Quad 在 <b>所有</b> 场景下都比 <code>std::binary_search</code> 快，没有例外</li>
+<li>Intel 平台热缓存场景加速最大（超过 2 倍），Apple 平台冷缓存场景加速最大（也超过 2 倍）</li>
+<li>单独看"四叉"部分的贡献，在 Apple 上效果不大，在 Intel 的大数组冷缓存场景下是显著优化。原因是 Intel 的内存级并行能力更强，四叉搜索更好地利用了这一点</li>
+<li>线性搜索 (<code>std::find</code>) 在小数组（不到 16 个元素）上最快，因为数据直接在缓存里，逐个比较的指令开销比 SIMD 的设置开销更低</li>
+</ul>
+
+<p>
+没有万能最优算法，最优解取决于数据规模和硬件特性。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgccf450f" class="outline-2">
+<h2 id="orgccf450f">更大的启示，算法设计应该从硬件出发</h2>
+<div class="outline-text-2" id="text-orgccf450f">
+<p>
+这个案例提示了一种思路，算法设计应该从"硬件能做什么"出发，别从"教科书怎么写"出发。
+</p>
+
+<p>
+教科书里的经典算法大多是在一个简化的计算模型上分析的，单核、标量运算、均匀内存访问代价。教学上这个模型有用，但它跟真实的处理器差距越来越大。今天的处理器有向量指令、有内存级并行、有多级缓存，这些特性对性能的影响有时候比算法复杂度本身还大。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-27</span>
+    <span class="post-info">2026-05-28</span>
+    <a href="../../../../../tags/算法">算法</a> : <a href="../../../../../tags/simd">SIMD</a> : <a href="../../../../../tags/二分搜索">二分搜索</a> : <a href="../../../../../tags/性能优化">性能优化</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmg397c &lt;dot&gt; pehccmsx0ouu5p3wxt1by3gfvd &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
