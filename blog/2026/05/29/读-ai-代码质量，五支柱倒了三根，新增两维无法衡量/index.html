@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读 AI 代码质量，五支柱倒了三根，新增两维无法衡量 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="description" content="Abgar Simonean 在 DZone 发表了一篇行业分析，讨论 AI 辅助代码对传统代码质量五支柱（可读性、可维护性、安全卫生、文档、结构简洁性）的影响。结论是三个旧支柱被打破，还有两个新质量维度（意图忠实度、代码库一致性）出现但尚无成熟度量手段。" />
+  <meta name="keywords" content="AI,代码质量,可读性,安全性,技术债务" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读 AI 代码质量，五支柱倒了三根，新增两维无法衡量</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org9bd8672">三根支柱倒了</a>
+<ul>
+<li><a href="#org81a6ad4">可读性，表面好看不等于好读</a></li>
+<li><a href="#orgae0fea4">可维护性，AI 债务正在累积</a></li>
+<li><a href="#orgb24dabf">安全性，模型变大不等于更安全</a></li>
+</ul>
+</li>
+<li><a href="#orga4f041a">两个没人能量度的新维度</a>
+<ul>
+<li><a href="#orgdf833bb">意图忠实度（Intent Fidelity）</a></li>
+<li><a href="#org724806e">代码库一致性</a></li>
+</ul>
+</li>
+<li><a href="#org29d379a">怎么办，三层防御</a></li>
+</ul>
+</div>
+</div>
+<p>
+Abgar Simonean 在 <a href="https://dzone.com/articles/ai-broke-code-quality">DZone</a> 上发了篇文章，聊 AI 辅助代码对传统代码质量评估框架的冲击。他的核心判断其实就一句话，「旧框架假设代码是人写的，人能解释每一行的理由」。但这个假设吧，在 AI 代码占比快速攀升的今天，已经站不住了。
+</p>
+
+<div id="outline-container-org9bd8672" class="outline-2">
+<h2 id="org9bd8672">三根支柱倒了</h2>
+<div class="outline-text-2" id="text-org9bd8672">
+</div>
+<div id="outline-container-org81a6ad4" class="outline-3">
+<h3 id="org81a6ad4">可读性，表面好看不等于好读</h3>
+<div class="outline-text-3" id="text-org81a6ad4">
+<p>
+过去我们认为好代码是「别人打开能看懂的」。好的命名、清晰的控制流、一致的格式。MSR 2026 年的一项研究分析了 403 次 AI agent 专门为「改善可读性」做的提交，结果挺有意思，56.1% 的提交反而让可维护性指数下降了，42.7% 让圈复杂度上升了（圈复杂度就是代码里独立执行路径的数量，值越高说明条件分支越多、代码越绕）。
+</p>
+
+<p>
+作者管这叫 cosmetic readability，代码看起来整洁，命名没问题，注释该有的地方都有，但控制流比人类写的更绕。PR 审查一眼扫过去觉得「挺好」，实际上结构更糟了。
+</p>
+
+<p>
+我自己在 Claude Code 写 Elisp 代码时也有类似感受。Claude 产出的代码结构规整、命名合理，但几乎不会利用 Elisp 的宏来消除重复模式。熟悉 Lisp 的开发者一眼就能看出「这里应该抽成一个宏」，但 LLM 倾向于写出完整的重复结构。代码看起来没问题，可维护性也不差，就是思维方式不对。它没学会用语言的特性去简化抽象。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgae0fea4" class="outline-3">
+<h3 id="orgae0fea4">可维护性，AI 债务正在累积</h3>
+<div class="outline-text-3" id="text-orgae0fea4">
+<p>
+多项数据都在说这事儿。一项研究发现，AI 生成代码的问题率是人类的 1.7 倍，其中可维护性错误高出 1.64 倍，逻辑错误高出 1.75 倍。
+</p>
+
+<p>
+另一项受控比较（642 个 AI 方案对比 107 份专家代码）发现，AI 代码的圈复杂度高 34%，代码重复率是 2.1 倍，运行速度慢 15% 到 40%，内存也多占 25%。
+</p>
+
+<p>
+问题在于这些都不会在测试中暴露。功能正常，测试通过，可质量在走下坡路。行业调查预测，到 2026 年有 75% 的技术领导者会因为 AI 驱动的开发速度而面临中等到严重的技术债务。少量 AI 生成的代码块勉强能接受，可如果一个仓库里三分之一都是这种「勉强能接受」的代码，累积的债务就超出能承受的范围了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb24dabf" class="outline-3">
+<h3 id="orgb24dabf">安全性，模型变大不等于更安全</h3>
+<div class="outline-text-3" id="text-orgb24dabf">
+<p>
+这是最吓人的数字。Veracode 测试了 80 个编码任务、100 多个 LLM，发现 45% 的生成代码引入了 OWASP Top 10 范围内的漏洞。OWASP Top 10 是 Open Web Application Security Project 发布的十大最关键的 Web 应用安全风险清单，常见条目包括 SQL 注入、跨站脚本（XSS）、认证绕过等。他们在 2026 年春天，GPT-5.1、Gemini 3 等最新模型出来后做了跟进测试，安全表现跟两年前的模型比，几乎没有差别。
+</p>
+
+<p>
+根因在训练目标上。LLM 被优化的是「代码能通过测试、能编译、能满足 prompt」，跟安全性没啥关系。参数化查询和字符串拼接的 SQL 都能返回同样的结果行，模型没有动力去区分它们。跨站脚本（XSS）只有 12% 到 13% 的生成结果是安全的，日志注入的失败率是 88%。Java 的安全失败率超过 70%，原因也简单，训练数据里塞满了安全意识普及之前的旧代码。
+</p>
+
+<p>
+这事儿不是模型变大就能自然解决的。现有训练信号不奖励安全，要修就得把安全纳入训练目标。但推动模型迭代的主要动力是「生成能跑的代码」，不是「生成安全的代码」。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga4f041a" class="outline-2">
+<h2 id="orga4f041a">两个没人能量度的新维度</h2>
+<div class="outline-text-2" id="text-orga4f041a">
+<p>
+文章还聊了两个传统框架没覆盖的新维度。
+</p>
+</div>
+
+<div id="outline-container-orgdf833bb" class="outline-3">
+<h3 id="orgdf833bb">意图忠实度（Intent Fidelity）</h3>
+<div class="outline-text-3" id="text-orgdf833bb">
+<p>
+代码能通过所有测试，但实现的业务逻辑是错位的。LLM 不知道你的授权模型、租户边界、数据分类规则。它满足了你写在 prompt 里的可见需求，但漏掉了你心里知道但没写进去的隐性约束，那些「这还用说」的东西。
+</p>
+
+<p>
+这方面有一个模糊的共识，需要具备「意图感知」能力的验证工具，追踪原始 prompt、仓库历史、文档来检查生成的代码和实际需求之间是否一致。但这个领域还在早期阶段，连「怎么给意图忠实度打分」都没定义清楚。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org724806e" class="outline-3">
+<h3 id="org724806e">代码库一致性</h3>
+<div class="outline-text-3" id="text-org724806e">
+<p>
+单个 AI 生成的 PR 看起来没问题，代码风格也合规。但几百个这样的 PR 叠加几个月后，整个代码库的架构会慢慢漂移，命名约定散了，抽象模式乱了，模块边界模糊了。架构漂移不是新问题，但当 GitHub 月推送 8200 万次、其中 41% 是 AI 辅助的时候，漂移速度已经不是人类审查能跟上的了。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org29d379a" class="outline-2">
+<h2 id="org29d379a">怎么办，三层防御</h2>
+<div class="outline-text-2" id="text-org29d379a">
+<p>
+作者给出的方案是分层防御。底层用静态分析打底，SonarQube、CodeQL、Semgrep 这些工具规则驱动、误报率低，能可靠地抓住已知漏洞模式（如 CWE 和 OWASP 里记录的那些常见安全问题类型）。中间层交给 AI 审查，CodeRabbit、Qodo、Copilot Code Review 用 LLM 抓住规则工具抓不到的微妙问题。顶层是推理扫描，Claude Code Security 这类工具的搞法不一样。它不像规则匹配那样扫，而是像安全研究员一样读代码库、追踪数据流、查看 git 提交历史，从中找未完成的修补。
+</p>
+
+<p>
+三层互不替代，每一层都是另外两层的补充。最关键的是，人的时间不应该花在看代码格式和已知漏洞上。架构问题和意图问题目前还没有工具能回答，那才是人该花时间的地方。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-29</span>
+    <span class="post-info">2026-05-29</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/代码质量">代码质量</a> : <a href="../../../../../tags/可读性">可读性</a> : <a href="../../../../../tags/安全性">安全性</a> : <a href="../../../../../tags/技术债务">技术债务</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; vuofcnqkcubu3oy5yogz5ckase &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

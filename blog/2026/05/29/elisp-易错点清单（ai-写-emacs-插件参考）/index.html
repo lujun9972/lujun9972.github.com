@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>Elisp 易错点清单（AI 写 Emacs 插件参考） - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="keywords" content="Emacs, Elisp, AI, pitfall" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">Elisp 易错点清单（AI 写 Emacs 插件参考）</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org1ad1cf1">cl-defstruct 的 copy-* 不接受关键字参数</a>
+<ul>
+<li><a href="#orga103b48">错误</a></li>
+<li><a href="#org2aaa3c9">正确</a></li>
+<li><a href="#org4b35f86">原因</a></li>
+</ul>
+</li>
+<li><a href="#orgd4632f1">字符串不需要转 vector 就能用 aref</a>
+<ul>
+<li><a href="#org82fa8f3">错误</a></li>
+<li><a href="#org286e8e4">正确</a></li>
+<li><a href="#org29c46b5">原因</a></li>
+</ul>
+</li>
+<li><a href="#orga5d90a2">string&lt;= 在旧版 Emacs 不存在</a>
+<ul>
+<li><a href="#org93d6d23">错误</a></li>
+<li><a href="#org005f0a8">正确</a></li>
+<li><a href="#org137e35a">原因</a></li>
+</ul>
+</li>
+<li><a href="#orgf167408">Org buffer 中 re-search-forward + org-back-to-heading 会死循环</a>
+<ul>
+<li><a href="#org733ccba">错误</a></li>
+<li><a href="#org5ef89eb">正确</a></li>
+<li><a href="#org5157919">原因</a></li>
+</ul>
+</li>
+<li><a href="#org3c18350">Org 的 org-entry-put 在 batch 模式下可能触发交互提示</a>
+<ul>
+<li><a href="#orga68d546">注意</a></li>
+<li><a href="#orgb707f91">规避</a></li>
+</ul>
+</li>
+<li><a href="#orgc7da288">数学公式的测试期望值必须从参考实现提取</a>
+<ul>
+<li><a href="#orgfdaac95">错误</a></li>
+<li><a href="#org3dae874">正确</a></li>
+<li><a href="#org15c1762">原因</a></li>
+</ul>
+</li>
+<li><a href="#orgc727c15">公式在边界条件下可能有反直觉行为</a>
+<ul>
+<li><a href="#org9987cfe">错误假设</a></li>
+<li><a href="#orgf824d4f">原因</a></li>
+<li><a href="#org837eac6">规避</a></li>
+</ul>
+</li>
+<li><a href="#org1fc9020">Elisp 没有编译时检查，写完必须立即 load</a>
+<ul>
+<li><a href="#org8457971">问题</a></li>
+<li><a href="#org55dc63f">规避</a></li>
+</ul>
+</li>
+<li><a href="#org410e800">Elisp 的 fround 不等于 JS 的 toFixed</a>
+<ul>
+<li><a href="#org651f4f9">差异</a></li>
+<li><a href="#orgf297836">规避</a></li>
+</ul>
+</li>
+<li><a href="#orgd4aa0eb">总结：写 Elisp 前的检查清单</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文是 AI agent 编写 Emacs Lisp 代码时的高频出错清单。每条都来自实际踩坑，附错误示例、正确写法和原因。写 Elisp 前扫一遍，能避免大量运行时才暴露的问题。
+</p>
+
+<div id="outline-container-org1ad1cf1" class="outline-2">
+<h2 id="org1ad1cf1">cl-defstruct 的 copy-* 不接受关键字参数</h2>
+<div class="outline-text-2" id="text-org1ad1cf1">
+</div>
+<div id="outline-container-orga103b48" class="outline-3">
+<h3 id="orga103b48">错误</h3>
+<div class="outline-text-3" id="text-orga103b48">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(copy-foo original <span class="org-builtin">:field-a</span> new-value)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#8594; wrong-number-of-arguments</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2aaa3c9" class="outline-3">
+<h3 id="org2aaa3c9">正确</h3>
+<div class="outline-text-3" id="text-org2aaa3c9">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(make-foo <span class="org-builtin">:field-a</span> new-value
+          <span class="org-builtin">:field-b</span> (foo-field-b original))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4b35f86" class="outline-3">
+<h3 id="org4b35f86">原因</h3>
+<div class="outline-text-3" id="text-org4b35f86">
+<p>
+Elisp 的 <code>cl-defstruct</code> 是 Common Lisp 的简化版。它自动生成的 <code>copy-*</code> 函数只接受一个参数（原始 struct），不支持 Common Lisp 风格的关键字参数覆盖。遇到"复制并修改个别字段"的需求时，必须手动用 <code>make-*</code> 逐字段构造。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd4632f1" class="outline-2">
+<h2 id="orgd4632f1">字符串不需要转 vector 就能用 aref</h2>
+<div class="outline-text-2" id="text-orgd4632f1">
+</div>
+<div id="outline-container-org82fa8f3" class="outline-3">
+<h3 id="org82fa8f3">错误</h3>
+<div class="outline-text-3" id="text-org82fa8f3">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">let</span> ((key (string-to-vector str)))
+  (aref key i))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org286e8e4" class="outline-3">
+<h3 id="org286e8e4">正确</h3>
+<div class="outline-text-3" id="text-org286e8e4">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(aref str i)  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36820;&#22238;&#23383;&#31526;&#30340;&#25972;&#25968;&#32534;&#30721;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org29c46b5" class="outline-3">
+<h3 id="org29c46b5">原因</h3>
+<div class="outline-text-3" id="text-org29c46b5">
+<p>
+Elisp 中字符串本身就是字符向量， <code>aref</code> 可以直接索引访问，返回字符的整数编码。 <code>string-to-vector</code> 是多余的中转。这个特性在移植其他语言的"字符数组"操作时尤其容易忽略。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga5d90a2" class="outline-2">
+<h2 id="orga5d90a2">string&lt;= 在旧版 Emacs 不存在</h2>
+<div class="outline-text-2" id="text-orga5d90a2">
+</div>
+<div id="outline-container-org93d6d23" class="outline-3">
+<h3 id="org93d6d23">错误</h3>
+<div class="outline-text-3" id="text-org93d6d23">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(string&lt;= a b)
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#8594; void-function&#65288;Emacs &lt; 28&#65289;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org005f0a8" class="outline-3">
+<h3 id="org005f0a8">正确</h3>
+<div class="outline-text-3" id="text-org005f0a8">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(not (string&gt; a b))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#25110;
+</span>(string-lessp a b)  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#33021;&#27604; &lt;&#65292;&#19981;&#33021;&#27604; &lt;=</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org137e35a" class="outline-3">
+<h3 id="org137e35a">原因</h3>
+<div class="outline-text-3" id="text-org137e35a">
+<p>
+<code>string&lt;=是 Emacs 28 才加入的。如果需要兼容旧版本，用 =(not (string&gt; ...))</code> 代替。类似地， <code>string&gt;=也不可靠。Elisp 的字符串比较函数族只有 =string=</code> 、 <code>string&lt;</code> = 、 <code>string&gt;</code> = 、 <code>string&lt;/</code> 、 <code>string&gt;/</code> = 五个，老版本只保证 <code>string-lessp</code> 和 <code>string</code> = 可用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf167408" class="outline-2">
+<h2 id="orgf167408">Org buffer 中 re-search-forward + org-back-to-heading 会死循环</h2>
+<div class="outline-text-2" id="text-orgf167408">
+</div>
+<div id="outline-container-org733ccba" class="outline-3">
+<h3 id="org733ccba">错误</h3>
+<div class="outline-text-3" id="text-org733ccba">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">while</span> (re-search-forward <span class="org-string">"^:SOME_PROP:"</span> nil t)
+  (org-back-to-heading t)
+  (<span class="org-keyword">let</span> ((id (org-entry-get (point) <span class="org-string">"ID"</span>)))
+    <span class="org-comment-delimiter">;; </span><span class="org-comment">&#22788;&#29702;...
+</span>    )
+  (forward-line 1))  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21482;&#21069;&#36827;&#21040; :PROPERTIES: &#34892;&#65292;&#19979;&#36718;&#21448;&#21305;&#37197;&#21516;&#19968;&#20010; drawer</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5ef89eb" class="outline-3">
+<h3 id="org5ef89eb">正确</h3>
+<div class="outline-text-3" id="text-org5ef89eb">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(org-map-entries
+ (<span class="org-keyword">lambda</span> ()
+   (<span class="org-keyword">let</span> ((id (org-entry-get (point) <span class="org-string">"ID"</span>)))
+     <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23433;&#20840;&#22788;&#29702;&#27599;&#20010; heading
+</span>     ))
+ <span class="org-string">"SOME_PROP&lt;&gt;\"\""</span> nil)
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5157919" class="outline-3">
+<h3 id="org5157919">原因</h3>
+<div class="outline-text-3" id="text-org5157919">
+<p>
+三层问题叠加：
+</p>
+
+<ol class="org-ol">
+<li><code>org-back-to-heading</code> 把光标移回 <code>* Heading</code> 行</li>
+<li><code>forward-line 1</code> 只前进到 <code>:PROPERTIES:</code> 行</li>
+<li>下一轮 <code>re-search-forward</code> 又匹配到同一个 drawer 里的属性</li>
+</ol>
+
+<p>
+此外，循环体内调用的函数如果内部也有 <code>re-search-forward</code> ，会破坏外层循环的光标位置（=save-excursion= 只保护当层）。
+</p>
+
+<p>
+<code>org-map-entries</code> 把遍历逻辑完全托管给 Org 引擎，用属性查询语法过滤，不存在这些问题。在 Org buffer 里遍历 heading，*永远优先用 =org-map-entries=*。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3c18350" class="outline-2">
+<h2 id="org3c18350">Org 的 org-entry-put 在 batch 模式下可能触发交互提示</h2>
+<div class="outline-text-2" id="text-org3c18350">
+</div>
+<div id="outline-container-orga68d546" class="outline-3">
+<h3 id="orga68d546">注意</h3>
+<div class="outline-text-3" id="text-orga68d546">
+<p>
+<code>org-entry-put</code> 在某些场景下（如 drawer 不存在需要创建时）可能触发 <code>y-or-n-p</code> 之类的交互确认，在 <code>emacs --batch</code> 下会卡住。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb707f91" class="outline-3">
+<h3 id="orgb707f91">规避</h3>
+<div class="outline-text-3" id="text-orgb707f91">
+<p>
+确保 heading 已经有 <code>:PROPERTIES:</code> drawer（哪怕为空）。或者在写入前先检查：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">unless</span> (org-entry-get pom <span class="org-string">"PROPERTY"</span>)
+  (org-entry-put pom <span class="org-string">"PROPERTY"</span> <span class="org-string">"value"</span>))
+</pre>
+</div>
+
+<p>
+Org 的写入 API（=org-entry-put= 、 <code>org-set-property</code> ）在 batch 模式下使用时，要提前确认 heading 结构完整。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc7da288" class="outline-2">
+<h2 id="orgc7da288">数学公式的测试期望值必须从参考实现提取</h2>
+<div class="outline-text-2" id="text-orgc7da288">
+</div>
+<div id="outline-container-orgfdaac95" class="outline-3">
+<h3 id="orgfdaac95">错误</h3>
+<div class="outline-text-3" id="text-orgfdaac95">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#24515;&#31639; "R = (1 + 7/(9*10))^(-1)" &#35273;&#24471;&#22823;&#27010;&#26159; 0.5625
+</span>(should (&lt; (abs (- r 0.5625)) 0.001))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#23454;&#38469;&#20540;&#26159; 0.9278&#65292;&#26029;&#35328;&#22833;&#36133;</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3dae874" class="outline-3">
+<h3 id="org3dae874">正确</h3>
+<div class="outline-text-3" id="text-org3dae874">
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-comment-delimiter">// </span><span class="org-comment">&#20808;&#29992;&#21442;&#32771;&#23454;&#29616;&#65288;&#22914; Node.js&#65289;&#36305;&#19968;&#36941;
+</span>console.log(<span class="org-string">"retrievability:"</span>, Math.pow(1 + 7/(9*10), -1));
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#8594; 0.9278350515463918</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#25226;&#31934;&#30830;&#20540;&#20889;&#36827;&#27979;&#35797;
+</span>(should (&lt; (abs (- r 0.9278)) 0.001))
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org15c1762" class="outline-3">
+<h3 id="org15c1762">原因</h3>
+<div class="outline-text-3" id="text-org15c1762">
+<p>
+移植算法时，AI（和人类）都不擅长心算复合浮点表达式。一次心算错误会导致多个测试的期望值连锁错误（因为下游公式依赖上游计算结果）。正确做法是：写测试之前，用参考实现的语言跑一遍每个函数，把输出复制粘贴为期望值。不心算，不估算。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc727c15" class="outline-2">
+<h2 id="orgc727c15">公式在边界条件下可能有反直觉行为</h2>
+<div class="outline-text-2" id="text-orgc727c15">
+</div>
+<div id="outline-container-org9987cfe" class="outline-3">
+<h3 id="org9987cfe">错误假设</h3>
+<div class="outline-text-3" id="text-org9987cfe">
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#20551;&#35774;&#65306;&#23545;&#26032;&#21345;&#29260;&#35780;&#20998; good&#65292;stability &#19968;&#23450;&#20250;&#22686;&#21152;
+</span>(should (&gt; new-stability old-stability))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#22833;&#36133;&#65281;elapsed=0 &#26102; new-stability == old-stability</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf824d4f" class="outline-3">
+<h3 id="orgf824d4f">原因</h3>
+<div class="outline-text-3" id="text-orgf824d4f">
+<p>
+FSRS 的 recall stability 公式中有一个因子 <code>exp((1-R)*w[10]) - 1</code> 。当 <code>elapsed=0</code> 时， <code>R=1.0</code> ， <code>exp(0)-1=0</code> ，整个增量项为 0，stability 不变。
+</p>
+
+<p>
+这不是 bug，是数学公式的正确行为：卡牌还没经过任何时间衰减，recall stability 的增量就是 0。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org837eac6" class="outline-3">
+<h3 id="org837eac6">规避</h3>
+<div class="outline-text-3" id="text-org837eac6">
+<p>
+写测试前先分析公式在边界输入下的行为（ <code>elapsed=0</code> 、 <code>S→0</code> 、 <code>R→1</code> 等），不要假设"操作一定会改变状态"。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1fc9020" class="outline-2">
+<h2 id="org1fc9020">Elisp 没有编译时检查，写完必须立即 load</h2>
+<div class="outline-text-2" id="text-org1fc9020">
+</div>
+<div id="outline-container-org8457971" class="outline-3">
+<h3 id="org8457971">问题</h3>
+<div class="outline-text-3" id="text-org8457971">
+<p>
+AI 写完 Elisp 代码后不会自动运行。笔误（如 <code>dotify</code> 写成 <code>dotify</code> 、函数名拼错）在"看起来对"的代码审查中无法发现，只有运行时才报 <code>void-function</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org55dc63f" class="outline-3">
+<h3 id="org55dc63f">规避</h3>
+<div class="outline-text-3" id="text-org55dc63f">
+<p>
+每写完一个 <code>(require 'your-module)</code> 能加载的最小单元，立即 load 一次：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">emacs --batch -L . --eval <span class="org-string">'(progn (require (quote your-module)) (princ "OK\n"))'</span>
+</pre>
+</div>
+
+<p>
+这一步能捕获所有 <code>void-function</code> 、 <code>void-variable</code> 、 <code>wrong-number-of-arguments</code> 类的错误。比攒一大堆代码最后一起调试高效得多。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org410e800" class="outline-2">
+<h2 id="org410e800">Elisp 的 fround 不等于 JS 的 toFixed</h2>
+<div class="outline-text-2" id="text-org410e800">
+</div>
+<div id="outline-container-org651f4f9" class="outline-3">
+<h3 id="org651f4f9">差异</h3>
+<div class="outline-text-3" id="text-org651f4f9">
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-comment-delimiter">// </span><span class="org-comment">JavaScript
+</span>+(5.1356).toFixed(2)  <span class="org-comment-delimiter">// </span><span class="org-comment">&#8594; 5.14&#65288;&#22235;&#33293;&#20116;&#20837;&#65289;</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">Elisp
+</span>(/ (fround (* 5.1356 100.0)) 100.0)  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#8594; 5.14&#65288;&#28014;&#28857;&#31934;&#24230;&#19979;&#34892;&#20026;&#19968;&#33268;&#65289;</span>
+</pre>
+</div>
+
+<p>
+虽然这个例子中结果一致，但浮点乘法再除法在某些值上可能产生 <code>5.13999...</code> 而非 <code>5.14</code> 。移植算法时，涉及 <code>toFixed(2)</code> 的地方要单独验证每个输出值。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf297836" class="outline-3">
+<h3 id="orgf297836">规避</h3>
+<div class="outline-text-3" id="text-orgf297836">
+<p>
+对需要精确到 N 位小数的结果，用容差比较而非精确相等：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">&#22909;
+</span>(should (&lt; (abs (- result 5.14)) 0.005))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#21361;&#38505;
+</span>(should (= result 5.14))
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd4aa0eb" class="outline-2">
+<h2 id="orgd4aa0eb">总结：写 Elisp 前的检查清单</h2>
+<div class="outline-text-2" id="text-orgd4aa0eb">
+<ol class="org-ol">
+<li class="off"><code>[&#xa0;]</code> <code>copy-*</code> 函数只接受一个参数，不支持关键字覆盖</li>
+<li class="off"><code>[&#xa0;]</code> 字符串直接 <code>aref</code> 索引，不需要 <code>string-to-vector</code></li>
+<li class="off"><code>[&#xa0;]</code> <code>string&lt;=可能不存在，用 =(not (string&gt; ...))</code></li>
+<li class="off"><code>[&#xa0;]</code> Org buffer 遍历用 <code>org-map-entries=，不要手动 =re-search-forward</code></li>
+<li class="off"><code>[&#xa0;]</code> Org 写入 API 在 batch 模式下要确认 heading 结构完整</li>
+<li class="off"><code>[&#xa0;]</code> 数学测试期望值从参考实现提取，不心算</li>
+<li class="off"><code>[&#xa0;]</code> 公式边界条件（零值、极值）先分析再写测试</li>
+<li class="off"><code>[&#xa0;]</code> 每写完一个模块立即 <code>require</code> 验证加载</li>
+<li class="off"><code>[&#xa0;]</code> 浮点结果用容差比较，不用精确相等</li>
+</ol>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-29</span>
+    <span class="post-info">2026-05-29</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/elisp">Elisp</a> : <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/pitfall">pitfall</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; vuofcnqkcubu3oy5yogz5ckase &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

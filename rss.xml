@@ -4,10 +4,240 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 29 May 2026 03:55:41 UTC</pubDate>
-    <lastBuildDate>Fri, 29 May 2026 03:55:41 UTC</lastBuildDate>
+    <pubDate>Fri, 29 May 2026 07:14:34 UTC</pubDate>
+    <lastBuildDate>Fri, 29 May 2026 07:14:34 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>读 AI 代码质量，五支柱倒了三根，新增两维无法衡量</title>
+<link>https://lujun9972.github.io/blog/2026/05/29/读-ai-代码质量，五支柱倒了三根，新增两维无法衡量/index.html</link>
+<description>Abgar Simonean 在 DZone 发表了一篇行业分析，讨论 AI 辅助代码对传统代码质量五支柱（可读性、可维护性、安全卫生、文档、结构简洁性）的影响。结论是三个旧支柱被打破，还有两个新质量维度（意图忠实度、代码库一致性）出现但尚无成熟度量手段。</description>
+<pubDate>2026-05-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/29/读-ai-代码质量，五支柱倒了三根，新增两维无法衡量/index.html</guid>
+</item>
+<item>
+<title>Elisp 易错点清单（AI 写 Emacs 插件参考）</title>
+<link>https://lujun9972.github.io/blog/2026/05/29/elisp-易错点清单（ai-写-emacs-插件参考）/index.html</link>
+<description>本文是 AI agent 编写 Emacs Lisp 代码时的高频出错清单。每条都来自实际踩坑，附错误示例、正确写法和原因。写 Elisp 前扫一遍，能避免大量运行时才暴露的问题。
+
+* cl-defstruct 的 copy-* 不接受关键字参数
+
+** 错误
+
+#+begin_src emacs-lisp
+(copy-foo original :field-a new-value)
+;; → wrong-number-of-arguments
+#+end_src
+
+** 正确
+
+#+begin_src emacs-lisp
+(make-foo :field-a new-value
+          :field-b (foo-field-b original))
+#+end_src
+
+** 原因
+
+Elisp 的 =cl-defstruct= 是 Common Lisp 的简化版。它自动生成的 =copy-*= 函数只接受一个参数（原始 struct），不支持 Common Lisp 风格的关键字参数覆盖。遇到&quot;复制并修改个别字段&quot;的需求时，必须手动用 =make-*= 逐字段构造。
+
+* 字符串不需要转 vector 就能用 aref
+
+** 错误
+
+#+begin_src emacs-lisp
+(let ((key (string-to-vector str)))
+  (aref key i))
+#+end_src
+
+** 正确
+
+#+begin_src emacs-lisp
+(aref str i)  ;; 返回字符的整数编码
+#+end_src
+
+** 原因
+
+Elisp 中字符串本身就是字符向量， =aref= 可以直接索引访问，返回字符的整数编码。 =string-to-vector= 是多余的中转。这个特性在移植其他语言的&quot;字符数组&quot;操作时尤其容易忽略。
+
+* string&lt;= 在旧版 Emacs 不存在
+
+** 错误
+
+#+begin_src emacs-lisp
+(string&lt;= a b)
+;; → void-function（Emacs &lt; 28）
+#+end_src
+
+** 正确
+
+#+begin_src emacs-lisp
+(not (string&gt; a b))
+;; 或
+(string-lessp a b)  ;; 只能比 &lt;，不能比 &lt;=
+#+end_src
+
+** 原因
+
+=string&lt;=是 Emacs 28 才加入的。如果需要兼容旧版本，用 =(not (string&gt; ...))= 代替。类似地， =string&gt;=也不可靠。Elisp 的字符串比较函数族只有 =string== 、 =string&lt;= = 、 =string&gt;= = 、 =string&lt;/= 、 =string&gt;/= = 五个，老版本只保证 =string-lessp= 和 =string= = 可用。
+
+* Org buffer 中 re-search-forward + org-back-to-heading 会死循环
+
+** 错误
+
+#+begin_src emacs-lisp
+(while (re-search-forward &quot;^:SOME_PROP:&quot; nil t)
+  (org-back-to-heading t)
+  (let ((id (org-entry-get (point) &quot;ID&quot;)))
+    ;; 处理...
+    )
+  (forward-line 1))  ;; 只前进到 :PROPERTIES: 行，下轮又匹配同一个 drawer
+#+end_src
+
+** 正确
+
+#+begin_src emacs-lisp
+(org-map-entries
+ (lambda ()
+   (let ((id (org-entry-get (point) &quot;ID&quot;)))
+     ;; 安全处理每个 heading
+     ))
+ &quot;SOME_PROP&lt;&gt;\&quot;\&quot;&quot; nil)
+#+end_src
+
+** 原因
+
+三层问题叠加：
+
+1. =org-back-to-heading= 把光标移回 =* Heading= 行
+2. =forward-line 1= 只前进到 =:PROPERTIES:= 行
+3. 下一轮 =re-search-forward= 又匹配到同一个 drawer 里的属性
+
+此外，循环体内调用的函数如果内部也有 =re-search-forward= ，会破坏外层循环的光标位置（=save-excursion= 只保护当层）。
+
+=org-map-entries= 把遍历逻辑完全托管给 Org 引擎，用属性查询语法过滤，不存在这些问题。在 Org buffer 里遍历 heading，*永远优先用 =org-map-entries=*。
+
+* Org 的 org-entry-put 在 batch 模式下可能触发交互提示
+
+** 注意
+
+=org-entry-put= 在某些场景下（如 drawer 不存在需要创建时）可能触发 =y-or-n-p= 之类的交互确认，在 =emacs --batch= 下会卡住。
+
+** 规避
+
+确保 heading 已经有 =:PROPERTIES:= drawer（哪怕为空）。或者在写入前先检查：
+
+#+begin_src emacs-lisp
+(unless (org-entry-get pom &quot;PROPERTY&quot;)
+  (org-entry-put pom &quot;PROPERTY&quot; &quot;value&quot;))
+#+end_src
+
+Org 的写入 API（=org-entry-put= 、 =org-set-property= ）在 batch 模式下使用时，要提前确认 heading 结构完整。
+
+* 数学公式的测试期望值必须从参考实现提取
+
+** 错误
+
+#+begin_src emacs-lisp
+;; 心算 &quot;R = (1 + 7/(9*10))^(-1)&quot; 觉得大概是 0.5625
+(should (&lt; (abs (- r 0.5625)) 0.001))
+;; 实际值是 0.9278，断言失败
+#+end_src
+
+** 正确
+
+#+begin_src javascript
+// 先用参考实现（如 Node.js）跑一遍
+console.log(&quot;retrievability:&quot;, Math.pow(1 + 7/(9*10), -1));
+// → 0.9278350515463918
+#+end_src
+
+#+begin_src emacs-lisp
+;; 把精确值写进测试
+(should (&lt; (abs (- r 0.9278)) 0.001))
+#+end_src
+
+** 原因
+
+移植算法时，AI（和人类）都不擅长心算复合浮点表达式。一次心算错误会导致多个测试的期望值连锁错误（因为下游公式依赖上游计算结果）。正确做法是：写测试之前，用参考实现的语言跑一遍每个函数，把输出复制粘贴为期望值。不心算，不估算。
+
+* 公式在边界条件下可能有反直觉行为
+
+** 错误假设
+
+#+begin_src emacs-lisp
+;; 假设：对新卡牌评分 good，stability 一定会增加
+(should (&gt; new-stability old-stability))
+;; 失败！elapsed=0 时 new-stability == old-stability
+#+end_src
+
+** 原因
+
+FSRS 的 recall stability 公式中有一个因子 =exp((1-R)*w[10]) - 1= 。当 =elapsed=0= 时， =R=1.0= ， =exp(0)-1=0= ，整个增量项为 0，stability 不变。
+
+这不是 bug，是数学公式的正确行为：卡牌还没经过任何时间衰减，recall stability 的增量就是 0。
+
+** 规避
+
+写测试前先分析公式在边界输入下的行为（ =elapsed=0= 、 =S→0= 、 =R→1= 等），不要假设&quot;操作一定会改变状态&quot;。
+
+* Elisp 没有编译时检查，写完必须立即 load
+
+** 问题
+
+AI 写完 Elisp 代码后不会自动运行。笔误（如 =dotify= 写成 =dotify= 、函数名拼错）在&quot;看起来对&quot;的代码审查中无法发现，只有运行时才报 =void-function= 。
+
+** 规避
+
+每写完一个 =(require &#39;your-module)= 能加载的最小单元，立即 load 一次：
+
+#+begin_src shell
+emacs --batch -L . --eval &#39;(progn (require (quote your-module)) (princ &quot;OK\n&quot;))&#39;
+#+end_src
+
+这一步能捕获所有 =void-function= 、 =void-variable= 、 =wrong-number-of-arguments= 类的错误。比攒一大堆代码最后一起调试高效得多。
+
+* Elisp 的 fround 不等于 JS 的 toFixed
+
+** 差异
+
+#+begin_src javascript
+// JavaScript
++(5.1356).toFixed(2)  // → 5.14（四舍五入）
+#+end_src
+
+#+begin_src emacs-lisp
+;; Elisp
+(/ (fround (* 5.1356 100.0)) 100.0)  ;; → 5.14（浮点精度下行为一致）
+#+end_src
+
+虽然这个例子中结果一致，但浮点乘法再除法在某些值上可能产生 =5.13999...= 而非 =5.14= 。移植算法时，涉及 =toFixed(2)= 的地方要单独验证每个输出值。
+
+** 规避
+
+对需要精确到 N 位小数的结果，用容差比较而非精确相等：
+
+#+begin_src emacs-lisp
+;; 好
+(should (&lt; (abs (- result 5.14)) 0.005))
+;; 危险
+(should (= result 5.14))
+#+end_src
+
+* 总结：写 Elisp 前的检查清单
+
+1. [ ] =copy-*= 函数只接受一个参数，不支持关键字覆盖
+2. [ ] 字符串直接 =aref= 索引，不需要 =string-to-vector=
+3. [ ] =string&lt;=可能不存在，用 =(not (string&gt; ...))=
+4. [ ] Org buffer 遍历用 =org-map-entries=，不要手动 =re-search-forward=
+5. [ ] Org 写入 API 在 batch 模式下要确认 heading 结构完整
+6. [ ] 数学测试期望值从参考实现提取，不心算
+7. [ ] 公式边界条件（零值、极值）先分析再写测试
+8. [ ] 每写完一个模块立即 =require= 验证加载
+9. [ ] 浮点结果用容差比较，不用精确相等
+</description>
+<pubDate>2026-05-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/29/elisp-易错点清单（ai-写-emacs-插件参考）/index.html</guid>
+</item>
 <item>
 <title>TIL：会议卡住了怎么办——ORID 和三脚凳两个诊断工具</title>
 <link>https://lujun9972.github.io/blog/2026/05/29/til：会议卡住了怎么办——orid-和三脚凳两个诊断工具/index.html</link>
@@ -120,20 +350,6 @@ Lemire 在两个平台上做了测试（Intel Emerald Rapids / GCC + Apple M4 / 
 </description>
 <pubDate>2026-05-28</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/27/读：教科书二分搜索能被超越——simd-与四叉搜索的启示/index.html</guid>
-</item>
-<item>
-<title>读：Not All Interruptions Are Created Equal——不是所有打扰都一样</title>
-<link>https://lujun9972.github.io/blog/2026/05/26/读：not-all-interruptions-are-created-equal——不是所有打扰都一样/index.html</link>
-<description>不是所有打扰都一样。同样是打断你的工作，有些切到另一件类似的事就行，有些需要把整个大脑的运转方式换掉。差别在于上下文切换的代价不同。水平切换代价小，垂直切换代价大。</description>
-<pubDate>2026-05-27</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/26/读：not-all-interruptions-are-created-equal——不是所有打扰都一样/index.html</guid>
-</item>
-<item>
-<title>读：一个人的行为能改变一个团队吗</title>
-<link>https://lujun9972.github.io/blog/2026/05/26/读：一个人的行为能改变一个团队吗/index.html</link>
-<description>Will Felps 的经典实验证明了一个&quot;坏苹果&quot;能在几分钟内感染整个团队。但传染不止于一个房间——Fowler 和 Christakis 在 PNAS 上的研究发现，合作和破坏行为在社交网络中能传播三度、放大三倍。本文融合两项研究，讨论坏苹果的破坏力为什么被低估了，以及一个好苹果的价值为什么远超你的想象。</description>
-<pubDate>2026-05-27</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/26/读：一个人的行为能改变一个团队吗/index.html</guid>
 </item>
 </channel>
 </rss>
