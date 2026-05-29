@@ -4,10 +4,17 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 29 May 2026 07:14:34 UTC</pubDate>
-    <lastBuildDate>Fri, 29 May 2026 07:14:34 UTC</lastBuildDate>
+    <pubDate>Fri, 29 May 2026 08:03:06 UTC</pubDate>
+    <lastBuildDate>Fri, 29 May 2026 08:03:06 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>AI 交互的真正瓶颈：读输出的维度决定了你能控制多少</title>
+<link>https://lujun9972.github.io/blog/2026/05/29/ai-交互的真正瓶颈：读输出的维度决定了你能控制多少/index.html</link>
+<description>人人都知道反馈重要。但反馈回路里&quot;观察&quot;这一步里面发生了什么？读 AI 输出的维度不同，控制效果天差地别。从控制论看反馈的微观机制。</description>
+<pubDate>2026-05-29</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/29/ai-交互的真正瓶颈：读输出的维度决定了你能控制多少/index.html</guid>
+</item>
 <item>
 <title>读 AI 代码质量，五支柱倒了三根，新增两维无法衡量</title>
 <link>https://lujun9972.github.io/blog/2026/05/29/读-ai-代码质量，五支柱倒了三根，新增两维无法衡量/index.html</link>
@@ -286,70 +293,6 @@ emacs --batch -L . --eval &#39;(progn (require (quote your-module)) (princ &quot
 <description>Julia Desmazes 五年前尝试从零实现浮点数，惨败。五年后她再来一次——这次不光写代码，还流了两次片。本文提炼她在这个过程中发现的三个反直觉事实：IEEE 754 不是铁律、C++ 标准库的 bfloat16 语义不等于硬件、简单的代码可能被工具优化得比你手写的更好。</description>
 <pubDate>2026-05-28</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/05/28/读：floating-dragon-—-三个关于浮点数的反直觉事实/index.html</guid>
-</item>
-<item>
-<title>读：教科书二分搜索能被超越——SIMD 与四叉搜索的启示</title>
-<link>https://lujun9972.github.io/blog/2026/05/27/读：教科书二分搜索能被超越——simd-与四叉搜索的启示/index.html</link>
-<description>Daniel Lemire 最近做了一组实验 ([[https://lemire.me/blog/2026/04/27/you-can-beat-the-binary-search][You Can Beat the Binary Search]])，结论很直接，教科书里的二分搜索可以被超越。他设计的 &quot;SIMD Quad&quot; 算法在所有测试场景下都比 =std::binary_search= 快，部分场景快了两倍以上。这篇博文不讲 C++ 实现细节（原文有完整源码），重点说清楚两件事，为什么教科书算法在今天不是最优的，以及现代处理器的哪些能力被白白浪费了。
-
-* 二分搜索的隐含假设
-
-二分搜索的时间复杂度是 O(log n)，理论上已经很好了。但这个复杂度分析背后藏着一个假设，每次比较只能查一个值，每次内存访问只能读一个地址。1946 年提出二分搜索的时候，这个假设完全成立。今天不行了。
-
-现代处理器有两个能力是二分搜索压根没利用到的：
-
-1. *SIMD（单指令多数据）* ，一条指令同时比较 8 个 16 位整数
-2. *内存级并行* ，处理器可以同时等待多个内存地址返回数据，不用串行地一个一个等
-
-Lemire 的思路就是想办法把这两个能力用上。
-
-* 洞察一，SIMD 让&quot;逐个比较&quot;变得浪费
-
-SIMD 是现代处理器的标配。x86 的 SSE2、ARM 的 NEON，都能用一条指令同时比较 8 个 16 位整数。
-
-对搜索来说这很关键。假设数组按 16 个元素一块来切，当搜索范围缩小到只剩一块的时候，没必要继续二分了，直接用 SIMD 把 16 个元素全部并行比较一遍，几条指令就能判断目标值在不在。
-
-二分搜索在最后几层其实就是在逐个比较，每次只剩一两个元素。有了 SIMD，这部分工作几条指令就能搞定。
-
-这里有一个自然的问题：SIMD 一次比较 8 个 16 位整数，为什么不按 8 个一组分块，而要按 16 个一组？多出来的 8 个元素需要多一次 SIMD 加载，但换来的是块数减半（4096 个元素从 512 块变成 256 块），四叉搜索少跑大约一轮。一轮四叉搜索要做 3 次内存访问，在冷缓存场景下每次访问要去主存取数据，延迟几百纳秒。而一次 SIMD 加载是从寄存器或 L1 缓存读，1 到 4 个时钟周期。两者差两三个数量级，所以这笔账是划算的。原文作者没有严格论证 16 vs 8 的选择，只是说了&quot;16 个也不贵，顺手多查几个&quot;，但从内存访问和 SIMD 计算的代价差异来看，这个选择是合理的。
-
-* 洞察二，内存级并行让&quot;二叉&quot;不如&quot;四叉&quot;
-
-二分搜索每次只查一个中点，然后丢弃一半。所以每次循环只有一次内存访问，处理器必须等这次访问完成才能往下走。
-
-但现代处理器的内存子系统可以同时处理多个未完成的内存请求。与其一次查一个分界点，不如一次查三个分界点，把搜索空间直接分成四份，让三个内存请求同时飞出去。这就是&quot;四叉搜索&quot;（quaternary search）。
-
-四叉搜索每轮的比较次数比二分多（3 次而非 1 次），但三次比较是并行的，单轮的墙钟时间跟做一次访问差不多。关键是每轮砍掉 3/4 的搜索空间（二分只砍 1/2），总轮数更少，整体耗时更低。在冷缓存场景（数据不在 CPU 缓存里，每次访问都要去主存取，延迟比缓存命中高一个数量级）下这个优势更明显，因为每次内存访问的代价都很高，并行化能把多次访问&quot;打包&quot;成差不多一次的时间。
-
-* 把两个洞察组合起来，SIMD Quad 算法
-
-Lemire 把上面两个思路组合成了 &quot;SIMD Quad&quot; 算法，三步走。四叉定位阶段用普通整数比较，SIMD 只在最后一步块内扫描时才出场：
-
-1. *分块* ，把有序数组按 16 个元素切成若干块
-2. *四叉定位* ，用每个块最后一个元素作为&quot;上限标记&quot;，执行四叉搜索，快速定位到目标所在的那一块。因为数组是有序的，块 i 的最后一个元素一定小于块 i+1 的第一个元素，所以只要找到&quot;目标值落在哪两个上限之间&quot;，就确定了目标所在的块
-3. *SIMD 扫描* ，定位到具体块后，用 SIMD 指令一次比较块内 16 个元素
-
-这个过程很像查字典，先翻到大概的页码范围（四叉定位，粗筛），再在那一页上扫一眼所有字（SIMD，细查）。二分搜索相当于每次翻到中间页，看一个字确定目标在前半还是后半，然后把另一半扔了。
-
-* 基准测试的几个关键数据
-
-Lemire 在两个平台上做了测试（Intel Emerald Rapids / GCC + Apple M4 / LLVM，数组大小 2 到 4096，分别测冷缓存和热缓存，每种配置 1000 万次查询），几个发现：
-
-- SIMD Quad 在 *所有* 场景下都比 =std::binary_search= 快，没有例外
-- Intel 平台热缓存场景加速最大（超过 2 倍），Apple 平台冷缓存场景加速最大（也超过 2 倍）
-- 单独看&quot;四叉&quot;部分的贡献，在 Apple 上效果不大，在 Intel 的大数组冷缓存场景下是显著优化。原因是 Intel 的内存级并行能力更强，四叉搜索更好地利用了这一点
-- 线性搜索 (=std::find=) 在小数组（不到 16 个元素）上最快，因为数据直接在缓存里，逐个比较的指令开销比 SIMD 的设置开销更低
-
-没有万能最优算法，最优解取决于数据规模和硬件特性。
-
-* 更大的启示，算法设计应该从硬件出发
-
-这个案例提示了一种思路，算法设计应该从&quot;硬件能做什么&quot;出发，别从&quot;教科书怎么写&quot;出发。
-
-教科书里的经典算法大多是在一个简化的计算模型上分析的，单核、标量运算、均匀内存访问代价。教学上这个模型有用，但它跟真实的处理器差距越来越大。今天的处理器有向量指令、有内存级并行、有多级缓存，这些特性对性能的影响有时候比算法复杂度本身还大。
-</description>
-<pubDate>2026-05-28</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/05/27/读：教科书二分搜索能被超越——simd-与四叉搜索的启示/index.html</guid>
 </item>
 </channel>
 </rss>
