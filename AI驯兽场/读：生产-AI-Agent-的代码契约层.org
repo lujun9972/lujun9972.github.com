@@ -1,0 +1,204 @@
+#+TITLE: 读：生产 AI Agent 的代码契约层
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: AI,Agent,生产,幂等,HITL,Python
+#+DATE: [2026-05-29 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 大多数 agent 教程停在"调 API 就完事了"，但生产 agent 需要在模型和副作用之间加一层代码契约。本文解读 belderbos.dev 上的生产级 agent 工程模式：typed plan 让 agent 只提方案不碰副作用、幂等键防止重复执行、HITL 让人拍板、agentic loop 用类型约束保证每轮输入输出格式一致，加上回滚策略和工具边界设计四原则。
+
+[[https://belderbos.dev/blog/production-ai-agents-real-workflows/][belderbos.dev 上的这篇文章]] 一上来就点破了行业现状。大多数 AI agent 教程教到"调 API，拿到回答"就收工了。可 agent 一旦碰上退款、下单、写数据库这些有副作用的操作，情况就复杂好多，可不是仅仅调用模型就可以搞定的。模型和副作用之间，必须有一层代码契约，就是一组预先写好的规则，规定 agent 想执行操作时必须满足什么条件才能放行。
+
+这层契约要回答的问题是，agent 要做什么？重复操作会怎么样？谁批准可以操作？出了事怎么回滚？
+
+之前几篇博文聊过[[file:读：Agent的瓶颈不在模型在基础设施.org][基础设施比模型重要]]的宏观框架、[[file:读：当 Agent 成为生产调用者——四个被打破的运维假设.org][运维假设被打破]]后的授权问题、[[file:读：当 Agent 开始写数据库——六个防御模式.org][数据库层防御]]、[[file:读：从端点到行动——面向AI代理的后端设计.org][后端 API 设计]]。这篇聚焦最落地的一层，代码到底长什么样。
+
+* Agent 只管方案，不管执行
+
+生产 agent 的第一条纪律，agent 不直接调用任何有副作用的操作（退款、发邮件、写数据库）。它只负责构建一个类型化的方案（typed plan），就是用带类型标注的数据结构（比如 Pydantic model）把"想做什么"填好，每个字段都有类型检查。是否执行操作由一个独立的函数来决定。
+
+#+begin_src python
+from datetime import datetime
+from pydantic import BaseModel
+
+class ExpensePayload(BaseModel):
+    description: str
+    amount: float
+    currency: str
+
+class ExpenseAction(BaseModel):
+    idempotency_key: str
+    requested_by: str
+    requested_at: datetime
+    approval_required: bool = True
+    dry_run: bool = True
+    payload: ExpensePayload
+#+end_src
+
+#+begin_src python
+def submit(action: ExpenseAction, repo: ExpenseRepo) -> Result:
+    # 1. 幂等检查：同样的 key 已经执行过了，直接返回
+    if repo.find_by_key(action.idempotency_key):
+        return Result.duplicate()
+
+    # 2. 试运行模式：只返回计划，不执行
+    if action.dry_run:
+        return Result.preview(action.plan())
+
+    # 3. 审批检查：需要审批但还没批，先等着
+    if action.approval_required and not action.is_approved():
+        return Result.pending_approval()
+
+    # 4. 持久化后执行
+    repo.persist(action)
+    return Result.ok(action.execute())
+#+end_src
+
+你看 =submit= 函数，里面的规则全是写死的。agent 的职责在 =ExpenseAction= 构建完的那一刻就结束了，剩下的判断全是确定性逻辑。
+
+四个检查点各管一摊。幂等检查解决"重复跑"的问题，dry-run 管"先看看会做什么"，审批管"谁允许的"，持久化保证"一定会做"。
+
+开篇提的"如何回滚"的问题，原文给了两条路。一是给每个不可逆操作准备一个明确的逆操作（退款对应取消退款，删除对应恢复）。二是根本不让不可逆操作轻易发生，dry-run 就是这个思路，执行前先冻结，确认了才放行。当然,更彻底的做法是把 action 按事件存储（event sourcing），而不是直接覆盖状态，这样审计日志自动就有了，回滚就只需要重放事件到某个时间点就行了。
+
+这里的一个关键设计是把 =dry_run= 默认设为 =True= 。agent 第一次提交请求时，系统只返回"我会做什么"，但不真正执行。等人（或者确定性的业务逻辑）确认后，才把 =dry_run= 改为 =False= 再次提交。
+
+* AI 给出建议，人拍板
+
+Human-in-the-loop（HITL，人在回路中）不是让 agent 放慢速度，而是把 agent 的输出从"决策"降级为"建议"。
+
+#+begin_src python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    response: ExpenseCategorizationResponse
+    persisted: bool
+
+def process_with_hitl(result: ClassificationResult,
+                      threshold: float = 0.8) -> str:
+    # 置信度够高，直接采纳
+    if result.response.confidence >= threshold:
+        return result.response.category
+
+    # 置信度不够，问人
+    print(f"低置信度 ({result.response.confidence:.0%}): "
+          f"'{result.response.category}' — "
+          f"{result.response.reason}")
+    user_input = input(
+        f"接受 '{result.response.category}'?"
+        f" (回车确认，或输入其他类别): "
+    ).strip()
+
+    if not user_input:
+        return result.response.category
+    return user_input
+#+end_src
+
+=threshold= 参数控制自动化程度，0.8 意味着模型 80% 确信时才自动执行，低于这个阈值就问人。
+
+有个细节容易被忽略。数据库存的是用户确认后的类别，不是 AI 猜的类别。
+
+#+begin_src python
+from dataclasses import dataclass
+
+@dataclass
+class ClassificationService:
+    assistant: Assistant
+    expense_repo: ExpenseRepository
+
+    def persist_with_category(self,
+                              expense_description: str,
+                              category_name: str,
+                              response: ExpenseCategorizationResponse,
+                              telegram_user_id: int | None = None):
+        """存的是用户选的类别，不是 AI 猜的"""
+        expense = Expense(
+            amount=response.total_amount,
+            currency=response.currency,
+            category=ExpenseCategory(category_name),
+            description=expense_description,
+            telegram_user_id=telegram_user_id,
+        )
+        self.expense_repo.add(expense)
+#+end_src
+
+=persist_with_category= 接收的 =category_name= 是人拍板的结论。同时 =response= 参数保留了 AI 原始的分类和置信度，后续可以对比"AI 猜的"和"人选的"之间的差异，看看模型哪里容易翻车。
+
+* Agent 循环里，工具的输入输出要有格式约束
+
+agent 的工具调用不是一次请求就结束的。它会调工具、看结果、再决定下一步，形成一个循环（agentic loop）。这个循环里每一轮的工具调用和返回值都需要格式约束，事先定义好 LLM 应该返回什么格式的数据，然后检查它实际返回的内容是否符合。这样就不会因为某一边悄悄改了格式而对不上。
+
+#+begin_src python
+from typing import cast
+import anthropic
+from anthropic.types import (
+    MessageParam,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlockParam,
+)
+
+def answer_with_tools(question: str,
+                      client: anthropic.Anthropic) -> str:
+    messages: list[MessageParam] = [
+        {"role": "user", "content": question}
+    ]
+
+    while True:
+        response = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=512,
+            tools=TOOLS,
+            messages=messages,
+        )
+
+        # 模型给出最终回答，循环结束
+        if response.stop_reason == "end_turn":
+            return cast(TextBlock, response.content[0]).text
+
+        # 非工具调用也非结束，属于异常
+        if response.stop_reason != "tool_use":
+            raise RuntimeError(
+                f"Unexpected stop reason: "
+                f"{response.stop_reason}")
+
+        # 提取工具调用，执行后把结果送回模型
+        tool_uses = [
+            cast(ToolUseBlock, b)
+            for b in response.content
+            if b.type == "tool_use"
+        ]
+
+        tool_results: list[ToolResultBlockParam] = [
+            {
+                "type": "tool_result",
+                "tool_use_id": b.id,
+                "content": str(
+                    get_exchange_rate(
+                        **cast(dict[str, str], b.input))),
+            }
+            for b in tool_uses
+        ]
+
+        messages.append(
+            {"role": "assistant", "content": response.content})
+        messages.append(
+            {"role": "user", "content": tool_results})
+#+end_src
+
+这个循环的走向全靠 =stop_reason= 控制。 =end_turn= 就退出， =tool_use= 就继续循环，其他值直接报错。工具结果用 =ToolResultBlockParam= 类型约束，不是裸字符串。每一轮的对话历史完整保留，模型能看到自己之前调了什么、返回了什么。
+
+生产环境中还需要给 =get_exchange_rate()= 加上 try/except。工具执行失败时，把错误信息作为 =tool_result= 返回给模型，让它自己决定是重试、换工具，还是告诉用户出了问题。错误别在循环外部吞掉，agent 需要知道工具失败了才能做出合理决策。
+
+* 工具边界的设计原则
+
+原文在工具设计上给了四条原则，和上面三个代码模式配套使用。
+
+1. 工具的作用域要明确。 =read_expense= 和 =flag_expense= 是两个工具，不是一个工具加 mode 参数。工具作用越明确，LLM 用错的概率越低。
+
+2. Schema 校验放在工具入口，Pydantic model 往那一挡，格式不对的参数根本到不了数据库。
+
+3. 输入预处理在 LLM 之前完成，XSS 检查、长度限制这些活儿在用户输入到达模型之前就做完，省 token 也防注入。
+
+4. 破坏性操作必须确认，agent 提出方案，人点确认，不能 agent 自己执行完再通知。
+
+说到底就一个字，不信任 agent。agent 会推理，也会犯错，系统设计应该在关键位置设卡检查。但这不意味着要把 agent 关进笼子什么都不让它干，而是把真正的判断逻辑放在工具里，agent 只负责调用和求助。
