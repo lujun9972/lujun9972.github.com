@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：生产 AI Agent 的代码契约层 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="大多数 agent 教程停在&quot;调 API 就完事了&quot;，但生产 agent 需要在模型和副作用之间加一层代码契约。本文解读 belderbos.dev 上的生产级 agent 工程模式：typed plan 让 agent 只提方案不碰副作用、幂等键防止重复执行、HITL 让人拍板、agentic loop 用类型约束保证每轮输入输出格式一致，加上回滚策略和工具边界设计四原则。" />
+  <meta name="keywords" content="AI,Agent,生产,幂等,HITL,Python" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：生产 AI Agent 的代码契约层</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org65fc4fb">Agent 只管方案，不管执行</a></li>
+<li><a href="#orgc3e3200">AI 给出建议，人拍板</a></li>
+<li><a href="#org1c954e5">Agent 循环里，工具的输入输出要有格式约束</a></li>
+<li><a href="#orgf5279f0">工具边界的设计原则</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://belderbos.dev/blog/production-ai-agents-real-workflows/">belderbos.dev 上的这篇文章</a> 一上来就点破了行业现状。大多数 AI agent 教程教到"调 API，拿到回答"就收工了。可 agent 一旦碰上退款、下单、写数据库这些有副作用的操作，情况就复杂好多，可不是仅仅调用模型就可以搞定的。模型和副作用之间，必须有一层代码契约，就是一组预先写好的规则，规定 agent 想执行操作时必须满足什么条件才能放行。
+</p>
+
+<p>
+这层契约要回答的问题是，agent 要做什么？重复操作会怎么样？谁批准可以操作？出了事怎么回滚？
+</p>
+
+<p>
+之前几篇博文聊过<a href="读：Agent的瓶颈不在模型在基础设施.html">基础设施比模型重要</a>的宏观框架、<a href="读：当 Agent 成为生产调用者——四个被打破的运维假设.html">运维假设被打破</a>后的授权问题、<a href="读：当 Agent 开始写数据库——六个防御模式.html">数据库层防御</a>、<a href="读：从端点到行动——面向AI代理的后端设计.html">后端 API 设计</a>。这篇聚焦最落地的一层，代码到底长什么样。
+</p>
+
+<div id="outline-container-org65fc4fb" class="outline-2">
+<h2 id="org65fc4fb">Agent 只管方案，不管执行</h2>
+<div class="outline-text-2" id="text-org65fc4fb">
+<p>
+生产 agent 的第一条纪律，agent 不直接调用任何有副作用的操作（退款、发邮件、写数据库）。它只负责构建一个类型化的方案（typed plan），就是用带类型标注的数据结构（比如 Pydantic model）把"想做什么"填好，每个字段都有类型检查。是否执行操作由一个独立的函数来决定。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> datetime <span class="org-keyword">import</span> datetime
+<span class="org-keyword">from</span> pydantic <span class="org-keyword">import</span> BaseModel
+
+<span class="org-keyword">class</span> <span class="org-type">ExpensePayload</span>(BaseModel):
+    description: <span class="org-builtin">str</span>
+    amount: <span class="org-builtin">float</span>
+    currency: <span class="org-builtin">str</span>
+
+<span class="org-keyword">class</span> <span class="org-type">ExpenseAction</span>(BaseModel):
+    idempotency_key: <span class="org-builtin">str</span>
+    requested_by: <span class="org-builtin">str</span>
+    requested_at: datetime
+    <span class="org-variable-name">approval_required</span>: <span class="org-builtin">bool</span> <span class="org-operator">=</span> <span class="org-constant">True</span>
+    <span class="org-variable-name">dry_run</span>: <span class="org-builtin">bool</span> <span class="org-operator">=</span> <span class="org-constant">True</span>
+    payload: ExpensePayload
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">submit</span>(action: ExpenseAction, repo: ExpenseRepo) <span class="org-operator">-&gt;</span> Result:
+    <span class="org-comment-delimiter"># </span><span class="org-comment">1. &#24130;&#31561;&#26816;&#26597;&#65306;&#21516;&#26679;&#30340; key &#24050;&#32463;&#25191;&#34892;&#36807;&#20102;&#65292;&#30452;&#25509;&#36820;&#22238;
+</span>    <span class="org-keyword">if</span> repo.find_by_key(action.idempotency_key):
+        <span class="org-keyword">return</span> Result.duplicate()
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">2. &#35797;&#36816;&#34892;&#27169;&#24335;&#65306;&#21482;&#36820;&#22238;&#35745;&#21010;&#65292;&#19981;&#25191;&#34892;
+</span>    <span class="org-keyword">if</span> action.dry_run:
+        <span class="org-keyword">return</span> Result.preview(action.plan())
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">3. &#23457;&#25209;&#26816;&#26597;&#65306;&#38656;&#35201;&#23457;&#25209;&#20294;&#36824;&#27809;&#25209;&#65292;&#20808;&#31561;&#30528;
+</span>    <span class="org-keyword">if</span> action.approval_required <span class="org-keyword">and</span> <span class="org-keyword">not</span> action.is_approved():
+        <span class="org-keyword">return</span> Result.pending_approval()
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">4. &#25345;&#20037;&#21270;&#21518;&#25191;&#34892;
+</span>    repo.persist(action)
+    <span class="org-keyword">return</span> Result.ok(action.execute())
+</pre>
+</div>
+
+<p>
+你看 <code>submit</code> 函数，里面的规则全是写死的。agent 的职责在 <code>ExpenseAction</code> 构建完的那一刻就结束了，剩下的判断全是确定性逻辑。
+</p>
+
+<p>
+四个检查点各管一摊。幂等检查解决"重复跑"的问题，dry-run 管"先看看会做什么"，审批管"谁允许的"，持久化保证"一定会做"。
+</p>
+
+<p>
+开篇提的"如何回滚"的问题，原文给了两条路。一是给每个不可逆操作准备一个明确的逆操作（退款对应取消退款，删除对应恢复）。二是根本不让不可逆操作轻易发生，dry-run 就是这个思路，执行前先冻结，确认了才放行。当然,更彻底的做法是把 action 按事件存储（event sourcing），而不是直接覆盖状态，这样审计日志自动就有了，回滚就只需要重放事件到某个时间点就行了。
+</p>
+
+<p>
+这里的一个关键设计是把 <code>dry_run</code> 默认设为 <code>True</code> 。agent 第一次提交请求时，系统只返回"我会做什么"，但不真正执行。等人（或者确定性的业务逻辑）确认后，才把 <code>dry_run</code> 改为 <code>False</code> 再次提交。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc3e3200" class="outline-2">
+<h2 id="orgc3e3200">AI 给出建议，人拍板</h2>
+<div class="outline-text-2" id="text-orgc3e3200">
+<p>
+Human-in-the-loop（HITL，人在回路中）不是让 agent 放慢速度，而是把 agent 的输出从"决策"降级为"建议"。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> dataclasses <span class="org-keyword">import</span> dataclass
+
+<span class="org-type">@dataclass</span>(frozen<span class="org-operator">=</span><span class="org-constant">True</span>)
+<span class="org-keyword">class</span> <span class="org-type">ClassificationResult</span>:
+    response: ExpenseCategorizationResponse
+    persisted: <span class="org-builtin">bool</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">process_with_hitl</span>(result: ClassificationResult,
+                      threshold: <span class="org-builtin">float</span> <span class="org-operator">=</span> 0.8) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#32622;&#20449;&#24230;&#22815;&#39640;&#65292;&#30452;&#25509;&#37319;&#32435;
+</span>    <span class="org-keyword">if</span> result.response.confidence <span class="org-operator">&gt;=</span> threshold:
+        <span class="org-keyword">return</span> result.response.category
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#32622;&#20449;&#24230;&#19981;&#22815;&#65292;&#38382;&#20154;
+</span>    <span class="org-builtin">print</span>(f<span class="org-string">"&#20302;&#32622;&#20449;&#24230; (</span>{result.response.confidence:.0<span class="org-operator">%</span>}<span class="org-string">): "</span>
+          f<span class="org-string">"'</span>{result.response.category}<span class="org-string">' &#8212; "</span>
+          f<span class="org-string">"</span>{result.response.reason}<span class="org-string">"</span>)
+    <span class="org-variable-name">user_input</span> <span class="org-operator">=</span> <span class="org-builtin">input</span>(
+        f<span class="org-string">"&#25509;&#21463; '</span>{result.response.category}<span class="org-string">'?"</span>
+        f<span class="org-string">" (&#22238;&#36710;&#30830;&#35748;&#65292;&#25110;&#36755;&#20837;&#20854;&#20182;&#31867;&#21035;): "</span>
+    ).strip()
+
+    <span class="org-keyword">if</span> <span class="org-keyword">not</span> user_input:
+        <span class="org-keyword">return</span> result.response.category
+    <span class="org-keyword">return</span> user_input
+</pre>
+</div>
+
+<p>
+<code>threshold</code> 参数控制自动化程度，0.8 意味着模型 80% 确信时才自动执行，低于这个阈值就问人。
+</p>
+
+<p>
+有个细节容易被忽略。数据库存的是用户确认后的类别，不是 AI 猜的类别。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> dataclasses <span class="org-keyword">import</span> dataclass
+
+<span class="org-type">@dataclass</span>
+<span class="org-keyword">class</span> <span class="org-type">ClassificationService</span>:
+    assistant: Assistant
+    expense_repo: ExpenseRepository
+
+    <span class="org-keyword">def</span> <span class="org-function-name">persist_with_category</span>(<span class="org-keyword">self</span>,
+                              expense_description: <span class="org-builtin">str</span>,
+                              category_name: <span class="org-builtin">str</span>,
+                              response: ExpenseCategorizationResponse,
+                              telegram_user_id: <span class="org-builtin">int</span> <span class="org-operator">|</span> <span class="org-constant">None</span> <span class="org-operator">=</span> <span class="org-constant">None</span>):
+        <span class="org-doc">"""&#23384;&#30340;&#26159;&#29992;&#25143;&#36873;&#30340;&#31867;&#21035;&#65292;&#19981;&#26159; AI &#29468;&#30340;"""</span>
+        <span class="org-variable-name">expense</span> <span class="org-operator">=</span> Expense(
+            amount<span class="org-operator">=</span>response.total_amount,
+            currency<span class="org-operator">=</span>response.currency,
+            category<span class="org-operator">=</span>ExpenseCategory(category_name),
+            description<span class="org-operator">=</span>expense_description,
+            telegram_user_id<span class="org-operator">=</span>telegram_user_id,
+        )
+        <span class="org-keyword">self</span>.expense_repo.add(expense)
+</pre>
+</div>
+
+<p>
+<code>persist_with_category</code> 接收的 <code>category_name</code> 是人拍板的结论。同时 <code>response</code> 参数保留了 AI 原始的分类和置信度，后续可以对比"AI 猜的"和"人选的"之间的差异，看看模型哪里容易翻车。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1c954e5" class="outline-2">
+<h2 id="org1c954e5">Agent 循环里，工具的输入输出要有格式约束</h2>
+<div class="outline-text-2" id="text-org1c954e5">
+<p>
+agent 的工具调用不是一次请求就结束的。它会调工具、看结果、再决定下一步，形成一个循环（agentic loop）。这个循环里每一轮的工具调用和返回值都需要格式约束，事先定义好 LLM 应该返回什么格式的数据，然后检查它实际返回的内容是否符合。这样就不会因为某一边悄悄改了格式而对不上。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> typing <span class="org-keyword">import</span> cast
+<span class="org-keyword">import</span> anthropic
+<span class="org-keyword">from</span> anthropic.types <span class="org-keyword">import</span> (
+    MessageParam,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlockParam,
+)
+
+<span class="org-keyword">def</span> <span class="org-function-name">answer_with_tools</span>(question: <span class="org-builtin">str</span>,
+                      client: anthropic.Anthropic) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-variable-name">messages</span>: <span class="org-builtin">list</span>[MessageParam] <span class="org-operator">=</span> [
+        {<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: question}
+    ]
+
+    <span class="org-keyword">while</span> <span class="org-constant">True</span>:
+        <span class="org-variable-name">response</span> <span class="org-operator">=</span> client.messages.create(
+            model<span class="org-operator">=</span><span class="org-string">"claude-sonnet-4-6"</span>,
+            max_tokens<span class="org-operator">=</span>512,
+            tools<span class="org-operator">=</span>TOOLS,
+            messages<span class="org-operator">=</span>messages,
+        )
+
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#27169;&#22411;&#32473;&#20986;&#26368;&#32456;&#22238;&#31572;&#65292;&#24490;&#29615;&#32467;&#26463;
+</span>        <span class="org-keyword">if</span> response.stop_reason <span class="org-operator">==</span> <span class="org-string">"end_turn"</span>:
+            <span class="org-keyword">return</span> cast(TextBlock, response.content[0]).text
+
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#38750;&#24037;&#20855;&#35843;&#29992;&#20063;&#38750;&#32467;&#26463;&#65292;&#23646;&#20110;&#24322;&#24120;
+</span>        <span class="org-keyword">if</span> response.stop_reason <span class="org-operator">!=</span> <span class="org-string">"tool_use"</span>:
+            <span class="org-keyword">raise</span> <span class="org-type">RuntimeError</span>(
+                f<span class="org-string">"Unexpected stop reason: "</span>
+                f<span class="org-string">"</span>{response.stop_reason}<span class="org-string">"</span>)
+
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#25552;&#21462;&#24037;&#20855;&#35843;&#29992;&#65292;&#25191;&#34892;&#21518;&#25226;&#32467;&#26524;&#36865;&#22238;&#27169;&#22411;
+</span>        <span class="org-variable-name">tool_uses</span> <span class="org-operator">=</span> [
+            cast(ToolUseBlock, b)
+            <span class="org-keyword">for</span> b <span class="org-keyword">in</span> response.content
+            <span class="org-keyword">if</span> b.<span class="org-builtin">type</span> <span class="org-operator">==</span> <span class="org-string">"tool_use"</span>
+        ]
+
+        <span class="org-variable-name">tool_results</span>: <span class="org-builtin">list</span>[ToolResultBlockParam] <span class="org-operator">=</span> [
+            {
+                <span class="org-string">"type"</span>: <span class="org-string">"tool_result"</span>,
+                <span class="org-string">"tool_use_id"</span>: b.<span class="org-builtin">id</span>,
+                <span class="org-string">"content"</span>: <span class="org-builtin">str</span>(
+                    get_exchange_rate(
+                        <span class="org-operator">**</span>cast(<span class="org-builtin">dict</span>[<span class="org-builtin">str</span>, <span class="org-builtin">str</span>], b.<span class="org-builtin">input</span>))),
+            }
+            <span class="org-keyword">for</span> b <span class="org-keyword">in</span> tool_uses
+        ]
+
+        messages.append(
+            {<span class="org-string">"role"</span>: <span class="org-string">"assistant"</span>, <span class="org-string">"content"</span>: response.content})
+        messages.append(
+            {<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: tool_results})
+</pre>
+</div>
+
+<p>
+这个循环的走向全靠 <code>stop_reason</code> 控制。 <code>end_turn</code> 就退出， <code>tool_use</code> 就继续循环，其他值直接报错。工具结果用 <code>ToolResultBlockParam</code> 类型约束，不是裸字符串。每一轮的对话历史完整保留，模型能看到自己之前调了什么、返回了什么。
+</p>
+
+<p>
+生产环境中还需要给 <code>get_exchange_rate()</code> 加上 try/except。工具执行失败时，把错误信息作为 <code>tool_result</code> 返回给模型，让它自己决定是重试、换工具，还是告诉用户出了问题。错误别在循环外部吞掉，agent 需要知道工具失败了才能做出合理决策。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf5279f0" class="outline-2">
+<h2 id="orgf5279f0">工具边界的设计原则</h2>
+<div class="outline-text-2" id="text-orgf5279f0">
+<p>
+原文在工具设计上给了四条原则，和上面三个代码模式配套使用。
+</p>
+
+<ol class="org-ol">
+<li>工具的作用域要明确。 <code>read_expense</code> 和 <code>flag_expense</code> 是两个工具，不是一个工具加 mode 参数。工具作用越明确，LLM 用错的概率越低。</li>
+
+<li>Schema 校验放在工具入口，Pydantic model 往那一挡，格式不对的参数根本到不了数据库。</li>
+
+<li>输入预处理在 LLM 之前完成，XSS 检查、长度限制这些活儿在用户输入到达模型之前就做完，省 token 也防注入。</li>
+
+<li>破坏性操作必须确认，agent 提出方案，人点确认，不能 agent 自己执行完再通知。</li>
+</ol>
+
+<p>
+说到底就一个字，不信任 agent。agent 会推理，也会犯错，系统设计应该在关键位置设卡检查。但这不意味着要把 agent 关进笼子什么都不让它干，而是把真正的判断逻辑放在工具里，agent 只负责调用和求助。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-29</span>
+    <span class="post-info">2026-05-30</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/agent">Agent</a> : <a href="../../../../../tags/生产">生产</a> : <a href="../../../../../tags/幂等">幂等</a> : <a href="../../../../../tags/hitl">HITL</a> : <a href="../../../../../tags/python">Python</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; wjzle3d4s1furbofydm004qebd &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
