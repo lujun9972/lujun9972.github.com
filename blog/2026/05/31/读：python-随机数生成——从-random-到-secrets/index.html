@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Python 随机数生成——从 random 到 secrets - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Python 提供了两个随机数模块——random 用于普通场景，secrets 用于密码学安全场景。本文从随机整数、随机浮点数、随机选择讲起，演示伪随机数的可复现机制，最后介绍 secrets 模块的用法和选择依据。" />
+  <meta name="keywords" content="Python,random,secrets" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Python 随机数生成——从 random 到 secrets</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org6bd08ef">随机整数， <code>randint</code> 与 <code>randrange</code></a></li>
+<li><a href="#orgf943f18">随机浮点数， <code>random</code></a></li>
+<li><a href="#orgbb16295">从序列中随机选择， <code>choice</code> 与 <code>choices</code></a></li>
+<li><a href="#orga48f2bf">伪随机数的可复现性</a></li>
+<li><a href="#orga7e7304">密码学安全的随机数， <code>secrets</code> 模块</a></li>
+<li><a href="#org7cc5180">SystemRandom 类</a></li>
+<li><a href="#orgeb195d3">总结，什么场景用什么</a></li>
+</ul>
+</div>
+</div>
+<p>
+本文是对 <a href="https://www.pythonmorsels.com/random-numbers/">Python Morsels: Random Numbers</a> 一文的解读和整理。
+</p>
+
+<p>
+Python 标准库里跟随机数打交道的模块有两个， <code>random</code> 和 <code>secrets</code> 。 <code>random</code> 生成伪随机数，速度快，日常用够了。 <code>secrets</code> 生成密码学安全的随机数，不可预测，安全相关的场景用这个。
+</p>
+
+<p>
+先看最常用的几个操作。
+</p>
+
+<div id="outline-container-org6bd08ef" class="outline-2">
+<h2 id="org6bd08ef">随机整数， <code>randint</code> 与 <code>randrange</code></h2>
+<div class="outline-text-2" id="text-org6bd08ef">
+<p>
+最常用的随机整数函数是 <code>randint</code> 。它接受起始值和结束值，返回两者之间的随机整数， <b>包含两端</b> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> randint
+<span class="org-builtin">print</span>(randint(1, 6))
+</pre>
+</div>
+
+<pre class="example" id="org0826405">
+3
+</pre>
+
+<p>
+<code>random</code> 模块还有个 <code>randrange</code> 函数，命名和用法都跟内置的 <code>range</code> 函数一致。 <code>range</code> 能怎么调， <code>randrange</code> 就能怎么调。
+</p>
+
+<p>
+只传终止值（从 0 到终止值之间，不包含终止值）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> randrange
+<span class="org-builtin">print</span>(randrange(10))
+</pre>
+</div>
+
+<pre class="example">
+2
+</pre>
+
+
+<pre class="example" id="org945e793">
+2
+</pre>
+
+<p>
+传起始值和终止值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">print</span>(randrange(5, 10))
+</pre>
+</div>
+
+<pre class="example" id="org963c3a0">
+8
+</pre>
+
+<p>
+传起始值、终止值和步长：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">print</span>(randrange(0, 100, 10))
+</pre>
+</div>
+
+<pre class="example" id="org89bfdcc">
+90
+</pre>
+
+<p>
+<code>randint</code> 和 <code>randrange</code> 的区别在于对终止值的处理。 <code>randint(1, 6)</code> 可能返回 6， <code>randrange(6)</code> 永远不会返回 6。需要随机整数时， <code>randint</code> 更直观。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf943f18" class="outline-2">
+<h2 id="orgf943f18">随机浮点数， <code>random</code></h2>
+<div class="outline-text-2" id="text-orgf943f18">
+<p>
+想要随机浮点数的话，用 <code>random</code> 函数。它返回 0.0 到 1.0 之间的浮点数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> random
+<span class="org-builtin">print</span>(random())
+</pre>
+</div>
+
+<pre class="example" id="org4a698f3">
+0.3452380767261871
+</pre>
+
+<p>
+乘以一个倍数就能得到更大范围的值：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">print</span>(random() <span class="org-operator">*</span> 100)
+</pre>
+</div>
+
+<pre class="example" id="orgc38a8e6">
+23.577339429778577
+</pre>
+
+<p>
+不过实际编程中，随机浮点数的需求远不如随机整数频繁。大多数时候你要的是从列表里挑一个或者掷骰子，用整数或后面要说的 <code>choice</code> 就够了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbb16295" class="outline-2">
+<h2 id="orgbb16295">从序列中随机选择， <code>choice</code> 与 <code>choices</code></h2>
+<div class="outline-text-2" id="text-orgbb16295">
+<p>
+很多时候你要的不是一个随机数，是从一组东西里随机挑一个。这种场合 <code>random.choice</code> 比 <code>randint</code> 更直接。
+</p>
+
+<p>
+假设有一个颜色列表，想随机挑一种颜色：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> choice
+<span class="org-variable-name">colors</span> <span class="org-operator">=</span> [<span class="org-string">"red"</span>, <span class="org-string">"blue"</span>, <span class="org-string">"green"</span>, <span class="org-string">"yellow"</span>, <span class="org-string">"purple"</span>]
+<span class="org-builtin">print</span>(choice(colors))
+</pre>
+</div>
+
+<pre class="example" id="org0cbf0ef">
+purple
+</pre>
+
+<p>
+如果你需要挑多个（允许重复），用 <code>choices</code> 并指定 <code>k</code> 参数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> choices
+<span class="org-variable-name">colors</span> <span class="org-operator">=</span> [<span class="org-string">"red"</span>, <span class="org-string">"blue"</span>, <span class="org-string">"green"</span>, <span class="org-string">"yellow"</span>, <span class="org-string">"purple"</span>]
+<span class="org-builtin">print</span>(choices(colors, k<span class="org-operator">=</span>3))
+</pre>
+</div>
+
+<pre class="example" id="orga130e97">
+['green', 'yellow', 'green']
+</pre>
+
+<p>
+<code>choice</code> 和 <code>choices</code> 适用于任何序列类型，不只是列表。字符串也是序列，所以可以直接从字符集合里挑：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> choices
+<span class="org-builtin">print</span>(choices(<span class="org-string">"ACGT"</span>, k<span class="org-operator">=</span>10))
+</pre>
+</div>
+
+<pre class="example" id="orgacecf90">
+['T', 'T', 'C', 'C', 'G', 'G', 'A', 'C', 'G', 'T']
+</pre>
+
+<p>
+这个特性在生成随机字符串时特别有用——普通场景（比如 DNA 序列模拟）用 <code>random.choices</code> 就够了，安全敏感的场景（验证码、令牌）则要用后面会说的 <code>secrets.choice</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga48f2bf" class="outline-2">
+<h2 id="orga48f2bf">伪随机数的可复现性</h2>
+<div class="outline-text-2" id="text-orga48f2bf">
+<p>
+<code>random</code> 模块生成的是伪随机数。底层用的是梅森旋转算法（Mersenne Twister），一个确定性算法。只要初始状态相同，产生的随机序列就完全相同。
+</p>
+
+<p>
+所以你可以通过设置随机种子（seed）让随机数变得 <b>可预测</b> 。听起来跟「随机」矛盾，但在测试和调试时特别好用。拿下面这个 <code>generate_code</code> 函数来说，它能生成 16 位随机字符串：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> random
+
+<span class="org-keyword">def</span> <span class="org-function-name">generate_code</span>():
+    <span class="org-variable-name">characters</span> <span class="org-operator">=</span> <span class="org-string">"ABCDEFGHJKLPQRTUVWXY234679"</span>
+    <span class="org-keyword">return</span> <span class="org-string">""</span>.join([random.choice(characters) <span class="org-keyword">for</span> _ <span class="org-keyword">in</span> <span class="org-builtin">range</span>(16)])
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35774;&#32622;&#38543;&#26426;&#31181;&#23376;&#65292;&#35753;&#21518;&#32493;&#30340;&#38543;&#26426;&#25968;&#21464;&#24471;&#21487;&#39044;&#27979;
+</span>random.seed(5)
+<span class="org-builtin">print</span>(generate_code())
+</pre>
+</div>
+
+<pre class="example" id="orgb3ec1b5">
+YJ6P9462VAT7H2BF
+</pre>
+
+<p>
+每次用 <code>random.seed(5)</code> 设定种子后，第一次调用 <code>generate_code()</code> 的结果永远是 <code>YJ6P9462VAT7H2BF</code> ，跟在哪台机器上跑都无关。这样写测试就靠得住：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">random.seed(5)
+<span class="org-keyword">assert</span> generate_code() <span class="org-operator">==</span> <span class="org-string">"YJ6P9462VAT7H2BF"</span>
+<span class="org-builtin">print</span>(<span class="org-string">"Test passed"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orgdee2de5">
+Test passed
+</pre>
+
+<p>
+而且种子可以重复设置，相同的种子会产生相同的随机序列：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> random <span class="org-keyword">import</span> seed, randint
+
+seed(42)
+<span class="org-builtin">print</span>(randint(1, 100))
+seed(42)
+<span class="org-builtin">print</span>(randint(1, 100))
+</pre>
+</div>
+
+<pre class="example" id="org8c93542">
+82
+82
+</pre>
+
+<p>
+可复现性在调试时很有用，某个随机数触发的 bug，只要记住种子就能反复复现。但这可预测性也有坏处。Python 的默认种子基于当前时间，如果有人能猜出你的代码什么时候跑的，或者从你生成的几个随机数反推出种子的状态，他就能预测你接下来会生成什么。如果你的随机数涉及密码、令牌、session key 这些安全敏感场景，就别用 <code>random</code> 了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga7e7304" class="outline-2">
+<h2 id="orga7e7304">密码学安全的随机数， <code>secrets</code> 模块</h2>
+<div class="outline-text-2" id="text-orga7e7304">
+<p>
+需要生成第三方不可预测的随机数时，用 <code>secrets</code> 模块。它从操作系统的安全随机源（比如 Linux 的 <code>/dev/urandom</code> ）读取数据，生成的随机数在密码学意义上是安全的，不可预测。
+</p>
+
+<p>
+<code>secrets</code> 也提供了 <code>choice</code> 函数，用法跟 <code>random.choice</code> 一样，结果是不可预测的。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> secrets
+
+<span class="org-variable-name">characters</span> <span class="org-operator">=</span> <span class="org-string">"ABCDEFGHJKLPQRTUVWXY234679"</span>
+<span class="org-builtin">print</span>(secrets.choice(characters))
+<span class="org-builtin">print</span>(<span class="org-string">""</span>.join([secrets.choice(characters) <span class="org-keyword">for</span> _ <span class="org-keyword">in</span> <span class="org-builtin">range</span>(16)]))
+</pre>
+</div>
+
+<pre class="example" id="org2092e00">
+7
+3GDLTHG3LLQGWQCE
+</pre>
+
+<p>
+<code>secrets</code> 还提供了几个 <code>random</code> 模块没有的函数：
+</p>
+
+<ul class="org-ul">
+<li><code>secrets.randbits(n)</code> 生成 <code>n</code> 个随机比特，以整数形式返回</li>
+<li><code>secrets.randbelow(n)</code> 返回 0 到 <code>n</code> 之间的随机整数，不包含 <code>n</code></li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> secrets
+<span class="org-builtin">print</span>(secrets.randbits(16))
+<span class="org-builtin">print</span>(secrets.randbelow(100))
+<span class="org-builtin">print</span>(secrets.randbelow(6) <span class="org-operator">+</span> 1)  <span class="org-comment-delimiter"># </span><span class="org-comment">&#27169;&#25311;&#25527;&#39600;&#23376;</span>
+</pre>
+</div>
+
+<pre class="example" id="org9a751ca">
+60468
+90
+6
+</pre>
+
+<p>
+随机比特适合生成加密密钥，随机下限值适合做抽奖或随机索引。
+</p>
+
+<p>
+此外， <code>secrets</code> 还提供了两个生成安全令牌的专用函数：
+</p>
+
+<ul class="org-ul">
+<li><code>secrets.token_hex(n)</code> 返回包含 <code>n</code> 个随机字节的十六进制字符串，适合直接当密钥或令牌用</li>
+<li><code>secrets.token_urlsafe(n)</code> 返回包含 <code>n</code> 个随机字节的 Base64 URL 安全字符串，适合生成重置密码链接中的令牌参数</li>
+</ul>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> secrets
+
+<span class="org-builtin">print</span>(secrets.token_hex(16))
+<span class="org-builtin">print</span>(secrets.token_urlsafe(16))
+</pre>
+</div>
+
+<pre class="example" id="org7b78fef">
+deb22c5ae4792dac534337f891974876
+8462YT76QewAPJ0doIv_CA
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org7cc5180" class="outline-2">
+<h2 id="org7cc5180">SystemRandom 类</h2>
+<div class="outline-text-2" id="text-org7cc5180">
+<p>
+<code>secrets</code> 的模块级函数不多（ <code>choice</code> 、 <code>randbelow</code> 、 <code>randbits</code> 、 <code>token_hex</code> 、 <code>token_urlsafe</code> ），如果你想要安全随机数，但还想用 <code>random.randint</code> 那些 API，可以用 <code>secrets.SystemRandom</code> 类。它是 <code>random.Random</code> 的子类， <code>random</code> 模块的函数它都有，只不过底层用的是安全随机源。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> secrets <span class="org-keyword">import</span> SystemRandom
+
+<span class="org-variable-name">secure_random</span> <span class="org-operator">=</span> SystemRandom()
+<span class="org-builtin">print</span>(secure_random.random())
+<span class="org-builtin">print</span>(secure_random.randint(1000, 9999))
+<span class="org-builtin">print</span>(<span class="org-string">""</span>.join(secure_random.choices(<span class="org-string">"ABCDEFGHJKLPQRTUVWXY234679"</span>, k<span class="org-operator">=</span>16)))
+</pre>
+</div>
+
+<pre class="example" id="org9d1cd60">
+0.8334571494524645
+9828
+X3DPFLTQDYE7WXVG
+</pre>
+
+<p>
+不过你通常不需要用到这么深。大多数安全场景用 <code>secrets.choice</code> 、 <code>secrets.token_hex</code> 或 <code>secrets.token_urlsafe</code> 就够了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgeb195d3" class="outline-2">
+<h2 id="orgeb195d3">总结，什么场景用什么</h2>
+<div class="outline-text-2" id="text-orgeb195d3">
+<p>
+游戏、模拟、做随机测试数据这类普通场景用 <code>random</code> 就行，速度快，需要时种子一设就能复现。测试场景用 <code>random.seed</code> 固定种子，保证每次跑出的随机序列一样。密码、令牌、加密密钥这类安全场景用 <code>secrets</code> ，不可预测。想用安全随机源但又舍不得 <code>random</code> 那套 API，那就上 <code>secrets.SystemRandom</code> 。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-31</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/random">random</a> : <a href="../../../../../tags/secrets">secrets</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; hwdy1fi52d2utifharbblzvnqc &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
