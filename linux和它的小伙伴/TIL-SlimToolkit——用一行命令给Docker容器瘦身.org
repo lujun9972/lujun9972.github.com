@@ -1,0 +1,74 @@
+#+TITLE: TIL：SlimToolkit——用一行命令给 Docker 容器瘦身
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Docker,SlimToolkit,容器,镜像优化
+#+DATE: [2026-05-31 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: SlimToolkit 通过自动分析容器运行时的实际文件依赖，生成精简镜像，无需修改 Dockerfile。本文介绍其两阶段分析原理和关键注意事项。
+
+给 Docker 镜像瘦身，常规路子不外乎多阶段构建、换 distroless 基础镜像。不管哪种都得改 Dockerfile，改完还得重新构建一遍，挺麻烦的。换个思路想，镜像里大量文件实际运行时根本用不上（OS 层的 shell、编译器、工具链占了体积的大头），如果只保留用到的那些，不就绕开改 Dockerfile 这一步了？
+
+这篇文章 [[https://codecut.ai/shrink-python-container-slimtoolkit/][Shrink Your Python Container in One Command with SlimToolkit]] 就是这么干的。
+
+** SlimToolkit 是什么
+
+SlimToolkit（以前叫 DockerSlim）是个开源工具，专门给容器镜像瘦身的。
+
+传统做法（多阶段构建、distroless）都要你在 Dockerfile 里手动指定"不要什么"——删这个包、换那个基础镜像。但 SlimToolkit 反过来，它不问"不要什么"，而是看"要什么"：把你容器跑一遍，看哪些文件被用到了，只保留这些，剩下的全扔掉。
+
+具体分两步：
+
+第一步做 *静态分析* ，扫描镜像文件系统，列出所有文件。第二步做 *动态分析* ，把容器跑起来，看它真正访问了哪些文件。
+
+关键在第二步，只有运行时被碰过的文件才会留下来。没被碰到的，比如临时构建工具、用不上的动态链接库、文档文件什么的，全部扔掉。
+
+** 为什么值得用
+
+这玩意好在哪？一是不用改 Dockerfile，对已有项目零侵入，拿到镜像直接瘦。二是不挑语言，Python、Node、Go、Java 都支持。三是效果明显，原文拿 Chainlit 聊天应用测试，镜像从 308MB 干到 123MB，2.5 倍的压缩比。
+
+** 基本用法
+
+安装：
+
+#+begin_src shell
+curl -sL https://raw.githubusercontent.com/slimtoolkit/slim/master/scripts/install-slim.sh | sudo bash
+#+end_src
+
+瘦身就一行命令：
+
+#+begin_src shell
+slim build --target my-image:fat --tag my-image:slim
+#+end_src
+
+~--target~ 指定原始镜像， ~--tag~ 指定瘦身后的镜像名。
+
+** 两个容易踩的坑
+
+*** --continue-after enter，让动态分析覆盖完整的调用链
+
+~slim build~ 默认启动容器后只发一个 ~GET /~ 探活请求就完事了。对 web 应用来说，这一个请求只加载了框架的基础路由，走不到完整的调用链。
+
+加上 ~--continue-after enter~ 后，slim 会在探活后暂停，等你在浏览器里手动操作应用（发消息、点按钮之类的），覆盖更多代码路径：
+
+#+begin_src shell
+slim build \
+  --target my-image:fat \
+  --tag my-image:slim \
+  --continue-after enter
+#+end_src
+
+*** --include-path，保留 lazily-loaded 模块
+
+有时候就算完整走了一遍调用链，动态分析还是可能漏掉一些文件。问题出在那些 lazily-loaded 的模块子组件上，这些组件是用的时候才加载的，动态分析阶段没碰到它们。但容器启动时又得检查这些文件在不在，一旦缺了就跑不起来。
+
+解决方案是用 ~--include-path~ 指定需要保留的目录：
+
+#+begin_src shell
+slim build \
+  --target my-image:fat \
+  --tag my-image:slim \
+  --include-path /usr/local/lib/python3.11/site-packages/myapp \
+  --continue-after enter
+#+end_src
+
+这两个问题经常一起出现。先用 ~--continue-after enter~ 覆盖大部分代码路径，但 lazily-loaded 模块还是可能被漏掉，最后得靠 ~--include-path~ 兜底。两个参数配合着用，瘦身后的镜像才能正常工作。
