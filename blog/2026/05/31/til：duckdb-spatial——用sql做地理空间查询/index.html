@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL：DuckDB Spatial——用SQL做地理空间查询 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="DuckDB 的 Spatial 扩展让 SQL 查询直接支持地理空间操作。本文用三个可运行的示例演示 ST_Point、ST_Distance、ST_Intersects、ST_Area 等核心函数的用法。" />
+  <meta name="keywords" content="DuckDB,Spatial,GIS,SQL" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL：DuckDB Spatial——用SQL做地理空间查询</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org87edd04">是什么</a></li>
+<li><a href="#org8bcc92f">为什么不用专门的 GIS 数据库</a></li>
+<li><a href="#org94f8a5b">怎么做</a>
+<ul>
+<li><a href="#org575d4af">示例 1：创建点和计算距离</a></li>
+<li><a href="#orgf3ce175">示例 2：判断点是否在多边形内</a></li>
+<li><a href="#org351bcde">示例 3：从 CSV 读数据做最近邻查询</a></li>
+</ul>
+</li>
+<li><a href="#org03cfacf">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Mark Litwintschik 在 <a href="https://tech.marksblogg.com/reverse-geocoding-overture-maps.html">Reverse Geocoding with Overture Maps</a> 一文中展示了如何用 DuckDB 的 Spatial 扩展处理地理空间数据。说穿了就是给 DuckDB 装个 Spatial 扩展，让 SQL 能处理点、线、多边形这些地理空间数据。
+</p>
+
+<div id="outline-container-org87edd04" class="outline-2">
+<h2 id="org87edd04">是什么</h2>
+<div class="outline-text-2" id="text-org87edd04">
+<p>
+DuckDB 的 Spatial 扩展提供了地理空间数据类型和函数，让你能用 SQL 直接处理经纬度坐标、多边形边界等空间数据。安装和加载只需要两条命令，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sql">INSTALL spatial;
+LOAD spatial;
+</pre>
+</div>
+
+<p>
+<code>INSTALL spatial</code> 只需要执行一次——扩展文件会下载到本地扩展目录，不会每次重复下载。 <code>LOAD spatial</code> 则在每次连接中加载扩展。
+</p>
+
+<p>
+加载后，DuckDB 就支持了一个核心类型和一批空间函数，
+</p>
+
+<ul class="org-ul">
+<li><b>核心类型</b> <code>GEOMETRY</code> ，点（ <code>POINT</code> ）、线（ <code>LINESTRING</code> ）、多边形（ <code>POLYGON</code> ）等</li>
+<li><b>常用函数</b> ， <code>ST_Point</code> （创建点）、 <code>ST_Distance</code> （计算距离）、 <code>ST_Intersects</code> （判断是否相交）、 <code>ST_Area</code> （计算面积）、 <code>ST_Centroid</code> （求中心点）、 <code>ST_AsText</code> （转为可读文本）</li>
+</ul>
+
+<p>
+DuckDB Spatial 默认用经纬度坐标（EPSG:4326）， <code>ST_Distance</code> 返回的是 <b>度数</b> ，不是公里或米。要换算成实际距离得做投影转换，但后文示例只展示函数用法，不涉及投影。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8bcc92f" class="outline-2">
+<h2 id="org8bcc92f">为什么不用专门的 GIS 数据库</h2>
+<div class="outline-text-2" id="text-org8bcc92f">
+<p>
+如果只是做简单的空间查询，架一个 PostGIS 太重了。DuckDB 的优势在于它是嵌入式数据库，不需要单独部署；用 SQL 接口，不需要学 GIS 专用语言；还能直接读 CSV、Parquet、JSON 中的数据做空间分析，不用先导入。
+</p>
+
+<p>
+当然 DuckDB Spatial 不是 PostGIS 的替代品，它不支持空间索引（至少目前不是原生支持的），复杂空间操作也更有限。但对于「这个点在哪个国家」「离我最近的地址是什么」这类逆地理编码场景，它够用了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org94f8a5b" class="outline-2">
+<h2 id="org94f8a5b">怎么做</h2>
+<div class="outline-text-2" id="text-org94f8a5b">
+<p>
+以下示例使用 Python 操作 DuckDB，需先安装 duckdb 包：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pip install duckdb
+</pre>
+</div>
+</div>
+
+<div id="outline-container-org575d4af" class="outline-3">
+<h3 id="org575d4af">示例 1：创建点和计算距离</h3>
+<div class="outline-text-3" id="text-org575d4af">
+<p>
+<code>ST_Point(lon, lat)</code> 创建一个点， <code>ST_Distance(a, b)</code> 计算两个点的距离：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+<span class="org-variable-name">con</span> <span class="org-operator">=</span> duckdb.connect(database<span class="org-operator">=</span><span class="org-string">':memory:'</span>)
+con.sql(<span class="org-string">'INSTALL spatial; LOAD spatial'</span>)
+
+<span class="org-variable-name">res</span> <span class="org-operator">=</span> con.sql(<span class="org-string">"""
+    SELECT
+        ST_AsText(ST_Point(116.4, 39.9)) AS beijing,
+        ST_AsText(ST_Point(121.47, 31.23)) AS shanghai,
+        ST_Distance(ST_Point(116.4, 39.9),
+                    ST_Point(121.47, 31.23)) AS dist
+"""</span>).fetchone()
+
+<span class="org-builtin">print</span>(f<span class="org-string">"&#21271;&#20140;: </span>{res[0]}<span class="org-string">"</span>)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#19978;&#28023;: </span>{res[1]}<span class="org-string">"</span>)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#36317;&#31163; (&#24230;&#25968;): </span>{res[2]}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<p>
+输出：
+</p>
+
+<pre class="example" id="org1a109a0">
+北京: POINT (116.4 39.9)
+上海: POINT (121.47 31.23)
+距离 (度数): 10.043594973912473
+</pre>
+
+<p>
+<code>ST_AsText</code> 把二进制的几何对象转成可读的 WKT（Well-Known Text）格式。10.04 是度数，不是实际距离——要换算成公里需要做投影转换。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf3ce175" class="outline-3">
+<h3 id="orgf3ce175">示例 2：判断点是否在多边形内</h3>
+<div class="outline-text-3" id="text-orgf3ce175">
+<p>
+用 <code>ST_GeomFromText</code> 从 WKT 字符串创建多边形，然后用 <code>ST_Intersects</code> 判断一个点是否落在多边形范围内：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+<span class="org-variable-name">con</span> <span class="org-operator">=</span> duckdb.connect(database<span class="org-operator">=</span><span class="org-string">':memory:'</span>)
+con.sql(<span class="org-string">'INSTALL spatial; LOAD spatial'</span>)
+
+<span class="org-variable-name">res</span> <span class="org-operator">=</span> con.sql(<span class="org-string">"""
+    WITH bounds AS (
+        SELECT ST_GeomFromText(
+            'POLYGON((115.4 39.4,
+                       117.0 39.4,
+                       117.0 40.2,
+                       115.4 40.2,
+                       115.4 39.4))'
+        ) AS geom
+    )
+    SELECT
+        ST_Intersects(geom, ST_Point(116.4, 39.9)) AS tiananmen_in_beijing,
+        ROUND(ST_Area(geom)::numeric, 2)            AS area_degrees,
+        ROUND(ST_X(ST_Centroid(geom)), 1)           AS cx,
+        ROUND(ST_Y(ST_Centroid(geom)), 1)           AS cy
+    FROM bounds
+"""</span>).fetchone()
+
+<span class="org-builtin">print</span>(f<span class="org-string">"&#22825;&#23433;&#38376;&#22312;&#21271;&#20140;&#33539;&#22260;&#20869;: </span>{res[0]}<span class="org-string">"</span>)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#22810;&#36793;&#24418;&#38754;&#31215; (&#24179;&#26041;&#24230;): </span>{res[1]}<span class="org-string">"</span>)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#20013;&#24515;&#28857;: POINT (</span>{res[2]}<span class="org-string"> </span>{res[3]}<span class="org-string">)"</span>)
+</pre>
+</div>
+
+<p>
+输出：
+</p>
+
+<pre class="example" id="orgea886bf">
+天安门在北京范围内: True
+多边形面积 (平方度): 1.28
+中心点: POINT (116.2 39.8)
+</pre>
+
+<p>
+这里用了一个简化的北京边界多边形（115.4°E–117.0°E, 39.4°N–40.2°N）。天安门坐标（116.4, 39.9）确实落在这个范围内。 <code>ST_Area</code> 返回面积（度数²）， <code>ST_Centroid</code> 返回多边形的中心点。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org351bcde" class="outline-3">
+<h3 id="org351bcde">示例 3：从 CSV 读数据做最近邻查询</h3>
+<div class="outline-text-3" id="text-org351bcde">
+<p>
+实际场景中，地理数据通常存在文件里。DuckDB 的 <code>read_csv_auto</code> 可以直接加载 CSV，结合空间函数做分析。
+</p>
+
+<p>
+先准备一份城市坐标数据：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">city,lon,lat
+Beijing,116.4,39.9
+Shanghai,121.47,31.23
+Guangzhou,113.26,23.13
+Shenzhen,114.06,22.55
+Chengdu,104.07,30.57
+Wuhan,114.27,30.58
+</pre>
+</div>
+
+<p>
+然后查询离某个点最近的三个城市：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+<span class="org-variable-name">con</span> <span class="org-operator">=</span> duckdb.connect(database<span class="org-operator">=</span><span class="org-string">':memory:'</span>)
+con.sql(<span class="org-string">'INSTALL spatial; LOAD spatial'</span>)
+
+<span class="org-variable-name">res</span> <span class="org-operator">=</span> con.sql(<span class="org-string">"""
+    WITH cities AS (
+        SELECT city, ST_Point(lon, lat) AS geom
+        FROM read_csv_auto('/tmp/cities.csv')
+    )
+    SELECT city, ST_Distance(geom, ST_Point(113.5, 22.5)) AS dist
+    FROM cities
+    ORDER BY dist
+    LIMIT 3
+"""</span>).fetchall()
+
+<span class="org-keyword">for</span> row <span class="org-keyword">in</span> res:
+    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{row[0]}<span class="org-string">: </span>{row[1]:.4f}<span class="org-string"> deg"</span>)
+</pre>
+</div>
+
+<p>
+输出：
+</p>
+
+<pre class="example" id="org5727394">
+Shenzhen: 0.5622 deg
+Guangzhou: 0.6742 deg
+Wuhan: 8.1166 deg
+</pre>
+
+<p>
+查询点 (113.5, 22.5) 大致在珠江口位置。深圳和广州自然最近，武汉远得多。整个过程就一个 CSV 文件加几行 SQL。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org03cfacf" class="outline-2">
+<h2 id="org03cfacf">总结</h2>
+<div class="outline-text-2" id="text-org03cfacf">
+<p>
+DuckDB Spatial 扩展最常用的函数无非是 <code>ST_Point</code> 创建几何对象， <code>ST_Distance</code> 算距离， <code>ST_Intersects</code> 做空间过滤。配合 <code>read_csv_auto</code> 等文件读取函数，不用上 PostGIS 也能搞定常见的地理空间查询任务。
+</p>
+
+<p>
+不过 DuckDB Spatial 目前不支持原生空间索引，数据量大时性能会下降。小型数据集和原型验证是它的舒适区。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-31</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/duckdb">DuckDB</a> : <a href="../../../../../tags/spatial">Spatial</a> : <a href="../../../../../tags/gis">GIS</a> : <a href="../../../../../tags/sql">SQL</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; vdbwcwnibg1ebpw4dzf3ckeoic &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
