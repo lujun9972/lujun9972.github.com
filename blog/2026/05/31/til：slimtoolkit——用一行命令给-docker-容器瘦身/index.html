@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL：SlimToolkit——用一行命令给 Docker 容器瘦身 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="SlimToolkit 通过自动分析容器运行时的实际文件依赖，生成精简镜像，无需修改 Dockerfile。本文介绍其两阶段分析原理和关键注意事项。" />
+  <meta name="keywords" content="Docker,SlimToolkit,容器,镜像优化" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL：SlimToolkit——用一行命令给 Docker 容器瘦身</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org2398411">SlimToolkit 是什么</a></li>
+<li><a href="#orge845705">为什么值得用</a></li>
+<li><a href="#org159e8b8">基本用法</a></li>
+<li><a href="#org8eed01c">两个容易踩的坑</a>
+<ul>
+<li><a href="#orga867d03">--continue-after enter，让动态分析覆盖完整的调用链</a></li>
+<li><a href="#orgac31f3a">--include-path，保留 lazily-loaded 模块</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+给 Docker 镜像瘦身，常规路子不外乎多阶段构建、换 distroless 基础镜像。不管哪种都得改 Dockerfile，改完还得重新构建一遍，挺麻烦的。换个思路想，镜像里大量文件实际运行时根本用不上（OS 层的 shell、编译器、工具链占了体积的大头），如果只保留用到的那些，不就绕开改 Dockerfile 这一步了？
+</p>
+
+<p>
+这篇文章 <a href="https://codecut.ai/shrink-python-container-slimtoolkit/">Shrink Your Python Container in One Command with SlimToolkit</a> 就是这么干的。
+</p>
+
+<div id="outline-container-org2398411" class="outline-2">
+<h2 id="org2398411">SlimToolkit 是什么</h2>
+<div class="outline-text-2" id="text-org2398411">
+<p>
+SlimToolkit（以前叫 DockerSlim）是个开源工具，专门给容器镜像瘦身的。
+</p>
+
+<p>
+传统做法（多阶段构建、distroless）都要你在 Dockerfile 里手动指定"不要什么"——删这个包、换那个基础镜像。但 SlimToolkit 反过来，它不问"不要什么"，而是看"要什么"：把你容器跑一遍，看哪些文件被用到了，只保留这些，剩下的全扔掉。
+</p>
+
+<p>
+具体分两步：
+</p>
+
+<p>
+第一步做 <b>静态分析</b> ，扫描镜像文件系统，列出所有文件。第二步做 <b>动态分析</b> ，把容器跑起来，看它真正访问了哪些文件。
+</p>
+
+<p>
+关键在第二步，只有运行时被碰过的文件才会留下来。没被碰到的，比如临时构建工具、用不上的动态链接库、文档文件什么的，全部扔掉。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge845705" class="outline-2">
+<h2 id="orge845705">为什么值得用</h2>
+<div class="outline-text-2" id="text-orge845705">
+<p>
+这玩意好在哪？一是不用改 Dockerfile，对已有项目零侵入，拿到镜像直接瘦。二是不挑语言，Python、Node、Go、Java 都支持。三是效果明显，原文拿 Chainlit 聊天应用测试，镜像从 308MB 干到 123MB，2.5 倍的压缩比。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org159e8b8" class="outline-2">
+<h2 id="org159e8b8">基本用法</h2>
+<div class="outline-text-2" id="text-org159e8b8">
+<p>
+安装：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">curl -sL https://raw.githubusercontent.com/slimtoolkit/slim/master/scripts/install-slim.sh | sudo bash
+</pre>
+</div>
+
+<p>
+瘦身就一行命令：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">slim build --target my-image:fat --tag my-image:slim
+</pre>
+</div>
+
+<p>
+<code>--target</code> 指定原始镜像， <code>--tag</code> 指定瘦身后的镜像名。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org8eed01c" class="outline-2">
+<h2 id="org8eed01c">两个容易踩的坑</h2>
+<div class="outline-text-2" id="text-org8eed01c">
+</div>
+<div id="outline-container-orga867d03" class="outline-3">
+<h3 id="orga867d03">--continue-after enter，让动态分析覆盖完整的调用链</h3>
+<div class="outline-text-3" id="text-orga867d03">
+<p>
+<code>slim build</code> 默认启动容器后只发一个 <code>GET /</code> 探活请求就完事了。对 web 应用来说，这一个请求只加载了框架的基础路由，走不到完整的调用链。
+</p>
+
+<p>
+加上 <code>--continue-after enter</code> 后，slim 会在探活后暂停，等你在浏览器里手动操作应用（发消息、点按钮之类的），覆盖更多代码路径：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">slim build <span class="org-sh-escaped-newline">\</span>
+  --target my-image:fat <span class="org-sh-escaped-newline">\</span>
+  --tag my-image:slim <span class="org-sh-escaped-newline">\</span>
+  --continue-after enter
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgac31f3a" class="outline-3">
+<h3 id="orgac31f3a">--include-path，保留 lazily-loaded 模块</h3>
+<div class="outline-text-3" id="text-orgac31f3a">
+<p>
+有时候就算完整走了一遍调用链，动态分析还是可能漏掉一些文件。问题出在那些 lazily-loaded 的模块子组件上，这些组件是用的时候才加载的，动态分析阶段没碰到它们。但容器启动时又得检查这些文件在不在，一旦缺了就跑不起来。
+</p>
+
+<p>
+解决方案是用 <code>--include-path</code> 指定需要保留的目录：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">slim build <span class="org-sh-escaped-newline">\</span>
+  --target my-image:fat <span class="org-sh-escaped-newline">\</span>
+  --tag my-image:slim <span class="org-sh-escaped-newline">\</span>
+  --include-path /usr/local/lib/python3.11/site-packages/myapp <span class="org-sh-escaped-newline">\</span>
+  --continue-after enter
+</pre>
+</div>
+
+<p>
+这两个问题经常一起出现。先用 <code>--continue-after enter</code> 覆盖大部分代码路径，但 lazily-loaded 模块还是可能被漏掉，最后得靠 <code>--include-path</code> 兜底。两个参数配合着用，瘦身后的镜像才能正常工作。
+</p>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-31</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/docker">Docker</a> : <a href="../../../../../tags/slimtoolkit">SlimToolkit</a> : <a href="../../../../../tags/容器">容器</a> : <a href="../../../../../tags/镜像优化">镜像优化</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; 5cxh0c1awo1ufoksjxtfocoz2d &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
