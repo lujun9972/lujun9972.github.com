@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：space-tree——Emacs 的树形工作区管理器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Charlie Holland 开发的 space-tree 是一个让工作区可以嵌套的 Emacs 工作区管理工具。大多数同类工具（eyebrowse、tab-bar-mode 等）都只能给你一个扁平的列表，但复杂工作的本质是层次化的。本文介绍 space-tree 的设计思路、认知心理学依据和实际用法。" />
+  <meta name="keywords" content="Emacs workspace space-tree" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：space-tree——Emacs 的树形工作区管理器</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org7165fba">工作区管理为什么需要树</a></li>
+<li><a href="#org6a0a8e3">认知心理学怎么说</a>
+<ul>
+<li><a href="#orgffb1d24">工作记忆的上限</a></li>
+<li><a href="#org71512e4">组块化是专家绕过上限的方式</a></li>
+<li><a href="#orgf9a1407">层次化直接提升回忆效果</a></li>
+<li><a href="#org5b1d81f">复杂工作天然就是层次化的</a></li>
+<li><a href="#org494006f">认知负荷理论给这个成本起了名字</a></li>
+<li><a href="#org7cfd266">但也有条件</a></li>
+</ul>
+</li>
+<li><a href="#orge5761d7">space-tree 的设计：三张哈希表</a></li>
+<li><a href="#orgdb9baf1">上手配置 + 实操场景</a></li>
+<li><a href="#org2092e54">与同类工具的对比</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org7165fba" class="outline-2">
+<h2 id="org7165fba">工作区管理为什么需要树</h2>
+<div class="outline-text-2" id="text-org7165fba">
+<p>
+Charlie Holland 写了一篇博文介绍他开发的 <code>space-tree</code> 工具（见 <a href="https://www.chiply.dev/post-emacs-space-tree">原文</a>）。这个工具要解决的问题很简单。Emacs 里不缺工作区管理工具，从内置的 <code>tab-bar-mode</code> 到社区维护的 <code>eyebrowse</code> 、 <code>perspective.el</code> 、 <code>persp-mode</code> 、 <code>activities.el</code> 、 <code>burly</code> 、 <code>beframe</code> 、 <code>workgroups2</code> ，一抓一大把。但它们有一个共同的盲区，所有工作区都是扁平的。
+</p>
+
+<p>
+扁平有什么问题？你有一个编号列表、一行标签或者一个网格，但你没办法在工作区里面再建一个工作区。实际开发中很少有一层就能搞定的任务。假设你在修一个 bug，可能需要测试源码、实现代码、堆栈追踪同时开着。这个 bug 可能关联到一个更大的重构。重构本身是一个父任务，修 bug 只是它的一个子任务。子任务内部可能还有更细的分工（翻阅日志、对比不同版本、查阅文档）。扁平的工作区列表迫使你去「压平」这种天然的分层结构。
+</p>
+
+<p>
+作者总结了他个人的五个需求，不一定适用所有人，但能解释他为什么觉得现有工具都不够好用。
+</p>
+
+<ul class="org-ul">
+<li><b>任意深度嵌套，不限制宽度</b> 。你可以有 1→1.1→1.1.1 这样的结构，工作区管理器不该限制你的层次数</li>
+<li><b>不需要强制命名</b> 。大部分工作区用完就丢，不值得起名字。强制命名等于增加工作量，工作量大了你就懒得创建新工作区，结果所有窗口又挤回一个空间</li>
+<li><b>不需要强制持久化</b> 。昨天的树和今天的树通常是两码事。持久化是好功能，但管理持久化状态（清理过期条目、决定启动时恢复什么）的成本超过了恢复本身的价值</li>
+<li><b>不做缓冲区作用域</b> 。工作区对作者来说是纯粹的视觉约定，它只管「在这里放什么窗口」。 <code>switch-to-buffer</code> 应该始终能看到所有缓冲区，不需要按工作区切割。如果确实需要任务级别的文件视图，Emacs 已有 <code>project.el</code> 和 <code>consult-buffer</code> 这些更精准的工具</li>
+<li><b>基于 Emacs 已有窗口原语</b> 。"原语"（primitive）指 Emacs 自带的 <code>window-state-get</code> 和 <code>window-state-put</code> ，这两个函数已经能保存和恢复窗口布局了。不需要引入新的"抽象"，即其他工具搞的那套 parallel buffer list 或 frame 快照模型——那些都是额外抽象层，直接嵌到 Emacs 已有的窗口机制上就好</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org6a0a8e3" class="outline-2">
+<h2 id="org6a0a8e3">认知心理学怎么说</h2>
+<div class="outline-text-2" id="text-org6a0a8e3">
+<p>
+说实话，作者自己也怀疑「树形」这个想法是不是程序员职业病，毕竟天天对着文件系统、抽象语法树、Org-mode 大纲，看什么都像树。查了文献后他发现，认知心理学对层次化组织的支持相当扎实。
+</p>
+</div>
+
+<div id="outline-container-orgffb1d24" class="outline-3">
+<h3 id="orgffb1d24">工作记忆的上限</h3>
+<div class="outline-text-3" id="text-orgffb1d24">
+<p>
+George Miller 1956 年的论文提出人的工作记忆大约能 hold 住 7 ± 2 个项目。这个数字已经很小了，但 Nelson Cowan 2001 年的综述进一步收窄，排除复述和组块化的干扰后，真实的工作记忆容量大约只有 3 到 5 个项目。但一次正式的编码会话可能同时打开的缓冲区可远不止 5 个。扁平的工作区列表把管理这些窗口的负担全部压在读者本来就有限的工作记忆上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org71512e4" class="outline-3">
+<h3 id="org71512e4">组块化是专家绕过上限的方式</h3>
+<div class="outline-text-3" id="text-org71512e4">
+<p>
+William Chase 和 Herbert Simon 1973 年做了一个实验，给国际象棋大师和业余棋手看一个中局棋面 5 秒，然后在空棋盘上复原。大师的成绩远好于业余棋手。但棋子如果是随机摆放的，大师的优势就完全消失了。
+</p>
+
+<p>
+差别不在记忆容量,而在于大师比业余棋手更能把有意义的棋面「组块化」，把多个相关棋子打包成一个更高层次的概念。树形结构其实就是一种显式的组块化系统，每个中间节点就是一个组块，把下面的所有子空间压缩成一个概念。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf9a1407" class="outline-3">
+<h3 id="orgf9a1407">层次化直接提升回忆效果</h3>
+<div class="outline-text-3" id="text-orgf9a1407">
+<p>
+Bower 等人在 1969 年做了一个实验，他们给了受试者 112 个单词，要求记住。一组拿到的是随机长列表，另一组拿到了四层分类结构。记忆时间和单词量是一样的，唯一的变量是组织方式。结果拿到结构的那一组能回忆出 2 到 3 倍多的单词，而且这个优势随着轮次增加还在放大。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5b1d81f" class="outline-3">
+<h3 id="org5b1d81f">复杂工作天然就是层次化的</h3>
+<div class="outline-text-3" id="text-org5b1d81f">
+<p>
+Newell 和 Simon 1972 年的研究把目标-子目标分解确立为人类解决复杂问题的标准模型。Annett 和 Duncan 1967 年提出的「层次化任务分析」至今仍在航空、麻醉等不容许状态丢失的领域使用。
+</p>
+
+<p>
+当一个扁平的工作区管理工具遇到一个天然分层的工作任务时，总有人要为这种结构错配买单。在 space-tree 出现之前，这个人就是开发者自己。他得动用脑力把工作的自然层次投射到工具扁平结构上去。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org494006f" class="outline-3">
+<h3 id="org494006f">认知负荷理论给这个成本起了名字</h3>
+<div class="outline-text-3" id="text-org494006f">
+<p>
+John Sweller 的认知负荷理论把工作记忆负担分成三类。
+</p>
+
+<ul class="org-ul">
+<li><b>内在负荷</b> ，任务本身的基本复杂度</li>
+<li><b>外在负荷</b> ，任务的呈现方式带来的额外负担</li>
+<li><b>相关负荷</b> ，构建有用心智模型付出的努力</li>
+</ul>
+
+<p>
+扁平的工作区列表加在天然层次化的任务上就产生了外在负荷。开发者的工作记忆本来该花在工作内容上，结果全耗在工作区管理工具的结构上了。树形组织匹配了这种需求，消除了这类开销。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7cfd266" class="outline-3">
+<h3 id="org7cfd266">但也有条件</h3>
+<div class="outline-text-3" id="text-org7cfd266">
+<p>
+作者也引用了 HCI 研究的反面证据。菜单设计的深度与广度研究（Kiger 1984 年；Norman 1991 年）表明，在用户需要浏览别人定义的层次结构时，宽而浅的菜单通常优于深而窄的菜单。Hick 法则（Hick's Law）也提醒我们，人在 N 个选项中做出选择所需的反应时间与 log₂(N+1) 成正比，即选项越多反应越慢，但增速递减。
+</p>
+
+<p>
+但工作区管理跟浏览菜单有一个关键区别。菜单的层次是别人定的，用户只能被动适应；工作区的树是用户自己动手建的，每一层放什么自己说了算。作者认为，当树的控制权在用户自己手里时，这些反面结论就不太适用了。他据此列出了四个条件来判断什么时候树形结构是对的。
+</p>
+
+<ol class="org-ol">
+<li>底层任务本身有层次结构（修 bug、重构、排查问题都有）</li>
+<li>用户自己创建和控制结构，不用去记忆别人定义的</li>
+<li>每一层的兄弟空间数量不超过工作记忆上限。意思是，树形结构用层数（深度）而不是每层的分支数（宽度）来表达复杂度。一个深度为 3、每层 3-5 个兄弟的树，能表达几十个工作区的结构，但你在每一层需要记住的选项始终只有 3-5 个，不会撑爆工作记忆</li>
+<li>支持识别而非回忆，modeline 显示当前位置和同级兄弟，用户认出自己在哪，不用硬记</li>
+</ol>
+
+<p>
+space-tree 就是按这四个条件设计的。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orge5761d7" class="outline-2">
+<h2 id="orge5761d7">space-tree 的设计：三张哈希表</h2>
+<div class="outline-text-2" id="text-orge5761d7">
+<p>
+space-tree 的代码很精干，目前大约 680 行 Elisp。核心思路只有两个（加上一个可选的命名扩展）。
+</p>
+
+<p>
+每个空间用一个整数列表标识，从左到右读就是从根到目标的空间路径。比如 (2 1 3) 表示「从顶层空间 2 开始，下到它的第一个子空间，再到那个子空间的第三个子空间」。
+</p>
+
+<p>
+三张哈希表分工明确。
+</p>
+
+<ol class="org-ol">
+<li><code>space-tree-tree</code> 树形结构表，嵌套的哈希表，键是整数空间号，值是子表。这张表编码了「空间之间的父子关系」</li>
+<li><code>space-tree-address-wconf-tbl</code> 窗口布局快照表，平的哈希表，键是地址列表，值是 <code>window-state-get</code> 返回的窗口状态数据。这张表编码了「每个空间里有什么窗口」</li>
+<li><code>space-tree-space-name-tbl</code> 可选名称表，平的哈希表，只有用户主动命名的空间才会出现在这里。这张表编码了「哪些空间有名字」</li>
+</ol>
+
+<p>
+三张表分开存，关联很清晰。第一张告诉你在哪，第二张告诉你有什么，第三张告诉你叫什么。
+</p>
+
+<p>
+切换到某个空间的操作就是查第二张表，把结果传给 <code>window-state-put</code> 。创建子空间就是沿第一张表走到父节点，加一个新键，然后渲染一个空白（只有 scratch buffer）的工作区。删除空间就是删除结构表里的入口和对应的快照和名称。
+</p>
+
+<p>
+除了这三张表，还有两个很小的状态。一个最近访问地址列表（用来实现「回到上一个空间」），一个记录当前地址的变量。全部状态库存就这么多。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdb9baf1" class="outline-2">
+<h2 id="orgdb9baf1">上手配置 + 实操场景</h2>
+<div class="outline-text-2" id="text-orgdb9baf1">
+<p>
+安装用 <code>use-package</code> 从 GitHub 获取：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> space-tree
+  <span class="org-builtin">:ensure</span> (<span class="org-builtin">:host</span> github <span class="org-builtin">:repo</span> <span class="org-string">"chiply/space-tree"</span>)
+  <span class="org-builtin">:config</span>
+  (space-tree-init)
+
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#39030;&#23618;&#31354;&#38388;&#65306;Super + &#25968;&#23383;
+</span>  (general-define-key
+   <span class="org-string">"s-1"</span> #'space-tree-to-1
+   <span class="org-string">"s-2"</span> #'space-tree-to-2
+   <span class="org-string">"s-3"</span> #'space-tree-to-3
+   <span class="org-string">"s-4"</span> #'space-tree-to-4
+   <span class="org-string">"s-5"</span> #'space-tree-to-5
+   <span class="org-string">"s-6"</span> #'space-tree-to-6
+   <span class="org-string">"s-7"</span> #'space-tree-to-7
+   <span class="org-string">"s-8"</span> #'space-tree-to-8
+   <span class="org-string">"s-9"</span> #'space-tree-to-9
+
+   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23376;&#31354;&#38388;&#65288;&#24403;&#21069;&#39030;&#23618;&#31354;&#38388;&#19979;&#30340;&#31532; 2 &#23618;&#65289;
+</span>   <span class="org-string">"s-a"</span> #'space-tree-sub-1
+   <span class="org-string">"s-s"</span> #'space-tree-sub-2
+   <span class="org-string">"s-d"</span> #'space-tree-sub-3
+   <span class="org-string">"s-f"</span> #'space-tree-sub-4
+   <span class="org-string">"s-g"</span> #'space-tree-sub-5
+
+   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23385;&#31354;&#38388;&#65288;&#24403;&#21069;&#23376;&#31354;&#38388;&#19979;&#30340;&#31532; 3 &#23618;&#65289;
+</span>   <span class="org-string">"s-A"</span> #'space-tree-sub-sub-1
+   <span class="org-string">"s-S"</span> #'space-tree-sub-sub-2
+   <span class="org-string">"s-D"</span> #'space-tree-sub-sub-3
+   <span class="org-string">"s-F"</span> #'space-tree-sub-sub-4
+   <span class="org-string">"s-G"</span> #'space-tree-sub-sub-5
+
+   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#23548;&#33322;
+</span>   <span class="org-string">"M-S-&lt;tab&gt;"</span>   #'space-tree-switch-space-by-name
+   <span class="org-string">"M-&lt;tab&gt;"</span>     #'space-tree-go-to-last-space
+   <span class="org-string">"C-M-&lt;tab&gt;"</span>   #'space-tree-go-right
+   <span class="org-string">"C-M-S-&lt;tab&gt;"</span> #'space-tree-go-left
+
+   <span class="org-comment-delimiter">;; </span><span class="org-comment">&#21024;&#38500;&#24403;&#21069;&#31354;&#38388;
+</span>   <span class="org-string">"s-_"</span> #'space-tree-delete-space)
+
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">Evil &#29992;&#25143;&#30340;&#24555;&#25463;&#38190;
+</span>  (general-define-key
+   <span class="org-builtin">:states</span> '(normal visual)
+   <span class="org-builtin">:keymaps</span> 'override
+   <span class="org-string">"gt"</span> #'space-tree-switch-current-level
+   <span class="org-string">"gT"</span> #'space-tree-switch-space-by-digit-arg
+   <span class="org-string">"g+"</span> #'space-tree-create-space-top-level
+   <span class="org-string">"gn"</span> #'space-tree-create-space-current-level))
+</pre>
+</div>
+
+<p>
+如果用不了 Super 键（被操作系统拦截了），换成 Hyper 或 Meta-Super 组合也行。不用 Evil 的话把后半段删掉。
+</p>
+
+<p>
+作者给了一个具体场景。假设他在修一个测试失败。
+</p>
+
+<ul class="org-ul">
+<li>按 <code>s-2</code> 切换到空间 2（顶层），先把测试运行器窗口摆好</li>
+<li>按 <code>s-a</code> （ <code>space-tree-sub-1</code> ）从空间 2 分支到 2.1，打开测试源码</li>
+<li>再按 <code>s-s</code> （ <code>space-tree-sub-2</code> ）从空间 2 分支到 2.2，打开实现代码</li>
+<li>按 <code>s-d</code> （ <code>space-tree-sub-3</code> ）创建同级空间 2.3，放堆栈追踪</li>
+</ul>
+
+<p>
+每个空间保持自己离开时的窗口布局。当前在哪个空间、下面是哪些分支，mode-line 上都有显示。修完后在空间 2.1、2.2、2.3 里分别按 <code>s-_</code> （ <code>space-tree-delete-space</code> ），整个子树一起消失，干净利落。
+</p>
+
+<p>
+除此之外，space-tree 还支持给空间命名后用名称跳转、复制粘贴工作区布局、以及 mode-line 显示当前位置等操作，完整的命令列表在项目的 <a href="https://github.com/chiply/space-tree">README</a>。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2092e54" class="outline-2">
+<h2 id="org2092e54">与同类工具的对比</h2>
+<div class="outline-text-2" id="text-org2092e54">
+<p>
+作者整理了一张功能矩阵对比 8 个同类工具。核心维度是结构、命名、作用域、持久化。
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">工具</th>
+<th scope="col" class="org-left">结构</th>
+<th scope="col" class="org-left">命名</th>
+<th scope="col" class="org-left">作用域</th>
+<th scope="col" class="org-left">持久化</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">tab-bar-mode</td>
+<td class="org-left">扁平</td>
+<td class="org-left">可选</td>
+<td class="org-left">窗口</td>
+<td class="org-left">通过 desktop</td>
+</tr>
+
+<tr>
+<td class="org-left">eyebrowse</td>
+<td class="org-left">扁平</td>
+<td class="org-left">可选</td>
+<td class="org-left">窗口</td>
+<td class="org-left">可选</td>
+</tr>
+
+<tr>
+<td class="org-left">perspective.el</td>
+<td class="org-left">扁平</td>
+<td class="org-left">必有</td>
+<td class="org-left">缓冲区+窗口</td>
+<td class="org-left">支持</td>
+</tr>
+
+<tr>
+<td class="org-left">persp-mode</td>
+<td class="org-left">扁平</td>
+<td class="org-left">必有</td>
+<td class="org-left">缓冲区+窗口</td>
+<td class="org-left">支持</td>
+</tr>
+
+<tr>
+<td class="org-left">activities.el</td>
+<td class="org-left">扁平</td>
+<td class="org-left">必有</td>
+<td class="org-left">帧+窗口</td>
+<td class="org-left">支持（书签）</td>
+</tr>
+
+<tr>
+<td class="org-left">burly</td>
+<td class="org-left">扁平</td>
+<td class="org-left">必有</td>
+<td class="org-left">窗口+帧</td>
+<td class="org-left">支持（书签）</td>
+</tr>
+
+<tr>
+<td class="org-left">beframe</td>
+<td class="org-left">逐帧(每个 frame 只能看到从它自己里面打开的缓冲区)</td>
+<td class="org-left">不适用</td>
+<td class="org-left">逐帧缓冲区</td>
+<td class="org-left">不支持</td>
+</tr>
+
+<tr>
+<td class="org-left">workgroups2</td>
+<td class="org-left">扁平</td>
+<td class="org-left">必有</td>
+<td class="org-left">窗口</td>
+<td class="org-left">支持</td>
+</tr>
+
+<tr>
+<td class="org-left">space-tree</td>
+<td class="org-left"><b>任意</b></td>
+<td class="org-left">可选</td>
+<td class="org-left">窗口</td>
+<td class="org-left">仅当前会话</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+space-tree 的独特之处首先在「结构」列，只有它是「任意深度」。其他所有工具都给你扁平的列表配上不同的附加功能，但空间的组织方式始终是一维的。
+</p>
+
+<p>
+作者还特意列出了 space-tree <b>不做</b> 的事，不做缓冲区作用域、不跨 session 恢复窗口、不跟 <code>project.el</code> 联动。这些功能不是做不了，而是刻意不做——因为缓冲区作用域和持久化已经有 <code>perspective.el</code> 、 <code>burly</code> 等工具做得很好了，space-tree 跟它们自由组合就好。那些把缓冲区作用域和窗口布局打包在一起的工具，对不需要缓冲区作用域的用户来说就是捆绑销售。space-tree 的克制恰恰是为了兼容性：只做一件事（窗口布局管理），然后让 Emacs 的 <code>project.el</code> 、 <code>recentf</code> 、 <code>consult-buffer</code> 各司其职。
+</p>
+
+<p>
+如果想试试，项目在 <a href="https://github.com/chiply/space-tree">GitHub</a>。README 里有完整的命令参考。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-31</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/emacs-workspace-space-tree">Emacs workspace space-tree</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; qtqeh0lh4sgepnqtebzm4mqhhe &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
