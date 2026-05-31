@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：ox-skills——用 Org-mode 管理 Claude Code 的 Skill 定义 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="ox-skills 是一个 Org exporter backend，把 Org 文件导出为带 YAML frontmatter 的 SKILL.md 文件。它让你用 Org-mode 编写 AI coding assistant 的 skill 定义，通过 org-export 一键生成目标格式，还支持动态上下文注入和批量管理。本文从实际操作出发，展示完整的编写→导出→使用流程。" />
+  <meta name="keywords" content="Emacs, Org-mode, Claude Code, AI" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：ox-skills——用 Org-mode 管理 Claude Code 的 Skill 定义</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga881874">一个 skill 从 Org 到 SKILL.md</a></li>
+<li><a href="#orgf4e901f">批量管理，一个文件管多个 skill</a></li>
+<li><a href="#orgdf2fdcd">局限：只管 SKILL.md，不管 skill 目录里的其他文件</a></li>
+<li><a href="#org5553a54">安装</a></li>
+<li><a href="#org1b6bba7">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://github.com/gicrisf/ox-skills">ox-skills</a> 是一个 Org exporter backend，做一件事，把 Org 文件导出为带 YAML frontmatter 的 SKILL.md 文件。
+</p>
+
+<p>
+如果你用 Claude Code 或 OpenCode 这类 AI coding assistant，迟早会写自己的 skill（一种用 Markdown + YAML frontmatter 定义的提示词模板）。手写 YAML frontmatter 很繁琐，skill 的内容（指令、代码示例、检查清单）说到底就是结构化文本，用 Org-mode 管理顺手得多。ox-skills 把这个流程打通了，在 Org 里写 skill，一键导出成 AI 工具需要的格式。
+</p>
+
+<div id="outline-container-orga881874" class="outline-2">
+<h2 id="orga881874">一个 skill 从 Org 到 SKILL.md</h2>
+<div class="outline-text-2" id="text-orga881874">
+<p>
+假设我们要写一个审查当前未提交改动的 skill。用 ox-skills 的方式，Org 文件长这样，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-meta-line">#+SKILL_NAME: git-review</span>
+<span class="org-org-meta-line">#+SKILL_DESCRIPTION: Review current uncommitted changes and suggest improvements</span>
+<span class="org-org-meta-line">#+SKILL_ALLOWED_TOOLS: Bash Read</span>
+<span class="org-org-meta-line">#+SKILL_USER_INVOCABLE: true</span>
+<span class="org-org-meta-line">#+SKILL_BASE_DIR: ~/.claude/skills</span>
+
+Review the current uncommitted changes for:
+
+1. <span class="org-bold">*Bugs*</span>: Logic errors, edge cases, missing error handling
+2. <span class="org-bold">*Style*</span>: Naming, function length, code organization
+3. <span class="org-bold">*Security*</span>: Input validation, injection risks
+
+Be constructive. Prioritize findings by severity.
+
+<span class="org-org-level-1">* Current changes</span>
+
+<span class="org-org-block-begin-line">#+begin_src sh :inject yes
+</span><span class="org-org-block">git diff HEAD
+</span><span class="org-org-block-end-line">#+end_src</span>
+</pre>
+</div>
+
+<p>
+按 <code>C-c C-e s s</code> （或者 <code>M-x org-export-dispatch</code> 选 <code>s s</code> ）导出后，ox-skills 在 <code>~/.claude/skills/git-review/SKILL.md</code> 生成这样的文件，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-yaml"><span class="org-comment">---</span>
+<span class="org-variable-name">name</span>: git-review
+<span class="org-variable-name">description</span>: Review current uncommitted changes and suggest improvements
+<span class="org-variable-name">allowed-tools</span>: [Bash, Read]
+<span class="org-variable-name">user-invocable</span>: <span class="org-constant">true</span>
+<span class="org-comment">---</span>
+
+<span class="org-variable-name">Review the current uncommitted changes for</span>:
+
+1. *<span class="org-function-name">*Bugs</span>**: Logic errors, edge cases, missing error handling
+2. *<span class="org-function-name">*Style</span>**: Naming, function length, code organization
+3. *<span class="org-function-name">*Security</span>**: Input validation, injection risks
+
+Be constructive. Prioritize findings by severity.
+
+<span class="org-comment-delimiter">## </span><span class="org-comment">Current changes
+</span>
+```!
+git diff HEAD
+```
+</pre>
+</div>
+
+<p>
+对比源文件和产物，能看出 ox-skills 做了什么。 <code>#+SKILL_*</code> 关键字变成 YAML frontmatter 里的对应字段，Org 的正文变成 Markdown 正文， <code>*Current changes*</code> 标题变成 <code>## Current changes</code> ，加了 <code>:inject yes</code> 的 src block 变成了带叹号的代码围栏（区别于普通的代码围栏）。
+</p>
+
+<p>
+带叹号的代码围栏是关键差异。普通代码块是静态内容，带叹号的围栏会被 Claude Code / OpenCode 在调用 skill 时实际执行，把运行结果注入到上下文里。你调用 <code>git-review</code> skill 的时候，AI 工具先跑 <code>git diff HEAD</code> ，拿到当前改动，再基于这个结果做审查。手写 SKILL.md 也可以直接写带叹号的围栏，但 ox-skills 让你用 Org 语法（ <code>:inject yes</code> ）来表达，跟其他 src block 的写法一致。
+</p>
+
+<p>
+*关键词对照。 * ox-skills 支持的 <code>#+SKILL_*</code> 关键字和对应的 YAML 字段如下，
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Org 关键字</th>
+<th scope="col" class="org-left">YAML 字段</th>
+<th scope="col" class="org-left">类型</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>#+SKILL_NAME</code></td>
+<td class="org-left"><code>name</code></td>
+<td class="org-left">字符串</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_DESCRIPTION</code></td>
+<td class="org-left"><code>description</code></td>
+<td class="org-left">字符串</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_WHEN_TO_USE</code></td>
+<td class="org-left"><code>when_to_use</code></td>
+<td class="org-left">字符串</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_ALLOWED_TOOLS</code></td>
+<td class="org-left"><code>allowed-tools</code></td>
+<td class="org-left">列表（空格分隔）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_USER_INVOCABLE</code></td>
+<td class="org-left"><code>user-invocable</code></td>
+<td class="org-left">布尔（ <code>true=/=false</code> ）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_MODEL</code></td>
+<td class="org-left"><code>model</code></td>
+<td class="org-left">字符串</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>#+SKILL_EFFORT</code></td>
+<td class="org-left"><code>effort</code></td>
+<td class="org-left">字符串</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+上表是常用字段，完整列表（含 <code>SKILL_ARGUMENTS</code> 、 <code>SKILL_CONTEXT</code> 、 <code>SKILL_AGENT</code> 等）见 <a href="https://github.com/gicrisf/ox-skills">项目 README</a> 。另外示例里的 <code>#+SKILL_BASE_DIR</code> 控制输出文件写到哪个目录，它不会被导出到 YAML 里。
+</p>
+
+<p>
+列表类型的值用空格分隔，多个词用引号括起来。布尔类型接受 <code>true=/=yes</code> 或 <code>false=/=no</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf4e901f" class="outline-2">
+<h2 id="orgf4e901f">批量管理，一个文件管多个 skill</h2>
+<div class="outline-text-2" id="text-orgf4e901f">
+<p>
+用着用着你会积累十几个甚至几十个 skill。ox-skills 支持把多个 skill 放在同一个 Org 文件里，给每个标题加属性抽屉（property drawer）设置元数据，一次性全部导出。
+</p>
+
+<p>
+注意命名变化：文件级用 <code>#+SKILL_NAME</code> ，子树属性用 <code>EXPORT_SKILL_NAME</code> （多了 <code>EXPORT_</code> 前缀）。两种写法效果一样，只是位置不同，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-meta-line">#+SKILL_BASE_DIR: ~/.claude/skills</span>
+
+<span class="org-org-level-1">* Review skill</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_NAME:</span> <span class="org-org-property-value">git-review</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_DESCRIPTION:</span> <span class="org-org-property-value">Review current uncommitted changes</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_ALLOWED_TOOLS:</span> <span class="org-org-property-value">Bash Read</span>
+<span class="org-org-drawer">:END:</span>
+
+Review instructions here...
+
+<span class="org-org-level-1">* Deploy skill</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_NAME:</span> <span class="org-org-property-value">deploy</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_DESCRIPTION:</span> <span class="org-org-property-value">Deploy to production</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_ALLOWED_TOOLS:</span> <span class="org-org-property-value">Bash</span>
+<span class="org-org-drawer">:END:</span>
+
+Deploy instructions here...
+</pre>
+</div>
+
+<p>
+按 <code>C-c C-e s w</code> （WIM 导出，"What I Mean"，导出当前子树或文件），ox-skills 会遍历当前范围内的每个带 <code>EXPORT_SKILL_NAME</code> 属性的子树，各导出一个 SKILL.md 。上面的例子会在 <code>~/.claude/skills/git-review/SKILL.md</code> 和 <code>~/.claude/skills/deploy/SKILL.md</code> 各生成一个文件。
+</p>
+
+<p>
+如果 skill 需要按目录组织（比如把工程类 skill 放在 <code>engineering/</code> 下），用 <code>EXPORT_SKILL_SUBDIR</code> 属性，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* Engineering</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_SUBDIR:</span> <span class="org-org-property-value">engineering</span>
+<span class="org-org-drawer">:END:</span>
+
+<span class="org-org-level-2">** Code Review</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_NAME:</span> <span class="org-org-property-value">code-review</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_DESCRIPTION:</span> <span class="org-org-property-value">Review code changes</span>
+<span class="org-org-drawer">:END:</span>
+...
+</pre>
+</div>
+
+<p>
+这样导出路径变成 <code>~/.claude/skills/engineering/code-review/SKILL.md</code> 。子目录层级可以嵌套，ox-skills 会沿着上层标题的 <code>EXPORT_SKILL_SUBDIR</code> 逐层拼接路径。没有 <code>EXPORT_SKILL_NAME</code> 的标题只贡献路径，本身不会被导出。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgdf2fdcd" class="outline-2">
+<h2 id="orgdf2fdcd">局限：只管 SKILL.md，不管 skill 目录里的其他文件</h2>
+<div class="outline-text-2" id="text-orgdf2fdcd">
+<p>
+ox-skills 只导出 SKILL.md 这一个文件。如果你的 skill 依赖辅助脚本、参考文档（比如 <code>scripts/</code> 和 <code>references/</code> 目录下的文件），这些不会自动管理。你需要自己维护 skill 目录下的完整结构。
+</p>
+
+<p>
+变通办法是用 org-babel 的 <code>:tangle</code> 。在 skills.org 里把脚本作为 src block 放在对应 skill 的子树下，用 <code>:tangle</code> 指定输出路径：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org"><span class="org-org-level-1">* url2blog</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_NAME:</span> <span class="org-org-property-value">url2blog</span>
+<span class="org-org-special-keyword">:EXPORT_SKILL_DESCRIPTION:</span> <span class="org-org-property-value">&#20174; URL &#35835;&#21462;&#20869;&#23481;&#29983;&#25104; Org-mode &#21338;&#25991;</span>
+<span class="org-org-drawer">:END:</span>
+
+skill &#27491;&#25991;...
+
+<span class="org-org-level-3">*** lint_org.el</span>
+<span class="org-org-drawer">:PROPERTIES:</span>
+<span class="org-org-special-keyword">:HEADER-ARGS:</span> <span class="org-org-property-value">:tangle ~/.claude/skills/url2blog/scripts/lint_org.el</span>
+<span class="org-org-drawer">:END:</span>
+
+<span class="org-org-block-begin-line">#+begin_src emacs-lisp
+</span><span class="org-org-block"><span class="org-comment-delimiter">;; </span></span><span class="org-org-block"><span class="org-comment">lint &#33050;&#26412;&#20869;&#23481;
+</span></span><span class="org-org-block-end-line">#+end_src</span>
+</pre>
+</div>
+
+<p>
+这样工作流变成两步， <code>C-c C-e s w</code> 导出所有 SKILL.md ， <code>C-c C-v t</code> （ <code>M-x org-babel-tangle</code> ）提取脚本到 skill 目录。两个 Org 原生机制拼起来，勉强算完整。缺点是 skills.org 会变得很长，所有脚本内容都堆在一个文件里。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5553a54" class="outline-2">
+<h2 id="org5553a54">安装</h2>
+<div class="outline-text-2" id="text-org5553a54">
+<p>
+四种方式选一个，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp"><span class="org-comment-delimiter">;; </span><span class="org-comment">Straight
+</span>(<span class="org-keyword">use-package</span> ox-skills
+  <span class="org-builtin">:straight</span> (<span class="org-builtin">:host</span> github <span class="org-builtin">:repo</span> <span class="org-string">"gicrisf/ox-skills"</span>))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">Emacs 29+ &#20869;&#32622; :vc
+</span>(<span class="org-keyword">use-package</span> ox-skills
+  <span class="org-builtin">:vc</span> (<span class="org-builtin">:url</span> <span class="org-string">"https://github.com/gicrisf/ox-skills"</span>
+            <span class="org-builtin">:rev</span> <span class="org-builtin">:newest</span>
+            <span class="org-builtin">:branch</span> <span class="org-string">"main"</span>))
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">Doom Emacs
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">packages.el:
+</span>(package! ox-skills <span class="org-builtin">:recipe</span> (<span class="org-builtin">:host</span> github <span class="org-builtin">:repo</span> <span class="org-string">"gicrisf/ox-skills"</span>))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">config.el:
+</span>(use-package! ox-skills)
+
+<span class="org-comment-delimiter">;; </span><span class="org-comment">Spacemacs
+</span><span class="org-comment-delimiter">;; </span><span class="org-comment">&#22312; dotspacemacs-configuration-layers &#25110; dotspacemacs-additional-packages &#37324;&#21152;&#65306;
+</span>(ox-skills <span class="org-builtin">:location</span> (recipe <span class="org-builtin">:fetcher</span> github <span class="org-builtin">:repo</span> <span class="org-string">"gicrisf/ox-skills"</span>))
+<span class="org-comment-delimiter">;; </span><span class="org-comment">&#28982;&#21518;&#22312; dotspacemacs/user-config &#37324;&#65306;
+</span>(<span class="org-keyword">use-package</span> ox-skills)
+</pre>
+</div>
+
+<p>
+安装后，Org 导出菜单里会多一个 <code>s</code> 键（ <code>C-c C-e s</code> ），下级菜单分别是 <code>s</code> 导出当前文件到一个 SKILL.md ， <code>S</code> 导出到临时缓冲区（预览用）， <code>w</code> 导出当前子树或文件， <code>a</code> 导出所有子树或文件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1b6bba7" class="outline-2">
+<h2 id="org1b6bba7">小结</h2>
+<div class="outline-text-2" id="text-org1b6bba7">
+<p>
+ox-skills 解决的问题不大但很实在，让 skill 定义回到 Org 生态。你用 Org 管理笔记、知识库、任务，现在 skill 也在一起了，不用另外手写 YAML frontmatter，不用单独维护 Markdown 模板。 如果你同时是 Org-mode 重度用户和 Claude Code 使用者，值得一试。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-30</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/org-mode">Org-mode</a> : <a href="../../../../../tags/claude-code">Claude Code</a> : <a href="../../../../../tags/ai">AI</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; sxgrb1ocwjxexfz2ozgtx0m0bd &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
