@@ -1,0 +1,233 @@
+#+TITLE: TIL: MySQL 慢了从哪查起——六个工具的排查顺序
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: MySQL,性能监控,mysqladmin,mytop,innotop,pt-query-digest,MySQLTuner,mysqlslap,TIL
+#+DATE: [2026-05-30 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 从"数据库慢了"的排查场景出发，按基线检查、实时监控、InnoDB 诊断、慢查询定位、配置调优、压测验证六步，串起 mysqladmin、mytop、innotop、pt-query-digest、MySQLTuner、mysqlslap 六个命令行工具。每个环节只看一两个关键指标。
+
+TecMint 上有篇 [[https://www.tecmint.com/mysql-performance-monitoring/][文章]] 介绍了六个 MySQL 性能监控的命令行工具。工具清单不难搜到，但这几个工具恰好覆盖了从"接到投诉"到"验证修复"的完整排查链路，理成工作流比单独学每个工具有用。
+
+** 是什么
+
+数据库慢了怎么查？我的习惯是先看基线数字，判断是不是真的在变慢；再看实时状态，确认现在正在发生什么；如果线程正常但查询就是慢，用 InnoDB 诊断工具看看是不是引擎层的问题；接着翻慢查询日志，揪出拖后腿的 SQL；然后检查配置参数有没有不合理的；改完东西之后跑一轮压测，确认改动生效。
+
+| 步骤        | 工具              | 关键指标                                |
+|-------------+-------------------+-----------------------------------------|
+| 基线检查    | =mysqladmin=      | Slow queries 累计数、Threads 数         |
+| 实时监控    | =mytop=           | qps now（实时每秒查询数）、正在跑的 SQL |
+| InnoDB 诊断 | =innotop=         | Buffer Pool 命中率、锁等待              |
+| 慢查询定位  | =pt-query-digest= | Response time 占比最高的查询            |
+| 配置检查    | =MySQLTuner=      | [!!] 标记的参数问题                     |
+| 压测验证    | =mysqlslap=       | 改前改后的平均耗时对比                  |
+
+这些步骤之间有依赖关系。比如你不知道基线的 =Slow queries= 是多少，就没法判断慢查询是不是在加速增长。 =mytop= 看到线程数正常但查询就是慢，就轮到 =innotop= 看是不是 InnoDB 层的问题（缓冲池不够或者锁竞争）。不开慢查询日志的话， =pt-query-digest= 也没数据可吃。调完参数不压测，等于盲改。
+
+** 为什么值得关注
+
+排查 MySQL 性能问题时特别容易犯的毛病就是跳步，一上来就改 =innodb_buffer_pool_size= ，或者到处加索引，但你还没搞清楚到底是查询慢还是连接数爆了。按依赖顺序排查，每步只盯一两个关键指标，能少走弯路。
+
+另外有个坑，这几个工具的安装方式差别挺大。 =mysqladmin= 和 =mysqlslap= 是 MySQL 自带的， =mytop= 原版 2009 年就停更了得找社区 fork， =innotop= 大部分发行版有包但名字不一样， =pt-query-digest= 要加 Percona 仓库， =MySQLTuner= 倒是省事，单个 Perl 脚本下载就能跑。记住哪个工具怎么装、该看什么，比死记参数管用。
+
+** 怎么用
+
+*** 第一步：记基线
+
+=mysqladmin= 是 MySQL 自带的管理工具，不用额外安装：
+
+#+begin_src shell
+mysqladmin -u root -p status
+#+end_src
+
+#+begin_example
+Uptime: 475424  Threads: 9  Questions: 2491823  Slow queries: 14  Opens: 412  ...
+#+end_example
+
+记住 =Slow queries= 的值。这个数字只增不减（服务器重启才归零），过一小时再查一次，从 14 涨到 140 就说明这一小时出了问题。 =Threads= 数如果逼近 =max_connections= 上限，新连接会被直接拒绝。
+
+持续观察加 =-i 2= 每 2 秒刷新：
+
+#+begin_src shell
+mysqladmin -u root -p -i 2 status
+#+end_src
+
+*** 第二步：看实时
+
+=mytop= 提供类似 Linux =top= 的实时视图，能看到每秒查询数和正在跑的 SQL：
+
+#+begin_src shell
+mytop -u root -p YourPassword -h localhost
+#+end_src
+
+=mytop= 的 =-p= 后面必须跟密码，不像 =mysql= 那样单独写 =-p= 会弹出交互提示。嫌命令行暴露密码的话，可以在 =~/.mytop= 里写配置：
+
+#+begin_src conf
+user=root
+pass=YourPassword
+host=localhost
+db=mysql
+#+end_src
+
+写完后记得 =chmod 600 ~/.mytop= ，否则别的用户能读到密码。
+
+#+begin_example
+MySQL on localhost (8.0.36)                up 5+12:03:44 [12:45:01]
+ Queries: 2.5M   qps:   87   Slow:    14   Se/In/Up/De(%):  62/18/14/06
+             qps now:   92   Slow qps: 0.3  Threads:    9 (   8/  1)
+
+      Id    User       Host/IP         DB      Time    Cmd Query or State
+      112    app_user   192.168.1.45    mydb       0    Query SELECT * FROM orders WHERE...
+#+end_example
+
+=qps now= 是实时的每秒查询数。这个数字飙升但应用响应变慢，就是负载问题。下半部分能看到哪个用户在跑什么 SQL。
+
+注意，原版 mytop 2009 年停更， =apt install mytop= 在 MySQL 8 上装不上。要用社区 fork（ [[https://github.com/fevangelou/mytop][fevangelou/mytop]] ），安装步骤：
+
+#+begin_src shell
+# Ubuntu/Debian
+sudo apt install libdbi-perl libdbd-mysql-perl libterm-readkey-perl
+cd ~ && git clone https://github.com/fevangelou/mytop.git
+cd mytop && chmod +x mytop
+sudo cp mytop /usr/local/sbin/
+
+# RHEL/Rocky Linux
+sudo dnf install perl-DBI perl-DBD-MySQL perl-TermReadKey
+cd ~ && git clone https://github.com/fevangelou/mytop.git
+cd mytop && chmod +x mytop
+sudo cp mytop /usr/local/sbin/
+#+end_src
+
+*** 第三步：看 InnoDB 内部状态
+
+=mytop= 看的是线程和查询列表，但如果线程数正常、查询也跑着就是慢，问题大概率在 InnoDB 引擎层。 =innotop= 能看到 InnoDB 的缓冲池状态、锁等待和事务详情。
+
+大部分发行版有包，直接装：
+
+#+begin_src shell
+sudo apt install innotop      # Ubuntu/Debian
+sudo dnf install innotop      # RHEL/Rocky Linux
+sudo pacman -S innotop        # Arch Linux
+#+end_src
+
+如果仓库里没有，从 GitHub 装也行： =git clone https://github.com/innotop/innotop.git= 。装好后连接：
+
+#+begin_src shell
+innotop -u root -p
+#+end_src
+
+#+begin_example
+[RO] InnoDB Txns, InnoDB 8.0.36, 9 threads, 92.0 QPS
+
+CXN     Timeouts  Deadlocks  Txns  RollSegments  History
+local          0          0     3           128       42
+
+ID  User        Host    DB      Time  Undo  Query
+42  app_user    local   mydb       3    18  UPDATE inventory SET qty=qty-1 WHERE...
+#+end_example
+
+重点盯两个东西。第一个是 =Deadlocks= 列，只要不是 0 就说明有事务在互相等锁，需要排查哪两个 SQL 在争同一行。第二个是按 =B= 键切换到 Buffer Pool 视图，看缓冲池命中率。命中率低于 99% 说明内存不够用，数据在走磁盘而不是走内存，这时候调大 =innodb_buffer_pool_size= 比优化 SQL 更管用。
+
+*** 第四步：定位慢查询
+
+先确保慢查询日志开着（超过 1 秒的查询记下来）。
+
+#+begin_src shell
+mysql -u root -p -e "SET GLOBAL slow_query_log = 'ON'; SET GLOBAL long_query_time = 1;"
+#+end_src
+
+注意 =SET GLOBAL= 只对当前运行实例生效，MySQL 重启后失效。要持久化的话写进 =my.cnf= ：
+
+#+begin_src conf
+[mysqld]
+slow_query_log = ON
+long_query_time = 1
+slow_query_log_file = /var/log/mysql/mysql-slow.log
+#+end_src
+
+然后从 Percona Toolkit 安装 =pt-query-digest= ：
+
+#+begin_src shell
+# Ubuntu/Debian
+curl -O https://repo.percona.com/apt/percona-release_latest.generic_all.deb
+sudo apt install ./percona-release_latest.generic_all.deb
+sudo percona-release enable pt release
+sudo apt update && sudo apt install percona-toolkit
+
+# RHEL/Rocky Linux
+sudo yum install -y https://repo.percona.com/yum/percona-release-latest.noarch.rpm
+sudo percona-release enable pt release
+sudo yum install percona-toolkit
+#+end_src
+
+装好后分析慢查询日志：
+
+#+begin_src shell
+pt-query-digest /var/log/mysql/mysql-slow.log
+#+end_src
+
+#+begin_example
+# Overall: 184 total, 8 unique, 0.02 QPS, 0.14x concurrency
+# Attribute          total     min     max     avg     95%  stddev  median
+# Exec time           512s      1s    143s     3s      9s      14s     1s
+
+# Profile
+# Rank  Query ID           Response time  Calls  R/Call  Item
+#    1  0x813031B8BBC3B329  341s 66.6%    42  8.12s   SELECT orders items
+#    2  0xA0CA1BBEDCD1B80D  108s 21.1%    89  1.21s   SELECT users sessions
+#+end_example
+
+=Response time= 的百分比直接告诉你优先级。Rank 1 占了 66% 的慢查询时间，跑了 42 次平均每次 8 秒。加个索引或者改写 JOIN，就能砍掉一大半的慢查询负担。不用把 8 个慢查询都修一遍，修占比最高的那一两条就够了。
+
+同属 Percona Toolkit 的 =pt-mysql-summary= 适合在排查前先跑一遍，了解全局状态：
+
+#+begin_src shell
+pt-mysql-summary -- -u root -p
+#+end_src
+
+它会一次性输出 MySQL 版本、运行端口、数据目录、当前进程列表（ =Command= 列按 Query/Sleep 分类统计）、缓冲池使用率、复制状态等。其中 =Processlist= 部分能看到 =Sleep= 连接占用了多少时间。如果 =Sleep= 的 =SUM(Time)= 很高，说明大量空闲连接没关，是连接池配置的问题而不是查询的问题。第一次登录一台不熟悉的服务器时跑一遍，能快速判断方向。
+
+*** 第五步：检查配置
+
+=MySQLTuner= 是单个 Perl 脚本，下载就能跑：
+
+#+begin_src shell
+wget https://raw.githubusercontent.com/major/MySQLTuner-perl/master/mysqltuner.pl
+perl mysqltuner.pl --user root --ask-pass
+#+end_src
+
+用 =--ask-pass= 交互输入密码，避免密码留在 shell 历史里。
+
+#+begin_example
+[!!] InnoDB buffer pool / data size: 128M / 2G
+[!!] InnoDB buffer pool instances: 1 (recommended 2)
+
+General recommendations:
+    Increase innodb_buffer_pool_size to 1.5G or more
+    Add innodb_buffer_pool_instances = 2 to my.cnf
+#+end_example
+
+=[!!]= 标记的是需要关注的问题。上面这个输出说的是，缓冲池（InnoDB 用来缓存数据和索引的内存区域）只有 128MB，但实际数据有 2GB，大量读操作在走磁盘而不是走内存。把 =innodb_buffer_pool_size= 设到可用内存的 70% 左右，新服务器上这一步改下来效果通常最明显。
+
+*** 第六步：验证效果
+
+改完配置后用 =mysqlslap= （MySQL 自带）跑基准测试，先记下改前的数字，改完再跑一次对比：
+
+#+begin_src shell
+mysqlslap -u root -p --concurrency=50 --iterations=1 \
+  --auto-generate-sql --number-of-queries=200
+#+end_src
+
+#+begin_example
+Benchmark
+        Average number of seconds to run all queries: 3.847 seconds
+        Number of clients running queries: 50
+        Average number of queries per client: 4
+#+end_example
+
+记下 =Average number of seconds= 。加索引后再跑，从 3.8 秒降到 1.2 秒就说明有效。也可以指定真实 SQL 来测特定查询：
+
+#+begin_src shell
+mysqlslap -u root -p --concurrency=25 --iterations=3 \
+  --query="SELECT * FROM mydb.orders WHERE status='pending'" \
+  --create-schema=mydb
+#+end_src
