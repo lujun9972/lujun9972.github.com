@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：别再手写边界用例了，让 Hypothesis 自动找 bug - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="darksun,Claude Code" />
+  <meta name="description" content="手写47个边界用例没发现的bug，Hypothesis用10000个随机输入在30秒内找到了。这不是巧合。property-based testing的思考方式跟传统测试完全不同，从「这个输入应该返回什么」变成「任何输入都应该满足什么」。本文从零开始介绍Hypothesis的使用方法和适用场景，带你完成从example thinking到property thinking的心智转换。" />
+  <meta name="keywords" content="Python,hypothesis,testing,测试" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：别再手写边界用例了，让 Hypothesis 自动找 bug</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org3e0b41b">Property-based testing 是什么</a>
+<ul>
+<li><a href="#orgd49e0e3">三个最常见的适用属性</a></li>
+<li><a href="#org84e1f0a">Round-trip（往返不变性）</a></li>
+<li><a href="#orgc195035">Idempotency（幂等性）</a></li>
+<li><a href="#orgfc7ab0b">Monotonicity（单调性）</a></li>
+</ul>
+</li>
+<li><a href="#orgb64aae1">安装 Hypothesis</a></li>
+<li><a href="#orga78d5df">Strategies，描述你的输入空间</a></li>
+<li><a href="#org8e248d7">Shrinking，找到最小的失败输入</a></li>
+<li><a href="#org3444481">集成 pytest</a></li>
+<li><a href="#org1246bd3">什么时候该用</a>
+<ul>
+<li><a href="#org3d75420">用传统测试来，</a></li>
+<li><a href="#org0591e5c">用 Hypothesis 来，</a></li>
+<li><a href="#org2f9836c">三行护身符</a></li>
+</ul>
+</li>
+<li><a href="#org7368689">结语</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://dev.to/peytongreen_dev/stop-writing-edge-case-tests-let-hypothesis-find-them-instead-5hl0">原文</a>是三年前的一段经历。作者为一个URL标准化器手写了47个边界用例，每个用例都是同样的套路，想一个奇怪的输入，写测试，确认代码能处理。
+</p>
+
+<p>
+然后 Hypothesis 对同一个函数生成了10000个随机输入，30秒内就找到了一个他从未想过要写测试的 bug。当输入全是空白字符时，标准化器静默返回空字符串。
+</p>
+
+<p>
+这47个测试用的全是「看起来像URL」的输入。Hypothesis 能找到空白字符问题，恰恰是因为它不做任何假设，它试图在约束的边界上生成输入来破坏你的函数。这就是核心转变，从描述「例子」变成描述「属性」。
+</p>
+
+<div id="outline-container-org3e0b41b" class="outline-2">
+<h2 id="org3e0b41b">Property-based testing 是什么</h2>
+<div class="outline-text-2" id="text-org3e0b41b">
+<p>
+传统测试会说，给定这个特定输入，我期待这个特定输出。Property-based testing 则换了问法，不管输入是什么，你的函数得守住哪些底线？那些底线就叫不变量（invariant），比如「编码再解码应该返回原始数据」。你描述一条不变量，Hypothesis 自动生成各种输入来检查它是否真的守得住。
+</p>
+
+<p>
+用 Hypothesis 的话，你只写那个不变量，它会自动生成成百上千个输入来尝试证伪它。如果找到失败的用例，它会自动收缩到仍然失败的最简输入。所以你得到的是一个小巧可调试的失败案例，而不是「在5000个字符的字符串上失败了」。
+</p>
+
+<p>
+看代码对比。先看传统测试，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">def</span> <span class="org-function-name">test_round_trip_specific</span>():
+    <span class="org-keyword">assert</span> decode(encode(<span class="org-string">"hello world"</span>)) <span class="org-operator">==</span> <span class="org-string">"hello world"</span>
+</pre>
+</div>
+
+<p>
+再看 property-based 版本，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> hypothesis <span class="org-keyword">import</span> given, strategies <span class="org-keyword">as</span> st
+
+<span class="org-type">@given</span>(st.text())
+<span class="org-keyword">def</span> <span class="org-function-name">test_round_trip_any_string</span>(s):
+    <span class="org-keyword">assert</span> decode(encode(s)) <span class="org-operator">==</span> s
+</pre>
+</div>
+
+<p>
+第二个测试会运行几百次，每次用不同的输入。如果 <code>encode/decode</code> 在 unicode 字符、空字符串、null 字节或恰好256个字符长的字符串上有 bug，Hypothesis 就会找到它。
+</p>
+</div>
+
+<div id="outline-container-orgd49e0e3" class="outline-3">
+<h3 id="orgd49e0e3">三个最常见的适用属性</h3>
+<div class="outline-text-3" id="text-orgd49e0e3">
+<p>
+几乎所有函数都有一些「应该始终成立」的不变量。以下三个是最常见的切入点，
+</p>
+</div>
+</div>
+
+<div id="outline-container-org84e1f0a" class="outline-3">
+<h3 id="org84e1f0a">Round-trip（往返不变性）</h3>
+<div class="outline-text-3" id="text-org84e1f0a">
+<p>
+把数据变形再变回来（编码解码、序列化反序列化、压缩解压），应该得到原始数据。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc195035" class="outline-3">
+<h3 id="orgc195035">Idempotency（幂等性）</h3>
+<div class="outline-text-3" id="text-orgc195035">
+<p>
+对同一个数据执行两次操作，结果应该和执行一次一样。URL 标准化、数据清洗、格式化都属于这类。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfc7ab0b" class="outline-3">
+<h3 id="orgfc7ab0b">Monotonicity（单调性）</h3>
+<div class="outline-text-3" id="text-orgfc7ab0b">
+<p>
+某些操作的结果不会超出输入的范围。比如过滤后的列表不会比原列表长，排序后的结果不会引入新元素。这个性质不如前两个直观，但理解之后你会发现很多场景都适用。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgb64aae1" class="outline-2">
+<h2 id="orgb64aae1">安装 Hypothesis</h2>
+<div class="outline-text-2" id="text-orgb64aae1">
+<p>
+安装不需要注册账号、不需要 API key、不需要配置任何服务，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pip install hypothesis
+</pre>
+</div>
+
+<p>
+如果同时装了 pytest（Hypothesis 测试本来就用 pytest 跑），
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pip install hypothesis pytest
+</pre>
+</div>
+
+<p>
+Hypothesis 是纯 Python 库，输入在本地生成，找到的失败用例存在本地。property-based testing 的全部威力，零外部依赖。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga78d5df" class="outline-2">
+<h2 id="orga78d5df">Strategies，描述你的输入空间</h2>
+<div class="outline-text-2" id="text-orga78d5df">
+<p>
+<code>st</code> 模块用来描述输入空间。几个常用策略，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> hypothesis <span class="org-keyword">import</span> strategies <span class="org-keyword">as</span> st
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#22522;&#26412;&#31867;&#22411;
+</span>st.integers()                       <span class="org-comment-delimiter"># </span><span class="org-comment">&#20219;&#24847;&#25972;&#25968;
+</span>st.integers(min_value<span class="org-operator">=</span>0)            <span class="org-comment-delimiter"># </span><span class="org-comment">&#38750;&#36127;&#25972;&#25968;
+</span>st.floats(allow_nan<span class="org-operator">=</span><span class="org-constant">False</span>)          <span class="org-comment-delimiter"># </span><span class="org-comment">&#28014;&#28857;&#25968;&#65292;&#25490;&#38500; NaN
+</span>st.text()                           <span class="org-comment-delimiter"># </span><span class="org-comment">&#20219;&#24847; unicode &#25991;&#26412;
+</span>st.text(alphabet<span class="org-operator">=</span>st.characters(allowed_categories<span class="org-operator">=</span>(<span class="org-string">'Lu'</span>, <span class="org-string">'Ll'</span>, <span class="org-string">'Nd'</span>)))  <span class="org-comment-delimiter"># </span><span class="org-comment">&#23383;&#27597;&#25968;&#23383;
+</span>st.binary()                         <span class="org-comment-delimiter"># </span><span class="org-comment">&#23383;&#33410;
+</span>st.booleans()                       <span class="org-comment-delimiter"># </span><span class="org-comment">&#24067;&#23572;&#20540;
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#38598;&#21512;&#31867;&#22411;
+</span>st.lists(st.integers())                             <span class="org-comment-delimiter"># </span><span class="org-comment">&#25972;&#25968;&#21015;&#34920;
+</span>st.lists(st.text(), min_size<span class="org-operator">=</span>1, max_size<span class="org-operator">=</span>50)        <span class="org-comment-delimiter"># </span><span class="org-comment">&#26377;&#30028;&#21015;&#34920;
+</span>st.dictionaries(st.text(), st.integers())           <span class="org-comment-delimiter"># </span><span class="org-comment">&#23383;&#20856;
+</span>st.tuples(st.integers(), st.text())                 <span class="org-comment-delimiter"># </span><span class="org-comment">&#23450;&#38271;&#20803;&#32452;
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#32452;&#21512;&#31574;&#30053;
+</span>st.one_of(st.text(), st.none())                     <span class="org-comment-delimiter"># </span><span class="org-comment">text &#25110; None
+</span>st.builds(MyDataClass, name<span class="org-operator">=</span>st.text(), age<span class="org-operator">=</span>st.integers(min_value<span class="org-operator">=</span>0, max_value<span class="org-operator">=</span>150))
+</pre>
+</div>
+
+<p>
+<code>builds</code> 策略算是个亮点。它为数据类或 Pydantic 模型的每个字段分别生成输入，自动构造测试对象，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> hypothesis <span class="org-keyword">import</span> given, strategies <span class="org-keyword">as</span> st
+<span class="org-keyword">from</span> pydantic <span class="org-keyword">import</span> BaseModel
+
+<span class="org-keyword">class</span> <span class="org-type">User</span>(BaseModel):
+    name: <span class="org-builtin">str</span>
+    age: <span class="org-builtin">int</span>
+
+<span class="org-type">@given</span>(st.builds(User, name<span class="org-operator">=</span>st.text(min_size<span class="org-operator">=</span>1), age<span class="org-operator">=</span>st.integers(min_value<span class="org-operator">=</span>0, max_value<span class="org-operator">=</span>150)))
+<span class="org-keyword">def</span> <span class="org-function-name">test_user_serialization_round_trip</span>(user):
+    <span class="org-keyword">assert</span> User.model_validate_json(user.model_dump_json()) <span class="org-operator">==</span> user
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8e248d7" class="outline-2">
+<h2 id="org8e248d7">Shrinking，找到最小的失败输入</h2>
+<div class="outline-text-2" id="text-org8e248d7">
+<p>
+当 Hypothesis 找到一个失败输入时，它不会直接报告原始输入。它会自动收缩，尝试越来越简单的输入，直到找到仍然触发失败的最简用例。
+</p>
+
+<p>
+没有 shrinking 的话，失败报告可能是「在3000个字符的字符串上失败」。有了 shrinking，它变成，
+</p>
+
+<pre class="example" id="org84cd1d5">
+Falsifying example: test_normalize_idempotent(
+    url='',
+)
+</pre>
+
+<p>
+不需要做任何额外配置，所有内置策略都自带 shrinking。用 <code>st.composite</code> 和标准组合器构建的自定义策略也能自动收缩。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3444481" class="outline-2">
+<h2 id="org3444481">集成 pytest</h2>
+<div class="outline-text-2" id="text-org3444481">
+<p>
+Hypothesis 测试看起来就是加了装饰器的 pytest 测试，集成完全无缝，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> pytest
+<span class="org-keyword">from</span> hypothesis <span class="org-keyword">import</span> given, settings, strategies <span class="org-keyword">as</span> st
+<span class="org-keyword">from</span> myapp.normalizer <span class="org-keyword">import</span> normalize_url
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20256;&#32479;&#27979;&#35797;&#8212;&#8212;&#20173;&#28982;&#26377;&#29992;&#65292;&#29992;&#26469;&#25991;&#26723;&#21270;&#39044;&#26399;&#34892;&#20026;
+</span><span class="org-keyword">def</span> <span class="org-function-name">test_normalize_removes_trailing_slash</span>():
+    <span class="org-keyword">assert</span> normalize_url(<span class="org-string">"https://example.com/"</span>) <span class="org-operator">==</span> <span class="org-string">"https://example.com"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">Property &#27979;&#35797;&#8212;&#8212;&#21457;&#29616;&#20256;&#32479;&#27979;&#35797;&#21457;&#29616;&#19981;&#20102;&#30340; bug
+</span><span class="org-type">@given</span>(st.text())
+<span class="org-keyword">def</span> <span class="org-function-name">test_normalize_idempotent</span>(url):
+    <span class="org-keyword">assert</span> normalize_url(normalize_url(url)) <span class="org-operator">==</span> normalize_url(url)
+
+<span class="org-type">@given</span>(st.text(min_size<span class="org-operator">=</span>1))
+<span class="org-keyword">def</span> <span class="org-function-name">test_normalize_never_empty_on_nonempty_input</span>(url):
+    <span class="org-keyword">assert</span> normalize_url(url) <span class="org-operator">!=</span> <span class="org-string">""</span>
+</pre>
+</div>
+
+<p>
+按常规方式运行 pytest 就行，Hypothesis 测试会自动被发现和执行。
+</p>
+
+<p>
+默认情况下，每个测试运行约100个随机示例。你也可以通过 <code>@settings</code> 调整，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> hypothesis <span class="org-keyword">import</span> given, settings, strategies <span class="org-keyword">as</span> st
+
+<span class="org-type">@settings</span>(max_examples<span class="org-operator">=</span>1000)   <span class="org-comment-delimiter"># </span><span class="org-comment">&#22686;&#21152;&#31034;&#20363;&#25968;&#37327;
+</span><span class="org-type">@given</span>(st.text())
+<span class="org-keyword">def</span> <span class="org-function-name">test_important_property</span>(s):
+    ...
+
+<span class="org-type">@settings</span>(max_examples<span class="org-operator">=</span>50)     <span class="org-comment-delimiter"># </span><span class="org-comment">&#20943;&#23569;&#31034;&#20363;&#25968;&#37327;&#65292;&#24555;&#36895;&#36816;&#34892;
+</span><span class="org-type">@given</span>(st.lists(st.integers()))
+<span class="org-keyword">def</span> <span class="org-function-name">test_basic_property</span>(items):
+    ...
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1246bd3" class="outline-2">
+<h2 id="org1246bd3">什么时候该用</h2>
+<div class="outline-text-2" id="text-org1246bd3">
+<p>
+Property-based testing 不是传统测试的替代品，两者结合比单独用任何一个都强。
+</p>
+</div>
+
+<div id="outline-container-org3d75420" class="outline-3">
+<h3 id="org3d75420">用传统测试来，</h3>
+<div class="outline-text-3" id="text-org3d75420">
+<ul class="org-ul">
+<li>文档化预期行为（这个特定输入应该输出什么）</li>
+<li>测试已知的边界用例（你已经想到的那些）</li>
+<li>回归测试（那个 bug 有一个特定输入，把它记下来）</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org0591e5c" class="outline-3">
+<h3 id="org0591e5c">用 Hypothesis 来，</h3>
+<div class="outline-text-3" id="text-org0591e5c">
+<ul class="org-ul">
+<li>处理或转换数据的函数（解析器、标准化器、序列化器）</li>
+<li>有「不管输入是什么，结果都得满足某条规则」的函数（排序稳定性、往返正确性）</li>
+<li>系统边界处的函数，输入空间很大或不可预测</li>
+<li>找到你没想到要找的 bug</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org2f9836c" class="outline-3">
+<h3 id="org2f9836c">三行护身符</h3>
+<div class="outline-text-3" id="text-org2f9836c">
+<p>
+给你的解析器和数据处理函数加上 <code>test_does_not_crash</code> ，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-type">@given</span>(st.text())
+<span class="org-keyword">def</span> <span class="org-function-name">test_does_not_crash</span>(s):
+    <span class="org-doc">"""&#20989;&#25968;&#24212;&#35813;&#33021;&#22788;&#29702;&#20219;&#20309;&#36755;&#20837;&#32780;&#19981;&#25243;&#20986;&#24847;&#22806;&#30340;&#24322;&#24120;&#12290;"""</span>
+    <span class="org-keyword">try</span>:
+        <span class="org-variable-name">result</span> <span class="org-operator">=</span> my_function(s)
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#22914;&#26524;&#27491;&#24120;&#36820;&#22238;&#65292;&#32467;&#26524;&#24212;&#35813;&#26159;&#21512;&#27861;&#31867;&#22411;
+</span>        <span class="org-keyword">assert</span> <span class="org-builtin">isinstance</span>(result, (<span class="org-builtin">str</span>, <span class="org-builtin">type</span>(<span class="org-constant">None</span>)))
+    <span class="org-keyword">except</span> <span class="org-type">ValueError</span>:
+        <span class="org-keyword">pass</span>  <span class="org-comment-delimiter"># </span><span class="org-comment">ValueError &#23545;&#26080;&#25928;&#36755;&#20837;&#26469;&#35828;&#26159;&#39044;&#26399;&#30340;
+</span>    <span class="org-keyword">except</span> <span class="org-type">Exception</span> <span class="org-keyword">as</span> e:
+        <span class="org-comment-delimiter"># </span><span class="org-comment">&#20854;&#20182;&#20219;&#20309;&#24322;&#24120;&#37117;&#26159; bug
+</span>        <span class="org-keyword">raise</span> <span class="org-type">AssertionError</span>(f<span class="org-string">"Unexpected exception for input </span>{s!r}<span class="org-string">: </span>{e}<span class="org-string">"</span>) <span class="org-keyword">from</span> e
+</pre>
+</div>
+
+<p>
+这行代码不断言正确性，它只断言函数不会在任意输入上炸掉。那些「从来只用合法数据调用」的函数，用这个模式一测就能翻出一堆你没想到的 bug。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7368689" class="outline-2">
+<h2 id="org7368689">结语</h2>
+<div class="outline-text-2" id="text-org7368689">
+<p>
+Property-based testing 的学习曲线是心智转换——从「想一个具体输入」变成「描述一个不变量」。一旦转过来，你会开始到处看到不变量。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-31</span>
+    <span class="post-info">2026-05-31</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/hypothesis">hypothesis</a> : <a href="../../../../../tags/testing">testing</a> : <a href="../../../../../tags/测试">测试</a>
+    <span class="post-info">darksun,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; lm5voez41cuu5k0eg3hjwl50ja &lt;dot&gt; xx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">darksun,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
