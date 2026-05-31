@@ -1,0 +1,191 @@
+#+TITLE: 读：ox-skills——用 Org-mode 管理 Claude Code 的 Skill 定义
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, Org-mode, Claude Code, AI
+#+DATE: [2026-05-30 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: ox-skills 是一个 Org exporter backend，把 Org 文件导出为带 YAML frontmatter 的 SKILL.md 文件。它让你用 Org-mode 编写 AI coding assistant 的 skill 定义，通过 org-export 一键生成目标格式，还支持动态上下文注入和批量管理。本文从实际操作出发，展示完整的编写→导出→使用流程。
+
+[[https://github.com/gicrisf/ox-skills][ox-skills]] 是一个 Org exporter backend，做一件事，把 Org 文件导出为带 YAML frontmatter 的 SKILL.md 文件。
+
+如果你用 Claude Code 或 OpenCode 这类 AI coding assistant，迟早会写自己的 skill（一种用 Markdown + YAML frontmatter 定义的提示词模板）。手写 YAML frontmatter 很繁琐，skill 的内容（指令、代码示例、检查清单）说到底就是结构化文本，用 Org-mode 管理顺手得多。ox-skills 把这个流程打通了，在 Org 里写 skill，一键导出成 AI 工具需要的格式。
+
+* 一个 skill 从 Org 到 SKILL.md
+
+假设我们要写一个审查当前未提交改动的 skill。用 ox-skills 的方式，Org 文件长这样，
+
+#+begin_src org
+  ,#+SKILL_NAME: git-review
+  ,#+SKILL_DESCRIPTION: Review current uncommitted changes and suggest improvements
+  ,#+SKILL_ALLOWED_TOOLS: Bash Read
+  ,#+SKILL_USER_INVOCABLE: true
+  ,#+SKILL_BASE_DIR: ~/.claude/skills
+
+  Review the current uncommitted changes for:
+
+  1. *Bugs*: Logic errors, edge cases, missing error handling
+  2. *Style*: Naming, function length, code organization
+  3. *Security*: Input validation, injection risks
+
+  Be constructive. Prioritize findings by severity.
+
+  ,* Current changes
+
+  ,#+begin_src sh :inject yes
+  git diff HEAD
+  ,#+end_src
+#+end_src
+
+按 =C-c C-e s s= （或者 =M-x org-export-dispatch= 选 =s s= ）导出后，ox-skills 在 =~/.claude/skills/git-review/SKILL.md= 生成这样的文件，
+
+#+begin_src yaml
+---
+name: git-review
+description: Review current uncommitted changes and suggest improvements
+allowed-tools: [Bash, Read]
+user-invocable: true
+---
+
+Review the current uncommitted changes for:
+
+1. **Bugs**: Logic errors, edge cases, missing error handling
+2. **Style**: Naming, function length, code organization
+3. **Security**: Input validation, injection risks
+
+Be constructive. Prioritize findings by severity.
+
+## Current changes
+
+```!
+git diff HEAD
+```
+#+end_src
+
+对比源文件和产物，能看出 ox-skills 做了什么。 =#+SKILL_*= 关键字变成 YAML frontmatter 里的对应字段，Org 的正文变成 Markdown 正文， =*Current changes*= 标题变成 =## Current changes= ，加了 =:inject yes= 的 src block 变成了带叹号的代码围栏（区别于普通的代码围栏）。
+
+带叹号的代码围栏是关键差异。普通代码块是静态内容，带叹号的围栏会被 Claude Code / OpenCode 在调用 skill 时实际执行，把运行结果注入到上下文里。你调用 =git-review= skill 的时候，AI 工具先跑 =git diff HEAD= ，拿到当前改动，再基于这个结果做审查。手写 SKILL.md 也可以直接写带叹号的围栏，但 ox-skills 让你用 Org 语法（ =:inject yes= ）来表达，跟其他 src block 的写法一致。
+
+*关键词对照。 * ox-skills 支持的 =#+SKILL_*= 关键字和对应的 YAML 字段如下，
+
+| Org 关键字 | YAML 字段 | 类型 |
+|-----------+----------+------|
+| =#+SKILL_NAME= | =name= | 字符串 |
+| =#+SKILL_DESCRIPTION= | =description= | 字符串 |
+| =#+SKILL_WHEN_TO_USE= | =when_to_use= | 字符串 |
+| =#+SKILL_ALLOWED_TOOLS= | =allowed-tools= | 列表（空格分隔） |
+| =#+SKILL_USER_INVOCABLE= | =user-invocable= | 布尔（ =true=/=false= ） |
+| =#+SKILL_MODEL= | =model= | 字符串 |
+| =#+SKILL_EFFORT= | =effort= | 字符串 |
+
+上表是常用字段，完整列表（含 =SKILL_ARGUMENTS= 、 =SKILL_CONTEXT= 、 =SKILL_AGENT= 等）见 [[https://github.com/gicrisf/ox-skills][项目 README]] 。另外示例里的 =#+SKILL_BASE_DIR= 控制输出文件写到哪个目录，它不会被导出到 YAML 里。
+
+列表类型的值用空格分隔，多个词用引号括起来。布尔类型接受 =true=/=yes= 或 =false=/=no= 。
+
+* 批量管理，一个文件管多个 skill
+
+用着用着你会积累十几个甚至几十个 skill。ox-skills 支持把多个 skill 放在同一个 Org 文件里，给每个标题加属性抽屉（property drawer）设置元数据，一次性全部导出。
+
+注意命名变化：文件级用 =#+SKILL_NAME= ，子树属性用 =EXPORT_SKILL_NAME= （多了 =EXPORT_= 前缀）。两种写法效果一样，只是位置不同，
+
+#+begin_src org
+  ,#+SKILL_BASE_DIR: ~/.claude/skills
+
+  ,* Review skill
+  :PROPERTIES:
+  :EXPORT_SKILL_NAME: git-review
+  :EXPORT_SKILL_DESCRIPTION: Review current uncommitted changes
+  :EXPORT_SKILL_ALLOWED_TOOLS: Bash Read
+  :END:
+
+  Review instructions here...
+
+  ,* Deploy skill
+  :PROPERTIES:
+  :EXPORT_SKILL_NAME: deploy
+  :EXPORT_SKILL_DESCRIPTION: Deploy to production
+  :EXPORT_SKILL_ALLOWED_TOOLS: Bash
+  :END:
+
+  Deploy instructions here...
+#+end_src
+
+按 =C-c C-e s w= （WIM 导出，"What I Mean"，导出当前子树或文件），ox-skills 会遍历当前范围内的每个带 =EXPORT_SKILL_NAME= 属性的子树，各导出一个 SKILL.md 。上面的例子会在 =~/.claude/skills/git-review/SKILL.md= 和 =~/.claude/skills/deploy/SKILL.md= 各生成一个文件。
+
+如果 skill 需要按目录组织（比如把工程类 skill 放在 =engineering/= 下），用 =EXPORT_SKILL_SUBDIR= 属性，
+
+#+begin_src org
+  ,* Engineering
+  :PROPERTIES:
+  :EXPORT_SKILL_SUBDIR: engineering
+  :END:
+
+  ,** Code Review
+  :PROPERTIES:
+  :EXPORT_SKILL_NAME: code-review
+  :EXPORT_SKILL_DESCRIPTION: Review code changes
+  :END:
+  ...
+#+end_src
+
+这样导出路径变成 =~/.claude/skills/engineering/code-review/SKILL.md= 。子目录层级可以嵌套，ox-skills 会沿着上层标题的 =EXPORT_SKILL_SUBDIR= 逐层拼接路径。没有 =EXPORT_SKILL_NAME= 的标题只贡献路径，本身不会被导出。
+
+* 局限：只管 SKILL.md，不管 skill 目录里的其他文件
+
+ox-skills 只导出 SKILL.md 这一个文件。如果你的 skill 依赖辅助脚本、参考文档（比如 =scripts/= 和 =references/= 目录下的文件），这些不会自动管理。你需要自己维护 skill 目录下的完整结构。
+
+变通办法是用 org-babel 的 =:tangle= 。在 skills.org 里把脚本作为 src block 放在对应 skill 的子树下，用 =:tangle= 指定输出路径：
+
+#+begin_src org
+,* url2blog
+:PROPERTIES:
+:EXPORT_SKILL_NAME: url2blog
+:EXPORT_SKILL_DESCRIPTION: 从 URL 读取内容生成 Org-mode 博文
+:END:
+
+skill 正文...
+
+,*** lint_org.el
+:PROPERTIES:
+:HEADER-ARGS: :tangle ~/.claude/skills/url2blog/scripts/lint_org.el
+:END:
+
+,#+begin_src emacs-lisp
+;; lint 脚本内容
+,#+end_src
+#+end_src
+
+这样工作流变成两步， =C-c C-e s w= 导出所有 SKILL.md ， =C-c C-v t= （ =M-x org-babel-tangle= ）提取脚本到 skill 目录。两个 Org 原生机制拼起来，勉强算完整。缺点是 skills.org 会变得很长，所有脚本内容都堆在一个文件里。
+
+* 安装
+
+四种方式选一个，
+
+#+begin_src emacs-lisp
+;; Straight
+(use-package ox-skills
+  :straight (:host github :repo "gicrisf/ox-skills"))
+
+;; Emacs 29+ 内置 :vc
+(use-package ox-skills
+  :vc (:url "https://github.com/gicrisf/ox-skills"
+            :rev :newest
+            :branch "main"))
+
+;; Doom Emacs
+;; packages.el:
+(package! ox-skills :recipe (:host github :repo "gicrisf/ox-skills"))
+;; config.el:
+(use-package! ox-skills)
+
+;; Spacemacs
+;; 在 dotspacemacs-configuration-layers 或 dotspacemacs-additional-packages 里加：
+(ox-skills :location (recipe :fetcher github :repo "gicrisf/ox-skills"))
+;; 然后在 dotspacemacs/user-config 里：
+(use-package ox-skills)
+#+end_src
+
+安装后，Org 导出菜单里会多一个 =s= 键（ =C-c C-e s= ），下级菜单分别是 =s= 导出当前文件到一个 SKILL.md ， =S= 导出到临时缓冲区（预览用）， =w= 导出当前子树或文件， =a= 导出所有子树或文件。
+
+* 小结
+
+ox-skills 解决的问题不大但很实在，让 skill 定义回到 Org 生态。你用 Org 管理笔记、知识库、任务，现在 skill 也在一起了，不用另外手写 YAML frontmatter，不用单独维护 Markdown 模板。 如果你同时是 Org-mode 重度用户和 Claude Code 使用者，值得一试。
