@@ -1,0 +1,172 @@
+#+TITLE: TIL：DuckDB Spatial——用SQL做地理空间查询
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: DuckDB,Spatial,GIS,SQL
+#+DATE: [2026-05-31 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: DuckDB 的 Spatial 扩展让 SQL 查询直接支持地理空间操作。本文用三个可运行的示例演示 ST_Point、ST_Distance、ST_Intersects、ST_Area 等核心函数的用法。
+
+Mark Litwintschik 在 [[https://tech.marksblogg.com/reverse-geocoding-overture-maps.html][Reverse Geocoding with Overture Maps]] 一文中展示了如何用 DuckDB 的 Spatial 扩展处理地理空间数据。说穿了就是给 DuckDB 装个 Spatial 扩展，让 SQL 能处理点、线、多边形这些地理空间数据。
+
+* 是什么
+
+DuckDB 的 Spatial 扩展提供了地理空间数据类型和函数，让你能用 SQL 直接处理经纬度坐标、多边形边界等空间数据。安装和加载只需要两条命令，
+
+#+begin_src sql
+INSTALL spatial;
+LOAD spatial;
+#+end_src
+
+=INSTALL spatial= 只需要执行一次——扩展文件会下载到本地扩展目录，不会每次重复下载。 =LOAD spatial= 则在每次连接中加载扩展。
+
+加载后，DuckDB 就支持了一个核心类型和一批空间函数，
+
+- *核心类型* =GEOMETRY= ，点（ =POINT= ）、线（ =LINESTRING= ）、多边形（ =POLYGON= ）等
+- *常用函数* ， =ST_Point= （创建点）、 =ST_Distance= （计算距离）、 =ST_Intersects= （判断是否相交）、 =ST_Area= （计算面积）、 =ST_Centroid= （求中心点）、 =ST_AsText= （转为可读文本）
+
+DuckDB Spatial 默认用经纬度坐标（EPSG:4326）， =ST_Distance= 返回的是 *度数* ，不是公里或米。要换算成实际距离得做投影转换，但后文示例只展示函数用法，不涉及投影。
+
+* 为什么不用专门的 GIS 数据库
+
+如果只是做简单的空间查询，架一个 PostGIS 太重了。DuckDB 的优势在于它是嵌入式数据库，不需要单独部署；用 SQL 接口，不需要学 GIS 专用语言；还能直接读 CSV、Parquet、JSON 中的数据做空间分析，不用先导入。
+
+当然 DuckDB Spatial 不是 PostGIS 的替代品，它不支持空间索引（至少目前不是原生支持的），复杂空间操作也更有限。但对于「这个点在哪个国家」「离我最近的地址是什么」这类逆地理编码场景，它够用了。
+
+* 怎么做
+
+以下示例使用 Python 操作 DuckDB，需先安装 duckdb 包：
+
+#+begin_src shell
+pip install duckdb
+#+end_src
+
+** 示例 1：创建点和计算距离
+
+=ST_Point(lon, lat)= 创建一个点， =ST_Distance(a, b)= 计算两个点的距离：
+
+#+begin_src python
+import duckdb
+
+con = duckdb.connect(database=':memory:')
+con.sql('INSTALL spatial; LOAD spatial')
+
+res = con.sql("""
+    SELECT
+        ST_AsText(ST_Point(116.4, 39.9)) AS beijing,
+        ST_AsText(ST_Point(121.47, 31.23)) AS shanghai,
+        ST_Distance(ST_Point(116.4, 39.9),
+                    ST_Point(121.47, 31.23)) AS dist
+""").fetchone()
+
+print(f"北京: {res[0]}")
+print(f"上海: {res[1]}")
+print(f"距离 (度数): {res[2]}")
+#+end_src
+
+输出：
+
+#+begin_example
+北京: POINT (116.4 39.9)
+上海: POINT (121.47 31.23)
+距离 (度数): 10.043594973912473
+#+end_example
+
+=ST_AsText= 把二进制的几何对象转成可读的 WKT（Well-Known Text）格式。10.04 是度数，不是实际距离——要换算成公里需要做投影转换。
+
+** 示例 2：判断点是否在多边形内
+
+用 =ST_GeomFromText= 从 WKT 字符串创建多边形，然后用 =ST_Intersects= 判断一个点是否落在多边形范围内：
+
+#+begin_src python
+import duckdb
+
+con = duckdb.connect(database=':memory:')
+con.sql('INSTALL spatial; LOAD spatial')
+
+res = con.sql("""
+    WITH bounds AS (
+        SELECT ST_GeomFromText(
+            'POLYGON((115.4 39.4,
+                       117.0 39.4,
+                       117.0 40.2,
+                       115.4 40.2,
+                       115.4 39.4))'
+        ) AS geom
+    )
+    SELECT
+        ST_Intersects(geom, ST_Point(116.4, 39.9)) AS tiananmen_in_beijing,
+        ROUND(ST_Area(geom)::numeric, 2)            AS area_degrees,
+        ROUND(ST_X(ST_Centroid(geom)), 1)           AS cx,
+        ROUND(ST_Y(ST_Centroid(geom)), 1)           AS cy
+    FROM bounds
+""").fetchone()
+
+print(f"天安门在北京范围内: {res[0]}")
+print(f"多边形面积 (平方度): {res[1]}")
+print(f"中心点: POINT ({res[2]} {res[3]})")
+#+end_src
+
+输出：
+
+#+begin_example
+天安门在北京范围内: True
+多边形面积 (平方度): 1.28
+中心点: POINT (116.2 39.8)
+#+end_example
+
+这里用了一个简化的北京边界多边形（115.4°E–117.0°E, 39.4°N–40.2°N）。天安门坐标（116.4, 39.9）确实落在这个范围内。 =ST_Area= 返回面积（度数²）， =ST_Centroid= 返回多边形的中心点。
+
+** 示例 3：从 CSV 读数据做最近邻查询
+
+实际场景中，地理数据通常存在文件里。DuckDB 的 =read_csv_auto= 可以直接加载 CSV，结合空间函数做分析。
+
+先准备一份城市坐标数据：
+
+#+begin_src text :tangle /tmp/cities.csv
+city,lon,lat
+Beijing,116.4,39.9
+Shanghai,121.47,31.23
+Guangzhou,113.26,23.13
+Shenzhen,114.06,22.55
+Chengdu,104.07,30.57
+Wuhan,114.27,30.58
+#+end_src
+
+然后查询离某个点最近的三个城市：
+
+#+begin_src python
+import duckdb
+
+con = duckdb.connect(database=':memory:')
+con.sql('INSTALL spatial; LOAD spatial')
+
+res = con.sql("""
+    WITH cities AS (
+        SELECT city, ST_Point(lon, lat) AS geom
+        FROM read_csv_auto('/tmp/cities.csv')
+    )
+    SELECT city, ST_Distance(geom, ST_Point(113.5, 22.5)) AS dist
+    FROM cities
+    ORDER BY dist
+    LIMIT 3
+""").fetchall()
+
+for row in res:
+    print(f"{row[0]}: {row[1]:.4f} deg")
+#+end_src
+
+输出：
+
+#+begin_example
+Shenzhen: 0.5622 deg
+Guangzhou: 0.6742 deg
+Wuhan: 8.1166 deg
+#+end_example
+
+查询点 (113.5, 22.5) 大致在珠江口位置。深圳和广州自然最近，武汉远得多。整个过程就一个 CSV 文件加几行 SQL。
+
+* 总结
+
+DuckDB Spatial 扩展最常用的函数无非是 =ST_Point= 创建几何对象， =ST_Distance= 算距离， =ST_Intersects= 做空间过滤。配合 =read_csv_auto= 等文件读取函数，不用上 PostGIS 也能搞定常见的地理空间查询任务。
+
+不过 DuckDB Spatial 目前不支持原生空间索引，数据量大时性能会下降。小型数据集和原型验证是它的舒适区。
