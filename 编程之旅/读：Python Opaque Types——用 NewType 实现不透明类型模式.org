@@ -1,0 +1,189 @@
+#+TITLE: 读：Python Opaque Types——用 NewType 实现 Opaque Type 模式
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Python 类型系统 设计模式 API设计
+#+DATE: [2026-05-31 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 用 typing.NewType + 私有 dataclass + 公开构造函数，在 Python 中实现 Opaque Type 模式——让库 API 保持稳定，内部数据结构自由演化。
+
+* 问题：Python 库的 API 兼容性困境
+
+写 Python 库最头疼的事之一，就是你得跟自己的 API 较劲。一个配置对象今天只有三个速度等级，下个月要多加承运商选项，再下个月还要签收确认。你当然想自由调整内部结构，可用户的代码已经绑死在你的 constructor 和属性上了,怎么办呢。
+
+opaque type（不透明数据类型/抽象数据类型，计算机科学里的经典概念）说的就是这种情况的对策，只暴露接口、隐藏内部结构的类型。用 =FILE= 和 =pthread_t= 举例最直观——你用它传参但从没见过它里面有什么字段。这篇博文要讲的是怎么在 Python 里实现这种模式。
+
+你可能会想，class 不是自带封装吗？把属性私有化不就行了。但 class 的封装藏的是值——你只是不让外界直接改 =_speed=，外界仍然知道对象有个属性叫 =speed=。这层知识本身就是耦合。哪天你把 =speed= 拆成 =carrier= 和 =conveyance=，所有写了 =ShippingOptions(speed="fast")= 的调用者全部崩。opaque type 要切断的是这层耦合——调用者不是不能访问内部字段，而是根本不知道内部有哪些字段。
+
+拿一个 dataclass 举例子
+
+#+begin_src python
+from dataclasses import dataclass
+
+@dataclass
+class ShippingOptions:
+    speed: str  # "fast", "normal", "slow"
+#+end_src
+
+但这个类的 constructor 是公开的，所有属性也是公开的。用户代码可以直接构造、直接访问内部属性：
+
+#+begin_src python
+# 用户代码
+opts = ShippingOptions(speed="fast")
+if opts.speed == "fast":
+    ...
+#+end_src
+
+一旦用户这么写了，你就被绑死了。一旦对属性进行修改就会让用户代码崩。
+
+这就是 Python 的尴尬之处，一个类一旦公开，它的 constructor 和属性就等于签了份隐式契约。你没法在不破坏用户代码的前提下自由演化内部实现。
+
+* 方案：NewType + 私有类 + 公开构造函数
+
+=typing.NewType= 给了我们一种在 Python 里模拟 opaque type 的手段。核心思路由三部分组成
+
+- *私有 dataclass* 存放实际数据，属性和类本身都以下划线开头，对外不可见
+- *NewType 别名* 创建一个公开的类型名称，类型检查时视为独立类型
+- *公开构造函数* 只暴露有限的、受控的构造方式
+
+#+begin_src python
+from dataclasses import dataclass
+from typing import Literal, NewType
+
+@dataclass
+class _RealShipOpts:
+    _speed: Literal["fast", "normal", "slow"]
+
+ShippingOptions = NewType("ShippingOptions", _RealShipOpts)
+
+def shipFast() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts("fast"))
+
+def shipNormal() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts("normal"))
+
+def shipSlow() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts("slow"))
+#+end_src
+
+这个模式的关键在于， =ShippingOptions= 是一个 NewType，它不像普通类那样有 constructor。用户代码想创建实例只有三条路， =shipFast()= 、 =shipNormal()= 、 =shipSlow()= ，没别的入口。
+
+聊聊 NewType 到底做了什么。 =typing.NewType("ShippingOptions", _RealShipOpts)= 在运行时创建了一个函数，这个函数接受一个参数，原封不动地把它返回。没有包装、没有复制、没有类型转换。所以 =ShippingOptions(_RealShipOpts("fast"))= 返回的就是你传进去的那个 =_RealShipOpts("fast")= 对象本身。它在类型检查器眼里是独立类型，在运行时就是个恒等函数。
+
+你也可能觉得 shipFast() 这些函数跟 factory 模式差不多。区别在于，factory 模式解决的是"创建哪个具体子类"的问题——返回 FastShipping 还是 NormalShipping。这里没有子类，shipFast() 返回的始终是同一个类型（ =_RealShipOpts= ），只不过这个类型对外不可见。ShippingOptions 本身也不是类，是个 NewType。整个模式的目标只有一个：**让类型检查器认为 =ShippingOptions= 和 =_RealShipOpts= 是两种不同的类型，同时运行时又不产生任何包装开销。**
+
+所以用户代码写出来就是这样的
+
+#+begin_src python
+# 用户代码——只能通过公开构造函数创建
+opts = shipFast()
+
+# 传递到库函数
+status = await shipPackage(how=opts, where=address)
+#+end_src
+
+作为库作者，你在库内部仍然可以直接访问私有属性：
+
+#+begin_src python
+# 库内部代码——可以访问私有属性
+if opts._speed == "fast":
+    ...
+#+end_src
+
+但外部用户无法通过 =opts.speed= 访问，因为 =_speed= 是私有属性（以下划线开头），类型检查器和 IDE 都会提示错误。
+
+实际运行效果验证：
+
+#+begin_example
+callable(ShippingOptions) = True
+type(ShippingOptions) = <class 'typing.NewType'>
+type(shipFast()) = <class '__main__._RealShipOpts'>
+isinstance(shipFast(), _RealShipOpts) = True
+ShippingOptions(raw) is raw: True
+#+end_example
+
+* 实例演化：ShippingOptions 的前世今生
+
+上面那段代码看起来做了很多工作却没带来什么好处。直接暴露 =_RealShipOpts= 好像也没啥区别。但这个模式真正的价值，是给 *未来的变化* 留了空间。
+
+假设需求变了，用户不再满足于「快、普通、慢」三个选项，而是需要指定具体的承运商（FedEx、UPS、USPS）和运输方式（空运、陆运、铁路）。内部结构需要彻底重写。
+
+因为有 NewType 的保护，你可以这么改
+
+#+begin_src python
+from dataclasses import dataclass
+from enum import Enum, auto
+from typing import NewType
+
+class Carrier(Enum):
+    FedEx = auto()
+    USPS = auto()
+    DHL = auto()
+    UPS = auto()
+
+class Conveyance(Enum):
+    air = auto()
+    truck = auto()
+    train = auto()
+
+@dataclass
+class _RealShipOpts:
+    _carrier: Carrier
+    _freight: Conveyance
+
+ShippingOptions = NewType("ShippingOptions", _RealShipOpts)
+
+def shipFast() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts(Carrier.FedEx, Conveyance.air))
+
+def shipNormal() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts(Carrier.UPS, Conveyance.truck))
+
+def shipSlow() -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts(Carrier.USPS, Conveyance.train))
+
+def shippingDetailed(
+    carrier: Carrier, conveyance: Conveyance
+) -> ShippingOptions:
+    return ShippingOptions(_RealShipOpts(carrier, conveyance))
+#+end_src
+
+看看外面发生了什么变化：
+
+- =shipFast()= 、 =shipNormal()= 和 =shipSlow()= 的签名和返回值完全不变
+- 新增的 =shippingDetailed()= 是可选的扩展，不影响已有调用者
+- 用户代码一行都不用改
+
+老的私有属性 =_speed= 已经不存在了，取而代之的是 =_carrier= 和 =_freight= 。但这对用户完全透明，他们本来就没有直接访问过这些属性，当然也不会被破坏。
+
+这就是 opaque type 的核心价值， *把 API 的兼容表面收缩到最小* ，让内部实现获得最大的演化自由度。
+
+实际运行效果验证：
+
+#+begin_example
+shipFast() = _RealShipOpts(_carrier=<Carrier.FedEx: 1>, _freight=<Conveyance.air: 1>)
+shippingDetailed(UPS, truck) = _RealShipOpts(_carrier=<Carrier.UPS: 4>, _freight=<Conveyance.truck: 2>)
+#+end_example
+
+* 原理与注意事项
+
+** NewType 的运行时行为
+
+=typing.NewType= 在类型检查时被视为一个独立的新类型。 =ShippingOptions= 和 =_RealShipOpts= 是两个不同的类型。但在运行时， =ShippingOptions= 只是一个把参数原样返回的可调用对象， =ShippingOptions(x)= 返回的值和 =x= 是同一个对象，没有包装或复制。
+
+这个调用开销极小，原文作者说在高频执行的热点代码（hot loop）中可以跳过 =ShippingOptions()= 直接返回底层值，然后用 =# type: ignore[return-value]= 抑制类型检查器的报错。对绝大多数场景，这个开销可以忽略不计。
+
+** 适用场景
+
+这个模式最适合的场景是，你的库有一个 *核心配置/状态对象* 。它会被多个 API 函数作为参数传递，而且你预计它的内部结构会随着需求变化而演进。
+
+** 局限性
+
+外部代码仍然可以绕过你的限制，Python 没有真正的私有机制，但类型检查器会给出警告，这足以阻止大多数误用。另一个代价是样板代码，每个属性都要配一个公开构造函数。如果配置对象永远不会变化，直接用普通 dataclass 更省事。
+
+* 总结
+
+NewType 加私有类再加公开构造函数，让 Python 库作者也能搞出 opaque type。它在 API 稳定性和内部演化自由度之间画了一条清晰的线，用户只看得到受控的公开接口，你作为库作者则可以随便改动内部实现。
+
+说到底，它在解决一个根本矛盾。 *你发布的是一个 API* ，但 Python 的类会把 constructor 和所有属性都变成公开的隐式契约。opaque type 模式就是主动把契约收回来，只给你想给的。
+
+当然这也不是免费的。每次调用 =ShippingOptions(...)= 都是一次函数调用，而不是编译器层面的零成本抽象。好在 Python 里大部分场景的瓶颈不在函数调用上，所以通常不用在意。如果真在 hot loop（代码中的高频热点路径）里跑，可以跳过包装直接返回底层值，用 =# type: ignore[return-value]= 让类型检查器闭嘴。
