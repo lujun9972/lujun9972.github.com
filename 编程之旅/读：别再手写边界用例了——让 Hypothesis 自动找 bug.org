@@ -1,0 +1,204 @@
+#+TITLE: 读：别再手写边界用例了，让 Hypothesis 自动找 bug
+#+AUTHOR: darksun,Claude Code
+#+TAGS: Python,hypothesis,testing,测试
+#+DATE: [2026-05-31 Sun]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 手写47个边界用例没发现的bug，Hypothesis用10000个随机输入在30秒内找到了。这不是巧合。property-based testing的思考方式跟传统测试完全不同，从「这个输入应该返回什么」变成「任何输入都应该满足什么」。本文从零开始介绍Hypothesis的使用方法和适用场景，带你完成从example thinking到property thinking的心智转换。
+
+[[https://dev.to/peytongreen_dev/stop-writing-edge-case-tests-let-hypothesis-find-them-instead-5hl0][原文]]是三年前的一段经历。作者为一个URL标准化器手写了47个边界用例，每个用例都是同样的套路，想一个奇怪的输入，写测试，确认代码能处理。
+
+然后 Hypothesis 对同一个函数生成了10000个随机输入，30秒内就找到了一个他从未想过要写测试的 bug。当输入全是空白字符时，标准化器静默返回空字符串。
+
+这47个测试用的全是「看起来像URL」的输入。Hypothesis 能找到空白字符问题，恰恰是因为它不做任何假设，它试图在约束的边界上生成输入来破坏你的函数。这就是核心转变，从描述「例子」变成描述「属性」。
+
+* Property-based testing 是什么
+
+传统测试会说，给定这个特定输入，我期待这个特定输出。Property-based testing 则换了问法，不管输入是什么，你的函数得守住哪些底线？那些底线就叫不变量（invariant），比如「编码再解码应该返回原始数据」。你描述一条不变量，Hypothesis 自动生成各种输入来检查它是否真的守得住。
+
+用 Hypothesis 的话，你只写那个不变量，它会自动生成成百上千个输入来尝试证伪它。如果找到失败的用例，它会自动收缩到仍然失败的最简输入。所以你得到的是一个小巧可调试的失败案例，而不是「在5000个字符的字符串上失败了」。
+
+看代码对比。先看传统测试，
+
+#+begin_src python
+def test_round_trip_specific():
+    assert decode(encode("hello world")) == "hello world"
+#+end_src
+
+再看 property-based 版本，
+
+#+begin_src python
+from hypothesis import given, strategies as st
+
+@given(st.text())
+def test_round_trip_any_string(s):
+    assert decode(encode(s)) == s
+#+end_src
+
+第二个测试会运行几百次，每次用不同的输入。如果 =encode/decode= 在 unicode 字符、空字符串、null 字节或恰好256个字符长的字符串上有 bug，Hypothesis 就会找到它。
+
+** 三个最常见的适用属性
+
+几乎所有函数都有一些「应该始终成立」的不变量。以下三个是最常见的切入点，
+
+** Round-trip（往返不变性）
+把数据变形再变回来（编码解码、序列化反序列化、压缩解压），应该得到原始数据。
+
+** Idempotency（幂等性）
+对同一个数据执行两次操作，结果应该和执行一次一样。URL 标准化、数据清洗、格式化都属于这类。
+
+** Monotonicity（单调性）
+某些操作的结果不会超出输入的范围。比如过滤后的列表不会比原列表长，排序后的结果不会引入新元素。这个性质不如前两个直观，但理解之后你会发现很多场景都适用。
+
+* 安装 Hypothesis
+
+安装不需要注册账号、不需要 API key、不需要配置任何服务，
+
+#+begin_src shell
+pip install hypothesis
+#+end_src
+
+如果同时装了 pytest（Hypothesis 测试本来就用 pytest 跑），
+
+#+begin_src shell
+pip install hypothesis pytest
+#+end_src
+
+Hypothesis 是纯 Python 库，输入在本地生成，找到的失败用例存在本地。property-based testing 的全部威力，零外部依赖。
+
+* Strategies，描述你的输入空间
+
+=st= 模块用来描述输入空间。几个常用策略，
+
+#+begin_src python
+from hypothesis import strategies as st
+
+# 基本类型
+st.integers()                       # 任意整数
+st.integers(min_value=0)            # 非负整数
+st.floats(allow_nan=False)          # 浮点数，排除 NaN
+st.text()                           # 任意 unicode 文本
+st.text(alphabet=st.characters(allowed_categories=('Lu', 'Ll', 'Nd')))  # 字母数字
+st.binary()                         # 字节
+st.booleans()                       # 布尔值
+
+# 集合类型
+st.lists(st.integers())                             # 整数列表
+st.lists(st.text(), min_size=1, max_size=50)        # 有界列表
+st.dictionaries(st.text(), st.integers())           # 字典
+st.tuples(st.integers(), st.text())                 # 定长元组
+
+# 组合策略
+st.one_of(st.text(), st.none())                     # text 或 None
+st.builds(MyDataClass, name=st.text(), age=st.integers(min_value=0, max_value=150))
+#+end_src
+
+=builds= 策略算是个亮点。它为数据类或 Pydantic 模型的每个字段分别生成输入，自动构造测试对象，
+
+#+begin_src python
+from hypothesis import given, strategies as st
+from pydantic import BaseModel
+
+class User(BaseModel):
+    name: str
+    age: int
+
+@given(st.builds(User, name=st.text(min_size=1), age=st.integers(min_value=0, max_value=150)))
+def test_user_serialization_round_trip(user):
+    assert User.model_validate_json(user.model_dump_json()) == user
+#+end_src
+
+* Shrinking，找到最小的失败输入
+
+当 Hypothesis 找到一个失败输入时，它不会直接报告原始输入。它会自动收缩，尝试越来越简单的输入，直到找到仍然触发失败的最简用例。
+
+没有 shrinking 的话，失败报告可能是「在3000个字符的字符串上失败」。有了 shrinking，它变成，
+
+#+begin_example
+Falsifying example: test_normalize_idempotent(
+    url='',
+)
+#+end_example
+
+不需要做任何额外配置，所有内置策略都自带 shrinking。用 =st.composite= 和标准组合器构建的自定义策略也能自动收缩。
+
+* 集成 pytest
+
+Hypothesis 测试看起来就是加了装饰器的 pytest 测试，集成完全无缝，
+
+#+begin_src python
+import pytest
+from hypothesis import given, settings, strategies as st
+from myapp.normalizer import normalize_url
+
+# 传统测试——仍然有用，用来文档化预期行为
+def test_normalize_removes_trailing_slash():
+    assert normalize_url("https://example.com/") == "https://example.com"
+
+# Property 测试——发现传统测试发现不了的 bug
+@given(st.text())
+def test_normalize_idempotent(url):
+    assert normalize_url(normalize_url(url)) == normalize_url(url)
+
+@given(st.text(min_size=1))
+def test_normalize_never_empty_on_nonempty_input(url):
+    assert normalize_url(url) != ""
+#+end_src
+
+按常规方式运行 pytest 就行，Hypothesis 测试会自动被发现和执行。
+
+默认情况下，每个测试运行约100个随机示例。你也可以通过 =@settings= 调整，
+
+#+begin_src python
+from hypothesis import given, settings, strategies as st
+
+@settings(max_examples=1000)   # 增加示例数量
+@given(st.text())
+def test_important_property(s):
+    ...
+
+@settings(max_examples=50)     # 减少示例数量，快速运行
+@given(st.lists(st.integers()))
+def test_basic_property(items):
+    ...
+#+end_src
+
+* 什么时候该用
+
+Property-based testing 不是传统测试的替代品，两者结合比单独用任何一个都强。
+
+** 用传统测试来，
+- 文档化预期行为（这个特定输入应该输出什么）
+- 测试已知的边界用例（你已经想到的那些）
+- 回归测试（那个 bug 有一个特定输入，把它记下来）
+
+** 用 Hypothesis 来，
+- 处理或转换数据的函数（解析器、标准化器、序列化器）
+- 有「不管输入是什么，结果都得满足某条规则」的函数（排序稳定性、往返正确性）
+- 系统边界处的函数，输入空间很大或不可预测
+- 找到你没想到要找的 bug
+
+** 三行护身符
+
+给你的解析器和数据处理函数加上 =test_does_not_crash= ，
+
+#+begin_src python
+@given(st.text())
+def test_does_not_crash(s):
+    """函数应该能处理任何输入而不抛出意外的异常。"""
+    try:
+        result = my_function(s)
+        # 如果正常返回，结果应该是合法类型
+        assert isinstance(result, (str, type(None)))
+    except ValueError:
+        pass  # ValueError 对无效输入来说是预期的
+    except Exception as e:
+        # 其他任何异常都是 bug
+        raise AssertionError(f"Unexpected exception for input {s!r}: {e}") from e
+#+end_src
+
+这行代码不断言正确性，它只断言函数不会在任意输入上炸掉。那些「从来只用合法数据调用」的函数，用这个模式一测就能翻出一堆你没想到的 bug。
+
+* 结语
+
+Property-based testing 的学习曲线是心智转换——从「想一个具体输入」变成「描述一个不变量」。一旦转过来，你会开始到处看到不变量。
