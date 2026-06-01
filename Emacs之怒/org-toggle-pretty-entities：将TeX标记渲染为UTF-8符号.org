@@ -1,0 +1,75 @@
+#+TITLE: org-toggle-pretty-entities：将 TeX 标记渲染为 UTF-8 符号
+#+AUTHOR: lujun9972
+#+TAGS: Emacs
+#+DATE: [2026-06-01 一]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: org-toggle-pretty-entities 能把 TeX 标记（如 \alpha）在 Org buffer 中显示为对应的 UTF-8 符号但不修改原文。本文介绍它的用法、自定义实体以及和几种其他输入方式的对比。
+
+Tushar Hero 在 [[https://tusharhero.codeberg.page/may-i-recommend-these-lesser-known-org-modes.html][May I recommend: lesser known org-modes]] 里推荐了 =org-toggle-pretty-entities= 。试用后觉得确实方便，写篇笔记补充一点自定义配置。
+
+* 它解决了什么问题
+
+写 Org 文件时偶尔要输入特殊字符，比如希腊字母、数学符号。最简单的办法是用 =C-x 8 RET= 插入 UTF-8 字符，但有些符号 Unicode 里根本没有。或者开 Quail 输入法（ =C-x RET C-\ TeX RET= ），边打字边替换，但同样受限于字符集。
+
+=org-toggle-pretty-entities= 的思路不一样。你在 buffer 里写 TeX 标记（比如 =\alpha= ），它只改变显示，把标记渲染成对应的 UTF-8 符号，原文还是 TeX 标记。导出时 Org 自动处理成正确的 HTML 或 LaTeX。
+
+* 基本用法
+
+=M-x org-toggle-pretty-entities= 切换开关。想全局启用的话加钩子就行
+
+#+begin_src emacs-lisp
+(add-hook 'org-mode-hook #'org-toggle-pretty-entities)
+#+end_src
+
+开启后在 buffer 里看到的效果如下
+
+#+begin_example
+输入 \alpha      → 显示为 α
+输入 \beta       → 显示为 β
+输入 \rightarrow → 显示为 →
+#+end_example
+
+** 查看所有可用实体
+
+=M-x org-entities-help= 打开一个 buffer，列出所有内置实体。涵盖希腊字母、数学符号、箭头、货币符号等。
+
+** 自定义实体
+
+除了内置的那些，还可以用 =org-entities-user= 添加自己的实体，格式如下
+
+#+begin_src emacs-lisp
+(setq org-entities-user
+      '(("name" "\\latex" nil "&html;" "ascii" "latin1" "utf8")))
+#+end_src
+
+各字段含义如下
+
+| 字段 | 说明 |
+|------|------|
+| name | 实体名，在 buffer 中用 =\name= 输入，不含前导反斜杠 |
+| \\latex | LaTeX 导出形式 |
+| latex-math-p | 是否需要 LaTeX 数学模式，不需要则填 nil |
+| html | HTML 导出形式 |
+| ascii | ASCII 替代文本（导出纯文本时用） |
+| latin1 | Latin1 字符 |
+| utf8 | 显示的 UTF-8 字符 |
+
+比如让 =\mycheck= 显示为 ✓
+
+#+begin_src emacs-lisp
+(setq org-entities-user
+      '(("mycheck" "\\checkmark" nil "&#10003;" "v" "✓" "✓")))
+#+end_src
+
+在 Org buffer 里输入 =\mycheck= 并开启 =org-toggle-pretty-entities= ，就会显示为 ✓。
+
+* 和其他输入方式的对比
+
+ | 方式                                    | 特点                           | 导出兼容性 |
+ |-----------------------------------------+--------------------------------+------------|
+ | =org-toggle-pretty-entities=            | 仅改变显示，原文保留 TeX 标记  | 好         |
+ | =C-x 8 RET= 插入 UTF-8 字符             | 直接插入字符，但有些字形不存在 | 好         |
+ | Quail 输入法（ =C-x RET C-\ TeX RET= ） | 输入时直接替换为字符，限制同上 | 好         |
+
+需要留意的是，这个 mode 只处理命名实体（ =\name= 形式），不处理上下标（ =a_b= 、 =p^q= ）。上下标的显示效果由另一个变量 =org-use-sub-superscripts= 控制。如果你需要上下标并希望在 buffer 中看到效果，可以把这个变量设为 =t= 而不是默认的 ={}= ，让 Org 把 =a_b= 解释为下标。

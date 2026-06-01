@@ -3,19 +3,61 @@
 #+TAGS: Emacs之怒
 #+DATE: [2020-02-11 二 10:27]
 #+LANGUAGE:  zh-CN
-#+STARTUP:  inlineimages
 #+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
- 
 
-这个module提供了一个 =org-num-mode= 为Org的标题进行自动编号(只是通过Overylay显示编号，实际编号并没有写入buffer中).
+=org-num-mode= 通过 overlay 给 Org 标题加编号（不影响 buffer 原文），只管显示不写进文件。默认对所有层级按 =x= 、 =x.y= 、 =x.y.z= 编号。
 
-进入该 =mode= 会对一级标题编号为 =x=,二级标题为 =x.y=, 三级标题为 =x.y.z= 以此类推。
-标题编号的最深层次由 =org-num-max-level= 决定,默认为 =nil= 表示限制。
+** 基础用法
 
-此外 =org-num-mode= 还提供了很多变量来控制要对哪些标题跳过编号:
-+ org-num-skip-tags :: 跳过指定标签的标题
-+ org-num-skip-commented :: 跳过关键字为 COMMENT 的标题
-+ org-num-skip-unnumbered :: 跳过带有属性 UNNUMBERED 的标题
-+ org-num-skip-fottnotes :: 跳过附录
+用 =M-x org-num-mode= 就能开关，也能加到 Org mode 钩子里全局启用
 
-如果对编号的显示有要求，还可以通过 =org-num-face= 和 =org-num-format-function= 来设置编号的显示方式。
+#+begin_src emacs-lisp
+(add-hook 'org-mode-hook #'org-num-mode)
+#+end_src
+
+** 控制编号深度
+
+=org-num-max-level= 限制最大编号层级，设为 =3= 则四级以上标题不编号
+
+#+begin_src emacs-lisp
+(setq org-num-max-level 3)
+#+end_src
+
+=nil= 表示不限深度（默认值）。
+
+** 跳过特定标题
+
+想跳过特定标题？这几个变量管用
+
+- =org-num-skip-tags= —— 跳过带指定 tag 的标题
+  #+begin_src emacs-lisp
+  (setq org-num-skip-tags '("no_num"))
+  #+end_src
+
+- =org-num-skip-commented= —— 跳过标记为 =COMMENT= 的标题
+- =org-num-skip-unnumbered= —— 跳过带 =UNNUMBERED= 属性的标题
+- =org-num-skip-footnotes= —— 跳过脚注区域
+
+** 自定义编号样式
+
+=org-num-face= 控制编号的字体样式
+
+#+begin_src emacs-lisp
+(setq org-num-face '(:foreground "gray50"))
+#+end_src
+
+=org-num-format-function= 控制编号的显示格式，接收一个按层级排列的编号列表。比如想变成「第 x.y.z 条」的格式
+
+#+begin_src emacs-lisp
+(setq org-num-format-function
+      (lambda (nums)
+        (concat "第 "
+                (mapconcat #'number-to-string nums ".")
+                " 条 ")))
+#+end_src
+
+#+begin_example
+,* 第 1 条 标题
+,** 第 1.1 条 子标题
+,*** 第 1.1.1 条 子子标题
+#+end_example
