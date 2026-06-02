@@ -1,0 +1,83 @@
+#+TITLE: r11y：一行命令把网页变 Markdown
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: CLI,Markdown,LLM,Web Scraping,Clojure
+#+DATE: [2026-06-02 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: r11y 是一个 GraalVM 原生编译的 CLI 工具，能把任意 URL 转换为干净的 Markdown。冷启动约 40ms，比同类工具快 1.5–2 倍，适合在终端或 Agent 循环中使用。
+
+[[https://flarework.com/posts-output/2026-05-30-r11y-html-to-markdown-cli][flarework.com]] 上介绍了一个叫 r11y 的工具，看完觉得这就是我要的东西，一个能从命令行把 URL 转成干净 Markdown 的工具，运行速度快，输出简洁，适合给 LLM 和 Agent 场景使用。
+
+* 是什么
+
+r11y 是一个 GraalVM 原生编译的 CLI 工具（Clojure 编写，MIT 许可），它能做的就一件事，给你一个 URL，返回干净的 Markdown。
+
+名字的来源是「readability」的 i18n/a11y 式缩写，首字母加中间字母数加末字母。念出来是「oh rlly?」，你还记得那个经典的「O RLY?」猫头鹰 meme 吗。
+
+[[file:./images/o-rly-owl.png]]
+
+* 为什么用
+
+给 LLM 喂网页时，真正的痛点是 HTML 标签带来的噪音。有人测过，一篇博客从原始 HTML 到干净 Markdown，token 从 16k 降到 3k，省掉 60-80% 的浪费。这些浪费不只是成本问题，它还把真正的内容淹没掉，减弱了 attention 的效果。
+
+r11y 编译成原生二进制（GraalVM），冷启动只需要 40ms 左右，不需要 JVM 暖机也没有 Node/Python 解释器启动。作者拿三个典型页面做了对比（各跑 5 次，含网络请求）：
+
+| URL                  | r11y  | defuddle | trafilatura | readability-rust |
+|----------------------+-------+----------+-------------+------------------|
+| 长文（~8k 词）       | 0.43s | 0.74s    | 0.99s       | 0.57s            |
+| 文档页（Cloudflare） | 0.26s | 0.54s    | 0.53s       | 0.36s            |
+| Next.js landing      | 0.30s | 0.63s    | 0.52s       | 0.27s            |
+
+不过网络延迟吃掉了大部分时间，纯看处理效率的话差距可能更大。
+
+除了速度，它还处理了不少边缘情况。元数据提取这块，优先从网页里的 JSON-LD（一种嵌在 HTML 中的结构化数据，搜索引擎用它展示富摘要）抓取，没有的话就退到 OpenGraph（Facebook 定义的协议，用来控制链接分享时的标题、描述和图片）、再到 Twitter Card（Twitter 版的 OpenGraph），最后还从 HTML 的 ~<time>~ 标签和 URL 里猜日期。一条链走到底，总有一个能命中。React/Next.js 那种 ~<div role="paragraph">~ 语义 soup 会先归一化再提取。Cloudflare 有时候返回 Markdown 内容但标成 =text/html= ，r11y 也能识别。GitHub 仓库会自动拉 README，blob URL 则直接返回原始内容。
+
+* 怎么用
+
+安装很简单，macOS arm64 或 Linux x86_64 直接用 brew，
+
+#+begin_src shell
+brew install dazld/tap/r11y
+#+end_src
+
+或者从 [[https://github.com/dazld/r11y/releases][GitHub Releases]] 页下载静态二进制。
+
+基本用法就一行命令，
+
+#+begin_src shell
+r11y https://example.com
+#+end_src
+
+输出 Markdown 到 stdout，可以直接 pipe 进文件或另一个工具。
+
+加 =-m= 参数还能带 YAML frontmatter，
+
+#+begin_src shell
+r11y -m https://www.wired.com/story/some-article/
+#+end_src
+
+出来的结果大概是这样，
+
+#+begin_example
+---
+title: Intelligence on Earth Evolved Independently at Least Twice
+author: Yasemin Saplakoglu
+url: https://www.wired.com/story/intelligence-evolved-at-least-twice/
+date: 2025-05-11T07:00:00.000-04:00
+---
+#+end_example
+
+除了当命令行工具用，r11y 也能当 Clojure 库来调用。简单说就是在你的 Clojure 项目里引入这个库，在代码中直接调用 =extract-content-from-url= 函数，不用走命令行。CLI 只输出 Markdown 文本，但库函数返回的是一个 Clojure map（可以理解为结构化数据容器），包含以下字段：
+
+#+begin_src clojure
+{:markdown "# Clojure\n..."                                           ; 正文 Markdown
+ :links    [{:text "Why Clojure?" :url "http://..."} ...]              ; 正文中的链接（已去重排序）
+ :images   [{:alt "" :url "https://..."} ...]                          ; 正文中的图片
+ :metadata {:title "Clojure" :sitename "Wikipedia" :date "..." ...}}   ; 元数据
+#+end_src
+
+这样做的好处是，你一次调用就能拿到所有结构化的数据——纯文本拿去喂 LLM，链接列表拿去爬关联页面，图片和元数据分别存入索引。 =:links= 和 =:images= 只来自正文而非导航栏/页脚等噪音区域，并且已经去重排序了。
+
+注意 r11y 不执行 JavaScript，所以纯服务端渲染的页面没问题，但 SPA 应用（React/Vue 客户端渲染）需要先跑一轮 headless browser 拿到 HTML 再喂给 r11y。
+
+原文作者拿它做两件事，新用户 onboarding 时自动爬客户网站填资料，以及批量文档摄入。对我自己来说最吸引我的是 Agent 循环这个场景，给 LLM 喂网页的时候不用再纠结 HTML 格式了。
