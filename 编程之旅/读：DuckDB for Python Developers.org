@@ -1,0 +1,241 @@
+#+TITLE: 读：DuckDB for Python Developers
+#+AUTHOR: lujun9972
+#+TAGS: DuckDB, Python, SQL, 数据分析, pandas
+#+DATE: [2026-05-29 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 解读 DZone 上 Varun Joshi 的 DuckDB 入门教程，覆盖零配置安装、SQL 查询 DataFrame、Arrow 零拷贝、Parquet 列裁剪和谓词下推、远程文件查询等核心功能。
+
+* 开篇
+
+用 pandas 读一个 3GB 的 CSV 文件是什么体验？先等它加载到内存，看着内存占用一路飙升，说不定遇到 MemoryError，然后只好去找更重的工具，搭一个 Postgres，开一个 Spark 集群，或者上云数据仓库。本来五分钟能出结果的查询，基础设施就要折腾半天。
+
+DuckDB 就是来解决这个问题的。它是一个嵌入式分析数据库，跑在 Python 进程内部，不用启动任何服务，可以直接用 SQL 查询 CSV 文件、Parquet 文件和 pandas DataFrame。Varun Joshi 在 [[https://dzone.com/articles/duckdb-for-python-developers][DZone]] 上把 DuckDB 的核心用法串了一遍，这篇是我读完之后的笔记，把原文的主要功能点过了一遍，另外补了代码验证。
+
+* 零配置，即装即用
+
+DuckDB 的安装就一步，
+
+#+begin_src shell
+pip install duckdb
+#+end_src
+
+不用启动数据库服务，不用配置端口，不用创建用户。装完就能用，和 SQLite 一样的嵌入式模型，不过面向的 workload 不一样。SQLite 是行式存储，做事务处理的；DuckDB 是列式存储加向量化执行引擎，做分析聚合的。
+
+最简的查询只需要几行，
+
+#+begin_src python
+import duckdb
+
+duckdb.sql("""
+    SELECT region, SUM(revenue) AS total
+    FROM read_csv('sales.csv')
+    GROUP BY region
+    ORDER BY total DESC
+""").show()
+#+end_src
+
+不用预先加载文件，也不用定义表结构。DuckDB 会自动推断列名和类型，执行聚合查询，打印格式化的结果表。
+
+** 内存模式与持久化
+
+默认情况下 =duckdb.sql()= 使用共享内存数据库，Python 进程退出数据就没了。探索性分析时这正好合适，快，用完即弃，不用清理。
+
+如果需要数据跨会话保留，可以连接文件，
+
+#+begin_src python
+import duckdb
+
+# 内存模式（默认） — 进程结束就消失
+con = duckdb.connect()
+
+# 持久化模式 — 保存到磁盘，下次还能读
+con = duckdb.connect("analytics.db")
+#+end_src
+
+两种模式的查询接口完全一样，区别只在持久性。有一点要注意，DuckDB 支持多个读取连接，但同一时间只允许一个写入连接。它不是服务端数据库，不支持多进程并发写入，这是有意为之的设计取舍。
+
+* 两种查询方式，SQL API 和 Relational API
+
+DuckDB 提供两种方式表达查询。
+
+第一种是 SQL API，直接写 SQL，
+
+#+begin_src python
+result = con.sql("SELECT * FROM sales WHERE year = 2024")
+#+end_src
+
+第二种是 Relational API，用链式调用拼接查询，不用拼 SQL 字符串，
+
+#+begin_src python
+result = (
+    con.table("sales")
+       .filter("year = 2024")
+       .aggregate("region, SUM(revenue) AS total", "region")
+       .order("total DESC")
+)
+#+end_src
+
+SQL API 是最自然的选择，特别是习惯 SQL 思维的人。Relational API 适合动态构建查询的场景，当查询条件来自用户输入或配置文件，字符串拼接容易出错也难以维护，链式调用更安全。
+
+* 用 SQL 查 DataFrame
+
+DuckDB 最实用的功能之一，是能直接查 Python 进程里已有的 pandas DataFrame。不用注册，不用导入数据，也不用额外的数据结构。在 SQL 里直接写变量名就行，
+
+#+begin_src python
+import pandas as pd
+import duckdb
+
+sales = pd.read_csv("sales.csv")
+
+# sales 是作用域里的普通变量，DuckDB 自动找到它
+result = duckdb.sql("""
+    SELECT region, SUM(revenue) AS total
+    FROM sales
+    WHERE year = 2026
+    GROUP BY region
+    ORDER BY total DESC
+""").df()
+#+end_src
+
+=sales= 是一个普通的 Python 变量，DuckDB 会自动在局部作用域里找到它。从 DuckDB 的角度看，你的 DataFrame 就是一张表，不需要 =duckdb.register("sales", sales)= 这种显式注册。
+
+这个功能改变了 pandas 的使用方式。与其写 =.groupby().agg().sort_values().reset_index()= 这种链式调用（熟悉 pandas 的人觉得好用，习惯 SQL 的人觉得绕），不如直接写一句 SQL 说清楚你要什么。对 SQL 背景的开发者来说，pandas 是第二语言，DuckDB 才是母语。
+
+** 为什么比 pandas 快
+
+DuckDB 查询 pandas DataFrame 时不会复制数据。它通过 Apache Arrow 内存格式直接读取 pandas 底层的数据，所以 pandas 和 DuckDB 之间的数据传递在内存层面几乎没有开销，没有数据复制，没有序列化，没有格式转换。
+
+数据量一大、查询一复杂，性能差距就拉开得很明显。pandas 很多操作是逐行执行的，DuckDB 用列式向量化执行引擎，以批为单位处理数据，还会自动利用所有可用的 CPU 核心并行计算。百万行级别的 =GROUP BY= 聚合，能差一个数量级；多表连接或窗口函数，差距更大。
+
+来看一个具体例子。假设有一个 500 万行的 DataFrame，要找出每个区域收入前 10 的客户，
+
+#+begin_src python
+# pandas 写法
+result = (
+    sales
+    .groupby(["region", "customer_id"])["revenue"]
+    .sum()
+    .reset_index()
+    .sort_values(["region", "revenue"], ascending=[True, False])
+    .groupby("region")
+    .head(10)
+)
+
+# DuckDB 写法
+result = duckdb.sql("""
+    SELECT region, customer_id, SUM(revenue) AS total
+    FROM sales
+    GROUP BY region, customer_id
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY region ORDER BY SUM(revenue) DESC
+    ) <= 10
+""").df()
+#+end_src
+
+两种写法结果一样。DuckDB 版本在大数据量下通常快 5 到 15 倍，而且对习惯 SQL 的人来说更易读，意图是明确的，不需要记住中间那个 =.reset_index()= 。
+
+** Arrow 零拷贝
+
+查询结果很大时， =.df()= 方法会把数据从 DuckDB 内部格式复制到 pandas 内存。大多数场景这没问题。但如果数据量到了内存上限，或者下游系统本身就支持 Arrow（比如 Polars、PyArrow、很多 ML 框架），可以跳过 pandas 这一步，
+
+#+begin_src python
+arrow_table = con.sql("SELECT * FROM large_table").arrow()
+
+# 直接传给 Polars，无需复制
+import polars as pl
+polars_df = pl.from_arrow(arrow_table)
+
+# 或者传给 PyArrow 做后续处理
+import pyarrow.compute as pc
+filtered = arrow_table.filter(pc.greater(arrow_table["revenue"], 1000))
+#+end_src
+
+=.arrow()= 返回的 =pyarrow.Table= 在可能的情况下与 DuckDB 的结果缓冲区共享内存。千万行级别的数据集，这能省下几百 MB 的峰值内存。
+
+** Polars 也能查
+
+上面说的功能对 Polars DataFrame 同样适用。DuckDB 自动识别作用域中的 Polars 变量，用 =.pl()= 返回原生的 Polars DataFrame，
+
+#+begin_src python
+import polars as pl
+import duckdb
+
+orders = pl.read_parquet("orders.parquet")
+
+result = duckdb.sql("""
+    SELECT customer_id, COUNT(*) AS order_count
+    FROM orders
+    GROUP BY customer_id
+    HAVING COUNT(*) > 5
+""").pl()
+#+end_src
+
+如果你的技术栈已经用了 Polars，可以用 DuckDB 处理管道中 SQL 形状的部分，其余部分继续用 Polars，两个方向都能无缝传递数据。
+
+* 直接查询文件，不加载到内存
+
+前面看到的都是查询已经在内存里的 DataFrame。但 DuckDB 更强大的能力是直接查询文件，不用把文件加载到内存。你指向一个文件，写一句 SQL，DuckDB 只读回答查询所需的数据。Python 进程自始至终不持有完整数据集。
+
+一个 10GB 的文件，用 pandas 加载，大多数开发机的内存直接爆掉。DuckDB 可以在同样的文件上跑聚合查询，用很少的内存，几秒出结果，不用任何特殊配置。
+
+** CSV 文件
+
+#+begin_src python
+import duckdb
+
+duckdb.sql("""
+    SELECT region, COUNT(*) AS orders, SUM(revenue) AS total
+    FROM read_csv('sales.csv')
+    GROUP BY region
+    ORDER BY total DESC
+""").show()
+#+end_src
+
+DuckDB 会采样文件来自动推断列名和类型。推断不准的时候（比如数字列被存成字符串、日期格式不标准），可以用 =columns= 参数手动指定每一列的类型。注意这个参数要列出所有列，不能只指定某几列，
+
+#+begin_src python
+duckdb.sql("""
+    SELECT *
+    FROM read_csv('sales.csv', columns = {
+        'region': 'VARCHAR',
+        'customer_id': 'VARCHAR',
+        'revenue': 'DOUBLE',
+        'year': 'BIGINT',
+        'order_date': 'DATE',
+        'postal_code': 'VARCHAR'
+    })
+    LIMIT 5
+""").show()
+#+end_src
+
+** Parquet 文件，DuckDB 大显身手的地方
+
+CSV 是起点，Parquet 是进阶。Parquet 是列式存储格式，每个列的数据在磁盘上连续存放。DuckDB 对它有两个关键优化。
+
+一个是 *列裁剪* （projection pushdown），查询只涉及 50 列中的 3 列的话，DuckDB 只从磁盘读那 3 列，其余 47 列根本不碰。列数很多的表，I/O 可以减少 90% 以上。
+
+另一个是 *谓词下推* （predicate pushdown），Parquet 文件为每个行组（大约 10 万行一组）存储了每列的最小值和最大值。如果 =WHERE= 条件过滤了某个列，而某个行组的数据全部在过滤范围之外，DuckDB 就直接跳过这整组数据，一个字节都不读。一整年的数据里过滤一小段日期范围，可能只读 5% 的文件。
+
+这两个优化加在一起，查询一个 20GB 的 Parquet 文件可能比查询一个 2GB 的 CSV 还快，因为 DuckDB 实际做的工作少得多。
+
+#+begin_src python
+duckdb.sql("""
+    SELECT product_category, SUM(revenue) AS total
+    FROM read_parquet('orders.parquet')
+    GROUP BY product_category
+    ORDER BY total DESC
+""").show()
+#+end_src
+
+* 什么时候用 DuckDB，什么时候用 pandas
+
+DuckDB 不是要替代 pandas。它俩解决的问题形状不一样。
+
+聚合、连接、过滤、排序、窗口函数，凡是能自然映射成 SQL 的操作，DuckDB 更快，代码更少，内存效率也更高。
+
+行级别的 Python 逻辑，自定义字符串解析、对每行调用 Python 函数、跟需要 DataFrame 输入的库对接，这些场景 pandas 更自然。DuckDB 没法在 SQL 里执行任意的 Python 代码。
+
+说真的，实际最好的做法是两个都用。DuckDB 负责重型的分析运算，pandas 负责行级转换和跟 Python 生态其他部分对接。两个库之间可以无缝传递数据，互相不关心对方的存在。
+
+上手很简单，下次遇到超过 1GB 的 CSV 文件，别急着 =pd.read_csv()= ，试试 =duckdb.sql("SELECT ... FROM read_csv('file.csv')")= 。跑一下就知道差别了。
