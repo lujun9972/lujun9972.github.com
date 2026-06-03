@@ -1,0 +1,67 @@
+#+TITLE: 读：为 Clojure 定制 AI Agent 的四个技能——从 println 调试到 REPL 交互
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Clojure, Claude Code, Skill, AI Agent, REPL
+#+DATE: [2026-05-20 Tue]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 作者在用 Claude Code 构建 Clojure 项目时观察到 AI agent 的三个行为模式问题：跳过 wrapper 库直接做 Java 互操作、格式化导致文本匹配失败、只会 println 调试不会用 REPL。他设计了四个 Skill 来重定向 agent 的行为。核心理念：Skill 的价值在改变行为模式，不在传授知识。
+
+看到 [[https://humorless.github.io/posts-output/agent-skill][这篇博客]]，作者用 Claude Code 构建 Clojure 项目（lite-crm）时，刻意不开 =--dangerously-skip-permissions= ，坐在旁边观察 agent 怎么干活。他看到的问题挺有意思：不是 agent 不会写代码，而是它的默认行为模式跟 Clojure 的惯用做法处处冲突。
+
+* 三个行为缺口
+
+** Wrapper 库盲区。
+
+遇到 Java 互操作时，agent 直接调 Java API 写裸互操作代码，从不问"这个有没有 Clojure wrapper 库？"。写出来的代码更长、更难维护，根本不像 Clojure 代码。
+
+** 格式化脆弱性。
+
+=cljfmt= 这类格式化工具会调整缩进。agent 用文本匹配做 =str_replace= ，缩进差一个空格就匹配失败。作者看着它失败、重试、又失败、最后重写整个文件，大量 token 浪费在跟格式化打架上。
+
+** 原始调试方式。
+
+测试失败时，agent 的调试手段就是加 =println= 、跑测试、看输出、删掉 =println= 、改代码、再加 =println= 。明明接入了 REPL（ =brepl= CLI），可以在不碰源码的情况下交互式探查值、测试假设、跟踪执行，但它从来不用。
+
+作者的诊断是：这些不是知识缺口，agent 训练数据里肯定有这些知识。这是行为缺口——agent 的默认行为是一般性编程模式，Clojure 专家的模式是另一套。
+
+* 四个 Skill
+
+每个 Skill 都遵循同一个结构：针对一个具体行为问题，指定正确的 Clojure 惯用模式，然后重定向 agent 的行为。注意，这四个 Skill 的目标不是"教知识"，而是"换行为"。
+
+** clj-debug：从日志到 REPL 探查。
+
+默认行为：加 =println= / =tap>= / 日志语句，跑测试看输出。
+
+Clojure 的正确做法：用 =def= 把值钉在 var 里，用 =keys= 、关键字访问、结构探查等 REPL 命令交互式了解值的结构。
+
+这个 Skill 在 agent 准备调试时触发，把它从"编辑-测试-检查"循环转向 REPL 交互探查。更快、不侵入代码、即时反馈。
+
+** clj-discover：系统化 API 探索。
+
+默认行为：遇到不认识的 Java 类或宏，直接写互操作代码。
+
+Clojure 专家的工作流分三步：先搜有没有 Clojure wrapper 库（通常有）；没有则通过反射探查 Java 类；遇到宏则展开看它生成什么代码。
+
+这个 Skill 把三步流程固化下来，让 agent 先研究再集成。
+
+** clj-replace：格式感知的结构替换。
+
+默认行为：文本匹配替换，缩进变化就失败。
+
+Clojure 是 homoiconic 的——代码即数据。两个 S 表达式语义等价，格式不同不影响。这个 Skill 用 =rewrite-clj= 库做结构级匹配和替换：按 S 表达式等价来比较代码，忽略空白字符，保留原文件的格式风格。
+
+** clj-refactor：机制/策略分离。
+
+默认行为：可重用机制和业务策略混在一起写，函数膨胀，技术债积累。
+
+Arne Brasseur 的机制/策略分离原则是 Clojure 社区写可维护系统的核心思想：机制跟上下文无关，稳定，能复用；策略带了业务立场，领域有绑定，说变就变。专家开发者会自觉把二者分开。
+
+这个 Skill 与前三个不同——它是用户主动调用的，不是自动触发的。当你觉得某段代码需要重构时调用它，agent 会扫描代码，找到机制和策略缠绕的地方，建议提取。
+
+* 说到底
+
+作者提了一个挺简洁的框架：Skill 的价值 = 行为改变了多少，不是知识传了多少。这四个 Skill 做的事情不是给 agent 补充 API 文档，而是把它从"能写代码的通用程序员"扭成"知道怎么用 REPL、怎么查 wrapper、怎么写 idiomatic Clojure 的专家"。
+
+Clojure 是个"会用就四两拨千斤"的语言——REPL、不可变性、homoiconicity、函数式思维，用对了事半功倍。一个不会利用这些特性的 agent，不只是写得慢，它根本没摸到 Clojure 的边。
+
+四个 Skill 的代码在 [[https://github.com/humorless/clj-native-agent][github.com/humorless/clj-native-agent]]。
