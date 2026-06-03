@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：DuckDB for Python Developers - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="解读 DZone 上 Varun Joshi 的 DuckDB 入门教程，覆盖零配置安装、SQL 查询 DataFrame、Arrow 零拷贝、Parquet 列裁剪和谓词下推、远程文件查询等核心功能。" />
+  <meta name="keywords" content="DuckDB, Python, SQL, 数据分析, pandas" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：DuckDB for Python Developers</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org7a36946">开篇</a></li>
+<li><a href="#org06eb72d">零配置，即装即用</a>
+<ul>
+<li><a href="#orga614004">内存模式与持久化</a></li>
+</ul>
+</li>
+<li><a href="#org2ab3789">两种查询方式，SQL API 和 Relational API</a></li>
+<li><a href="#org3d98f4e">用 SQL 查 DataFrame</a>
+<ul>
+<li><a href="#org4fc1b58">为什么比 pandas 快</a></li>
+<li><a href="#orge7e8cda">Arrow 零拷贝</a></li>
+<li><a href="#org56540d0">Polars 也能查</a></li>
+</ul>
+</li>
+<li><a href="#orgf6ea6b3">直接查询文件，不加载到内存</a>
+<ul>
+<li><a href="#org133b3ad">CSV 文件</a></li>
+<li><a href="#org2ed15e0">Parquet 文件，DuckDB 大显身手的地方</a></li>
+</ul>
+</li>
+<li><a href="#org690ef23">什么时候用 DuckDB，什么时候用 pandas</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org7a36946" class="outline-2">
+<h2 id="org7a36946">开篇</h2>
+<div class="outline-text-2" id="text-org7a36946">
+<p>
+用 pandas 读一个 3GB 的 CSV 文件是什么体验？先等它加载到内存，看着内存占用一路飙升，说不定遇到 MemoryError，然后只好去找更重的工具，搭一个 Postgres，开一个 Spark 集群，或者上云数据仓库。本来五分钟能出结果的查询，基础设施就要折腾半天。
+</p>
+
+<p>
+DuckDB 就是来解决这个问题的。它是一个嵌入式分析数据库，跑在 Python 进程内部，不用启动任何服务，可以直接用 SQL 查询 CSV 文件、Parquet 文件和 pandas DataFrame。Varun Joshi 在 <a href="https://dzone.com/articles/duckdb-for-python-developers">DZone</a> 上把 DuckDB 的核心用法串了一遍，这篇是我读完之后的笔记，把原文的主要功能点过了一遍，另外补了代码验证。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org06eb72d" class="outline-2">
+<h2 id="org06eb72d">零配置，即装即用</h2>
+<div class="outline-text-2" id="text-org06eb72d">
+<p>
+DuckDB 的安装就一步，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">pip install duckdb
+</pre>
+</div>
+
+<p>
+不用启动数据库服务，不用配置端口，不用创建用户。装完就能用，和 SQLite 一样的嵌入式模型，不过面向的 workload 不一样。SQLite 是行式存储，做事务处理的；DuckDB 是列式存储加向量化执行引擎，做分析聚合的。
+</p>
+
+<p>
+最简的查询只需要几行，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+duckdb.sql(<span class="org-string">"""
+    SELECT region, SUM(revenue) AS total
+    FROM read_csv('sales.csv')
+    GROUP BY region
+    ORDER BY total DESC
+"""</span>).show()
+</pre>
+</div>
+
+<p>
+不用预先加载文件，也不用定义表结构。DuckDB 会自动推断列名和类型，执行聚合查询，打印格式化的结果表。
+</p>
+</div>
+
+<div id="outline-container-orga614004" class="outline-3">
+<h3 id="orga614004">内存模式与持久化</h3>
+<div class="outline-text-3" id="text-orga614004">
+<p>
+默认情况下 <code>duckdb.sql()</code> 使用共享内存数据库，Python 进程退出数据就没了。探索性分析时这正好合适，快，用完即弃，不用清理。
+</p>
+
+<p>
+如果需要数据跨会话保留，可以连接文件，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20869;&#23384;&#27169;&#24335;&#65288;&#40664;&#35748;&#65289; &#8212; &#36827;&#31243;&#32467;&#26463;&#23601;&#28040;&#22833;
+</span><span class="org-variable-name">con</span> <span class="org-operator">=</span> duckdb.connect()
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25345;&#20037;&#21270;&#27169;&#24335; &#8212; &#20445;&#23384;&#21040;&#30913;&#30424;&#65292;&#19979;&#27425;&#36824;&#33021;&#35835;
+</span><span class="org-variable-name">con</span> <span class="org-operator">=</span> duckdb.connect(<span class="org-string">"analytics.db"</span>)
+</pre>
+</div>
+
+<p>
+两种模式的查询接口完全一样，区别只在持久性。有一点要注意，DuckDB 支持多个读取连接，但同一时间只允许一个写入连接。它不是服务端数据库，不支持多进程并发写入，这是有意为之的设计取舍。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2ab3789" class="outline-2">
+<h2 id="org2ab3789">两种查询方式，SQL API 和 Relational API</h2>
+<div class="outline-text-2" id="text-org2ab3789">
+<p>
+DuckDB 提供两种方式表达查询。
+</p>
+
+<p>
+第一种是 SQL API，直接写 SQL，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">result</span> <span class="org-operator">=</span> con.sql(<span class="org-string">"SELECT * FROM sales WHERE year = 2024"</span>)
+</pre>
+</div>
+
+<p>
+第二种是 Relational API，用链式调用拼接查询，不用拼 SQL 字符串，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">result</span> <span class="org-operator">=</span> (
+    con.table(<span class="org-string">"sales"</span>)
+       .<span class="org-builtin">filter</span>(<span class="org-string">"year = 2024"</span>)
+       .aggregate(<span class="org-string">"region, SUM(revenue) AS total"</span>, <span class="org-string">"region"</span>)
+       .order(<span class="org-string">"total DESC"</span>)
+)
+</pre>
+</div>
+
+<p>
+SQL API 是最自然的选择，特别是习惯 SQL 思维的人。Relational API 适合动态构建查询的场景，当查询条件来自用户输入或配置文件，字符串拼接容易出错也难以维护，链式调用更安全。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3d98f4e" class="outline-2">
+<h2 id="org3d98f4e">用 SQL 查 DataFrame</h2>
+<div class="outline-text-2" id="text-org3d98f4e">
+<p>
+DuckDB 最实用的功能之一，是能直接查 Python 进程里已有的 pandas DataFrame。不用注册，不用导入数据，也不用额外的数据结构。在 SQL 里直接写变量名就行，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> pandas <span class="org-keyword">as</span> pd
+<span class="org-keyword">import</span> duckdb
+
+<span class="org-variable-name">sales</span> <span class="org-operator">=</span> pd.read_csv(<span class="org-string">"sales.csv"</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">sales &#26159;&#20316;&#29992;&#22495;&#37324;&#30340;&#26222;&#36890;&#21464;&#37327;&#65292;DuckDB &#33258;&#21160;&#25214;&#21040;&#23427;
+</span><span class="org-variable-name">result</span> <span class="org-operator">=</span> duckdb.sql(<span class="org-string">"""
+    SELECT region, SUM(revenue) AS total
+    FROM sales
+    WHERE year = 2026
+    GROUP BY region
+    ORDER BY total DESC
+"""</span>).df()
+</pre>
+</div>
+
+<p>
+<code>sales</code> 是一个普通的 Python 变量，DuckDB 会自动在局部作用域里找到它。从 DuckDB 的角度看，你的 DataFrame 就是一张表，不需要 <code>duckdb.register("sales", sales)</code> 这种显式注册。
+</p>
+
+<p>
+这个功能改变了 pandas 的使用方式。与其写 <code>.groupby().agg().sort_values().reset_index()</code> 这种链式调用（熟悉 pandas 的人觉得好用，习惯 SQL 的人觉得绕），不如直接写一句 SQL 说清楚你要什么。对 SQL 背景的开发者来说，pandas 是第二语言，DuckDB 才是母语。
+</p>
+</div>
+
+<div id="outline-container-org4fc1b58" class="outline-3">
+<h3 id="org4fc1b58">为什么比 pandas 快</h3>
+<div class="outline-text-3" id="text-org4fc1b58">
+<p>
+DuckDB 查询 pandas DataFrame 时不会复制数据。它通过 Apache Arrow 内存格式直接读取 pandas 底层的数据，所以 pandas 和 DuckDB 之间的数据传递在内存层面几乎没有开销，没有数据复制，没有序列化，没有格式转换。
+</p>
+
+<p>
+数据量一大、查询一复杂，性能差距就拉开得很明显。pandas 很多操作是逐行执行的，DuckDB 用列式向量化执行引擎，以批为单位处理数据，还会自动利用所有可用的 CPU 核心并行计算。百万行级别的 <code>GROUP BY</code> 聚合，能差一个数量级；多表连接或窗口函数，差距更大。
+</p>
+
+<p>
+来看一个具体例子。假设有一个 500 万行的 DataFrame，要找出每个区域收入前 10 的客户，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-comment-delimiter"># </span><span class="org-comment">pandas &#20889;&#27861;
+</span><span class="org-variable-name">result</span> <span class="org-operator">=</span> (
+    sales
+    .groupby([<span class="org-string">"region"</span>, <span class="org-string">"customer_id"</span>])[<span class="org-string">"revenue"</span>]
+    .<span class="org-builtin">sum</span>()
+    .reset_index()
+    .sort_values([<span class="org-string">"region"</span>, <span class="org-string">"revenue"</span>], ascending<span class="org-operator">=</span>[<span class="org-constant">True</span>, <span class="org-constant">False</span>])
+    .groupby(<span class="org-string">"region"</span>)
+    .head(10)
+)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">DuckDB &#20889;&#27861;
+</span><span class="org-variable-name">result</span> <span class="org-operator">=</span> duckdb.sql(<span class="org-string">"""
+    SELECT region, customer_id, SUM(revenue) AS total
+    FROM sales
+    GROUP BY region, customer_id
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY region ORDER BY SUM(revenue) DESC
+    ) &lt;= 10
+"""</span>).df()
+</pre>
+</div>
+
+<p>
+两种写法结果一样。DuckDB 版本在大数据量下通常快 5 到 15 倍，而且对习惯 SQL 的人来说更易读，意图是明确的，不需要记住中间那个 <code>.reset_index()</code> 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge7e8cda" class="outline-3">
+<h3 id="orge7e8cda">Arrow 零拷贝</h3>
+<div class="outline-text-3" id="text-orge7e8cda">
+<p>
+查询结果很大时， <code>.df()</code> 方法会把数据从 DuckDB 内部格式复制到 pandas 内存。大多数场景这没问题。但如果数据量到了内存上限，或者下游系统本身就支持 Arrow（比如 Polars、PyArrow、很多 ML 框架），可以跳过 pandas 这一步，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-variable-name">arrow_table</span> <span class="org-operator">=</span> con.sql(<span class="org-string">"SELECT * FROM large_table"</span>).arrow()
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#30452;&#25509;&#20256;&#32473; Polars&#65292;&#26080;&#38656;&#22797;&#21046;
+</span><span class="org-keyword">import</span> polars <span class="org-keyword">as</span> pl
+<span class="org-variable-name">polars_df</span> <span class="org-operator">=</span> pl.from_arrow(arrow_table)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25110;&#32773;&#20256;&#32473; PyArrow &#20570;&#21518;&#32493;&#22788;&#29702;
+</span><span class="org-keyword">import</span> pyarrow.compute <span class="org-keyword">as</span> pc
+<span class="org-variable-name">filtered</span> <span class="org-operator">=</span> arrow_table.<span class="org-builtin">filter</span>(pc.greater(arrow_table[<span class="org-string">"revenue"</span>], 1000))
+</pre>
+</div>
+
+<p>
+<code>.arrow()</code> 返回的 <code>pyarrow.Table</code> 在可能的情况下与 DuckDB 的结果缓冲区共享内存。千万行级别的数据集，这能省下几百 MB 的峰值内存。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org56540d0" class="outline-3">
+<h3 id="org56540d0">Polars 也能查</h3>
+<div class="outline-text-3" id="text-org56540d0">
+<p>
+上面说的功能对 Polars DataFrame 同样适用。DuckDB 自动识别作用域中的 Polars 变量，用 <code>.pl()</code> 返回原生的 Polars DataFrame，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> polars <span class="org-keyword">as</span> pl
+<span class="org-keyword">import</span> duckdb
+
+<span class="org-variable-name">orders</span> <span class="org-operator">=</span> pl.read_parquet(<span class="org-string">"orders.parquet"</span>)
+
+<span class="org-variable-name">result</span> <span class="org-operator">=</span> duckdb.sql(<span class="org-string">"""
+    SELECT customer_id, COUNT(*) AS order_count
+    FROM orders
+    GROUP BY customer_id
+    HAVING COUNT(*) &gt; 5
+"""</span>).pl()
+</pre>
+</div>
+
+<p>
+如果你的技术栈已经用了 Polars，可以用 DuckDB 处理管道中 SQL 形状的部分，其余部分继续用 Polars，两个方向都能无缝传递数据。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf6ea6b3" class="outline-2">
+<h2 id="orgf6ea6b3">直接查询文件，不加载到内存</h2>
+<div class="outline-text-2" id="text-orgf6ea6b3">
+<p>
+前面看到的都是查询已经在内存里的 DataFrame。但 DuckDB 更强大的能力是直接查询文件，不用把文件加载到内存。你指向一个文件，写一句 SQL，DuckDB 只读回答查询所需的数据。Python 进程自始至终不持有完整数据集。
+</p>
+
+<p>
+一个 10GB 的文件，用 pandas 加载，大多数开发机的内存直接爆掉。DuckDB 可以在同样的文件上跑聚合查询，用很少的内存，几秒出结果，不用任何特殊配置。
+</p>
+</div>
+
+<div id="outline-container-org133b3ad" class="outline-3">
+<h3 id="org133b3ad">CSV 文件</h3>
+<div class="outline-text-3" id="text-org133b3ad">
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> duckdb
+
+duckdb.sql(<span class="org-string">"""
+    SELECT region, COUNT(*) AS orders, SUM(revenue) AS total
+    FROM read_csv('sales.csv')
+    GROUP BY region
+    ORDER BY total DESC
+"""</span>).show()
+</pre>
+</div>
+
+<p>
+DuckDB 会采样文件来自动推断列名和类型。推断不准的时候（比如数字列被存成字符串、日期格式不标准），可以用 <code>columns</code> 参数手动指定每一列的类型。注意这个参数要列出所有列，不能只指定某几列，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">duckdb.sql(<span class="org-string">"""
+    SELECT *
+    FROM read_csv('sales.csv', columns = {
+        'region': 'VARCHAR',
+        'customer_id': 'VARCHAR',
+        'revenue': 'DOUBLE',
+        'year': 'BIGINT',
+        'order_date': 'DATE',
+        'postal_code': 'VARCHAR'
+    })
+    LIMIT 5
+"""</span>).show()
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org2ed15e0" class="outline-3">
+<h3 id="org2ed15e0">Parquet 文件，DuckDB 大显身手的地方</h3>
+<div class="outline-text-3" id="text-org2ed15e0">
+<p>
+CSV 是起点，Parquet 是进阶。Parquet 是列式存储格式，每个列的数据在磁盘上连续存放。DuckDB 对它有两个关键优化。
+</p>
+
+<p>
+一个是 <b>列裁剪</b> （projection pushdown），查询只涉及 50 列中的 3 列的话，DuckDB 只从磁盘读那 3 列，其余 47 列根本不碰。列数很多的表，I/O 可以减少 90% 以上。
+</p>
+
+<p>
+另一个是 <b>谓词下推</b> （predicate pushdown），Parquet 文件为每个行组（大约 10 万行一组）存储了每列的最小值和最大值。如果 <code>WHERE</code> 条件过滤了某个列，而某个行组的数据全部在过滤范围之外，DuckDB 就直接跳过这整组数据，一个字节都不读。一整年的数据里过滤一小段日期范围，可能只读 5% 的文件。
+</p>
+
+<p>
+这两个优化加在一起，查询一个 20GB 的 Parquet 文件可能比查询一个 2GB 的 CSV 还快，因为 DuckDB 实际做的工作少得多。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">duckdb.sql(<span class="org-string">"""
+    SELECT product_category, SUM(revenue) AS total
+    FROM read_parquet('orders.parquet')
+    GROUP BY product_category
+    ORDER BY total DESC
+"""</span>).show()
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org690ef23" class="outline-2">
+<h2 id="org690ef23">什么时候用 DuckDB，什么时候用 pandas</h2>
+<div class="outline-text-2" id="text-org690ef23">
+<p>
+DuckDB 不是要替代 pandas。它俩解决的问题形状不一样。
+</p>
+
+<p>
+聚合、连接、过滤、排序、窗口函数，凡是能自然映射成 SQL 的操作，DuckDB 更快，代码更少，内存效率也更高。
+</p>
+
+<p>
+行级别的 Python 逻辑，自定义字符串解析、对每行调用 Python 函数、跟需要 DataFrame 输入的库对接，这些场景 pandas 更自然。DuckDB 没法在 SQL 里执行任意的 Python 代码。
+</p>
+
+<p>
+说真的，实际最好的做法是两个都用。DuckDB 负责重型的分析运算，pandas 负责行级转换和跟 Python 生态其他部分对接。两个库之间可以无缝传递数据，互相不关心对方的存在。
+</p>
+
+<p>
+上手很简单，下次遇到超过 1GB 的 CSV 文件，别急着 <code>pd.read_csv()</code> ，试试 <code>duckdb.sql("SELECT ... FROM read_csv('file.csv')")</code> 。跑一下就知道差别了。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-29</span>
+    <span class="post-info">2026-06-03</span>
+    <a href="../../../../../tags/duckdb">DuckDB</a> : <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/sql">SQL</a> : <a href="../../../../../tags/数据分析">数据分析</a> : <a href="../../../../../tags/pandas">pandas</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; f4530jdhkuyexk22dkczxkimmd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

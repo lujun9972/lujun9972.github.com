@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：为 Clojure 定制 AI Agent 的四个技能——从 println 调试到 REPL 交互 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude Code" />
+  <meta name="description" content="作者在用 Claude Code 构建 Clojure 项目时观察到 AI agent 的三个行为模式问题：跳过 wrapper 库直接做 Java 互操作、格式化导致文本匹配失败、只会 println 调试不会用 REPL。他设计了四个 Skill 来重定向 agent 的行为。核心理念：Skill 的价值在改变行为模式，不在传授知识。" />
+  <meta name="keywords" content="Clojure, Claude Code, Skill, AI Agent, REPL" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：为 Clojure 定制 AI Agent 的四个技能——从 println 调试到 REPL 交互</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org490fea3">三个行为缺口</a>
+<ul>
+<li><a href="#orgc95a7a1">Wrapper 库盲区。</a></li>
+<li><a href="#orgc13da30">格式化脆弱性。</a></li>
+<li><a href="#orge06a269">原始调试方式。</a></li>
+</ul>
+</li>
+<li><a href="#org4e563e3">四个 Skill</a>
+<ul>
+<li><a href="#org8aa5ad8">clj-debug：从日志到 REPL 探查。</a></li>
+<li><a href="#orgf186940">clj-discover：系统化 API 探索。</a></li>
+<li><a href="#org6604f40">clj-replace：格式感知的结构替换。</a></li>
+<li><a href="#orga98d046">clj-refactor：机制/策略分离。</a></li>
+</ul>
+</li>
+<li><a href="#org9d5a208">说到底</a></li>
+</ul>
+</div>
+</div>
+<p>
+看到 <a href="https://humorless.github.io/posts-output/agent-skill">这篇博客</a>，作者用 Claude Code 构建 Clojure 项目（lite-crm）时，刻意不开 <code>--dangerously-skip-permissions</code> ，坐在旁边观察 agent 怎么干活。他看到的问题挺有意思：不是 agent 不会写代码，而是它的默认行为模式跟 Clojure 的惯用做法处处冲突。
+</p>
+
+<div id="outline-container-org490fea3" class="outline-2">
+<h2 id="org490fea3">三个行为缺口</h2>
+<div class="outline-text-2" id="text-org490fea3">
+</div>
+<div id="outline-container-orgc95a7a1" class="outline-3">
+<h3 id="orgc95a7a1">Wrapper 库盲区。</h3>
+<div class="outline-text-3" id="text-orgc95a7a1">
+<p>
+遇到 Java 互操作时，agent 直接调 Java API 写裸互操作代码，从不问"这个有没有 Clojure wrapper 库？"。写出来的代码更长、更难维护，根本不像 Clojure 代码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc13da30" class="outline-3">
+<h3 id="orgc13da30">格式化脆弱性。</h3>
+<div class="outline-text-3" id="text-orgc13da30">
+<p>
+<code>cljfmt</code> 这类格式化工具会调整缩进。agent 用文本匹配做 <code>str_replace</code> ，缩进差一个空格就匹配失败。作者看着它失败、重试、又失败、最后重写整个文件，大量 token 浪费在跟格式化打架上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orge06a269" class="outline-3">
+<h3 id="orge06a269">原始调试方式。</h3>
+<div class="outline-text-3" id="text-orge06a269">
+<p>
+测试失败时，agent 的调试手段就是加 <code>println</code> 、跑测试、看输出、删掉 <code>println</code> 、改代码、再加 <code>println</code> 。明明接入了 REPL（ <code>brepl</code> CLI），可以在不碰源码的情况下交互式探查值、测试假设、跟踪执行，但它从来不用。
+</p>
+
+<p>
+作者的诊断是：这些不是知识缺口，agent 训练数据里肯定有这些知识。这是行为缺口——agent 的默认行为是一般性编程模式，Clojure 专家的模式是另一套。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4e563e3" class="outline-2">
+<h2 id="org4e563e3">四个 Skill</h2>
+<div class="outline-text-2" id="text-org4e563e3">
+<p>
+每个 Skill 都遵循同一个结构：针对一个具体行为问题，指定正确的 Clojure 惯用模式，然后重定向 agent 的行为。注意，这四个 Skill 的目标不是"教知识"，而是"换行为"。
+</p>
+</div>
+
+<div id="outline-container-org8aa5ad8" class="outline-3">
+<h3 id="org8aa5ad8">clj-debug：从日志到 REPL 探查。</h3>
+<div class="outline-text-3" id="text-org8aa5ad8">
+<p>
+默认行为：加 <code>println</code> / <code>tap&gt;</code> / 日志语句，跑测试看输出。
+</p>
+
+<p>
+Clojure 的正确做法：用 <code>def</code> 把值钉在 var 里，用 <code>keys</code> 、关键字访问、结构探查等 REPL 命令交互式了解值的结构。
+</p>
+
+<p>
+这个 Skill 在 agent 准备调试时触发，把它从"编辑-测试-检查"循环转向 REPL 交互探查。更快、不侵入代码、即时反馈。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf186940" class="outline-3">
+<h3 id="orgf186940">clj-discover：系统化 API 探索。</h3>
+<div class="outline-text-3" id="text-orgf186940">
+<p>
+默认行为：遇到不认识的 Java 类或宏，直接写互操作代码。
+</p>
+
+<p>
+Clojure 专家的工作流分三步：先搜有没有 Clojure wrapper 库（通常有）；没有则通过反射探查 Java 类；遇到宏则展开看它生成什么代码。
+</p>
+
+<p>
+这个 Skill 把三步流程固化下来，让 agent 先研究再集成。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6604f40" class="outline-3">
+<h3 id="org6604f40">clj-replace：格式感知的结构替换。</h3>
+<div class="outline-text-3" id="text-org6604f40">
+<p>
+默认行为：文本匹配替换，缩进变化就失败。
+</p>
+
+<p>
+Clojure 是 homoiconic 的——代码即数据。两个 S 表达式语义等价，格式不同不影响。这个 Skill 用 <code>rewrite-clj</code> 库做结构级匹配和替换：按 S 表达式等价来比较代码，忽略空白字符，保留原文件的格式风格。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga98d046" class="outline-3">
+<h3 id="orga98d046">clj-refactor：机制/策略分离。</h3>
+<div class="outline-text-3" id="text-orga98d046">
+<p>
+默认行为：可重用机制和业务策略混在一起写，函数膨胀，技术债积累。
+</p>
+
+<p>
+Arne Brasseur 的机制/策略分离原则是 Clojure 社区写可维护系统的核心思想：机制跟上下文无关，稳定，能复用；策略带了业务立场，领域有绑定，说变就变。专家开发者会自觉把二者分开。
+</p>
+
+<p>
+这个 Skill 与前三个不同——它是用户主动调用的，不是自动触发的。当你觉得某段代码需要重构时调用它，agent 会扫描代码，找到机制和策略缠绕的地方，建议提取。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9d5a208" class="outline-2">
+<h2 id="org9d5a208">说到底</h2>
+<div class="outline-text-2" id="text-org9d5a208">
+<p>
+作者提了一个挺简洁的框架：Skill 的价值 = 行为改变了多少，不是知识传了多少。这四个 Skill 做的事情不是给 agent 补充 API 文档，而是把它从"能写代码的通用程序员"扭成"知道怎么用 REPL、怎么查 wrapper、怎么写 idiomatic Clojure 的专家"。
+</p>
+
+<p>
+Clojure 是个"会用就四两拨千斤"的语言——REPL、不可变性、homoiconicity、函数式思维，用对了事半功倍。一个不会利用这些特性的 agent，不只是写得慢，它根本没摸到 Clojure 的边。
+</p>
+
+<p>
+四个 Skill 的代码在 <a href="https://github.com/humorless/clj-native-agent">github.com/humorless/clj-native-agent</a>。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-20</span>
+    <span class="post-info">2026-06-03</span>
+    <a href="../../../../../tags/clojure">Clojure</a> : <a href="../../../../../tags/claude-code">Claude Code</a> : <a href="../../../../../tags/skill">Skill</a> : <a href="../../../../../tags/ai-agent">AI Agent</a> : <a href="../../../../../tags/repl">REPL</a>
+    <span class="post-info">lujun9972, Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; f4530jdhkuyexk22dkczxkimmd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

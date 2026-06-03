@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：为什么 Trace ID 要用 128 位 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="分布式系统中每个请求都有一个 trace ID 来追踪它的完整链路。那么为什么trace ID被设计为 128 位呢？答案涉及概率论中的生日悖论：64 位在生产规模下碰撞概率不可接受，而 256 位太浪费了，128位在实际规模下碰撞概率已经近乎为零。" />
+  <meta name="keywords" content="分布式系统, 可观测性, 概率论, 生日悖论" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：为什么 Trace ID 要用 128 位</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org52d4fb2">为什么不能用自增计数器</a></li>
+<li><a href="#org05f5e06">生日悖论：直觉为什么会翻车</a></li>
+<li><a href="#orgbea4950">64 位 vs 128 位：算一笔账</a></li>
+<li><a href="#orga0a88ff">为什么不是 256 位</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文：<a href="https://newsletter.signoz.io/p/why-should-a-trace-id-be-128-bits">Why Should a Trace ID Be 128 Bits?</a>
+</p>
+
+<p>
+一个下单请求可能在你的系统里需要经过 20 个服务：API 网关、认证、购物车、库存…… 每个服务干完活还可能调别的服务。当出了问题要排查时，就得把这个请求所有相关的日志找出来。于是就有了trace ID ：它在入口处生成一次，然后通过 HTTP 头部（比如 <code>traceparent</code> ）一路传下去。
+</p>
+
+<p>
+那这个 ID 为什么是 128 位，不是 64 位或 256 位？
+</p>
+
+<div id="outline-container-org52d4fb2" class="outline-2">
+<h2 id="org52d4fb2">为什么不能用自增计数器</h2>
+<div class="outline-text-2" id="text-org52d4fb2">
+<p>
+直觉上最简单的方案是自增计数器：第 1 个请求 ID 为 1，第 2 个为 2，以此类推。但计数器需要协调：服务 A 和服务 B 都要生成下一个 ID 时，必须找一台中心服务器分配，还得记住之前分到几了。分布式系统中这种协调会变得非常复杂。
+</p>
+
+<p>
+所以 trace ID 的生成方式是：各服务自己随机生成，互不通气。既然是随机的，就有碰撞的可能。碰撞能不能接受，取决于 ID 有多大。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org05f5e06" class="outline-2">
+<h2 id="org05f5e06">生日悖论：直觉为什么会翻车</h2>
+<div class="outline-text-2" id="text-org05f5e06">
+<p>
+64 位有 2^64 ≈ 1.8 × 10^19 个可能值。这个数字大到离谱，直觉上随机从中取值不可能碰上。但这个直觉是错的。
+</p>
+
+<p>
+想象一个 23 人的班级，两个人同一天生日的概率是多少？换个角度算更容易：先算所有人生日都不同的概率：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">P(&#26080;&#37325;&#22797;) = 365/365 &#215; 364/365 &#215; 363/365 &#215; ... &#215; 343/365 &#8776; 0.493
+P(&#26377;&#37325;&#22797;) = 1 - 0.493 &#8776; 0.507
+</pre>
+</div>
+
+<p>
+23 人就有超过 50% 的概率出现重复生日。这就是生日悖论，它告诉我们：碰撞概率取决于 <b>配对数量</b> ，而不是个体数量。
+</p>
+
+<p>
+k 个 ID 之间的配对数是 k(k-1)/2，近似 k²/2。当 k 增长 10 倍，配对数会增长 100 倍。把配对数乘上每对碰撞的概率 1/N（N 是 ID 空间大小），再用 1-x ≈ e^(-x) 做近似，得到碰撞概率公式：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-text">P(&#30896;&#25758;) &#8776; 1 - e^(-k&#178;/2N)
+</pre>
+</div>
+
+<p>
+这个公式把情况分成三段：
+</p>
+
+<ul class="org-ul">
+<li><b>安全区</b> ：k²/2N 远小于 1 时，碰撞概率约等于 0</li>
+<li><b>危险区</b> ：k²/2N 接近 1 时，碰撞概率跳到约 63%</li>
+<li><b>必然区</b> ：k²/2N 远大于 1 时，碰撞几乎是肯定的</li>
+</ul>
+
+<p>
+k（生成的 ID 数量）你控制不了，但 N（ID 空间大小）可以选，位数越大 N 越大。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbea4950" class="outline-2">
+<h2 id="orgbea4950">64 位 vs 128 位：算一笔账</h2>
+<div class="outline-text-2" id="text-orgbea4950">
+<p>
+64 位（N = 2^64 ≈ 1.8 × 10^19）：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-right" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">累计 ID 数 (k)</th>
+<th scope="col" class="org-right">k²/2N</th>
+<th scope="col" class="org-left">碰撞概率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">10 亿</td>
+<td class="org-right">0.027</td>
+<td class="org-left">~2.7%</td>
+</tr>
+
+<tr>
+<td class="org-left">100 亿</td>
+<td class="org-right">2.71</td>
+<td class="org-left">~93%</td>
+</tr>
+
+<tr>
+<td class="org-left">1000 亿</td>
+<td class="org-right">271</td>
+<td class="org-left">≈100%</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+一个中等规模公司积累 10 亿个 trace ID 很正常，碰撞率已经 2.7%。到了 100 亿，碰撞率超过 93%，几乎必然会碰上。
+</p>
+
+<p>
+128 位（N = 2^128 ≈ 3.4 × 10^38）：
+</p>
+
+<p>
+即使累计到万亿（10^12）个 ID，k²/2N 也只有约 1.5 × 10^-15。要达到有意义的碰撞风险，需要生成的 ID 数量超过地球上所有可观测平台产生的 trace 之和。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga0a88ff" class="outline-2">
+<h2 id="orga0a88ff">为什么不是 256 位</h2>
+<div class="outline-text-2" id="text-orga0a88ff">
+<p>
+数学上 256 位更安全，实际中没人这么干。原因很朴素：每个 trace ID 都要在每次服务间调用时通过 HTTP 头传递，在每个 span 旁边存储，在后端建索引，在每行日志里出现。128 位是 16 字节，256 位是 32 字节。128 位的碰撞余量已经远超实际需求，再翻一倍换来的只是所有 trace 数据的存储和带宽开销翻倍，不值当。
+</p>
+
+<p>
+而且 128 位恰好等于 UUID 的长度，数据库、编程语言、协议都原生支持，不用额外适配。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-05-22</span>
+    <span class="post-info">2026-06-03</span>
+    <a href="../../../../../tags/分布式系统">分布式系统</a> : <a href="../../../../../tags/可观测性">可观测性</a> : <a href="../../../../../tags/概率论">概率论</a> : <a href="../../../../../tags/生日悖论">生日悖论</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; f4530jdhkuyexk22dkczxkimmd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

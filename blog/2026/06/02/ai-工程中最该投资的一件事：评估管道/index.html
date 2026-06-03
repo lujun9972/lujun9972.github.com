@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>AI 工程中最该投资的一件事：评估管道 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="AI 工程和传统软件工程最大的区别在于输出质量不是二元的。一个 CRUD 接口要么能用要么不能用，但 LLM 的输出处于一个质量梯度上，你没法用单元测试来替代评估管道。本文从 Luca Cavallin 的 AI Engineering 全景指南中提取评估方法论的核心内容，覆盖 eval pipeline 的四个组件、LLM-as-judge 的偏见和缓解方式、评估指标的优先级排序，以及一个可运行的 LLM-as-judge demo。" />
+  <meta name="keywords" content="AI, LLM, evaluation, eval-pipeline, LLM-as-judge" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">AI 工程中最该投资的一件事：评估管道</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org273befe">为什么评估被跳过</a></li>
+<li><a href="#org5d4539f">最小可行 eval pipeline</a>
+<ul>
+<li><a href="#org1d2a7f4">eval 数据集的坑</a></li>
+</ul>
+</li>
+<li><a href="#orgf9aca03">LLM-as-judge 实操</a>
+<ul>
+<li><a href="#orgce68997">LLM-as-judge 的偏见</a></li>
+<li><a href="#org7061fdf">比绝对评分更靠谱的方法：配对比较</a></li>
+</ul>
+</li>
+<li><a href="#orgbce2a17">评估什么：优先级排序</a>
+<ul>
+<li><a href="#orgb3c0cdf">指令遵循被严重低估</a></li>
+<li><a href="#orgc5fd059">成本和延迟要端到端测</a></li>
+</ul>
+</li>
+<li><a href="#org20b1c31">函数调用需要独立的测试套件</a></li>
+<li><a href="#org75cdcc1">Agent 的评估维度</a></li>
+<li><a href="#org902a5f3">红队测试是持续过程不是一次性检查</a></li>
+<li><a href="#org3e254cb">总结：什么时候你的 eval 算够用</a></li>
+</ul>
+</div>
+</div>
+<p>
+原文链接：<a href="https://www.lucavall.in/blog/ai-engineering-for-developers">AI Engineering for Developers</a>
+</p>
+
+<div id="outline-container-org273befe" class="outline-2">
+<h2 id="org273befe">为什么评估被跳过</h2>
+<div class="outline-text-2" id="text-org273befe">
+<p>
+先对齐术语：eval 是 evaluation（评估）的缩写。eval 管道是一套自动化流程，用来检测你的 AI 系统（LLM、RAG、Agent 等）的输出质量有没有退化。eval 数据集就是喂给这条管道的测试输入，类似于单元测试的 fixture。
+</p>
+
+<p>
+传统软件工程有类型系统、单元测试、集成测试帮你守住质量底线。但在AI 工程里这些手段大部分都会失效：你能测试 prompt 模板渲染是否正确，能测试 API 调用是否返回 200，但无法用确定性手段判断"这个摘要好不好"或者"这个 SQL 生成对不对"。
+</p>
+
+<p>
+结果就是评估成了 AI 工程中被跳过最多的步骤。原因不难理解：
+</p>
+
+<ol class="org-ol">
+<li>搭 eval 管道不像写单元测试那样有即时反馈。你今天加了 eval，下个月模型升级时它才会帮你挡住回归</li>
+<li>eval 数据集难做。需要50 到 500 个有代表性的输入，每个案例还要有标准答案或评分量规，这比写 test case 麻烦得多</li>
+<li>"我的 demo 看起来效果不错"的直觉会给你虚假的信心</li>
+</ol>
+
+<p>
+但跳过 eval 的代价是：每次模型变更、每次 prompt 变更、每次检索调整，你都在发布回归。你可能三个月后才发现用户已经放弃了你的产品。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5d4539f" class="outline-2">
+<h2 id="org5d4539f">最小可行 eval pipeline</h2>
+<div class="outline-text-2" id="text-org5d4539f">
+<p>
+一个能用的 eval 管道只需要四个组件：
+</p>
+
+<ol class="org-ol">
+<li><b>数据集</b> ：50 到 500 个有代表性的输入。覆盖你的真实使用场景，不只是容易的 case</li>
+<li><b>标准</b> ：每个输入要么有标准答案（ground truth），要么有评分量规（rubric）</li>
+<li><b>执行器</b> ：一个函数，接收输入，端到端运行你的系统，产出输出</li>
+<li><b>打分器</b> ：程序化指标（精确率、召回率、编辑距离）或 LLM-as-judge</li>
+</ol>
+
+<p>
+加上 CI 集成：每个 PR 跑一遍 eval，报告指标变化。指标退化超过阈值就阻止合并。
+</p>
+
+<p>
+用 DeepEval、RAGAS、Braintrust、LangSmith 或者自己写代码，一个下午能搭好评估管道的代码框架。但难的不是管道代码，是数据集。
+</p>
+</div>
+
+<div id="outline-container-org1d2a7f4" class="outline-3">
+<h3 id="org1d2a7f4">eval 数据集的坑</h3>
+<div class="outline-text-3" id="text-org1d2a7f4">
+<p>
+一个常见错误是把开发过程中用过的 prompt 直接当 eval 数据。这些 prompt 往往偏向容易的 case，因为你下意识地在"能跑通"的例子上反复迭代。真实的用户输入比你想象的更狂野。
+</p>
+
+<p>
+另一个坑是不做版本管理。eval 数据集应该和代码一样在 git 里有版本，每次变更走 PR 审查。把 eval 数据放在数据库里"方便热更新"是个反模式，你会失去可追溯性。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf9aca03" class="outline-2">
+<h2 id="orgf9aca03">LLM-as-judge 实操</h2>
+<div class="outline-text-2" id="text-orgf9aca03">
+<p>
+当你没有标准答案时（摘要质量好不好、回答有没有帮助），LLM-as-judge 是目前最实用的方案：用一个强大的模型按评分量规给另一个模型的输出打分。
+</p>
+
+<p>
+下面的代码演示了完整的 eval 循环：用 DeepSeek 生成回答，用 GLM（智谱）做裁判评分。两个模型来自不同家族，避免自偏好偏见。你可以在本地跑这个例子，亲身感受 LLM-as-judge 的效果。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> json
+<span class="org-keyword">import</span> re
+<span class="org-keyword">from</span> openai <span class="org-keyword">import</span> OpenAI
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29983;&#25104;&#27169;&#22411;&#65306;DeepSeek
+</span><span class="org-variable-name">generator</span> <span class="org-operator">=</span> OpenAI(
+    api_key<span class="org-operator">=</span><span class="org-string">"your-deepseek-api-key"</span>,
+    base_url<span class="org-operator">=</span><span class="org-string">"https://api.deepseek.com"</span>
+)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35009;&#21028;&#27169;&#22411;&#65306;GLM&#65288;&#26234;&#35889;&#65289;&#65292;&#29992;&#19981;&#21516;&#27169;&#22411;&#26063;&#36991;&#20813;&#33258;&#20559;&#22909;&#20559;&#35265;
+</span><span class="org-variable-name">judge_client</span> <span class="org-operator">=</span> OpenAI(
+    api_key<span class="org-operator">=</span><span class="org-string">"your-zhipuai-api-key"</span>,
+    base_url<span class="org-operator">=</span><span class="org-string">"https://open.bigmodel.cn/api/paas/v4"</span>
+)
+
+<span class="org-variable-name">QUESTION</span> <span class="org-operator">=</span> <span class="org-string">"&#29992;&#19968;&#21477;&#35805;&#35299;&#37322;&#20160;&#20040;&#26159; RAG&#65288;&#26816;&#32034;&#22686;&#24378;&#29983;&#25104;&#65289;&#12290;"</span>
+<span class="org-variable-name">RUBRIC</span> <span class="org-operator">=</span> <span class="org-string">"""
+&#25353;&#20197;&#19979;&#19977;&#20010;&#32500;&#24230;&#35780;&#20998;&#65292;&#27599;&#39033; 1-5 &#20998;&#65306;
+- &#20934;&#30830;&#24615;&#65306;&#25216;&#26415;&#25551;&#36848;&#26159;&#21542;&#27491;&#30830;
+- &#31616;&#27905;&#24615;&#65306;&#26159;&#21542;&#30495;&#30340;&#20570;&#21040;&#20102;"&#19968;&#21477;&#35805;"
+- &#21487;&#29702;&#35299;&#24615;&#65306;&#27809;&#26377; AI &#32972;&#26223;&#30340;&#31243;&#24207;&#21592;&#33021;&#21542;&#30475;&#25026;
+&#21482;&#36820;&#22238; JSON&#65292;&#19981;&#35201;&#21152; markdown &#20195;&#30721;&#22359;&#65306;{"accuracy": x, "conciseness": x, "clarity": x, "reason": "..."}
+"""</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">generate_answer</span>(question: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">str</span>:
+    <span class="org-doc">"""&#35753; DeepSeek &#29983;&#25104;&#22238;&#31572;"""</span>
+    <span class="org-variable-name">resp</span> <span class="org-operator">=</span> generator.chat.completions.create(
+        model<span class="org-operator">=</span><span class="org-string">"deepseek-chat"</span>,
+        messages<span class="org-operator">=</span>[{<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: question}],
+        temperature<span class="org-operator">=</span>0.3,
+    )
+    <span class="org-keyword">return</span> resp.choices[0].message.content
+
+<span class="org-keyword">def</span> <span class="org-function-name">judge_answer</span>(question: <span class="org-builtin">str</span>, answer: <span class="org-builtin">str</span>) <span class="org-operator">-&gt;</span> <span class="org-builtin">dict</span>:
+    <span class="org-doc">"""&#29992; GLM &#20570;&#35009;&#21028;&#65292;&#32473;&#22238;&#31572;&#25171;&#20998;"""</span>
+    <span class="org-variable-name">resp</span> <span class="org-operator">=</span> judge_client.chat.completions.create(
+        model<span class="org-operator">=</span><span class="org-string">"glm-4-flash"</span>,
+        messages<span class="org-operator">=</span>[
+            {<span class="org-string">"role"</span>: <span class="org-string">"system"</span>, <span class="org-string">"content"</span>: f<span class="org-string">"&#20320;&#26159;&#19968;&#20010;&#20005;&#26684;&#30340;&#35780;&#20998;&#35009;&#21028;&#12290;</span>{RUBRIC}<span class="org-string">"</span>},
+            {<span class="org-string">"role"</span>: <span class="org-string">"user"</span>, <span class="org-string">"content"</span>: f<span class="org-string">"&#38382;&#39064;&#65306;</span>{question}<span class="org-constant">\n\n</span><span class="org-string">&#22238;&#31572;&#65306;</span>{answer}<span class="org-constant">\n\n</span><span class="org-string">&#35831;&#35780;&#20998;&#12290;"</span>},
+        ],
+        temperature<span class="org-operator">=</span>0.0,
+    )
+    <span class="org-variable-name">raw</span> <span class="org-operator">=</span> resp.choices[0].message.content
+    <span class="org-comment-delimiter"># </span><span class="org-comment">LLM &#21487;&#33021;&#36820;&#22238; markdown &#20195;&#30721;&#22359;&#21253;&#35065;&#30340; JSON&#65292;&#38656;&#35201;&#25552;&#21462;
+</span>    <span class="org-keyword">match</span> <span class="org-operator">=</span> re.search(r<span class="org-string">"\{.*\}"</span>, raw, re.DOTALL)
+    <span class="org-keyword">return</span> json.loads(<span class="org-keyword">match</span>.group()) <span class="org-keyword">if</span> <span class="org-keyword">match</span> <span class="org-keyword">else</span> json.loads(raw)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#36816;&#34892;&#19968;&#27425; eval
+</span><span class="org-variable-name">answer</span> <span class="org-operator">=</span> generate_answer(QUESTION)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#22238;&#31572;&#65306;</span>{answer}<span class="org-constant">\n</span><span class="org-string">"</span>)
+
+<span class="org-variable-name">score</span> <span class="org-operator">=</span> judge_answer(QUESTION, answer)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#35780;&#20998;&#65306;</span>{json.dumps(score, ensure_ascii<span class="org-operator">=</span><span class="org-constant">False</span>, indent<span class="org-operator">=</span>2)}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<p>
+运行一次的输出大概是这样（每次会有差异）：
+</p>
+
+<pre class="example" id="org48b56d3">
+回答：RAG（检索增强生成）是一种让大语言模型在生成回答前，先从外部知识库中检索相关信息作为参考，从而提升答案准确性和时效性的技术方法。
+
+评分：
+{
+  "accuracy": 4,
+  "conciseness": 4,
+  "clarity": 4,
+  "reason": "回答准确描述了RAG的基本概念，但可以进一步精简。"
+}
+</pre>
+
+<p>
+对比一下：如果让 DeepSeek 自己当裁判评自己的回答，同样的输出会拿到 5/5/5 满分。用不同模型族的 GLM 当裁判，分数更客观。这就是前面说的自偏好偏见。
+</p>
+</div>
+
+<div id="outline-container-orgce68997" class="outline-3">
+<h3 id="orgce68997">LLM-as-judge 的偏见</h3>
+<div class="outline-text-3" id="text-orgce68997">
+<p>
+LLM-as-judge 出奇地好用，但有已知的系统性偏见。裁判模型有几个倾向需要你知道：
+</p>
+
+<ol class="org-ol">
+<li><b>自偏好</b> ：裁判倾向于给自己同族的模型打更高分。就像上面说的，用 DeepSeek 当裁判评 DeepSeek 的输出，分数会偏高。缓解方法是：裁判和生成器用不同模型族</li>
+<li><b>长度偏见</b> ：裁判倾向于给更长的回答打更高分。一个冗长但信息密度低的回答可能比一个精炼准确的回答得分更高</li>
+<li><b>格式偏见</b> ：结构化输出（有标题、有列表）比纯文本更容易得高分，即使内容质量一样</li>
+</ol>
+
+<p>
+缓解方式是使用结构化评分量规：把评分拆成多个具体维度（准确性、简洁性、完整性等），每个维度有独立的 1-5 分标准，而不是笼统地问"给 1 到 5 分"。并且定期抽样 1 到 5% 的裁判决策做人工审查。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org7061fdf" class="outline-3">
+<h3 id="org7061fdf">比绝对评分更靠谱的方法：配对比较</h3>
+<div class="outline-text-3" id="text-org7061fdf">
+<p>
+让裁判在两个输出中选更好的，比让裁判给绝对分数更可靠。原因不难理解：比较两个东西的难度远低于从零开始打分。配对胜负可以转化为 Elo 排名（国际象棋用的积分制：赢涨分、输降分，对手越强涨分越多），这就是 Chatbot Arena 的运作方式。
+</p>
+
+<p>
+如果你的场景是比较不同 prompt 版本或不同模型的表现，优先用配对比较而非绝对评分。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbce2a17" class="outline-2">
+<h2 id="orgbce2a17">评估什么：优先级排序</h2>
+<div class="outline-text-2" id="text-orgbce2a17">
+<p>
+原文给出了一个评估标准的优先级，从高到低：
+</p>
+
+<ol class="org-ol">
+<li><b>领域能力</b> ：模型知道你的领域吗？</li>
+<li><b>生成质量</b> ：输出正确、流畅、格式好吗？</li>
+<li><b>指令遵循</b> ：它做了你要求的事吗？</li>
+<li><b>成本和延迟</b> ：每请求多少秒、多少钱</li>
+</ol>
+
+<p>
+这个顺序反映的是生产中实际出问题的模式：
+</p>
+
+<ul class="org-ul">
+<li>不了解你领域的模型会产生 <b>自信地错误的答案</b> ，不管格式多漂亮</li>
+<li>有领域知识但生成差的模型产生 <b>用户无法提取的知识</b></li>
+<li>忽略指令的模型不管其他品质如何都 <b>不可靠</b></li>
+<li>便宜的错误答案 <b>毫无意义</b></li>
+</ul>
+</div>
+
+<div id="outline-container-orgb3c0cdf" class="outline-3">
+<h3 id="orgb3c0cdf">指令遵循被严重低估</h3>
+<div class="outline-text-3" id="text-orgb3c0cdf">
+<p>
+很多团队在模型选型时只看领域 benchmark 分数，上线后才发现模型不听话：你让它不要加评论它偏要加，你让它用 JSON 格式它中途换成纯文本，你限制 500 字它写了 2000 字。然后花几周时间在 prompt 里各种加约束条件来弥补。指令遵循需要显式测试：给模型清晰的格式指令，在各种难度的输入上检查它是否遵守，而不只是那些简单的、模型天然就能处理好的输入。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc5fd059" class="outline-3">
+<h3 id="orgc5fd059">成本和延迟要端到端测</h3>
+<div class="outline-text-3" id="text-orgc5fd059">
+<p>
+一个便宜的模型如果需要重试两次才能得到正确结果，总成本可能比一个一次就对的贵模型更高。所以测量成本时不能只看模型标价（比如"gpt-4o 每百万 token $5"），要把重试次数也算进去，在真实的用户请求模式下端到端地算总账。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org20b1c31" class="outline-2">
+<h2 id="org20b1c31">函数调用需要独立的测试套件</h2>
+<div class="outline-text-2" id="text-org20b1c31">
+<p>
+函数调用（function calling / tool calling）是 AI 工程中最常见的结构化输出场景。大多数团队只检查"模型调了哪个函数"，不检查"参数传得对不对"。比如模型调了 <code>search_user</code> 函数，这只说明它选对了函数；但如果你要的是整数 ID，它传了字符串 ="abc"=，这就是错的，而你的测试可能仍然通过。
+</p>
+
+<p>
+函数调用更像一个结构化输出问题而非语言问题：模型需要产生一个 JSON 对象，有正确的函数名、正确类型的参数、正确的值。常见的失败模式有四种，每种需要不同的测试用例：
+</p>
+
+<ol class="org-ol">
+<li><b>参数名错误</b> ：拼写错误或语义错误（比如把 <code>user_id</code> 写成 <code>userId</code> ）</li>
+<li><b>参数类型错误</b> ：传了字符串但 API 要整数</li>
+<li><b>幻觉可选参数</b> ：模型编造了 API 文档中不存在的可选参数</li>
+<li><b>调用时机错误</b> ：该调用时不调用，不该调用时调用了</li>
+</ol>
+
+<p>
+一个只检查"它调了什么"的 eval 会遗漏这些。你的函数调用测试套件需要：
+</p>
+
+<ul class="org-ul">
+<li>正确调用的正面案例</li>
+<li>每种参数错误模式的负面案例</li>
+<li>应该调用但不调用的遗漏案例</li>
+<li>不应该调用但可能被触发的误调用案例</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org75cdcc1" class="outline-2">
+<h2 id="org75cdcc1">Agent 的评估维度</h2>
+<div class="outline-text-2" id="text-org75cdcc1">
+<ol class="org-ol">
+<li><b>任务完成率</b> ：Agent 完成了用户要求的事吗？这是最基础但也最难衡量的</li>
+<li><b>工具调用准确率</b> ：它选了正确的工具吗？参数对吗？这可以复用上一节的函数调用测试方法</li>
+<li><b>轨迹质量</b> ：它走的路径合理吗？有没有绕路、循环、无效的中间步骤？一个 3 步能完成的任务走了 15 步，即使最终结果正确，轨迹质量也很差</li>
+<li><b>每解决任务的成本</b> ：Token 花费、工具调用花费、端到端延迟。一个能解决问题但每次花 5 美元的 agent 在很多场景下不可用</li>
+</ol>
+
+<p>
+Agent 评估为什么比普通 LLM 评估更难？普通 LLM 的失败是结构性的：输出格式错了、JSON 解析失败、返回了空字符串，这些都有明确的错误信号。Agent 的失败是行为性的：每一步的输出看起来都合理，但整个执行路径是错的。它不会抛异常，而是产生看起来合理但完全错误的结果，或者烧光 token 预算后什么都不返回，或者静默循环直到超时。
+</p>
+
+<p>
+没有追踪（trace），你几乎无法调试 agent 失败。LangSmith、Arize、Langfuse 都支持 agent 追踪，能记录每一步的输入输出。在开发中追踪每次运行，在生产中采样追踪。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org902a5f3" class="outline-2">
+<h2 id="org902a5f3">红队测试是持续过程不是一次性检查</h2>
+<div class="outline-text-2" id="text-org902a5f3">
+<p>
+很多团队把红队测试（red teaming）当作上线前的一次性检查。这不对。用户的创造力超出你的想象：一旦 LLM 上线，用户会不断尝试以你没预料到的方式使用它，攻击面会持续扩大。更麻烦的是，每次模型更新都可能让之前已经堵住的攻击路径重新打开（攻击向量：即攻击者利用的具体手段，比如通过 prompt 注入绕过安全限制、通过特殊编码逃逸过滤等）。
+</p>
+
+<p>
+红队测试应该是一个持续流程：
+</p>
+
+<ol class="org-ol">
+<li>在 CI 中维护一组对抗性测试用例（jailbreak 尝试、prompt 注入、边界值）</li>
+<li>每次有东西穿透了生产防线就把它加进 CI 集</li>
+<li>定期运行新的红队 prompt，覆盖最新的攻击手法</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org3e254cb" class="outline-2">
+<h2 id="org3e254cb">总结：什么时候你的 eval 算够用</h2>
+<div class="outline-text-2" id="text-org3e254cb">
+<p>
+作者提供了一个自检清单：
+</p>
+
+<ul class="org-ul">
+<li class="off"><code>[&#xa0;]</code> 有一个 50+ 条的 eval 数据集，版本管理在 git 里</li>
+<li class="off"><code>[&#xa0;]</code> 每次 PR 会自动跑 eval 并报告指标变化</li>
+<li class="off"><code>[&#xa0;]</code> 用了 LLM-as-judge 且裁判和生成器不同族</li>
+<li class="off"><code>[&#xa0;]</code> 函数调用有独立测试套件，覆盖四种失败模式</li>
+<li class="off"><code>[&#xa0;]</code> Agent 有追踪，开发环境全覆盖</li>
+<li class="off"><code>[&#xa0;]</code> 红队测试在 CI 中，定期更新</li>
+</ul>
+
+<p>
+如果以上有超过两项是"没有"，你的 AI 功能大概率在不知不觉中变差（发布回归：新版本上线后，某些原来能正常工作的场景反而坏了，而你因为没有评估管道所以没发现）。好消息是，从零搭一个最小可行的 eval 管道只需要一个下午。先从 50 条数据集和一个简单的 LLM-as-judge 打分器开始，以后再逐步完善。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-02</span>
+    <span class="post-info">2026-06-03</span>
+    <a href="../../../../../tags/ai">AI</a> : <a href="../../../../../tags/llm">LLM</a> : <a href="../../../../../tags/evaluation">evaluation</a> : <a href="../../../../../tags/eval-pipeline">eval-pipeline</a> : <a href="../../../../../tags/llm-as-judge">LLM-as-judge</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; f4530jdhkuyexk22dkczxkimmd &lt;dot&gt; phxx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
