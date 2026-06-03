@@ -1,0 +1,47 @@
+#+TITLE: TIL：Python 中不该 catch 的三种异常
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Python, 异常处理, exception
+#+DATE: [2026-05-27 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 从 Python Morsels 学到了一些异常捕获反直觉规则：NameError 是代码 bug 不该 catch，KeyError 应该预处理而不是 catch，catch all 在批量处理场景下是合理的。
+
+从 [[https://www.pythonmorsels.com/what-types-of-exceptions-should-you-catch/][Python Morsels]] 的一篇文章中学到三个反直觉的判断。原则就一条，只 catch 你理解来源的异常。有几种异常看着该 catch，但其实不该。
+
+* NameError 是代码 bug，别 catch
+
+NameError 就是变量名拼错了。你 catch 它等于把自己的 bug 藏起来，跟用户数据没有半点关系。让它在开发阶段炸出来反而好。
+
+* KeyError 不该 catch，应该预处理
+
+用 =csv.DictReader= 读 CSV，表头拼错了（start 写成 Start）， =row["start"]= 就会抛 KeyError。有人习惯把它加到 except 里统一处理，但这么干有两个问题。
+
+1. 错误信息变模糊了。原始 traceback 显示 =KeyError: 'start'= ，你一眼就能看出是表头大小写不匹配。catch 后只能输出"Invalid date on line N"，每一行都报，误导你以为数据全坏了
+2. 问题只出在表头，但循环体里 catch 让每一行都走一遍报错逻辑
+
+正确的做法是在循环之前检查表头。
+
+#+begin_src python
+for header in ["name", "start", "end"]:
+    if header not in reader.fieldnames:
+        print(f"Error: Missing {header} header", file=sys.stderr)
+        sys.exit(1)
+#+end_src
+
+报错清晰，而且只报一次。
+
+* catch all 在批量处理时是合理的
+
+批量处理多个文件时，一个文件出错不应该中断整个流程。
+
+#+begin_src python
+for path in args.paths:
+    try:
+        with open(path) as f:
+            line_count = sum(1 for line in f)
+        print(f"{path}: {line_count} lines")
+    except Exception as e:
+        print(f"ERROR READING {path}: {e}", file=sys.stderr)
+#+end_src
+
+注意这里用的是 =except Exception= 而不是裸 =except= 。区别在于 =except Exception= 不会拦截 =SystemExit= 和 =KeyboardInterrupt= ，用户按 Ctrl+C 仍然能正常退出程序。
