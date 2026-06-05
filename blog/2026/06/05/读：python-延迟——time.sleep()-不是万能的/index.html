@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Python 延迟——time.sleep() 不是万能的 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="Python 的 time.sleep() 在普通脚本里没问题，但到了多线程、异步、GUI 等场景就直接翻车，线程退不掉、事件循环冻死、界面卡住。因为 time.sleep() 阻塞的是整个线程。本文按四种并发场景逐一讲解正确的延迟方法和背后的原理。" />
+  <meta name="keywords" content="python, sleep, threading, asyncio, GUI, 并发" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Python 延迟——time.sleep() 不是万能的</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org31fd2df">普通脚本，time.sleep() 够用</a>
+<ul>
+<li><a href="#orgbc74486">基本用法</a></li>
+<li><a href="#orgb2ac345">精度到底差多少</a></li>
+<li><a href="#orgc5f1dd4">实战，定时检查网站状态</a></li>
+<li><a href="#orgd110da1">重试间隔，用装饰器把 time.sleep() 包装起来</a></li>
+</ul>
+</li>
+<li><a href="#org19ca827">多线程，time.sleep() 让线程退不掉，改用 Event.wait()</a></li>
+<li><a href="#org258dc5d">异步代码，time.sleep() 冻结整个事件循环，改用 asyncio.sleep()</a></li>
+<li><a href="#orgb09cc34">GUI 程序，time.sleep() 冻死界面，改用 .after()</a></li>
+<li><a href="#orgd459053">决策速查表</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://realpython.com/python-sleep/">Real Python</a> 有一篇教程讲了 Python 中添加延迟的多种方法。time.sleep() 这东西在普通脚本里用着挺顺手，但程序一旦涉及多线程、异步或者 GUI，它就开始给你添乱了。线程退不掉、事件循环冻死、界面卡住，根子都在一件事上，time.sleep() 阻塞的是整个线程，而你的程序可能在一个线程里同时处理好几件事。
+</p>
+
+<div id="outline-container-org31fd2df" class="outline-2">
+<h2 id="org31fd2df">普通脚本，time.sleep() 够用</h2>
+<div class="outline-text-2" id="text-org31fd2df">
+</div>
+<div id="outline-container-orgbc74486" class="outline-3">
+<h3 id="orgbc74486">基本用法</h3>
+<div class="outline-text-3" id="text-orgbc74486">
+<p>
+time.sleep() 接受一个秒数参数（支持小数），暂停当前线程。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> time
+
+<span class="org-builtin">print</span>(<span class="org-string">"&#24320;&#22987;"</span>)
+time.sleep(3)
+<span class="org-builtin">print</span>(<span class="org-string">"&#32467;&#26463;"</span>)
+</pre>
+</div>
+
+<p>
+有两点要留心。一是 time.sleep() 暂停的是 <b>调用它的线程</b> ，不是整个进程，如果你的程序只有主线程，那就是暂停整个程序。二是精度不保证，你传 3 秒，实际等待几乎总是略长于 3 秒，因为操作系统调度有开销。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb2ac345" class="outline-3">
+<h3 id="orgb2ac345">精度到底差多少</h3>
+<div class="outline-text-3" id="text-orgb2ac345">
+<p>
+用 time.perf_counter() 可以精确测量。连跑 5 次 sleep(1)，看看实际耗时是多少。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> time
+
+<span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(5):
+    <span class="org-variable-name">start</span> <span class="org-operator">=</span> time.perf_counter()
+    time.sleep(1)
+    <span class="org-variable-name">elapsed</span> <span class="org-operator">=</span> time.perf_counter() <span class="org-operator">-</span> start
+    <span class="org-builtin">print</span>(f<span class="org-string">"&#31532; </span>{i<span class="org-operator">+</span>1}<span class="org-string"> &#27425;: sleep(1) &#23454;&#38469;&#32791;&#26102; </span>{elapsed:.6f}<span class="org-string"> &#31186;"</span>)
+</pre>
+</div>
+
+<pre class="example" id="org171cf0c">
+第 1 次: sleep(1) 实际耗时 1.000111 秒
+第 2 次: sleep(1) 实际耗时 1.000143 秒
+第 3 次: sleep(1) 实际耗时 1.000474 秒
+第 4 次: sleep(1) 实际耗时 1.000104 秒
+第 5 次: sleep(1) 实际耗时 1.000100 秒
+</pre>
+
+<p>
+每次都比 1 秒多了 0.0001 到 0.0005 秒。多数场景下这点误差无所谓，但如果在做精确计时或高频轮询（比如每 10 毫秒一次），这个偏差会累积。原因是操作系统的调度有开销，time.sleep() 只能保证"至少等这么久"，不能保证"恰好等这么久"。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc5f1dd4" class="outline-3">
+<h3 id="orgc5f1dd4">实战，定时检查网站状态</h3>
+<div class="outline-text-3" id="text-orgc5f1dd4">
+<p>
+一个常见的用法是定时轮询。下面这个函数每 60 秒检查一次网站是否在线（为了演示，间隔改为 5 秒，只检查 3 次）。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> time
+<span class="org-keyword">import</span> urllib.request
+<span class="org-keyword">import</span> urllib.error
+
+<span class="org-keyword">def</span> <span class="org-function-name">uptime_bot</span>(url, interval<span class="org-operator">=</span>5, checks<span class="org-operator">=</span>3):
+    <span class="org-keyword">for</span> _ <span class="org-keyword">in</span> <span class="org-builtin">range</span>(checks):
+        <span class="org-keyword">try</span>:
+            <span class="org-variable-name">response</span> <span class="org-operator">=</span> urllib.request.urlopen(url, timeout<span class="org-operator">=</span>10)
+            <span class="org-builtin">print</span>(f<span class="org-string">"[</span>{response.status}<span class="org-string">] </span>{url}<span class="org-string"> &#27491;&#24120;"</span>)
+        <span class="org-keyword">except</span> urllib.error.HTTPError <span class="org-keyword">as</span> e:
+            <span class="org-builtin">print</span>(f<span class="org-string">"[HTTP </span>{e.code}<span class="org-string">] </span>{url}<span class="org-string"> &#36820;&#22238;&#38169;&#35823;"</span>)
+        <span class="org-keyword">except</span> urllib.error.URLError <span class="org-keyword">as</span> e:
+            <span class="org-builtin">print</span>(f<span class="org-string">"[URL&#38169;&#35823;] </span>{url}<span class="org-string">: </span>{e.reason}<span class="org-string">"</span>)
+        time.sleep(interval)
+
+uptime_bot(<span class="org-string">"https://httpbin.org/status/404"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orgcf501e7">
+[HTTP 404] https://httpbin.org/status/404 返回错误
+[HTTP 404] https://httpbin.org/status/404 返回错误
+[HTTP 404] https://httpbin.org/status/404 返回错误
+</pre>
+
+<p>
+这里用 httpbin 的 404 端点做演示，实际使用时换成你要监控的 URL，间隔改回 60 秒就行。"循环 + sleep"在脚本里没毛病，脚本只有一个线程，不需要响应外部事件。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd110da1" class="outline-3">
+<h3 id="orgd110da1">重试间隔，用装饰器把 time.sleep() 包装起来</h3>
+<div class="outline-text-3" id="text-orgd110da1">
+<p>
+有些操作偶尔失败（网络超时、接口没就绪），重试几次就好了，但重试之间得等一等。把"重试 + 等待"的逻辑抽成装饰器，任何函数加一行就能自动重试。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> time
+
+<span class="org-keyword">def</span> <span class="org-function-name">retry</span>(delay<span class="org-operator">=</span>3, max_retries<span class="org-operator">=</span>3):
+    <span class="org-keyword">def</span> <span class="org-function-name">decorator</span>(func):
+        <span class="org-keyword">def</span> <span class="org-function-name">wrapper</span>(<span class="org-operator">*</span>args, <span class="org-operator">**</span>kwargs):
+            <span class="org-variable-name">last_exc</span> <span class="org-operator">=</span> <span class="org-constant">None</span>
+            <span class="org-keyword">for</span> attempt <span class="org-keyword">in</span> <span class="org-builtin">range</span>(max_retries):
+                <span class="org-keyword">try</span>:
+                    <span class="org-keyword">return</span> func(<span class="org-operator">*</span>args, <span class="org-operator">**</span>kwargs)
+                <span class="org-keyword">except</span> <span class="org-type">Exception</span> <span class="org-keyword">as</span> e:
+                    <span class="org-variable-name">last_exc</span> <span class="org-operator">=</span> e
+                    <span class="org-builtin">print</span>(f<span class="org-string">"&#31532; </span>{attempt <span class="org-operator">+</span> 1}<span class="org-string"> &#27425;&#22833;&#36133;&#65292;</span>{delay}<span class="org-string"> &#31186;&#21518;&#37325;&#35797;: </span>{e}<span class="org-string">"</span>)
+                    time.sleep(delay)
+            <span class="org-keyword">raise</span> last_exc
+        <span class="org-keyword">return</span> wrapper
+    <span class="org-keyword">return</span> decorator
+
+<span class="org-type">@retry</span>(delay<span class="org-operator">=</span>2)
+<span class="org-keyword">def</span> <span class="org-function-name">download_file</span>(url):
+    <span class="org-keyword">raise</span> <span class="org-type">ConnectionError</span>(f<span class="org-string">"&#26080;&#27861;&#36830;&#25509; </span>{url}<span class="org-string">"</span>)
+
+<span class="org-keyword">try</span>:
+    download_file(<span class="org-string">"https://example.com/file.zip"</span>)
+<span class="org-keyword">except</span> <span class="org-type">ConnectionError</span> <span class="org-keyword">as</span> e:
+    <span class="org-builtin">print</span>(f<span class="org-string">"&#26368;&#32456;&#22833;&#36133;: </span>{e}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<pre class="example" id="org8674f61">
+第 1 次失败，2 秒后重试: 无法连接 https://example.com/file.zip
+第 2 次失败，2 秒后重试: 无法连接 https://example.com/file.zip
+第 3 次失败，2 秒后重试: 无法连接 https://example.com/file.zip
+最终失败: 无法连接 https://example.com/file.zip
+</pre>
+
+<p>
+time.sleep() 用在这里挺合适的，重试逻辑本身就是同步的，不需要响应外部事件。装饰器的好处，就是把重试逻辑从业务代码里抽出来，省得每次都手写 for 循环加 try/except。
+</p>
+
+<p>
+以上场景 time.sleep() 都没问题。下面三个场景，它就开始坑人了。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org19ca827" class="outline-2">
+<h2 id="org19ca827">多线程，time.sleep() 让线程退不掉，改用 Event.wait()</h2>
+<div class="outline-text-2" id="text-org19ca827">
+<p>
+你有个后台线程在做数据迁移，每批操作之间要等 5 秒，免得压垮数据库。time.sleep(5) 能实现等待，但麻烦来了，你想停掉这个线程的时候（比如用户按了 Ctrl+C），线程得等 sleep 结束才能响应退出信号。sleep 剩 4 秒，你就得干等 4 秒。
+</p>
+
+<p>
+举个更具体的例子。你的程序有个后台线程，每隔 10 秒往日志里写一条心跳记录。你用的是 time.sleep(10)：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> threading
+<span class="org-keyword">import</span> time
+
+<span class="org-keyword">def</span> <span class="org-function-name">heartbeat</span>():
+    <span class="org-keyword">for</span> i <span class="org-keyword">in</span> <span class="org-builtin">range</span>(2):
+        <span class="org-builtin">print</span>(f<span class="org-string">"&#24515;&#36339; </span>{i}<span class="org-string"> [</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string">]"</span>)
+        time.sleep(5)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27880;&#24847;&#65306;&#27809;&#26377;&#35774; daemon=True&#65292;&#25152;&#20197;&#26159;&#26222;&#36890;&#32447;&#31243;
+</span><span class="org-variable-name">t</span> <span class="org-operator">=</span> threading.Thread(target<span class="org-operator">=</span>heartbeat)
+t.start()
+time.sleep(2)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#20027;&#31243;&#24207;&#35201;&#36864;&#20986;&#20102;... [</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string">]"</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#32447;&#31243;&#21018;&#21457;&#23436;&#24515;&#36339; 0&#65292;&#27491;&#21345;&#22312; sleep(5) &#30340;&#31532; 2 &#31186;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">Python &#20250;&#31561;&#38750; daemon &#32447;&#31243;&#32467;&#26463;&#25165;&#36864;&#20986;&#65292;&#36824;&#24471;&#31561;&#32422; 8 &#31186;</span>
+</pre>
+</div>
+
+<pre class="example" id="orgc4f78b0">
+心跳 0 [16:53:45]
+主程序要退出了... [16:53:47]
+心跳 1 [16:53:50]
+（程序总共跑了 10 秒才退出，而不是主线程希望的 2 秒）
+</pre>
+
+<p>
+主程序想退出，线程正卡在 sleep 中间，Python 要等非 daemon 线程跑完才退出。上面这个例子，主线程 2 秒就想走了，但实际等了 10 秒。这在生产环境里很烦人，特别是 sleep 时间长的时候（比如 60 秒的监控间隔）。
+</p>
+
+<p>
+threading.Event 的 wait() 方法就是干这个的，也能等待指定时间，但可以立刻被中断。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> threading
+<span class="org-keyword">import</span> logging
+<span class="org-keyword">import</span> time
+
+logging.basicConfig(level<span class="org-operator">=</span>logging.DEBUG, <span class="org-builtin">format</span><span class="org-operator">=</span><span class="org-string">"%(threadName)s: %(message)s"</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">worker</span>(interval, stop_event):
+    <span class="org-keyword">while</span> <span class="org-keyword">not</span> stop_event.is_set():
+        logging.debug(<span class="org-string">"&#24037;&#20316;&#20013;..."</span>)
+        stop_event.wait(timeout<span class="org-operator">=</span>interval)
+    logging.debug(<span class="org-string">"&#36864;&#20986;"</span>)
+
+<span class="org-variable-name">stop_event</span> <span class="org-operator">=</span> threading.Event()
+<span class="org-variable-name">t1</span> <span class="org-operator">=</span> threading.Thread(target<span class="org-operator">=</span>worker, args<span class="org-operator">=</span>(2, stop_event), name<span class="org-operator">=</span><span class="org-string">"Worker-1"</span>)
+<span class="org-variable-name">t2</span> <span class="org-operator">=</span> threading.Thread(target<span class="org-operator">=</span>worker, args<span class="org-operator">=</span>(3, stop_event), name<span class="org-operator">=</span><span class="org-string">"Worker-2"</span>)
+t1.start()
+t2.start()
+
+<span class="org-keyword">try</span>:
+    <span class="org-keyword">while</span> <span class="org-keyword">not</span> stop_event.wait(timeout<span class="org-operator">=</span>5):
+        logging.debug(<span class="org-string">"&#20027;&#32447;&#31243;&#20173;&#22312;&#36816;&#34892;"</span>)
+<span class="org-keyword">except</span> <span class="org-type">KeyboardInterrupt</span>:
+    logging.debug(<span class="org-string">"&#25910;&#21040;&#20013;&#26029;&#20449;&#21495;"</span>)
+    stop_event.<span class="org-builtin">set</span>()
+
+t1.join()
+t2.join()
+logging.debug(<span class="org-string">"&#25152;&#26377;&#32447;&#31243;&#24050;&#36864;&#20986;"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orga196deb">
+Worker-1: 工作中...
+Worker-2: 工作中...
+Worker-1: 工作中...
+Worker-2: 工作中...
+Worker-1: 工作中...
+MainThread: 主线程仍在运行
+MainThread: 收到中断信号
+Worker-1: 退出
+Worker-2: 退出
+MainThread: 所有线程已退出
+</pre>
+
+<p>
+Event.wait(timeout=N)：N 秒内 event 被 set() 了，它立刻返回 True，线程马上退出循环。超时了就返回 False，线程继续下一轮。比 time.sleep() 优雅得多，不用等 sleep 跑完才能停。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org258dc5d" class="outline-2">
+<h2 id="org258dc5d">异步代码，time.sleep() 冻结整个事件循环，改用 asyncio.sleep()</h2>
+<div class="outline-text-2" id="text-org258dc5d">
+<p>
+异步编程的思路：一个线程同时处理多个任务，哪个任务在等 IO 就先挂起它，去跑其他任务。time.sleep() 会把整个线程（也就是整个事件循环）冻住，所有任务都卡住，异步的优势全没了。
+</p>
+
+<p>
+asyncio.sleep() 只挂起当前协程，不阻塞事件循环，其他协程可以继续跑。下面这个例子用时间戳直观展示两者的区别。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> asyncio
+<span class="org-keyword">import</span> time
+
+<span class="org-keyword">async def</span> <span class="org-function-name">task</span>(name, delay):
+    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string"> </span>{name}<span class="org-string"> &#24320;&#22987;"</span>)
+    <span class="org-keyword">await</span> asyncio.sleep(delay)
+    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string"> </span>{name}<span class="org-string"> &#32467;&#26463;&#65288;&#31561;&#20102; </span>{delay}<span class="org-string"> &#31186;&#65289;"</span>)
+
+<span class="org-keyword">async def</span> <span class="org-function-name">main</span>():
+    <span class="org-comment-delimiter"># </span><span class="org-comment">task A &#31561; 2 &#31186;&#65292;task B &#31561; 1 &#31186;
+</span>    <span class="org-comment-delimiter"># </span><span class="org-comment">&#22914;&#26524;&#26159;&#20018;&#34892;&#65292;&#24635;&#20849;&#35201; 3 &#31186;&#65307;&#24182;&#21457;&#25191;&#34892;&#21482;&#38656; 2 &#31186;
+</span>    <span class="org-keyword">await</span> asyncio.gather(task(<span class="org-string">"A"</span>, 2), task(<span class="org-string">"B"</span>, 1))
+
+asyncio.run(main())
+</pre>
+</div>
+
+<pre class="example" id="orgf6ca6d2">
+14:44:23 A 开始
+14:44:23 B 开始
+14:44:24 B 结束（等了 1 秒）
+14:44:25 A 结束（等了 2 秒）
+</pre>
+
+<p>
+B 在第 1 秒就结束了，不用等 A。两个任务是并发执行的，总共只花了 2 秒而不是串行的 3 秒。
+</p>
+
+<p>
+如果换成 time.sleep()，效果是这样的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> time
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20018;&#34892;&#29256;&#26412;&#65288;time.sleep &#22312; async &#20013;&#30340;&#25928;&#26524;&#65289;
+</span><span class="org-builtin">print</span>(<span class="org-string">"=== &#20018;&#34892; ==="</span>)
+<span class="org-variable-name">start</span> <span class="org-operator">=</span> time.perf_counter()
+<span class="org-keyword">for</span> name, delay <span class="org-keyword">in</span> [(<span class="org-string">"A"</span>, 2), (<span class="org-string">"B"</span>, 1)]:
+    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string"> </span>{name}<span class="org-string"> &#24320;&#22987;"</span>)
+    time.sleep(delay)
+    <span class="org-builtin">print</span>(f<span class="org-string">"</span>{time.strftime('<span class="org-operator">%</span>H:<span class="org-operator">%</span>M:<span class="org-operator">%</span>S')}<span class="org-string"> </span>{name}<span class="org-string"> &#32467;&#26463;&#65288;&#31561;&#20102; </span>{delay}<span class="org-string"> &#31186;&#65289;"</span>)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#20018;&#34892;&#24635;&#32791;&#26102;: </span>{time.perf_counter() <span class="org-operator">-</span> start:.1f}<span class="org-string"> &#31186;"</span>)
+</pre>
+</div>
+
+<pre class="example" id="org9b8f798">
+=== 串行 ===
+16:40:28 A 开始
+16:40:30 A 结束（等了 2 秒）
+16:40:30 B 开始
+16:40:31 B 结束（等了 1 秒）
+串行总耗时: 3.0 秒
+</pre>
+
+<p>
+对比一下，串行版本里 B 必须等 A 跑完才开始，总共 3 秒。而用 asyncio.sleep() 的并发版本，两个任务同时开始，B 先结束，总共只要 2 秒。差异来自 time.sleep() 把整个线程焊死了，事件循环没法切换到其他协程。
+</p>
+
+<p>
+说个实际的场景，调 API 有速率限制，需要在请求之间加间隔。用 asyncio.sleep() 可以在不阻塞事件循环的前提下控制请求频率，同时其他协程（比如处理用户输入）不受影响。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb09cc34" class="outline-2">
+<h2 id="orgb09cc34">GUI 程序，time.sleep() 冻死界面，改用 .after()</h2>
+<div class="outline-text-2" id="text-orgb09cc34">
+<p>
+GUI 框架（Tkinter、wxPython）在主线程跑一个事件循环，处理用户点击、窗口重绘这些事。在事件循环里调用 time.sleep()，会导致界面直接冻住，按钮点不动，窗口拖不了，Windows 上甚至会弹出"程序未响应"。
+</p>
+
+<p>
+先看错误示范。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> tkinter <span class="org-keyword">as</span> tk
+<span class="org-keyword">import</span> time
+
+<span class="org-variable-name">root</span> <span class="org-operator">=</span> tk.Tk()
+root.title(<span class="org-string">"&#20923;&#32467;&#28436;&#31034;"</span>)
+root.geometry(<span class="org-string">"300x150"</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">on_click</span>():
+    <span class="org-builtin">print</span>(<span class="org-string">"&#25353;&#38062;&#34987;&#28857;&#20987;"</span>)
+    time.sleep(3)
+    <span class="org-builtin">print</span>(<span class="org-string">"3 &#31186;&#21040;&#20102;"</span>)
+
+<span class="org-variable-name">btn</span> <span class="org-operator">=</span> tk.Button(root, text<span class="org-operator">=</span><span class="org-string">"&#28857;&#25105;&#65288;&#20250;&#20923;&#32467; 3 &#31186;&#65289;"</span>, command<span class="org-operator">=</span>on_click)
+btn.pack(pady<span class="org-operator">=</span>50)
+root.mainloop()
+</pre>
+</div>
+
+<p>
+点击按钮后，整个窗口冻住 3 秒，什么都做不了。
+</p>
+
+<p>
+正确做法是用 Tkinter 的 .after() 方法。它接受两个参数，等待的毫秒数和回调函数。调用后立刻返回，不阻塞事件循环。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> tkinter <span class="org-keyword">as</span> tk
+
+<span class="org-variable-name">root</span> <span class="org-operator">=</span> tk.Tk()
+root.title(<span class="org-string">"&#38750;&#38459;&#22622;&#28436;&#31034;"</span>)
+root.geometry(<span class="org-string">"300x150"</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">delayed_action</span>():
+    <span class="org-builtin">print</span>(<span class="org-string">"3 &#31186;&#21040;&#20102;"</span>)
+
+<span class="org-keyword">def</span> <span class="org-function-name">on_click</span>():
+    root.after(3000, delayed_action)
+    <span class="org-builtin">print</span>(<span class="org-string">"&#24050;&#23433;&#25490; 3 &#31186;&#21518;&#25191;&#34892;&#65292;&#30028;&#38754;&#19981;&#20250;&#21345;"</span>)
+
+<span class="org-variable-name">btn</span> <span class="org-operator">=</span> tk.Button(root, text<span class="org-operator">=</span><span class="org-string">"&#28857;&#25105;&#65288;&#19981;&#20250;&#20923;&#32467;&#65289;"</span>, command<span class="org-operator">=</span>on_click)
+btn.pack(pady<span class="org-operator">=</span>50)
+root.mainloop()
+</pre>
+</div>
+
+<pre class="example" id="orgc98b0ca">
+已安排 3 秒后执行，界面不会卡
+（3 秒后）
+3 秒到了
+（此输出为描述，未经实际验证——验证环境缺少 python3-tk）
+</pre>
+
+<p>
+用 .after() 之后，按钮可以反复点击，每次点击都安排一个延迟回调，界面始终流畅。wxPython 的等价方法是 wx.CallLater()，思路一样，安排延迟回调而不是阻塞线程。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd459053" class="outline-2">
+<h2 id="orgd459053">决策速查表</h2>
+<div class="outline-text-2" id="text-orgd459053">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">场景</th>
+<th scope="col" class="org-left">用什么</th>
+<th scope="col" class="org-left">为什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">普通脚本（包括重试间隔）</td>
+<td class="org-left">time.sleep()</td>
+<td class="org-left">只有一个线程，不怕阻塞</td>
+</tr>
+
+<tr>
+<td class="org-left">多线程，工作间隔</td>
+<td class="org-left">Event.wait()</td>
+<td class="org-left">可以被 set() 立即中断，不用等 sleep 跑完</td>
+</tr>
+
+<tr>
+<td class="org-left">异步代码，协程暂停</td>
+<td class="org-left">asyncio.sleep()</td>
+<td class="org-left">只挂起当前协程，不冻结事件循环</td>
+</tr>
+
+<tr>
+<td class="org-left">GUI，延迟操作</td>
+<td class="org-left">.after() / wx.CallLater()</td>
+<td class="org-left">不阻塞 GUI 事件循环，界面保持响应</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+说到底就一句话，time.sleep() 阻塞的是整个线程。只要你的程序在一个线程里跑多个任务（多个协程共享一个线程、GUI 事件循环在主线程处理用户操作），就不能用它，得换成不阻塞或可中断的方案。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-05</span>
+    <span class="post-info">2026-06-05</span>
+    <a href="../../../../../tags/python">python</a> : <a href="../../../../../tags/sleep">sleep</a> : <a href="../../../../../tags/threading">threading</a> : <a href="../../../../../tags/asyncio">asyncio</a> : <a href="../../../../../tags/gui">GUI</a> : <a href="../../../../../tags/并发">并发</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; 3oem33avjkrenfoeeqrvndxdpg &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
