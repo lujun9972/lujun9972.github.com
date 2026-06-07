@@ -1,0 +1,223 @@
+#+TITLE: 读：为什么 Discord 把实验指标从 50 个砍到 15 个
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: A/B测试,统计,PCA,多重比较
+#+DATE: [2026-06-06 Sat]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Discord 数据团队发现 A/B 测试中指标越多，越难检测到真实效果。原因是多重比较问题导致统计校正越来越严格。他们用 50000 次模拟实验验证了这个规律，再用 PCA 找出冗余指标，最终将默认指标从约 50 个削减到约 15 个，真阳性检出率提升约 45%。本文通俗解读背后的统计原理。
+
+* 开篇
+
+做 A/B 测试的时候，总觉得多加几个指标没坏处，多看几个维度总归能多发现点什么。
+
+Discord 的数据团队一开始也这么想。他们的默认指标列表从几个膨胀到了约 50 个，每个团队都往里塞自己关心的指标，几乎没人删过。直到他们撞上一个反直觉的事实，指标加得越多，反而越难检测到真实的效果。
+
+[[https://discord.com/blog/measure-less-to-learn-more-using-fewer-higher-quality-metrics-to-capture-what-matters][这篇博文]]解读 Discord 怎么用统计模拟和 PCA（主成分分析）验证了这个规律，最后把实验指标从 ~50 砍到 ~15，真阳性检出率（recall）反而提升了约 45%。
+
+* 多重比较问题
+
+** 为什么指标多了反而坏事
+
+先说一个基础概念：p 值衡量的是"这个结果有多大概率是碰巧出现的"。p 值越小，说明结果越不像是随机波动造成的，越像是真实效果。通常 p < 0.05 就认为"显著"（只有 5% 的概率是碰巧）。
+
+现在假设你做了一次 A/B 测试，跟踪 100 个指标，每个指标都设 p 值阈值 0.05。就算实验组没有任何真实效果，纯粹因为随机波动，100 个指标里平均会有 5 个"碰巧 p 值小于 0.05"。这就是 *多重比较问题*（multiple comparisons problem），同时检验的东西越多，其中至少有一个碰巧"看起来显著"的概率就越高。
+
+- *假发现率*（False Discovery Rate，FDR）：所有被标记为"有显著效果"的指标中，有多少是冤枉的。FDR 控制在 5% 意味着，每 20 个"显著"的指标中，平均不超过 1 个是假的
+- *recall*（真阳性检出率）：所有真实存在的效果中，成功检测到了多少。recall 为 60% 意味着，10 个真实效果里只抓到了 6 个
+
+这两个指标天生矛盾。降低 FDR（少冤枉人）往往意味着降低 recall（多漏掉真效果），BH 校正就是在这两者之间找平衡。
+
+** BH 校正：控制冤枉率的代价
+
+Discord 使用 Benjamini-Hochberg（BH）校正来控制 FDR，思路是这样的。
+
+1. 把所有指标的 p 值从小到大排序
+2. 排名第 i 的指标，阈值设为 =i × 0.05 / n=（n 是指标总数）
+3. 只有 p 值低于对应阈值的指标才被判为"显著"
+
+排名越靠前（i 值越小），指标总数约大（n值越大）面对的门槛越严格， 真正有效果的指标也越容易被漏掉。
+
+一句话总结这个两难，不校正，假阳性太多；校正了，真效果容易被埋没。与其琢磨更精妙的统计方法，不如直接减少指标数量，让校正不那么激进。
+
+* 模拟验证：看见才能相信
+
+Discord 没有停留在理论分析，他们用模拟实验直接看数字怎么走。
+
+** 实验设计
+
+他们模拟了 50000 次实验，每次包含 20 个指标。
+- 19 个"噪声指标"：从正态分布 N(0, 1) 中随机抽取，代表没有真实效果的指标
+- 1 个"真实效果指标"：从 N(2.8, 1) 中抽取，z 值 2.8 对应约 -5.2% 的变化，来自一次真实实验的数据
+
+然后他们在不同的指标总数下重复模拟，观察假阳性率和 recall 的变化。
+
+** Python 复现
+
+下面用 Python 复现这个核心模拟（为加快运行速度，这里用 5000 次模拟代替原文的 50000 次）。
+
+#+begin_src python
+import numpy as np
+from scipy.stats import norm
+
+def bh_reject(p_values, alpha=0.05):
+    """Benjamini-Hochberg 校正，返回哪些假设被拒绝"""
+    n = len(p_values)
+    sorted_idx = np.argsort(p_values)
+    sorted_pvals = p_values[sorted_idx]
+    rejected = np.zeros(n, dtype=bool)
+    # 从最大 rank 往前找，找到第一个满足 p(k) <= k*alpha/n 的
+    for k in range(n, 0, -1):
+        if sorted_pvals[k-1] <= k * alpha / n:
+            rejected[sorted_idx[:k]] = True
+            break
+    return rejected
+
+def simulate(n_metrics, effect_z=2.8, n_sims=5000):
+    """模拟 n_metrics 个指标的实验，其中 1 个有真实效果"""
+    false_alarms = 0
+    detections = 0
+    for _ in range(n_sims):
+        # n_metrics-1 个噪声指标
+        null_z = np.random.normal(0, 1, n_metrics - 1)
+        null_p = 2 * (1 - norm.cdf(np.abs(null_z)))
+        # 1 个真实效果指标
+        effect_z_val = np.random.normal(effect_z, 1)
+        effect_p = 2 * (1 - norm.cdf(np.abs(effect_z_val)))
+        # 合并并做 BH 校正
+        all_p = np.append(null_p, effect_p)
+        rejected = bh_reject(all_p, alpha=0.05)
+        # 假阳性：至少 1 个噪声指标被拒绝
+        if np.any(rejected[:n_metrics-1]):
+            false_alarms += 1
+        # 真阳性：真实效果指标被检测到
+        if rejected[-1]:
+            detections += 1
+    return false_alarms / n_sims, detections / n_sims
+
+print(f"{'指标数':>6s}  {'假阳性率':>8s}  {'recall':>6s}")
+print("-" * 30)
+for n in [5, 10, 20, 50, 100]:
+    far, rec = simulate(n)
+    print(f"{n:6d}  {far:8.3f}  {rec:6.3f}")
+#+end_src
+
+#+begin_example
+   指标数      假阳性率  recall
+------------------------------
+     5     0.062   0.599
+    10     0.067   0.504
+    20     0.073   0.426
+    50     0.067   0.329
+   100     0.069   0.258
+#+end_example
+
+数字很清楚，从 5 个指标增加到 100 个，recall 从 60% 跌到 26%，腰斩不止。BH 校正面对更多指标时必须加码控制 FDR，结果连真效果也被压下去了。
+
+Discord 面对的正是这个困境，50 个默认指标意味着大量真实效果被 BH 校正埋没。
+
+* 用 PCA 找冗余
+
+既然"指标越少越好"在统计上站得住，下一个问题就是删哪些。不能瞎删，得先搞清楚哪些指标在测量同一件事。Discord 分两步走。
+
+** 第一步：看相关性
+
+他们先计算各指标在不同实验中的处理效果相关性。如果两个指标在所有实验中都朝同一个方向变化，说明它们很可能在测量同一件事。
+
+#+begin_src python
+import numpy as np
+from itertools import combinations
+
+np.random.seed(42)
+n_exp = 200
+
+# 6 个相关指标：共享一个共同因子
+factor = np.random.normal(0, 1, n_exp)
+correlated = np.array([factor + np.random.normal(0, 0.3, n_exp)
+                        for _ in range(6)])
+# 2 个独立指标
+independent = np.random.normal(0, 1, (2, n_exp))
+
+metrics = np.vstack([correlated, independent])
+labels = [f"metric_{i}" for i in range(8)]
+
+print("高相关指标对（|r| > 0.7）：")
+for i, j in combinations(range(8), 2):
+    r = np.corrcoef(metrics[i], metrics[j])[0, 1]
+    if abs(r) > 0.7:
+        print(f"  {labels[i]} <-> {labels[j]}: r = {r:.3f}")
+#+end_src
+
+#+begin_example
+高相关指标对（|r| > 0.7）：
+  metric_0 <-> metric_1: r = 0.905
+  metric_0 <-> metric_2: r = 0.900
+  metric_0 <-> metric_3: r = 0.901
+  metric_0 <-> metric_4: r = 0.902
+  metric_0 <-> metric_5: r = 0.909
+  metric_1 <-> metric_2: r = 0.915
+  metric_1 <-> metric_3: r = 0.908
+  metric_1 <-> metric_4: r = 0.891
+  metric_1 <-> metric_5: r = 0.917
+  metric_2 <-> metric_3: r = 0.925
+  metric_2 <-> metric_4: r = 0.902
+  metric_2 <-> metric_5: r = 0.911
+  metric_3 <-> metric_4: r = 0.914
+  metric_3 <-> metric_5: r = 0.909
+  metric_4 <-> metric_5: r = 0.900
+#+end_example
+
+metric_0 到 metric_5 两两高度相关（r > 0.85），它们测量的是同一个底层概念。留一个就够了，删掉其余 5 个几乎不丢信息。
+
+但相关性只能看两两关系。如果一群指标之间的关系错综复杂（A 和 B 相关，B 和 C 相关，但 A 和 C 相关性弱），两两分析就不够了。需要更全局的工具。
+
+** 第二步：用 PCA 量化冗余
+
+PCA（主成分分析，Principal Component Analysis）回答一个更本质的问题，这些指标里到底有几个是真正独立的？
+
+直观理解 PCA：如果你的 8 个指标其实都在测量同一件事，PCA 会告诉你"大部分变化可以被 1 个主成分解释"。如果有 3 个独立维度，前 3 个主成分就能覆盖大部分方差。
+
+#+begin_src python
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+# 标准化后做 PCA（转置：每行是一个实验，每列是一个指标）
+scaler = StandardScaler()
+metrics_scaled = scaler.fit_transform(metrics.T)
+pca = PCA()
+pca.fit(metrics_scaled)
+
+print("各主成分解释的方差比例：")
+cum = 0
+for i, v in enumerate(pca.explained_variance_ratio_):
+    cum += v
+    print(f"  PC{i+1}: {v:.3f} (累计 {cum:.3f})")
+#+end_src
+
+#+begin_example
+各主成分解释的方差比例：
+  PC1: 0.696 (累计 0.696)
+  PC2: 0.132 (累计 0.828)
+  PC3: 0.114 (累计 0.942)
+  PC4: 0.014 (累计 0.957)
+  PC5: 0.013 (累计 0.970)
+  PC6: 0.011 (累计 0.981)
+  PC7: 0.010 (累计 0.991)
+  PC8: 0.009 (累计 1.000)
+#+end_example
+
+第 1 个主成分就解释了约 70% 的方差，前 3 个覆盖了 94%。8 个指标里，真正独立的维度只有 2 到 3 个，其余都是重复测量。
+
+Discord 在真实数据上发现了同样的规律，大量 engagement 相关的指标塌缩到了同一个主成分上。这给了他们信心，去掉冗余指标不会丢多少信号。
+
+需要说明的是，PCA 和相关性分析不能告诉你具体删哪个指标，那是业务判断的事。但它们能告诉你哪些指标在测量同一件事，让你有数据支撑地做减法，别凭感觉。
+
+* 结果
+
+Discord 最终的操作分两步。
+
+1. 合并平台拆分，把按平台（iOS/Android/Desktop）拆开的指标合并为父指标
+2. 去掉冗余 engagement 指标，PCA 显示它们其实测量的是同一件事
+
+结果，默认指标从 ~50 个削减到 ~15 个，检测一个中等大小真实效果的 recall 提升了约 45%。
+
+说到底就一句话，做减法之前先量化冗余。相关性分析和 PCA 给你量化工具，告诉你哪些指标在测量同一件事。有了数据，删起来才有底气，不至于拍脑袋。
