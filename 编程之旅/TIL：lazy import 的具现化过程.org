@@ -1,0 +1,69 @@
+#+TITLE: TIL：lazy import 的具现化过程
+#+AUTHOR: lujun9972
+#+TAGS: Python, 编程, 模块系统
+#+DATE: [2026-06-08 Mon]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Python 3.15 的 lazy import 创建的是一个 lazy_import 对象，不是模块。它有个 .resolve() 方法可以手动拿到真实模块。调用之后 globals 里的 lazy import 不会自动消失，说明具现化其实就是一次赋值操作。
+
+Python 的 =import= 语句在模块加载时立即执行被导入模块的顶层代码。大型应用顶部可能 import 几百个模块，但其中很多不是马上用到的，全部在启动时执行意味着启动慢、内存浪费。CLI 工具对这个问题最敏感，用户敲完命令后超过半秒没响应就会觉得卡了。
+
+为了解决这个问题，Python 3.15 引入了 =lazy import= 语法（来自 PEP 690），把模块加载推迟到首次使用时。写了 =lazy import json= 之后，=globals()["json"]= 拿到的不是一个模块对象，而是一个 =lazy_import= 类型的对象。这个对象不能调用 =json.dumps()= 之类的模块方法，它只是占着 =json= 这个名字，等真正需要用到模块时再被替换掉。如果这个 import 只在一个很少触发的错误处理分支里用到了，那这个模块可能永远不会被加载。
+
+用 =dir()= 看看这个占位符有什么，
+
+#+begin_src python :python python3
+lazy import json
+dir(globals()["json"])
+#+end_src
+
+#+begin_example
+['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', 'resolve']
+#+end_example
+
+除了有一堆 dunder 方法（双下划线方法，像 =__class__= 、 =__doc__= ）之外，有个 =resolve= 方法。看看它的文档，
+
+#+begin_src python :python python3
+help(globals()["json"].resolve)
+#+end_src
+
+#+begin_example
+Help on built-in function resolve:
+
+resolve() method of builtins.lazy_import instance
+    resolves the lazy import and returns the actual object
+#+end_example
+
+* 手动调用 resolve()
+
+#+begin_src python :python python3
+lazy import json
+resolved_json = globals()["json"].resolve()
+resolved_json
+#+end_src
+
+#+begin_example
+<module 'json' from '/tmp/python3.15/lib/python3.15/json/__init__.py'>
+#+end_example
+
+拿到真实模块了。但有意思的是，globals 里的 lazy import 没有消失。
+
+#+begin_src python :python python3
+globals()["json"]
+#+end_src
+
+#+begin_example
+<lazy_import 'json'>
+#+end_example
+
+这说明具现化光靠 =resolve()= 不够。它分两步，先 =resolve()= 拿到模块，再赋值回 globals。
+
+#+begin_src python :python python3
+globals()["json"] = globals()["json"].resolve()
+#+end_src
+
+* 还有疑问
+
+手动 =resolve()= 能拿到模块，但 lazy import 真正的自动具现化是什么操作触发的？Python 怎么检测到「有东西碰了这个 lazy import」并触发赋值？这个机制我还没搞明白。
+
+（本文代码示例已在 Python 3.15.0a8 上实际验证通过。）
