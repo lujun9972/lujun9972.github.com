@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>TIL：lazy import 的具现化过程 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="Python 3.15 的 lazy import 创建的是一个 lazy_import 对象，不是模块。它有个 .resolve() 方法可以手动拿到真实模块。调用之后 globals 里的 lazy import 不会自动消失，说明具现化其实就是一次赋值操作。" />
+  <meta name="keywords" content="Python, 编程, 模块系统" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">TIL：lazy import 的具现化过程</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga67144b">手动调用 resolve()</a></li>
+<li><a href="#org4f3ed08">还有疑问</a></li>
+</ul>
+</div>
+</div>
+<p>
+Python 的 <code>import</code> 语句在模块加载时立即执行被导入模块的顶层代码。大型应用顶部可能 import 几百个模块，但其中很多不是马上用到的，全部在启动时执行意味着启动慢、内存浪费。CLI 工具对这个问题最敏感，用户敲完命令后超过半秒没响应就会觉得卡了。
+</p>
+
+<p>
+为了解决这个问题，Python 3.15 引入了 <code>lazy import</code> 语法（来自 PEP 690），把模块加载推迟到首次使用时。写了 <code>lazy import json</code> 之后，=globals()["json"]= 拿到的不是一个模块对象，而是一个 <code>lazy_import</code> 类型的对象。这个对象不能调用 <code>json.dumps()</code> 之类的模块方法，它只是占着 <code>json</code> 这个名字，等真正需要用到模块时再被替换掉。如果这个 import 只在一个很少触发的错误处理分支里用到了，那这个模块可能永远不会被加载。
+</p>
+
+<p>
+用 <code>dir()</code> 看看这个占位符有什么，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python">lazy <span class="org-keyword">import</span> json
+<span class="org-builtin">dir</span>(<span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>])
+</pre>
+</div>
+
+<pre class="example" id="org746a68d">
+['__class__', '__delattr__', '__dir__', '__doc__', '__eq__', '__format__', '__ge__', '__getattribute__', '__getstate__', '__gt__', '__hash__', '__init__', '__init_subclass__', '__le__', '__lt__', '__ne__', '__new__', '__reduce__', '__reduce_ex__', '__repr__', '__setattr__', '__sizeof__', '__str__', '__subclasshook__', 'resolve']
+</pre>
+
+<p>
+除了有一堆 dunder 方法（双下划线方法，像 <code>__class__</code> 、 <code>__doc__</code> ）之外，有个 <code>resolve</code> 方法。看看它的文档，
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">help</span>(<span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>].resolve)
+</pre>
+</div>
+
+<pre class="example" id="org9b41172">
+Help on built-in function resolve:
+
+resolve() method of builtins.lazy_import instance
+    resolves the lazy import and returns the actual object
+</pre>
+
+<div id="outline-container-orga67144b" class="outline-2">
+<h2 id="orga67144b">手动调用 resolve()</h2>
+<div class="outline-text-2" id="text-orga67144b">
+<div class="org-src-container">
+<pre class="src src-python">lazy <span class="org-keyword">import</span> json
+<span class="org-variable-name">resolved_json</span> <span class="org-operator">=</span> <span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>].resolve()
+resolved_json
+</pre>
+</div>
+
+<pre class="example" id="org5fceba7">
+&lt;module 'json' from '/tmp/python3.15/lib/python3.15/json/__init__.py'&gt;
+</pre>
+
+<p>
+拿到真实模块了。但有意思的是，globals 里的 lazy import 没有消失。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>]
+</pre>
+</div>
+
+<pre class="example" id="orgca3c06e">
+&lt;lazy_import 'json'&gt;
+</pre>
+
+<p>
+这说明具现化光靠 <code>resolve()</code> 不够。它分两步，先 <code>resolve()</code> 拿到模块，再赋值回 globals。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>] <span class="org-operator">=</span> <span class="org-builtin">globals</span>()[<span class="org-string">"json"</span>].resolve()
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4f3ed08" class="outline-2">
+<h2 id="org4f3ed08">还有疑问</h2>
+<div class="outline-text-2" id="text-org4f3ed08">
+<p>
+手动 <code>resolve()</code> 能拿到模块，但 lazy import 真正的自动具现化是什么操作触发的？Python 怎么检测到「有东西碰了这个 lazy import」并触发赋值？这个机制我还没搞明白。
+</p>
+
+<p>
+（本文代码示例已在 Python 3.15.0a8 上实际验证通过。）
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-08</span>
+    <span class="post-info">2026-06-09</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/编程">编程</a> : <a href="../../../../../tags/模块系统">模块系统</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm3jyl0 &lt;dot&gt; dcmqfzuzjfdufk2kvuezc4hldb &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
