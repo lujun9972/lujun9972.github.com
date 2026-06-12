@@ -1,0 +1,335 @@
+#+TITLE: 用 Python 发邮件：标准库从调试到批量发送
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Python, email, SMTP, 教程
+#+DATE: [2026-06-12 Thu]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 用 Python 标准库 smtplib 和 email 发送邮件的完整实操。从本地调试服务器到新浪邮箱真实发送，覆盖纯文本、HTML、附件、Reply-To 和 CSV 批量个性化。所有代码基于标准库，不依赖第三方邮件库。
+
+在 Real Python 上看到 [[https://realpython.com/python-send-email/][一篇文章]]讲怎么用 Python 标准库 =smtplib= 和 =email= 发邮件，从搭建调试环境、连接 SMTP 服务器、组装各类邮件（纯文本、HTML、附件），到实现 CSV 批量个性化发送，全程基于标准库，不用装第三方包，值得记录一下。
+
+* 准备邮件服务
+
+两种方案，新浪邮箱做真实发送测试，或者用 =aiosmtpd= 在本地跑一个调试服务器。开发阶段用调试服务器随便折腾，不用担心发错，验证没问题后再切到真实邮箱。
+
+** 新浪邮箱 SMTP 设置
+
+1. 登录新浪邮箱网页版，进入「设置」→「账户」
+2. 开启 SMTP 服务，获取授权码（不是登录密码）
+3. SMTP 服务器 =smtp.sina.com=，SSL 端口 465
+
+** 本地调试服务器
+
+=aiosmtpd= 是一个第三方调试服务器（Python 3.12 移除了旧版 =smtpd=，用这个替代），发到它的邮件会直接打印到终端，不会真正投递出去。
+
+#+begin_src shell
+python -m pip install aiosmtpd
+#+end_src
+
+用几行 Python 代码就能启动调试服务器：
+
+#+begin_src python
+from aiosmtpd.controller import Controller
+
+class DebugHandler:
+    async def handle_DATA(self, server, session, envelope):
+        print(envelope.content)
+        return "250 Message accepted"
+
+controller = Controller(DebugHandler(), hostname="localhost", port=8025)
+controller.start()
+#+end_src
+
+服务器运行在 =localhost:8025= 上，不需要加密，不需要登录。开发阶段用它可以随便测试，不用担心发错人或刷屏。
+
+* 连接 SMTP 服务器
+
+调试服务器不用加密，但生产环境必须加密。Python 这边用 =SMTP_SSL()= 搭配 =ssl.create_default_context()= 就行。
+
+=ssl.create_default_context()= 会加载系统信任的 CA 证书，启用主机名验证和证书校验，并选择合理的加密参数。简单说就是一套安全的默认 SSL 配置，不用自己一个个调。
+
+把上面两种模式封装成一个 =send()= 函数，后面会反复用到。
+
+#+begin_src python
+import smtplib
+import ssl
+
+def send(message, debug=False):
+    """发送邮件。debug=True 用本地调试服务器，否则用新浪邮箱。"""
+    if debug:
+        with smtplib.SMTP("localhost", 8025) as server:
+            server.send_message(message)
+    else:
+        smtp_server = "smtp.sina.com"
+        port = 465
+        context = ssl.create_default_context()
+        with smtplib.SMTP_SSL(smtp_server, port, context=context) as server:
+            server.login("your_email@sina.com", "your_auth_code")
+            server.send_message(message)
+#+end_src
+
+=SMTP_SSL()= 从建立连接那一刻起就是加密的， =port= 省略时默认 465。改一下 =debug= 参数就能在本地调试和真实发送之间切换。
+
+密码可以用 =getpass= 模块在运行时输入，或者存到环境变量里用 =os.getenv()= 读取都行。
+
+* 用 EmailMessage 组装邮件
+
+Python 的 =email= 包里有个 =EmailMessage= 类专门用来组装邮件。你可以把它当成一个字典来理解，键是邮件头（To、From、Subject 这些，遵循 RFC 5322 标准），值是对应的字符串，再加上一个载荷表示邮件正文。 =email= 包不管发送，发送的事交给 =smtplib=。
+
+** 纯文本邮件
+
+#+begin_src python
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["Subject"] = "测试邮件"
+msg["From"] = "sender@sina.com"
+msg["To"] = "recipient@example.com"
+msg.set_content("这是一封纯文本测试邮件。")
+
+send(msg, debug=True)
+#+end_src
+
+=EmailMessage= 用字典语法设置邮件头，用 =set_content()= 设置正文。运行后调试服务器会输出
+
+#+begin_example
+---------- MESSAGE FOLLOWS ----------
+Subject: =?utf-8?b?5rWL6K+V6YKu5Lu2?=
+From: sender@sina.com
+To: recipient@example.com
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+这是一封纯文本测试邮件。
+------------ END MESSAGE ------------
+#+end_example
+
+除了手动设置的 Subject、From、To， =EmailMessage= 自动添加了 Content-Type、MIME-Version、Content-Transfer-Encoding 这些头。Subject 里的 =?utf-8?b?...?= 是 base64 编码——因为 Subject 里含中文字符，=EmailMessage= 自动编码了标题，但正文保持了可读的中文。
+
+** HTML 邮件
+
+大多数邮件客户端优先显示 HTML 版本，但也有些用户只接受纯文本。稳妥起见同时提供两个版本， =set_content()= 设置纯文本做后备， =add_alternative()= 追加 HTML 做首选。
+
+#+begin_src python
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["Subject"] = "HTML 邮件测试"
+msg["From"] = "sender@sina.com"
+msg["To"] = "recipient@example.com"
+
+msg.set_content("这是纯文本版本。")
+msg.add_alternative("""\
+<html>
+  <body>
+    <h1>这是 HTML 版本</h1>
+    <p>支持<b>加粗</b>和<a href="https://example.com">链接</a>。</p>
+  </body>
+</html>
+""", subtype="html")
+
+send(msg, debug=True)
+#+end_src
+
+#+begin_example
+---------- MESSAGE FOLLOWS ----------
+Subject: HTML =?utf-8?b?6YKu5Lu25rWL6K+V?=
+From: sender@sina.com
+To: recipient@example.com
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============...=="
+
+--===============...==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+这是纯文本版本。
+
+--===============...==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+<html>
+  <body>
+    <h1>这是 HTML 版本</h1>
+    <p>支持<b>加粗</b>和<a href="https://example.com">链接</a>。</p>
+  </body>
+</html>
+
+--===============...==--
+------------ END MESSAGE ------------
+#+end_example
+
+Content-Type 变成了 =multipart/alternative= ，说明邮件里包含了多个版本， =boundary= 分隔符划分各部分边界。邮件客户端会优先显示 HTML 版本，不支持 HTML 的就回退到纯文本。
+
+** 添加附件
+
+邮件本质上是个纯文本协议，若附件是二进制文件，发送前得先编码。 =add_attachment()= 会自动用 base64 进行编码。
+
+#+begin_src python
+import mimetypes
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["Subject"] = "带附件的邮件"
+msg["From"] = "sender@sina.com"
+msg["To"] = "recipient@example.com"
+msg.set_content("请查收附件中的图片。")
+
+filename = "photo.jpg"
+with open(filename, "rb") as f:
+    file_data = f.read()
+
+# 用 mimetypes 推断文件类型
+mime_type, _ = mimetypes.guess_type(filename)
+if mime_type is None:
+    mime_type = "application/octet-stream"
+main_type, sub_type = mime_type.split("/", 1)
+
+msg.add_attachment(
+    file_data,
+    maintype=main_type,
+    subtype=sub_type,
+    filename=filename,
+)
+
+send(msg, debug=True)
+#+end_src
+
+=mimetypes= 模块根据文件扩展名推断 MIME 类型（比如 =.jpg= → =image/jpeg=）。=add_attachment()= 的 =maintype= 和 =subtype= 合在一起就是 MIME 类型，邮件客户端据此决定怎么展示附件。不确定类型就用 =application/octet-stream=（通用二进制数据）。
+
+调试服务器会打印完整邮件内容。可以看到文本部分和附件部分各自的编码方式：
+
+#+begin_example
+---------- MESSAGE FOLLOWS ----------
+Subject: =?utf-8?b?5bim6ZmE5Lu255qE6YKu5Lu2?=
+From: sender@sina.com
+To: recipient@example.com
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============...=="
+
+--===============...==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+请查收附件中的图片。
+
+--===============...==
+Content-Type: image/jpeg
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="photo.jpg"
+MIME-Version: 1.0
+
+/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==
+
+--===============...==--
+------------ END MESSAGE ------------
+#+end_example
+
+只有附件部分用了 =base64= ，二进制 JPEG 被编码成纯 ASCII 文本才能在邮件协议中传输。文本部分是 =8bit= 编码，保留可读的中文。这是因为 SMTP 协议支持 8 位数据传输，=send_message()= 会优先用更高效的 8bit 编码，如果接收方不支持才回退到 base64。
+
+Content-Type 变成 =multipart/mixed= ，表示包含不同类型的多个部分（文本 + 附件）。=boundary= 分隔符划分各部分的边界，每个 boundary 之间是独立的 MIME 部分，各有自己的 Content-Type 和 Content-Transfer-Encoding。
+
+MIME（Multipurpose Internet Mail Extensions）是邮件中处理非 ASCII 内容的标准，常见的有 =text/html= 、=image/jpeg= 、 =application/pdf= 。想查完整列表可以搜「MIME type list」。
+
+* 自定义邮件头
+
+SMTP 标准定义了一组邮件头， =EmailMessage= 可以直接设置。最常用的场景是 =Reply-To= ，让回复发到另一个邮箱。
+
+#+begin_src python
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["Subject"] = "请回复到支持邮箱"
+msg["From"] = "noreply@sina.com"
+msg["To"] = "recipient@example.com"
+msg["Reply-To"] = "support@sina.com"
+msg.set_content("有问题请回复此邮件。")
+
+send(msg, debug=True)
+#+end_src
+
+其他常用的 SMTP 头还有 =return-path= （退信地址）、 =message-id= （邮件唯一标识，用于去重和线程归组）、 =in-reply-to= （回复引用）。以 =X-= 开头的都是自定义头，可以随便定义用途，比如你可以用它来追踪邮件的打开率。
+
+* 批量发送
+
+** 多收件人
+
+To、CC、BCC 字段都支持列表形式。
+
+#+begin_src python
+from email.message import EmailMessage
+
+msg = EmailMessage()
+msg["Subject"] = "群发邮件"
+msg["From"] = "sender@sina.com"
+msg["To"] = ["alice@example.com", "bob@example.com"]
+msg["Cc"] = "charlie@example.com"
+msg.set_content("这是一封群发邮件。")
+
+send(msg, debug=True)
+#+end_src
+
+BCC 的处理方式比较特殊：设置 =msg["Bcc"]= 后， =send_message()= 会自动把 BCC 地址从邮件头中移除，只传递给 SMTP 服务器。这是故意的设计——BCC 的目的就是让收件人看不到其他密送对象。
+
+** CSV 个性化发送
+
+收件人多了以后，硬编码邮箱地址就不现实了。但我们可以用 CSV 文件管理联系人信息，然后循环发送个性化邮件。
+
+先创建 =contacts.csv= 。
+
+#+begin_example
+name,email,grade
+张三,zhangsan@example.com,A
+李四,lisi@example.com,B
+王五,wangwu@example.com,A
+#+end_example
+
+逐行读取并发送，代码如下。
+
+#+begin_src python
+import csv
+from email.message import EmailMessage
+
+with open("contacts.csv", encoding="utf-8") as f:
+    reader = csv.DictReader(f)
+    for contact in reader:
+        msg = EmailMessage()
+        msg["Subject"] = f"成绩通知 - {contact['name']}"
+        msg["From"] = "老师 <teacher@sina.com>"
+        msg["To"] = f"{contact['name']} <{contact['email']}>"
+        msg.set_content(
+            f"{contact['name']} 同学你好，\n\n"
+            f"你的成绩等级为 {contact['grade']}。"
+        )
+        send(msg, debug=True)
+#+end_src
+
+From 和 To 字段用了 =显示名 <邮箱>= 格式，RFC 标准推荐的写法。每条记录生成一封独立的邮件，收件人各自收到带自己名字和成绩的内容。
+
+** Address 类
+
+=email= 包还提供了 =Address= 类，自动处理显示名和邮箱地址的格式化，不用手动拼接字符串。
+
+#+begin_src python
+from email.message import EmailMessage
+from email.headerregistry import Address
+
+sender = Address("发件人", addr_spec="sender@sina.com")
+# 也可以用 username + domain 两部分创建
+recipient = Address(username="zhangsan", domain="example.com")
+
+msg = EmailMessage()
+msg["Subject"] = "使用 Address 类"
+msg["From"] = sender
+msg["To"] = recipient
+msg.set_content("这封邮件使用了 Address 类。")
+
+print(msg["From"])
+print(msg["To"])
+#+end_src
+
+=Address= 的 =__str__()= 方法会自动生成符合 RFC 标准的格式化地址。
