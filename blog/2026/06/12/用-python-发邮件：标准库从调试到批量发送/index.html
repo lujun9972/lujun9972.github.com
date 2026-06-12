@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 Python 发邮件：标准库从调试到批量发送 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="用 Python 标准库 smtplib 和 email 发送邮件的完整实操。从本地调试服务器到新浪邮箱真实发送，覆盖纯文本、HTML、附件、Reply-To 和 CSV 批量个性化。所有代码基于标准库，不依赖第三方邮件库。" />
+  <meta name="keywords" content="Python, email, SMTP, 教程" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 Python 发邮件：标准库从调试到批量发送</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org08b0910">准备邮件服务</a>
+<ul>
+<li><a href="#org02bf157">新浪邮箱 SMTP 设置</a></li>
+<li><a href="#org281e91b">本地调试服务器</a></li>
+</ul>
+</li>
+<li><a href="#orgbaab90d">连接 SMTP 服务器</a></li>
+<li><a href="#orgbe13d54">用 EmailMessage 组装邮件</a>
+<ul>
+<li><a href="#orgd06fa37">纯文本邮件</a></li>
+<li><a href="#org4c22df0">HTML 邮件</a></li>
+<li><a href="#org343b83c">添加附件</a></li>
+</ul>
+</li>
+<li><a href="#orgd8d33b1">自定义邮件头</a></li>
+<li><a href="#org4cd1fa9">批量发送</a>
+<ul>
+<li><a href="#org0418f82">多收件人</a></li>
+<li><a href="#org0988276">CSV 个性化发送</a></li>
+<li><a href="#org9e8424a">Address 类</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+<p>
+在 Real Python 上看到 <a href="https://realpython.com/python-send-email/">一篇文章</a>讲怎么用 Python 标准库 <code>smtplib</code> 和 <code>email</code> 发邮件，从搭建调试环境、连接 SMTP 服务器、组装各类邮件（纯文本、HTML、附件），到实现 CSV 批量个性化发送，全程基于标准库，不用装第三方包，值得记录一下。
+</p>
+
+<div id="outline-container-org08b0910" class="outline-2">
+<h2 id="org08b0910">准备邮件服务</h2>
+<div class="outline-text-2" id="text-org08b0910">
+<p>
+两种方案，新浪邮箱做真实发送测试，或者用 <code>aiosmtpd</code> 在本地跑一个调试服务器。开发阶段用调试服务器随便折腾，不用担心发错，验证没问题后再切到真实邮箱。
+</p>
+</div>
+
+<div id="outline-container-org02bf157" class="outline-3">
+<h3 id="org02bf157">新浪邮箱 SMTP 设置</h3>
+<div class="outline-text-3" id="text-org02bf157">
+<ol class="org-ol">
+<li>登录新浪邮箱网页版，进入「设置」→「账户」</li>
+<li>开启 SMTP 服务，获取授权码（不是登录密码）</li>
+<li>SMTP 服务器 =smtp.sina.com=，SSL 端口 465</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org281e91b" class="outline-3">
+<h3 id="org281e91b">本地调试服务器</h3>
+<div class="outline-text-3" id="text-org281e91b">
+<p>
+<code>aiosmtpd</code> 是一个第三方调试服务器（Python 3.12 移除了旧版 =smtpd=，用这个替代），发到它的邮件会直接打印到终端，不会真正投递出去。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">python -m pip install aiosmtpd
+</pre>
+</div>
+
+<p>
+用几行 Python 代码就能启动调试服务器：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> aiosmtpd.controller <span class="org-keyword">import</span> Controller
+
+<span class="org-keyword">class</span> <span class="org-type">DebugHandler</span>:
+    <span class="org-keyword">async def</span> <span class="org-function-name">handle_DATA</span>(<span class="org-keyword">self</span>, server, session, envelope):
+        <span class="org-builtin">print</span>(envelope.content)
+        <span class="org-keyword">return</span> <span class="org-string">"250 Message accepted"</span>
+
+<span class="org-variable-name">controller</span> <span class="org-operator">=</span> Controller(DebugHandler(), hostname<span class="org-operator">=</span><span class="org-string">"localhost"</span>, port<span class="org-operator">=</span>8025)
+controller.start()
+</pre>
+</div>
+
+<p>
+服务器运行在 <code>localhost:8025</code> 上，不需要加密，不需要登录。开发阶段用它可以随便测试，不用担心发错人或刷屏。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgbaab90d" class="outline-2">
+<h2 id="orgbaab90d">连接 SMTP 服务器</h2>
+<div class="outline-text-2" id="text-orgbaab90d">
+<p>
+调试服务器不用加密，但生产环境必须加密。Python 这边用 <code>SMTP_SSL()</code> 搭配 <code>ssl.create_default_context()</code> 就行。
+</p>
+
+<p>
+<code>ssl.create_default_context()</code> 会加载系统信任的 CA 证书，启用主机名验证和证书校验，并选择合理的加密参数。简单说就是一套安全的默认 SSL 配置，不用自己一个个调。
+</p>
+
+<p>
+把上面两种模式封装成一个 <code>send()</code> 函数，后面会反复用到。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> smtplib
+<span class="org-keyword">import</span> ssl
+
+<span class="org-keyword">def</span> <span class="org-function-name">send</span>(message, debug<span class="org-operator">=</span><span class="org-constant">False</span>):
+    <span class="org-doc">"""&#21457;&#36865;&#37038;&#20214;&#12290;debug=True &#29992;&#26412;&#22320;&#35843;&#35797;&#26381;&#21153;&#22120;&#65292;&#21542;&#21017;&#29992;&#26032;&#28010;&#37038;&#31665;&#12290;"""</span>
+    <span class="org-keyword">if</span> debug:
+        <span class="org-keyword">with</span> smtplib.SMTP(<span class="org-string">"localhost"</span>, 8025) <span class="org-keyword">as</span> server:
+            server.send_message(message)
+    <span class="org-keyword">else</span>:
+        <span class="org-variable-name">smtp_server</span> <span class="org-operator">=</span> <span class="org-string">"smtp.sina.com"</span>
+        <span class="org-variable-name">port</span> <span class="org-operator">=</span> 465
+        <span class="org-variable-name">context</span> <span class="org-operator">=</span> ssl.create_default_context()
+        <span class="org-keyword">with</span> smtplib.SMTP_SSL(smtp_server, port, context<span class="org-operator">=</span>context) <span class="org-keyword">as</span> server:
+            server.login(<span class="org-string">"your_email@sina.com"</span>, <span class="org-string">"your_auth_code"</span>)
+            server.send_message(message)
+</pre>
+</div>
+
+<p>
+<code>SMTP_SSL()</code> 从建立连接那一刻起就是加密的， <code>port</code> 省略时默认 465。改一下 <code>debug</code> 参数就能在本地调试和真实发送之间切换。
+</p>
+
+<p>
+密码可以用 <code>getpass</code> 模块在运行时输入，或者存到环境变量里用 <code>os.getenv()</code> 读取都行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgbe13d54" class="outline-2">
+<h2 id="orgbe13d54">用 EmailMessage 组装邮件</h2>
+<div class="outline-text-2" id="text-orgbe13d54">
+<p>
+Python 的 <code>email</code> 包里有个 <code>EmailMessage</code> 类专门用来组装邮件。你可以把它当成一个字典来理解，键是邮件头（To、From、Subject 这些，遵循 RFC 5322 标准），值是对应的字符串，再加上一个载荷表示邮件正文。 <code>email</code> 包不管发送，发送的事交给 =smtplib=。
+</p>
+</div>
+
+<div id="outline-container-orgd06fa37" class="outline-3">
+<h3 id="orgd06fa37">纯文本邮件</h3>
+<div class="outline-text-3" id="text-orgd06fa37">
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"&#27979;&#35797;&#37038;&#20214;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"sender@sina.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> <span class="org-string">"recipient@example.com"</span>
+msg.set_content(<span class="org-string">"&#36825;&#26159;&#19968;&#23553;&#32431;&#25991;&#26412;&#27979;&#35797;&#37038;&#20214;&#12290;"</span>)
+
+send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<p>
+<code>EmailMessage</code> 用字典语法设置邮件头，用 <code>set_content()</code> 设置正文。运行后调试服务器会输出
+</p>
+
+<pre class="example" id="org61d42c4">
+---------- MESSAGE FOLLOWS ----------
+Subject: =?utf-8?b?5rWL6K+V6YKu5Lu2?=
+From: sender@sina.com
+To: recipient@example.com
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+这是一封纯文本测试邮件。
+------------ END MESSAGE ------------
+</pre>
+
+<p>
+除了手动设置的 Subject、From、To， <code>EmailMessage</code> 自动添加了 Content-Type、MIME-Version、Content-Transfer-Encoding 这些头。Subject 里的 <code>?utf-8?b?...?</code> 是 base64 编码——因为 Subject 里含中文字符，=EmailMessage= 自动编码了标题，但正文保持了可读的中文。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4c22df0" class="outline-3">
+<h3 id="org4c22df0">HTML 邮件</h3>
+<div class="outline-text-3" id="text-org4c22df0">
+<p>
+大多数邮件客户端优先显示 HTML 版本，但也有些用户只接受纯文本。稳妥起见同时提供两个版本， <code>set_content()</code> 设置纯文本做后备， <code>add_alternative()</code> 追加 HTML 做首选。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"HTML &#37038;&#20214;&#27979;&#35797;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"sender@sina.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> <span class="org-string">"recipient@example.com"</span>
+
+msg.set_content(<span class="org-string">"&#36825;&#26159;&#32431;&#25991;&#26412;&#29256;&#26412;&#12290;"</span>)
+msg.add_alternative(<span class="org-string">"""\
+&lt;html&gt;
+  &lt;body&gt;
+    &lt;h1&gt;&#36825;&#26159; HTML &#29256;&#26412;&lt;/h1&gt;
+    &lt;p&gt;&#25903;&#25345;&lt;b&gt;&#21152;&#31895;&lt;/b&gt;&#21644;&lt;a href="https://example.com"&gt;&#38142;&#25509;&lt;/a&gt;&#12290;&lt;/p&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+"""</span>, subtype<span class="org-operator">=</span><span class="org-string">"html"</span>)
+
+send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<pre class="example" id="org87af395">
+---------- MESSAGE FOLLOWS ----------
+Subject: HTML =?utf-8?b?6YKu5Lu25rWL6K+V?=
+From: sender@sina.com
+To: recipient@example.com
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============...=="
+
+--===============...==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+这是纯文本版本。
+
+--===============...==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+MIME-Version: 1.0
+
+&lt;html&gt;
+  &lt;body&gt;
+    &lt;h1&gt;这是 HTML 版本&lt;/h1&gt;
+    &lt;p&gt;支持&lt;b&gt;加粗&lt;/b&gt;和&lt;a href="https://example.com"&gt;链接&lt;/a&gt;。&lt;/p&gt;
+  &lt;/body&gt;
+&lt;/html&gt;
+
+--===============...==--
+------------ END MESSAGE ------------
+</pre>
+
+<p>
+Content-Type 变成了 <code>multipart/alternative</code> ，说明邮件里包含了多个版本， <code>boundary</code> 分隔符划分各部分边界。邮件客户端会优先显示 HTML 版本，不支持 HTML 的就回退到纯文本。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org343b83c" class="outline-3">
+<h3 id="org343b83c">添加附件</h3>
+<div class="outline-text-3" id="text-org343b83c">
+<p>
+邮件本质上是个纯文本协议，若附件是二进制文件，发送前得先编码。 <code>add_attachment()</code> 会自动用 base64 进行编码。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> mimetypes
+<span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"&#24102;&#38468;&#20214;&#30340;&#37038;&#20214;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"sender@sina.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> <span class="org-string">"recipient@example.com"</span>
+msg.set_content(<span class="org-string">"&#35831;&#26597;&#25910;&#38468;&#20214;&#20013;&#30340;&#22270;&#29255;&#12290;"</span>)
+
+<span class="org-variable-name">filename</span> <span class="org-operator">=</span> <span class="org-string">"photo.jpg"</span>
+<span class="org-keyword">with</span> <span class="org-builtin">open</span>(filename, <span class="org-string">"rb"</span>) <span class="org-keyword">as</span> f:
+    <span class="org-variable-name">file_data</span> <span class="org-operator">=</span> f.read()
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29992; mimetypes &#25512;&#26029;&#25991;&#20214;&#31867;&#22411;
+</span><span class="org-variable-name">mime_type</span>, <span class="org-variable-name">_</span> <span class="org-operator">=</span> mimetypes.guess_type(filename)
+<span class="org-keyword">if</span> mime_type <span class="org-keyword">is</span> <span class="org-constant">None</span>:
+    <span class="org-variable-name">mime_type</span> <span class="org-operator">=</span> <span class="org-string">"application/octet-stream"</span>
+<span class="org-variable-name">main_type</span>, <span class="org-variable-name">sub_type</span> <span class="org-operator">=</span> mime_type.split(<span class="org-string">"/"</span>, 1)
+
+msg.add_attachment(
+    file_data,
+    maintype<span class="org-operator">=</span>main_type,
+    subtype<span class="org-operator">=</span>sub_type,
+    filename<span class="org-operator">=</span>filename,
+)
+
+send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<p>
+<code>mimetypes</code> 模块根据文件扩展名推断 MIME 类型（比如 <code>.jpg</code> → <code>image/jpeg=）。=add_attachment()</code> 的 <code>maintype</code> 和 <code>subtype</code> 合在一起就是 MIME 类型，邮件客户端据此决定怎么展示附件。不确定类型就用 =application/octet-stream=（通用二进制数据）。
+</p>
+
+<p>
+调试服务器会打印完整邮件内容。可以看到文本部分和附件部分各自的编码方式：
+</p>
+
+<pre class="example" id="org4543737">
+---------- MESSAGE FOLLOWS ----------
+Subject: =?utf-8?b?5bim6ZmE5Lu255qE6YKu5Lu2?=
+From: sender@sina.com
+To: recipient@example.com
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============...=="
+
+--===============...==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+请查收附件中的图片。
+
+--===============...==
+Content-Type: image/jpeg
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="photo.jpg"
+MIME-Version: 1.0
+
+/9j/4AAQSkZJRgABAQAAAQABAAD/2Q==
+
+--===============...==--
+------------ END MESSAGE ------------
+</pre>
+
+<p>
+只有附件部分用了 <code>base64</code> ，二进制 JPEG 被编码成纯 ASCII 文本才能在邮件协议中传输。文本部分是 <code>8bit</code> 编码，保留可读的中文。这是因为 SMTP 协议支持 8 位数据传输，=send_message()= 会优先用更高效的 8bit 编码，如果接收方不支持才回退到 base64。
+</p>
+
+<p>
+Content-Type 变成 <code>multipart/mixed</code> ，表示包含不同类型的多个部分（文本 + 附件）。=boundary= 分隔符划分各部分的边界，每个 boundary 之间是独立的 MIME 部分，各有自己的 Content-Type 和 Content-Transfer-Encoding。
+</p>
+
+<p>
+MIME（Multipurpose Internet Mail Extensions）是邮件中处理非 ASCII 内容的标准，常见的有 <code>text/html</code> 、=image/jpeg= 、 <code>application/pdf</code> 。想查完整列表可以搜「MIME type list」。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd8d33b1" class="outline-2">
+<h2 id="orgd8d33b1">自定义邮件头</h2>
+<div class="outline-text-2" id="text-orgd8d33b1">
+<p>
+SMTP 标准定义了一组邮件头， <code>EmailMessage</code> 可以直接设置。最常用的场景是 <code>Reply-To</code> ，让回复发到另一个邮箱。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"&#35831;&#22238;&#22797;&#21040;&#25903;&#25345;&#37038;&#31665;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"noreply@sina.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> <span class="org-string">"recipient@example.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"Reply-To"</span>] <span class="org-operator">=</span> <span class="org-string">"support@sina.com"</span>
+msg.set_content(<span class="org-string">"&#26377;&#38382;&#39064;&#35831;&#22238;&#22797;&#27492;&#37038;&#20214;&#12290;"</span>)
+
+send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<p>
+其他常用的 SMTP 头还有 <code>return-path</code> （退信地址）、 <code>message-id</code> （邮件唯一标识，用于去重和线程归组）、 <code>in-reply-to</code> （回复引用）。以 <code>X-</code> 开头的都是自定义头，可以随便定义用途，比如你可以用它来追踪邮件的打开率。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4cd1fa9" class="outline-2">
+<h2 id="org4cd1fa9">批量发送</h2>
+<div class="outline-text-2" id="text-org4cd1fa9">
+</div>
+<div id="outline-container-org0418f82" class="outline-3">
+<h3 id="org0418f82">多收件人</h3>
+<div class="outline-text-3" id="text-org0418f82">
+<p>
+To、CC、BCC 字段都支持列表形式。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"&#32676;&#21457;&#37038;&#20214;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"sender@sina.com"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> [<span class="org-string">"alice@example.com"</span>, <span class="org-string">"bob@example.com"</span>]
+<span class="org-variable-name">msg</span>[<span class="org-string">"Cc"</span>] <span class="org-operator">=</span> <span class="org-string">"charlie@example.com"</span>
+msg.set_content(<span class="org-string">"&#36825;&#26159;&#19968;&#23553;&#32676;&#21457;&#37038;&#20214;&#12290;"</span>)
+
+send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<p>
+BCC 的处理方式比较特殊：设置 <code>msg["Bcc"]</code> 后， <code>send_message()</code> 会自动把 BCC 地址从邮件头中移除，只传递给 SMTP 服务器。这是故意的设计——BCC 的目的就是让收件人看不到其他密送对象。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0988276" class="outline-3">
+<h3 id="org0988276">CSV 个性化发送</h3>
+<div class="outline-text-3" id="text-org0988276">
+<p>
+收件人多了以后，硬编码邮箱地址就不现实了。但我们可以用 CSV 文件管理联系人信息，然后循环发送个性化邮件。
+</p>
+
+<p>
+先创建 <code>contacts.csv</code> 。
+</p>
+
+<pre class="example" id="orgb7cb240">
+name,email,grade
+张三,zhangsan@example.com,A
+李四,lisi@example.com,B
+王五,wangwu@example.com,A
+</pre>
+
+<p>
+逐行读取并发送，代码如下。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> csv
+<span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+
+<span class="org-keyword">with</span> <span class="org-builtin">open</span>(<span class="org-string">"contacts.csv"</span>, encoding<span class="org-operator">=</span><span class="org-string">"utf-8"</span>) <span class="org-keyword">as</span> f:
+    <span class="org-variable-name">reader</span> <span class="org-operator">=</span> csv.DictReader(f)
+    <span class="org-keyword">for</span> contact <span class="org-keyword">in</span> reader:
+        <span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+        <span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> f<span class="org-string">"&#25104;&#32489;&#36890;&#30693; - </span>{contact['name']}<span class="org-string">"</span>
+        <span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> <span class="org-string">"&#32769;&#24072; <a href="mailto:teacher%40sina.com">&lt;teacher@sina.com&gt;</a>"</span>
+        <span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> f<span class="org-string">"</span>{contact['name']}<span class="org-string"> &lt;</span>{contact['email']}<span class="org-string">&gt;"</span>
+        msg.set_content(
+            f<span class="org-string">"</span>{contact['name']}<span class="org-string"> &#21516;&#23398;&#20320;&#22909;&#65292;</span><span class="org-constant">\n\n</span><span class="org-string">"</span>
+            f<span class="org-string">"&#20320;&#30340;&#25104;&#32489;&#31561;&#32423;&#20026; </span>{contact['grade']}<span class="org-string">&#12290;"</span>
+        )
+        send(msg, debug<span class="org-operator">=</span><span class="org-constant">True</span>)
+</pre>
+</div>
+
+<p>
+From 和 To 字段用了 <code>显示名 &lt;邮箱&gt;</code> 格式，RFC 标准推荐的写法。每条记录生成一封独立的邮件，收件人各自收到带自己名字和成绩的内容。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9e8424a" class="outline-3">
+<h3 id="org9e8424a">Address 类</h3>
+<div class="outline-text-3" id="text-org9e8424a">
+<p>
+<code>email</code> 包还提供了 <code>Address</code> 类，自动处理显示名和邮箱地址的格式化，不用手动拼接字符串。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> email.message <span class="org-keyword">import</span> EmailMessage
+<span class="org-keyword">from</span> email.headerregistry <span class="org-keyword">import</span> Address
+
+<span class="org-variable-name">sender</span> <span class="org-operator">=</span> Address(<span class="org-string">"&#21457;&#20214;&#20154;"</span>, addr_spec<span class="org-operator">=</span><span class="org-string">"sender@sina.com"</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20063;&#21487;&#20197;&#29992; username + domain &#20004;&#37096;&#20998;&#21019;&#24314;
+</span><span class="org-variable-name">recipient</span> <span class="org-operator">=</span> Address(username<span class="org-operator">=</span><span class="org-string">"zhangsan"</span>, domain<span class="org-operator">=</span><span class="org-string">"example.com"</span>)
+
+<span class="org-variable-name">msg</span> <span class="org-operator">=</span> EmailMessage()
+<span class="org-variable-name">msg</span>[<span class="org-string">"Subject"</span>] <span class="org-operator">=</span> <span class="org-string">"&#20351;&#29992; Address &#31867;"</span>
+<span class="org-variable-name">msg</span>[<span class="org-string">"From"</span>] <span class="org-operator">=</span> sender
+<span class="org-variable-name">msg</span>[<span class="org-string">"To"</span>] <span class="org-operator">=</span> recipient
+msg.set_content(<span class="org-string">"&#36825;&#23553;&#37038;&#20214;&#20351;&#29992;&#20102; Address &#31867;&#12290;"</span>)
+
+<span class="org-builtin">print</span>(msg[<span class="org-string">"From"</span>])
+<span class="org-builtin">print</span>(msg[<span class="org-string">"To"</span>])
+</pre>
+</div>
+
+<p>
+<code>Address</code> 的 <code>__str__()</code> 方法会自动生成符合 RFC 标准的格式化地址。
+</p>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-12</span>
+    <span class="post-info">2026-06-12</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/email">email</a> : <a href="../../../../../tags/smtp">SMTP</a> : <a href="../../../../../tags/教程">教程</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm1li68 &lt;dot&gt; ajpjuzvd0pcu5m1ughqrvmkcxa &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
