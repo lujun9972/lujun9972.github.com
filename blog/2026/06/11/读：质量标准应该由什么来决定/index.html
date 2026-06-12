@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：质量标准应该由什么来决定 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="matklad 在 rust-analyzer 项目中对核心代码和边缘功能用了两套不同的质量标准，不是因为偷懒，而是因为不同层的贡献者能力和动机不一样。但能这么做的前提是软件架构能隔离故障。质量标准应该考虑三件事：这个模块在系统中的位置、写这个模块的人员特点以及这个模块崩了影响多大。" />
+  <meta name="keywords" content="software-architecture, rust-analyzer" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：质量标准应该由什么来决定</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgf3ce3e0">同一个项目，两种质量标准</a></li>
+<li><a href="#org15058bd">崩溃也没关系的两个前提</a></li>
+<li><a href="#org36be47d">为什么不直接要求所有代码都高标准</a></li>
+<li><a href="#org4fff571">从中学到了什么</a></li>
+</ul>
+</div>
+</div>
+<p>
+matklad 在谈 rust-analyzer 项目 (<a href="https://matklad.github.io/2026/05/12/software-architecture.html">原文</a>) 时提到一个做法，同一个项目，核心和边缘用了两套截然不同的质量标准。
+</p>
+
+<div id="outline-container-orgf3ce3e0" class="outline-2">
+<h2 id="orgf3ce3e0">同一个项目，两种质量标准</h2>
+<div class="outline-text-2" id="text-orgf3ce3e0">
+<p>
+rust-analyzer 有一个特点，它既是一个编译器，又是一个 IDE。这两种性质吸引了完全不同的贡献者。
+</p>
+
+<p>
+编译器核心部分吸引的是少数深度贡献者，他们有持续的时间和精力投入。matklad 对这部分代码的质量要求很严格。
+</p>
+
+<p>
+IDE 的各种功能（跳转定义、自动补全、重构提示等）则适合另一类人，matklad 管他们叫「周末战士」，他们没有长期参与项目的精力，但可以花一两个小时实现某个功能来满足自己的需求。
+</p>
+
+<p>
+对这类贡献者的代码，matklad 定的标准出人意料地低，只要正常流程能跑通、有测试就行。崩溃也没关系。
+</p>
+
+<p>
+这听起来像是放纵，但其实是算计过的选择，而且有两个技术前提。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org15058bd" class="outline-2">
+<h2 id="org15058bd">崩溃也没关系的两个前提</h2>
+<div class="outline-text-2" id="text-org15058bd">
+<p>
+要让「低质量功能代码」不拖垮整个项目，rust-analyzer 必须同时满足两个条件。
+</p>
+
+<ol class="org-ol">
+<li>*质量隔离*，一个功能的崩溃不能蔓延到其他功能。rust-analyzer 在运行时用 <code>catch_unwind</code> （Rust 的异常捕获机制）把每个功能的错误隔离起来。某个功能崩了，也不影响其他功能继续正常工作。</li>
+
+<li>*用户无感知*，崩溃不能让用户看到。rust-analyzer 不会让功能代码直接操作实时数据，而是给每个功能一份只读的源代码快照。功能只能读，不能改原数据，所以即使崩了也不会弄脏主数据。</li>
+</ol>
+
+<p>
+两个条件缺一个都不行。没有质量隔离，bug 会从一个功能蔓延到另一个。没有只读快照，崩溃会搞乱数据。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org36be47d" class="outline-2">
+<h2 id="org36be47d">为什么不直接要求所有代码都高标准</h2>
+<div class="outline-text-2" id="text-org36be47d">
+<p>
+因为核心和边缘本身就不该用同一把尺子量。matklad 把提供基础设施的核心代码（他称之为 spine）的质量抓得很紧，核心代码一旦出问题，所有功能都受影响，没有隔离可言。但边缘功能不一样，只要隔离得当，质量低一点不会伤筋动骨。
+</p>
+
+<p>
+而这个项目的激励结构也决定了必须这么做。
+</p>
+
+<p>
+matklad 花了大量精力降低参与门槛：不依赖 rustc（Rust 官方编译器，代码量巨大，编译极慢），只用稳定版 Rust（不需要装实验版本），不依赖 C 语言库（装了 Rust 就能编译，不用额外装 C 工具链），测试套件秒级完成。这些全是为了让深度贡献者更容易上手。但 IDE 功能太多了，光靠深度贡献者做不完。
+</p>
+
+<p>
+降低功能代码的质量门槛，是为了让「周末战士」也能贡献。如果每个功能 PR 都要求核心级别的质量，这些贡献者根本不会出现。而功能即使有 bug，只要隔离得当，不仅不会有什么影响，而且还能吸引更多人来修复。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4fff571" class="outline-2">
+<h2 id="org4fff571">从中学到了什么</h2>
+<div class="outline-text-2" id="text-org4fff571">
+<p>
+这个策略不是所有项目都能用的。它要求系统架构天然支持功能隔离，并且核心和边缘的边界足够清晰。
+</p>
+
+<p>
+但在满足条件时，它给了一个实用的思路，质量标准不需要全局统一，可以按模块的隔离程度和贡献者类型做差异化。质量标准由三个因素决定：模块在系统中的位置、谁来写它、它崩了影响多大。
+</p>
+
+<p>
+还有一件事要注意：项目会向着你想象不到的方向发展。rust-analyzer 最初是给 rustc 做 LSP 架构原型的实验品，结果实验没按预期发展，反而搞出了个编译器。类似的事也发生在 uutils 项目上，最初是 Rust 学习者的练习场，后来成了 Ubuntu 的 coreutils 实现。分层质量策略在特定阶段有效，但不能指望项目的目标和激励结构永远不变。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-11</span>
+    <span class="post-info">2026-06-12</span>
+    <a href="../../../../../tags/software-architecture">software-architecture</a> : <a href="../../../../../tags/rust-analyzer">rust-analyzer</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm1li68 &lt;dot&gt; sgyfafs2kbnexlihx1gfup2jfd &lt;dot&gt; cx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
