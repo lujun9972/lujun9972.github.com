@@ -1,0 +1,262 @@
+#+TITLE: 读：Python mock/patch 用法与陷阱
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Python, Testing, Mock, pytest
+#+DATE: [2026-06-13 Sat]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: mock 测试看起来通过了，但 mock 可能根本没拦住调用。这篇文章讲清楚 mock/patch 的几个关键问题：怎么验证 mock 真的生效、patch 位置为什么决定成败、mock 还能用来制造碰撞、什么时候该放下 mock 换显式参数或适配器模式。
+
+[[https://belderbos.dev/blog/python-mock-patch-verify-interception/][原文链接]]（Bob Belderbos）
+
+我之前写过 [[file:Python中Mock第三方依赖的四种策略.org][Python Mock 第三方依赖的四种策略]], 讲怎么用 =patch= 和 =MagicMock= 替换不同类型的依赖。那篇文章讲的是「怎么 mock」, 但没回答几个更基本的问题, mock 到底生效了没有? patch 位置错了会怎样? 有些场景是不是根本不该用 mock? 这篇博文顺着这条线展开。
+
+* 假绿测试, 测试通过但 mock 没干活
+
+文章从一个真实的 case 讲起。有个函数调用汇率 API 做货币转换，API 返回失败就抛出 =CurrencyConversionError= 。
+
+#+begin_src python :python python3
+  from decimal import Decimal
+
+  class CurrencyConversionError(Exception):
+      pass
+
+  def convert_currency(amount, from_currency, to_currency):
+      if from_currency == to_currency:
+          return amount
+      import requests
+      response = requests.get(
+          f"https://v6.exchangerate-api.com/v6/KEY/pair/{from_currency}/{to_currency}"
+      )
+      data = response.json()
+      if data["result"] != "success":
+          raise CurrencyConversionError(f"{data['error-type']}")
+      return Decimal(str(data["conversion_rate"])) * amount
+#+end_src
+
+测试的逻辑是, 用无效货币码 =CTM= 调用 =convert_currency= ，期望它抛出 =CurrencyConversionError= 。测试用 =patch= 替换了 =requests.get= ，但 mock 配置的是一个 *成功* 的响应。
+
+问题来了, 如果 mock 真的拦住了请求，函数会正常返回，测试期望的异常不会抛出， =pytest.raises= 应该失败。但测试实际上 *通过了*。
+
+原因只有一个, mock 根本没拦住调用。真实 API 被请求了, 对无效货币码 =CTM= 返回了错误, 函数抛出了异常, =pytest.raises= 就通过了。测试之所以通过, 是因为真实 API 碰巧做了 mock 应该做的事, 跟 mock 一点关系都没有。
+
+这种「假绿」测试特别坑, 它给你的安全感是假的。
+
+* 怎么证明 mock 真的拦住了
+
+第一反应大概是在 =requests.get= 之前加一行 =print("calling external api")= 。但 print 只能证明代码走到了那一行，不能区分是 mock 拦截了调用还是真实网络被触发了。
+
+=mock.assert_called_once()= 才管用。它检查 mock 对象是不是恰好被调用了一次。如果 =patch= 没拦住请求, mock 对象压根没被碰过, 断言直接挂掉。
+
+#+begin_src python :python python3
+  from decimal import Decimal
+  from unittest.mock import patch, MagicMock
+  import requests
+
+  class CurrencyConversionError(Exception):
+      pass
+
+  def convert_currency(amount, from_currency, to_currency):
+      if from_currency == to_currency:
+          return amount
+      response = requests.get(
+          f"https://example.com/pair/{from_currency}/{to_currency}"
+      )
+      data = response.json()
+      if data["result"] != "success":
+          raise CurrencyConversionError(f"{data['error-type']}")
+      return Decimal(str(data["conversion_rate"])) * amount
+
+  # 用 patch 拦截 requests.get，配置一个失败响应
+  mock_get = patch("__main__.requests.get").start()
+  mock_get.return_value.json.return_value = {
+      "result": "error",
+      "error-type": "unknown-code",
+  }
+
+  try:
+      convert_currency(Decimal("1.00"), "CAD", "CTM")
+      print("ERROR: 应该抛出异常但没有")
+  except CurrencyConversionError as e:
+      print(f"抛出了 CurrencyConversionError: {e}")
+
+  # 关键：验证 mock 是否真的被调用了
+  mock_get.assert_called_once()
+  print("assert_called_once 通过：mock 确实拦截了请求")
+  patch.stopall()
+#+end_src
+
+#+begin_example
+抛出了 CurrencyConversionError: unknown-code
+assert_called_once 通过：mock 确实拦截了请求
+#+end_example
+
+=assert_called_once()= 的逻辑很简单, 如果 mock 没被调用过, 说明 =patch= 没有拦住请求, 你的测试在依赖真实网络。如果 mock 被调用了恰好一次, 说明请求确实走了 mock。在「假绿」测试中加上这行断言后, 作者发现 mock 根本没被调用, 断言直接失败。问题出在, =patch= 的目标写错了。
+
+* patch 的位置决定成败
+
+为什么 mock 没拦住调用？因为 =patch= 的目标搞错了。[[file:Python中Mock第三方依赖的四种策略.org][前文]]提到过「patch 的是引用位置」这个规则, 这里展开讲一个更容易踩的坑。
+
+=patch= 的规则是, patch 的目标是名字 *被使用的地方*, 而它最初在哪里定义的不重要。
+
+货币转换模块用 =import requests= 导入 =requests= 库，然后调用 =requests.get(...)= 。这时 =patch("mymodule.requests.get")= 能拦住调用，因为 =mymodule.requests= 和原始 =requests= 指向同一个模块对象。
+
+但如果模块改成 =from requests import get= ，情况就不同了。这时 =get= 成了模块里的一个 *局部名字*，和 =requests.get= 不再是同一个引用。你必须 patch =mymodule.get= 而不是 =requests.get= 。搞错了位置， mock 就拦截不到。
+
+#+begin_src python :python python3
+  import requests
+  from requests import get as direct_get
+
+  # 两个名字指向同一个函数对象
+  print(f"requests.get is direct_get: {requests.get is direct_get}")
+  print("但 patch 替换的是指定命名空间里的引用，不是全局的")
+  print('patch("module_a.requests.get") 替换 module_a 的 requests 属性上的 get')
+  print('patch("module_b.get") 替换 module_b 的 get 属性')
+  print("搞错了命名空间，mock 就拦截不到")
+#+end_src
+
+#+begin_example
+requests.get is direct_get: True
+但 patch 替换的是指定命名空间里的引用，不是全局的
+patch("module_a.requests.get") 替换 module_a 的 requests 属性上的 get
+patch("module_b.get") 替换 module_b 的 get 属性
+搞错了命名空间，mock 就拦截不到
+#+end_example
+
+这条规则为什么容易踩坑？因为 =import requests= 的情况下， =patch("module.requests.get")= 和 =patch("requests.get")= 恰好都能工作（两个名字指向同一个模块对象）。你以为随便 patch 哪个都行，等到代码改成 =from requests import get= 的那天， =patch("requests.get")= 就失效了，而你完全不知道。
+
+* mock 的另一个用途, 制造碰撞
+
+前面用 mock 替代了网络请求，但 mock 还有别的用处。文章里还举了一个 CRM（客户关系管理）系统的例子, 联系人用文件存储，每个联系人根据名字生成唯一编码。要测试「两个联系人生成相同编码时抛出 =FileExistsError= 」, 需要强制让两次调用产生相同的编码。
+
+正常情况下编码生成函数对不同名字会返回不同编码，所以你 patch 它强制固定返回值。
+
+#+begin_src python :python python3
+  from pathlib import Path
+  from unittest.mock import patch
+  import tempfile
+
+  def next_code(name):
+      """根据名字生成唯一编码（简化版）"""
+      return name.lower().replace(" ", "")[:3] + "1"
+
+  def create_contact(name, contacts_dir):
+      code = next_code(name)
+      path = contacts_dir / f"{code}.txt"
+      if path.exists():
+          raise FileExistsError(f"Contact {code} already exists")
+      path.write_text(f"name: {name}")
+      return code
+
+  with tempfile.TemporaryDirectory() as tmpdir:
+      contacts_dir = Path(tmpdir)
+
+      with patch("__main__.next_code", return_value="jd1"):
+          code1 = create_contact("Jane Doe", contacts_dir)
+          print(f"第一次创建成功，编码: {code1}")
+
+          try:
+              create_contact("Bob Smith", contacts_dir)
+              print("ERROR: 应该抛出 FileExistsError")
+          except FileExistsError as e:
+              print(f"正确抛出 FileExistsError: {e}")
+#+end_src
+
+#+begin_example
+第一次创建成功，编码: jd1
+正确抛出 FileExistsError: Contact jd1 already exists
+#+end_example
+
+patch 强制 =next_code= 对任何名字都返回 =jd1= ，所以两个不同的名字生成了相同的编码，触发了碰撞检测。注意 patch 目标同样是 =next_code= *被调用* 的地方。
+
+* 比 mock 更好的办法, 显式 override 参数
+
+后来文章作者发现 patch =next_code= 不是最优方案。给 =create_contact= 加一个 =code= 参数, 允许调用者直接指定编码, 就不需要 patch 任何东西了。
+
+#+begin_src python :python python3
+  from pathlib import Path
+  import tempfile
+
+  def next_code(name):
+      return name.lower().replace(" ", "")[:3] + "1"
+
+  def create_contact(name, contacts_dir, *, code=None):
+      # code 参数前加 * 表示 keyword-only，只能用 code="xxx" 传递
+      # 防止调用者不小心在错误的位置传了一个值
+      code = code if code is not None else next_code(name)
+      path = contacts_dir / f"{code}.txt"
+      if path.exists():
+          raise FileExistsError(f"Contact {code} already exists")
+      path.write_text(f"name: {name}")
+      return code
+
+  with tempfile.TemporaryDirectory() as tmpdir:
+      contacts_dir = Path(tmpdir)
+
+      # 第一次调用：不指定 code，用 next_code 自动生成
+      code1 = create_contact("Jane Doe", contacts_dir)
+      print(f"第一次创建成功，编码: {code1}")
+
+      # 第二次调用：显式指定和第一次相同的 code，制造碰撞
+      try:
+          create_contact("Bob Smith", contacts_dir, code=code1)
+          print("ERROR: 应该抛出 FileExistsError")
+      except FileExistsError as e:
+          print(f"正确抛出 FileExistsError: {e}")
+#+end_src
+
+#+begin_example
+第一次创建成功，编码: jan1
+正确抛出 FileExistsError: Contact jan1 already exists
+#+end_example
+
+测试通过公共接口（ =code= 参数）控制行为，不需要 patch 任何内部函数。第一次调用捕获自动生成的编码，第二次用同一个编码制造碰撞。
+
+这个做法有代价。给生产代码加一个纯粹为了测试方便的参数, mock 批评者管这叫「测试导致的设计损伤」（test-induced design damage）, 意思是你为了测试在生产代码里开了一个本不需要的口子。但作者觉得这里合理, 因为 =code= 参数同时也是实用功能, 手动指定编码可以用于数据导入或备份恢复。如果参数 *只* 为测试存在, 那还是保留 mock 比较好。
+
+注意这跟依赖注入不是一回事。依赖注入（dependency injection）是把函数的 *依赖本身* 传进来, 测试里换一个假实现。这里传的是依赖 *产出的值*, 更轻量, 原文称之为「显式 override」。
+
+* 什么时候别用 mock
+
+mock 的价值在于让你跑快速的单元测试, 不依赖外部服务。判断标准很简单, 测试需要环境变量或外部服务才能跑就是集成测试, 把依赖 mock 掉就变成了单元测试。但有时候答案不是「怎么用好 mock」, 而是别用 mock。
+
+每次 =patch("module.requests.get")= 都在写一个和导入路径强耦合的测试。你把 =import requests= 改成 =from requests import get= ，所有 patch 都会失效。测试在测实现细节，不是在测行为。
+
+文章推荐看 Harry Percival 的 PyCon 演讲「Stop Using Mocks」。核心建议是把外部调用封装到一个适配器类里，写一个内存中的假实现（fake），用依赖注入把假实现传给测试、真实实现传给生产代码。
+
+拿前面的货币转换函数举例, 适配器模式长这样
+
+#+begin_src python :python python3
+  from decimal import Decimal
+
+  class RateProvider:
+      """适配器接口: 把汇率 API 的调用封装起来"""
+      def get_rate(self, from_currency, to_currency):
+          raise NotImplementedError
+
+  class FakeRateProvider(RateProvider):
+      """测试用的假实现: 不碰网络, 返回固定值"""
+      def __init__(self, rate):
+          self._rate = rate
+      def get_rate(self, from_currency, to_currency):
+          return self._rate
+
+  def convert_currency(amount, rate_provider):
+      rate = rate_provider.get_rate("CAD", "USD")
+      return Decimal(str(rate)) * amount
+
+  # 测试里传 fake, 生产里传真实实现
+  fake = FakeRateProvider(rate="0.75")
+  result = convert_currency(Decimal("100.00"), fake)
+  print(f"转换结果: {result}")
+  # 不需要 patch 任何东西
+#+end_src
+
+#+begin_example
+转换结果: 75.0000
+#+end_example
+
+生产代码传一个真实调用 API 的 =RateProvider= 子类, 测试传 =FakeRateProvider= , 函数根本不知道 mock 的存在。
+
+那什么时候 mock 是对的？测试的范围小, 外部依赖就一个, 边界清楚, 这种场景 mock 就很合适。货币转换函数只有一个 =requests.get= 调用，mock 就是合适的工具。CRM 的 =next_code= 也是，虽然后来发现显式 override 更好。
+
+先想清楚要不要用 mock。决定用了, 就务必验证它真的生效, 假绿测试比没有测试更危险。
