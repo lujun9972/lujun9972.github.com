@@ -387,6 +387,114 @@ NotificationCompat.Action pauseAction = new NotificationCompat.Action(
 教训：通知的每个 Action 按钮都应该有独立、语义清晰的图标。Material Design Icons 提供了标准的 pause、stop、play 等图标，直接复用即可。
 #+end_quote
 
+* 番茄钟超时无通知：通知渠道 importance 的"静默覆盖"
+
+**现象**：番茄钟时间到后，没有任何提示——无声音、无振动、无弹出通知。
+
+**根因**：Android 8+ 引入通知渠道（NotificationChannel）机制后，渠道的 importance 级别优先于 =notification.defaults=。原代码用 =IMPORTANCE_LOW= 创建了 =mobileorg_timeclock= 渠道，然后尝试用 =notification.defaults = Notification.DEFAULT_ALL= 触发声音和振动——但这在 =IMPORTANCE_LOW= 渠道下被静默忽略。更糟的是，复用了前台通知（ongoing）的 ID 来发送提醒，很多设备不会对已显示的 ongoing 通知重新触发声音。
+
+#+begin_src java
+// 旧代码：无效！LOW 渠道覆盖了 defaults
+notification.defaults = Notification.DEFAULT_ALL;
+mNM.notify(notificationID, notification);  // 复用前台通知 ID
+#+end_src
+
+**修复**：
+1. 创建独立的 =IMPORTANCE_HIGH= 渠道（=mobileorg_timeclock_timeout=）
+2. 发送独立的提醒通知（不同 ID、非 ongoing、=CATEGORY_ALARM=、=autoCancel=）
+3. 在 stop/cancel/destroy 时清理提醒通知
+
+#+begin_src java
+// 新代码：独立 HIGH 渠道 + 独立通知
+Compat.createNotificationChannelHigh(this, TIMEOUT_CHANNEL_ID,
+    "Pomodoro Timer Alert", "Alerts when pomodoro timer completes");
+NotificationCompat.Builder timeoutBuilder = new NotificationCompat.Builder(this, TIMEOUT_CHANNEL_ID)
+    .setSmallIcon(R.drawable.timeclock_icon)
+    .setContentTitle("🍅 番茄钟时间到！")
+    .setPriority(NotificationCompat.PRIORITY_HIGH)
+    .setCategory(NotificationCompat.CATEGORY_ALARM)
+    .setAutoCancel(true);
+mNM.notify(TIMEOUT_NOTIFICATION_ID, timeoutBuilder.build());
+#+end_src
+
+#+begin_quote
+教训：Android 8+ 上，=notification.defaults= 和 =priority= 在通知渠道面前形同虚设。永远不要用 =IMPORTANCE_LOW= 渠道发送需要声音/振动的提醒。前台通知（ongoing）不适合做提醒——用独立通知。
+#+end_quote
+
+* 同步按钮旋转不停：Menu 重建导致动画状态丢失
+
+**现象**：点击同步按钮后，旋转动画开始播放。同步完成后，按钮继续无限旋转。
+
+**根因**：=onResume()= 中调用了 =invalidateOptionsMenu()=（为了刷新番茄钟菜单项状态），这会导致 ActionBar/Toolbar 重建 Menu。Menu 重建后，=synchronizerMenuItem= 被重新赋值给新的 MenuItem（没有 actionView），而旧的带旋转动画的 ImageView 与新 MenuItem 失去了关联。当 =SYNC_DONE= 广播到达时，=synchronizerMenuItem.getActionView()= 返回 null，无法停止动画。此外，=synchronizerMenuItem= 本身也可能为 null（OptionsMenu 还没创建），导致 NPE。
+
+#+begin_src java
+// 旧代码：没有 null 安全，动画状态可能丢失
+android.view.View actionView = synchronizerMenuItem.getActionView();
+if (actionView != null) { actionView.clearAnimation(); }
+synchronizerMenuItem.setActionView(null);  // 可能 NPE!
+#+end_src
+
+**修复**：
+1. 添加 =SyncService.isSyncRunning= 静态标志，让 UI 可以检查同步状态
+2. 在 =onPrepareOptionsMenu()= 中自愈：同步中但动画丢失→恢复动画；同步完成但动画残留→清除动画
+3. =SYNC_DONE= handler 加 null 安全检查
+
+#+begin_src java
+// 自愈逻辑：每次 menu invalidation 都检查
+if (SyncService.isSyncRunning) {
+    if (syncItem.getActionView() == null) {
+        // 恢复旋转动画
+        syncItem.setActionView(refreshView);
+        refreshView.startAnimation(rotate);
+    }
+} else {
+    // 清除残留动画
+    if (syncItem.getActionView() != null) {
+        actionView.clearAnimation();
+    }
+    syncItem.setActionView(null);
+}
+#+end_src
+
+#+begin_quote
+教训：=invalidateOptionsMenu()= 会重建 Menu，任何通过 =setActionView()= 设置的 UI 状态都会丢失。如果 UI 状态依赖后台任务，必须在 =onPrepareOptionsMenu()= 中根据任务状态自愈，而不是只在广播回调中处理。同时，广播回调中引用 MenuItem 必须做 null 安全检查。
+#+end_quote
+
+** 坑 15：SCHEDULE_EXACT_ALARM 是特殊权限，新装默认未授予
+
+DEADLINE/SCHEDULED 提醒是后期加的功能。manifest 里声明了 =<uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>= ，代码里也调用 =AlarmManager.setExactAndAllowWhileIdle()=，初看没问题。
+
+实测时日志里出现：
+
+#+begin_example
+W MobileOrg: ReminderScheduler failed: java.lang.SecurityException:
+    Caller com.matburt.mobileorg needs to hold android.permission.SCHEDULE_EXACT_ALARM
+    or android.permission.USE_EXACT_ALARM to set exact alarms.
+#+end_example
+
+而且只在 sync 完成后抛，应用启动时不抛。原因有两条：
+
+1. *=SCHEDULE_EXACT_ALARM= 是特殊权限*（app-special access），不是普通 dangerous permission。manifest 声明只是"有资格申请"，实际是否生效要用户在系统设置里手动打开。**新安装的 app 默认未授予**。
+2. *=canScheduleExactAlarms()= 的 fallback 写错了*。原代码：
+   #+begin_src java
+   if (Build.VERSION.SDK_INT >= 31 && alarmManager.canScheduleExactAlarms()) {
+       alarmManager.setExactAndAllowWhileIdle(...);
+   } else if (Build.VERSION.SDK_INT >= 23) {  // ← API 31+ 无权限也落到这里
+       alarmManager.setExactAndAllowWhileIdle(...);  // ← API 31+ 无权限仍抛 SecurityException
+   } else {
+       alarmManager.setExact(...);
+   }
+   #+end_src
+   作者误以为 =else if= 分支只覆盖 API 23-30，但 API 31+ 无权限时 =canScheduleExactAlarms()= 返回 false 也会落到这里。在 API 31+ 上，=setExactAndAllowWhileIdle()= 始终需要权限，不管 API 等级。
+
+为什么 onCreate 不抛？因为 onCreate 只调 =scheduleDailyOverview()=，那个方法自己写对了（无权限 fallback 到 =setWindow()=）。sync 完成后才调 =scheduleAll()=，里面的 =registerAlarm()= 写错了。这种"同一文件两处相同模式，一处对一处错"特别难发现——review 时容易下意识假定两处一致。
+
+**修复**：抽出决策纯函数 =chooseAlarmStrategy(apiLevel, canExact)=，让 =scheduleDailyOverview= 和 =registerAlarm= 共用，并加单测覆盖三个分支（API 31+ 有/无权限、API 23-30、API < 23）。
+
+#+begin_quote
+教训：Android 12+ 上凡是用到 =setExact*= 系列的地方都要先检查 =canScheduleExactAlarms()=，无权限时只能 fallback 到 =setWindow()=。manifest 声明 ≠ 权限已授予，对特殊权限永远是两回事。同一个文件里相同模式的代码必须一致，最佳做法是抽公共函数。
+#+end_quote
+
 * 经验总结
 
 ** 1. 静默失效比崩溃更可怕
