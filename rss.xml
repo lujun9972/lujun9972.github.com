@@ -4,10 +4,900 @@
     <title>暗无天日</title>
     <link>https://lujun9972.github.io</link>
     <description>=============&gt;DarkSun的个人博客</description>
-    <pubDate>Fri, 12 Jun 2026 15:40:07 UTC</pubDate>
-    <lastBuildDate>Fri, 12 Jun 2026 15:40:07 UTC</lastBuildDate>
+    <pubDate>Sun, 21 Jun 2026 21:56:42 UTC</pubDate>
+    <lastBuildDate>Sun, 21 Jun 2026 21:56:42 UTC</lastBuildDate>
     <docs>http://www.rssboard.org/rss-specification</docs>
     <generator>ego static site generator (https://github.com/emacs-china/ego)</generator>
+<item>
+<title>读：HN 热帖——用 AI 写代码，你的手艺在退化吗？</title>
+<link>https://lujun9972.github.io/blog/2026/06/08/读：hn-热帖——用-ai-写代码，你的手艺在退化吗？/index.html</link>
+<description>Hacker News 上一条「我们放弃 Claude 了」的帖子，意外引爆了程序员社区关于 AI 技能退化的激烈辩论。有人拿俄语打比方说「不练就忘」，有人说「用编译器也没见谁忘了编程」，还有人指出真正的问题不是退化而是冷漠的态度。本文梳理这场辩论的核心论点，看看 220 条评论到底吵出了什么。</description>
+<pubDate>2026-06-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/06/08/读：hn-热帖——用-ai-写代码，你的手艺在退化吗？/index.html</guid>
+</item>
+<item>
+<title>浏览器文件选择框弹不出来——xdg-desktop-portal 启动时序陷阱</title>
+<link>https://lujun9972.github.io/blog/2026/06/06/浏览器文件选择框弹不出来——xdg-desktop-portal-启动时序陷阱/index.html</link>
+<description>* 故障现象
+
+我在自己写的打字练习网站后台管理页面（AdminPage）上加了一个文件上传功能——点击按钮选择本地视频文件。代码写好后，点击按钮……什么也没发生。没有文件选择框，没有报错，没有反应。
+
+不只是 Chrome ，Firefox 也一样——点击按钮毫无反应。两个浏览器都弹不出文件选择框。
+
+* 排查过程
+
+** 第一步：排除代码问题
+
+我当时还没意识到问题的严重性，以为是前端代码的问题，先后尝试了四种不同的 CSS + JS 方案来触发 =&lt;input type=&quot;file&quot;&gt;= ：
+
+1. =display:none= + JS =.click()= → 不弹
+2. =clip:rect(0,0,0,0)= + JS =.click()= → 不弹
+3. =&lt;label&gt;= + 离屏 input → 不弹
+4. 透明 overlay 直接盖在按钮上（用户点的是真正的 =&lt;input&gt;= ） → 还是不弹！
+
+结果四种方案全部失败，而且两个浏览器都不行。
+
+- 只凭&quot;多浏览器不行&quot;→ 可能是代码 bug ，也可能是系统问题
+- 只凭&quot;多方案不行&quot;→ 可能是某个浏览器对所有方案都不兼容
+- *两者叠加* → 如果是代码 bug ，不可能四种方案全写错；如果是浏览器兼容性，不可能两个浏览器同时排斥所有方案。问题一定在更底层
+
+#+BEGIN_QUOTE
+*小知识：Linux 下浏览器的文件选择框是谁弹出来的？*
+
+在 Windows 和 macOS 上，浏览器直接调用操作系统的原生文件对话框 API ，简单直接。
+
+但在 Linux 上，浏览器不自己画文件对话框。Chrome 和 Firefox 都通过一个叫 =xdg-desktop-portal= 的中间层来请求桌面环境弹出对话框。这个 portal 的设计初衷是让沙盒应用（Flatpak、Snap）能安全地访问系统资源，后来主流浏览器都采用了这套机制。
+
+流程是：
+#+begin_example
+  浏览器需要 file dialog
+    → 通过 D-Bus 询问 xdg-desktop-portal
+      → portal 找到当前桌面环境的后端（如 portal-gtk）
+        → 后端调用 GTK/Qt 弹出原生文件对话框
+          → 用户选择文件，结果传回浏览器
+#+end_example
+
+如果 portal 或它的后端挂了，浏览器需要&quot;弹文件对话框&quot;时就什么都做不了——而且不会报错，因为从浏览器的角度看，它只是发了一个 D-Bus 请求，没收到回复而已。
+#+END_QUOTE
+
+** 第二步：检查 portal 服务状态
+
+#+begin_src shell
+  systemctl --user status xdg-desktop-portal-gtk
+#+end_src
+
+#+begin_example
+  × xdg-desktop-portal-gtk.service - Portal service (GTK/GNOME implementation)
+       Loaded: loaded (/usr/lib/systemd/user/xdg-desktop-portal-gtk.service; static)
+       Active: failed (Result: exit-code)
+       Process: 1277 ExecStart=/usr/lib/xdg-desktop-portal-gtk (code=exited, status=1/FAILURE)
+  Main PID: 1277 (code=exited, status=1/FAILURE)
+
+  6月 06 04:30 systemd[1277]: Started Portal service (GTK/GNOME implementation).
+  6月 06 04:30 xdg-desktop-portal-gtk[1277]: cannot open display:
+  6月 06 04:30 systemd[1277]: xdg-desktop-portal-gtk.service: Failed with result &#39;exit-code&#39;.
+#+end_example
+
+*BINGO！* 服务失败了，错误信息是 =cannot open display:= ——它找不到显示服务器！这也解释了为什么 Chrome 和 Firefox 都弹不出文件选择框——它们依赖的是同一个已死掉的 portal 后端。
+
+** 第三步：为什么找不到 display？
+
+这个服务在开机时就尝试启动了（PID 1277 ，非常小的数字，说明是系统启动早期）。但我的系统是通过 =startx= 启动图形界面的：
+
+#+begin_example
+  时间线：
+  ─────────────────────────────────────────────────────────→
+
+  T1: 在 tty 输入用户名密码登录
+      │
+      ├─ systemd --user 启动（PID ~1277）
+      │   └─ xdg-desktop-portal-gtk.service 尝试启动
+      │       → 报错 &quot;cannot open display:&quot;
+      │       → 此时还没有 X11，DISPLAY 不存在！
+      │
+  T2: 在 tty 里输入 startx
+      │
+      ├─ Xorg 启动 → DISPLAY=:0 出现
+      │   但只存在于 startx 的子进程环境中
+      │   systemd user session 仍然没有 DISPLAY
+      │
+  T3: awesome WM 启动，桌面出现
+      │
+  T4: 打开浏览器 → 需要 portal → portal 后端已挂 → 文件对话框弹不出来
+#+end_example
+
+问题出在 *启动时序* ：portal 服务在 X11 启动之前就尝试运行了，自然打不开 display 。
+
+** 第四步：为什么 portal-gtk 会这么早启动？
+
+查看它的 service unit ：
+
+#+begin_src shell
+  systemctl --user cat xdg-desktop-portal-gtk.service
+#+end_src
+
+#+begin_src conf
+  [Unit]
+  Description=Portal service (GTK/GNOME implementation)
+  PartOf=graphical-session.target
+  After=graphical-session.target
+
+  [Service]
+  Type=dbus
+  BusName=org.freedesktop.impl.portal.desktop.gtk
+  ExecStart=/usr/lib/xdg-desktop-portal-gtk
+#+end_src
+
+它声明了 =After=graphical-session.target= ，意思是&quot;应该在图形会话准备好之后再启动&quot;。但关键是—— =graphical-session.target= 在我的系统上 *从来没被激活过* ：
+
+#+begin_src shell
+  systemctl --user is-active graphical-session.target
+  # inactive
+#+end_src
+
+#+BEGIN_QUOTE
+*小知识：=graphical-session.target= 是谁激活的？*
+
+在 Linux 桌面的生态中，=graphical-session.target= 是一个 systemd target ，代表&quot;图形用户会话已就绪&quot;。它不是一个普通服务，而是一个 *里程碑标记* ，告诉其他依赖图形环境的服务&quot;现在可以安全启动了&quot;。
+
+正常情况下，谁负责激活它？
+
+- *GDM（GNOME Display Manager）* ：用户在图形登录界面输入密码后，GDM 启动 X11/Wayland ，然后通过 PAM 模块激活 =graphical-session.target=
+- *SDDM（KDE）* 、*LightDM* 等：同理，显示管理器负责整个启动链路
+
+关键点：显示管理器保证 =先有图形环境，再激活 target= 。服务单元只需要声明 =After=graphical-session.target= 就能确保启动时 DISPLAY 已经存在。
+
+但如果你用 =startx= 启动桌面，没有显示管理器来激活这个 target ，它就一直是 =inactive= 。
+#+END_QUOTE
+
+** 第五步：D-Bus 激活绕过了时序保护
+
+那 portal-gtk 是怎么被启动的呢？它是通过 D-Bus 自动激活的：
+
+#+begin_src shell
+  cat /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service
+#+end_src
+
+#+begin_example
+  [D-BUS Service]
+  Name=org.freedesktop.impl.portal.desktop.gtk
+  Exec=/usr/lib/xdg-desktop-portal-gtk
+  SystemdService=xdg-desktop-portal-gtk.service
+#+end_example
+
+当主 portal 服务（=xdg-desktop-portal=）尝试通过 D-Bus 访问 GTK 后端时，D-Bus 守护进程发现这个服务没运行，就自动让 systemd 启动它。这个激活过程 *不受 =After=graphical-session.target= 约束* ，因为 systemd 认为这个 target 已经处于终态（inactive ），不需要等待。
+
+#+BEGIN_QUOTE
+*小知识：D-Bus 自动激活（D-Bus Activation）*
+
+D-Bus 有一个很方便的机制：当某个 D-Bus 服务名被请求但没有人提供时，D-Bus 守护进程会查找 =/usr/share/dbus-1/services/= 下的配置文件，找到对应的 =SystemdService= ，然后让 systemd 启动它。
+
+这意味着：即使一个服务没有被 enable ，只要它的 D-Bus 配置文件在，有其他程序请求它提供的服务时，它就会被自动拉起。这就是为什么 portal-gtk 虽然没有被手动 enable ，却在开机时就被启动了。
+#+END_QUOTE
+
+** 第六步：发现 service unit 的设计缺陷
+
+对比 GNOME 版的 portal service ：
+
+#+begin_src shell
+  systemctl --user cat xdg-desktop-portal-gnome.service
+#+end_src
+
+#+begin_src conf
+  [Unit]
+  Description=Portal service (GNOME implementation)
+  After=graphical-session.target
+  Requisite=graphical-session.target    ← 注意这行！
+  PartOf=graphical-session.target
+
+  [Service]
+  Type=dbus
+  BusName=org.freedesktop.impl.portal.desktop.gnome
+  ExecStart=/usr/lib/xdg-desktop-portal-gnome
+#+end_src
+
+GNOME 版多了一行 =Requisite=graphical-session.target= ，意思是&quot;如果 graphical-session.target 没激活，就 *拒绝启动* &quot;。这是正确的防御措施——在纯 tty 环境下，GNOME portal 不会尝试启动，避免了无意义的失败。
+
+#+BEGIN_QUOTE
+*小知识：=After= vs =Requisite= vs =PartOf= 的区别*
+
+systemd 的依赖指令很多，容易混淆：
+
+| 指令         | 含义                                                     |
+|--------------+----------------------------------------------------------|
+| =After=      | 排序约束：如果两者同时要启动，先启动目标单元             |
+| =Requires=   | 硬依赖：目标失败时，自己也跟着停                         |
+| =Requisite=  | 门卫：目标没启动就直接拒绝启动自己（比 Requires 更严格） |
+| =PartOf=     | 跟随：目标的 stop/restart 会传播给自己                   |
+| =Wants=      | 软依赖：建议启动目标，但目标失败了不影响自己             |
+
+在本案中，GTK portal 只有 =After= 和 =PartOf= ，缺少 =Requisite= 。这导致在 graphical-session.target 未激活的情况下，D-Bus 激活仍然能把它拉起来，然后它去打开一个不存在的 display ，就崩溃了。
+#+END_QUOTE
+
+* 根因分析（5 Whys）
+
+** Why #1：为什么文件选择框弹不出来？
+
+**回答**：=xdg-desktop-portal-gtk= 服务启动失败（=cannot open display:=），Chrome 和 Firefox 都依赖这个服务来弹出文件选择框。
+
+**证据**：=systemctl --user status xdg-desktop-portal-gtk= 显示 =failed (exit-code)= ，两个浏览器都无反应。
+
+---
+
+** Why #2：为什么 portal-gtk 启动失败？
+
+**回答**：服务启动时 systemd user session 中不存在 =DISPLAY= 环境变量。没有 DISPLAY ，GTK 程序无法连接显示服务器。
+
+**证据**：错误日志 =cannot open display:= ；服务启动时间（PID 1277 ）早于 =startx= 执行时间。
+
+---
+
+** Why #3：为什么 systemd user session 里没有 DISPLAY？
+
+**回答**：因为用户通过 =startx= 启动图形界面。=systemd --user= 在 tty 登录时就启动了（那时没有 DISPLAY ），而 =startx= 在之后才创建 DISPLAY=:0 ，但这个变量只存在于 startx 的子进程环境中，不会自动传递给 systemd user session 。
+
+**证据**：=startx= 不像 GDM/SDDM 那样调用 =systemctl --user import-environment= 。
+
+---
+
+** Why #4：为什么 portal-gtk 会在没有 DISPLAY 的时候被启动？
+
+**回答**：因为 D-Bus 自动激活机制绕过了 =After=graphical-session.target= 的排序约束。当 =graphical-session.target= 处于 =inactive= 状态时，=After= 指令不产生阻止效果——systemd 认为&quot;不需要等待一个已经处于终态的单元&quot;。
+
+**证据**：=graphical-session.target= 的状态是 =inactive (dead)= ，而 portal-gtk 仍然被 D-Bus 激活拉起了。
+
+---
+
+** Why #5：为什么 unit 设计没有阻止这种情况？
+
+**回答**：=xdg-desktop-portal-gtk.service= 缺少 =Requisite=graphical-session.target= 。对比 =xdg-desktop-portal-gnome.service= ，GNOME 版有 =Requisite= 保护（target 没激活就拒绝启动），而 GTK 版漏掉了这个防御。这是 upstream 的设计疏漏。
+
+**证据**：GNOME 版 unit 文件有 =Requisite=graphical-session.target= ，GTK 版没有。
+
+---
+
+** 识别出的根因
+
+| 层级   | 根因                                                                 |
+|--------+----------------------------------------------------------------------|
+| 直接   | portal-gtk 因缺少 DISPLAY 启动失败                                   |
+| 系统   | startx 不像显示管理器那样将 DISPLAY 导入 systemd user session        |
+| 设计   | xdg-desktop-portal-gtk.service 缺少 Requisite=graphical-session.target |
+
+* 解决方案
+
+** 已采用的修复
+
+在 =~/.xinitrc= 中添加两行，在 X11 启动后、窗口管理器启动前执行：
+
+#+begin_src shell
+  # 将 DISPLAY 传递给 systemd user session
+  systemctl --user import-environment DISPLAY 2&gt;/dev/null
+  # 重新启动 portal 后端（现在 DISPLAY 已存在）
+  systemctl --user restart xdg-desktop-portal-gtk 2&gt;/dev/null
+#+end_src
+
+#+BEGIN_QUOTE
+*小知识：=systemctl --user import-environment= 是什么？*
+
+每个进程都有自己的环境变量副本。=startx= 启动的子进程（包括 awesome WM 、浏览器等）继承了 shell 的 =DISPLAY=:0 。但 =systemd --user= 实例是你在 tty 登录时就启动的，那时 =DISPLAY= 还不存在。
+
+=import-environment DISPLAY= 的作用是把当前 shell 的 =DISPLAY= 变量&quot;导入&quot;到 systemd user session 的环境中。这样 systemd 启动的所有用户服务就都能看到 =DISPLAY=:0 了。
+#+END_QUOTE
+
+修改后完整的 =~/.xinitrc= 相关部分：
+
+#+begin_src shell
+  # 将 DISPLAY 传递给 systemd user session，让 xdg-desktop-portal-gtk 正常工作
+  systemctl --user import-environment DISPLAY 2&gt;/dev/null
+  systemctl --user restart xdg-desktop-portal-gtk 2&gt;/dev/null
+
+  # setup fcitx
+  export GTK_IM_MODULE=fcitx5
+  export QT_IM_MODULE=fcitx5
+  export XMODIFIERS=&quot;@im=fcitx5&quot;
+  fcitx5 &amp;
+
+  exec awesome
+#+end_src
+
+** 理想的 upstream 修复
+
+=xdg-desktop-portal-gtk.service= 应该加上 =Requisite=graphical-session.target= ，与 GNOME 版保持一致：
+
+#+begin_example
+  [Unit]
+  Description=Portal service (GTK/GNOME implementation)
+  Requisite=graphical-session.target    ← 加上这一行
+  PartOf=graphical-session.target
+  After=graphical-session.target
+#+end_example
+
+这样在没有图形环境时，portal-gtk 不会尝试启动。等到 =.xinitrc= 中 =import-environment= 和 =restart= 执行时，它才能正常工作。
+</description>
+<pubDate>2026-06-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/06/06/浏览器文件选择框弹不出来——xdg-desktop-portal-启动时序陷阱/index.html</guid>
+</item>
+<item>
+<title>MobileOrg Android：从 API 17 迁移到 API 34 的实战记录</title>
+<link>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</link>
+<description>#+BEGIN_quote
+本文迁移全程借助 [[https://claude.ai/code][Claude Code]] 完成，我本人没有手动编写任何代码。整个过程是：真机测试发现问题 → 将 logcat 或现象描述给 Claude Code → Claude Code 定位原因并生成修复代码 → 推送 GitHub Actions 构建 → 再测试验证。包括本文本身，也是借助 Claude Code 生成的。
+
+由于我不是 Android 开发者，对文中涉及的技术细节无法保证完全准确，请读者自行判断。
+#+END_quote
+
+MobileOrg Android 是一个 Org-mode 的 Android 客户端，fork 自已经停止维护的 [[https://github.com/matburt/mobileorg-android][matburt/mobileorg-android]]。原始代码写于 2013 年左右，targetSdk 为 17（Android 4.2），使用 ActionBarSherlock、Support Library v4 等早已废弃的库。
+
+Google Play 要求 targetSdk 33+，所以必须迁移。本文记录了整个迁移过程中的踩坑和修复经验。
+
+* 迁移时间线
+
+整个迁移分三个阶段，共 50+ 个 commit：
+
+** 第一阶段：构建系统升级
+
+原始项目使用 ADT 构建，没有 Gradle 支持。首先需要让项目能编译：
+
+1. 创建 Gradle 构建配置（AGP 3.0.1 + Gradle 4.1）
+2. 解决 ActionBarSherlock 兼容性（禁用 AAPT2）
+3. 解决 support-v4 版本冲突（降级到 25.4.0）
+
+** 第二阶段：AndroidX 迁移
+
+1. 替换 ActionBarSherlock 为 AppCompat
+2. 执行 AndroidX 迁移（Refactor → Migrate to AndroidX）
+3. 升级到现代工具链（AGP 8.2.2 + Gradle 8.5 + JDK 17 + compileSdk 34）
+
+** 第三阶段：运行时兼容性修复
+
+这是最耗时的阶段。代码能编译，但在现代 Android 上各种崩溃和功能异常。下面详细记录。
+
+* 踩过的坑
+
+** 坑 1：ActionBarSherlock → AppCompat 的菜单图标消失
+
+#+begin_quote
+症状：菜单图标在 ActionBar 上不显示
+#+end_quote
+
+AppCompat 使用自己的 namespace 解析 =showAsAction= 属性。如果用 =android:showAsAction=，AppCompat 会静默忽略，图标不显示但不报错。
+
+#+begin_src xml
+&lt;!-- 错误：AppCompat 会忽略 --&gt;
+&lt;item android:showAsAction=&quot;ifRoom&quot; /&gt;
+
+&lt;!-- 正确：必须用 app namespace --&gt;
+&lt;item app:showAsAction=&quot;ifRoom&quot;
+    xmlns:app=&quot;http://schemas.android.com/apk/res-auto&quot; /&gt;
+#+end_src
+
+**影响范围**：项目中 8 个菜单 XML 文件全部需要修改。只修了一个文件时，其他界面（capture 保存按钮、节点操作按钮等）的图标依然消失。
+
+#+begin_quote
+教训：迁移框架后要全局搜索同类问题，不要只修一个文件就以为搞定了。
+#+end_quote
+
+** 坑 2：NotificationChannel 导致前台服务崩溃
+
+#+begin_quote
+症状：CannotPostForegroundServiceNotificationException: Bad notification for startForeground
+#+end_quote
+
+Android 8.0（API 26）引入了 NotificationChannel。Android 13（API 33）进一步强化——如果 notification 引用的 channel 不存在，直接抛异常崩溃。
+
+原始代码通过反射创建 channel（因为当时 compileSdk 是 23），但反射异常被静默吞掉了。Channel 没创建成功，notification 引用了一个不存在的 channel，崩溃。
+
+#+begin_src java
+// 原来的反射方式——异常被吞掉，channel 创建失败但不知道
+try {
+    Class&lt;?&gt; channelClass = Class.forName(&quot;android.app.NotificationChannel&quot;);
+    // ...
+} catch (Exception e) {
+    // 静默失败！
+}
+
+// 修复：compileSdk 34 已经有直接 API，不需要反射
+NotificationChannel channel = new NotificationChannel(channelId, name,
+    NotificationManager.IMPORTANCE_LOW);
+nm.createNotificationChannel(channel);
+#+end_src
+
+同时，所有 =NotificationCompat.Builder= 构造函数都必须传 CHANNEL_ID：
+
+#+begin_src java
+// 错误：没有 channel ID
+new NotificationCompat.Builder(context)
+
+// 正确
+new NotificationCompat.Builder(context, CHANNEL_ID)
+#+end_src
+
+**影响范围**：6 处 Builder 调用点，涉及 SyncService、TimeclockService、SynchronizerNotification、SynchronizerNotificationCompat。
+
+** 坑 3：危险权限的运行时检查
+
+#+begin_quote
+症状：CalendarSyncService 启动时 SecurityException 崩溃
+#+end_quote
+
+Android 6.0（API 23）引入了运行时权限。=READ_CALENDAR= 和 =WRITE_CALENDAR= 是危险权限，光在 Manifest 声明不够，必须运行时请求。
+
+#+begin_src java
+// 在 Service.onCreate() 中检查权限
+if (!hasCalendarPermission()) {
+    stopSelf();  // 无权限则优雅退出
+    return;
+}
+#+end_src
+
+**影响范围**：CalendarSyncService 的 =onCreate()= 和 =onStartCommand()= 都需要加权限检查。
+
+** 坑 4：Service early return 导致 onDestroy NPE
+
+#+begin_quote
+症状：修复权限检查后，CalendarSyncService.onDestroy() 抛 NullPointerException
+#+end_quote
+
+修复坑 3 加了 early return 后，=sharedPreferences= 没有被初始化，但 Android 仍然会调用 =onDestroy()=，里面直接调了 =unregisterOnSharedPreferenceChangeListener(sharedPreferences...)= 导致 NPE。
+
+#+begin_src java
+// onDestroy 必须做空检查
+@Override
+public void onDestroy() {
+    if (sharedPreferences != null) {
+        sharedPreferences.unregisterOnSharedPreferenceChangeListener(this);
+    }
+    super.onDestroy();
+}
+#+end_src
+
+#+begin_quote
+教训：在 =onCreate()= / =onStartCommand()= 中加 early return（比如权限检查失败后 =stopSelf()=）时，=onDestroy()= 仍会被 Android 调用。所有在 =onDestroy()= 中使用的字段都必须做空检查。
+#+end_quote
+
+** 坑 5：主线程网络操作
+
+#+begin_quote
+症状：SSH Connection failed: android.os.NetworkOnMainThreadException
+#+end_quote
+
+Android 3.0 开始禁止主线程网络操作。但 =SyncService.getSynchronizer()= 在主线程调用 =new SSHSynchronizer()=，而 SSHSynchronizer 的构造函数调了 =connect()= 做网络连接。
+
+#+begin_src java
+// 错误：构造函数中发起网络连接
+public SSHSynchronizer(Context context) {
+    // ... 读取配置 ...
+    this.connect();  // 网络操作在主线程！
+}
+
+// 修复：移除构造函数中的 connect()，让后台线程处理
+public SSHSynchronizer(Context context) {
+    // ... 只读取配置，不连接 ...
+}
+#+end_src
+
+后台线程的 =getRemoteFile()= 已经有重连逻辑，会自动在正确的线程上建立连接。
+
+** 坑 6：隐式广播不送达
+
+#+begin_quote
+症状：同步后变更计数不刷新，同步动画不显示，但同步本身是成功的
+#+end_quote
+
+这是最隐蔽的一个问题。=OrgUtils.announceSyncDone()= 通过 =sendBroadcast()= 发送隐式广播通知 UI 刷新。但 targetSdk 34 的设备上，隐式广播可能不被 =RECEIVER_NOT_EXPORTED= 的 receiver 接收。
+
+#+begin_src java
+// 错误：隐式广播，targetSdk 34 可能不送达
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+context.sendBroadcast(intent);
+
+// 修复：设为显式广播
+Intent intent = new Intent(Synchronizer.SYNC_UPDATE);
+intent.setPackage(context.getPackageName());  // 关键！
+context.sendBroadcast(intent);
+#+end_src
+
+这个问题的影响面很大：变更计数不刷新、同步动画不显示、编辑后列表不更新——全部因为广播没送达。但不会报任何错误，就是功能静默失效。
+
+#+begin_quote
+教训：targetSdk 升级后，最危险的不是崩溃，而是功能静默失效。崩溃至少有日志，静默失效只能靠用户反馈。
+#+end_quote
+
+** 坑 7：Preference 的隐式 Intent 解析错误
+
+#+begin_quote
+症状：点击 Setup Wizard 直接退回到大纲界面
+#+end_quote
+
+XML Preference 中用隐式 intent 打开 Activity：
+
+#+begin_src xml
+&lt;!-- 错误：隐式 intent 可能解析到错误的 Activity --&gt;
+&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
+    &lt;intent android:action=&quot;com.matburt.mobileorg.Settings.SETUP_WIZARD&quot; /&gt;
+&lt;/Preference&gt;
+
+&lt;!-- 修复：显式指定目标 --&gt;
+&lt;Preference android:title=&quot;Setup Wizard&quot;&gt;
+    &lt;intent
+        android:targetPackage=&quot;com.matburt.mobileorg&quot;
+        android:targetClass=&quot;com.matburt.mobileorg.Gui.Wizard.WizardActivity&quot; /&gt;
+&lt;/Preference&gt;
+#+end_src
+
+** 坑 8：动画在未挂载的 View 上启动
+
+#+begin_quote
+症状：同步图标的旋转动画不显示
+#+end_quote
+
+先 =startAnimation()= 再 =setActionView()=，此时 view 还没挂载到 window，动画被静默忽略。
+
+#+begin_src java
+// 错误顺序
+refreshView.startAnimation(rotate);  // view 还没挂载！
+synchronizerMenuItem.setActionView(refreshView);
+
+// 修复：先挂载，再用 post 延迟启动动画
+synchronizerMenuItem.setActionView(refreshView);
+refreshView.post(() -&gt; refreshView.startAnimation(rotate));
+#+end_src
+
+** 坑 9：Intent.getAction() 返回 null 导致 NPE
+
+#+begin_quote
+症状：Setup Wizard 完成后，OutlineActivity 崩溃 NullPointerException
+#+end_quote
+
+之前修改 Wizard 完成后的导航逻辑，使用 =FLAG_ACTIVITY_SINGLE_TOP= 回到已有的 OutlineActivity：
+
+#+begin_src java
+Intent outlineIntent = new Intent(context, OutlineActivity.class);
+outlineIntent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+context.startActivity(outlineIntent);
+#+end_src
+
+由于 =FLAG_ACTIVITY_SINGLE_TOP=，Android 不会创建新实例，而是调用已有实例的 =onNewIntent()=。但这个 Intent 没有设 action，所以 =getAction()= 返回 null：
+
+#+begin_src java
+// 崩溃：intent.getAction() 为 null，对 null 调 equals()
+if (intent.getAction().equals(SYNC_FAILED)) { ... }
+
+// 修复：常量在左，天然防 null
+if (SYNC_FAILED.equals(intent.getAction())) { ... }
+#+end_src
+
+#+begin_quote
+教训：=Intent.getAction()= 可以为 null。使用 =FLAG_ACTIVITY_SINGLE_TOP= 导航回已有 Activity 时，=onNewIntent()= 收到的 Intent 可能没有 action。养成 =CONSTANT.equals(variable)= 的习惯可以避免此类 NPE。
+#+end_quote
+
+** 坑 10：AndroidX Fragment 要求内部类为 public static
+
+#+begin_quote
+症状：点击 TimeclockDialog 的编辑按钮，或 DateTableRow 的日期/时间选择器，抛 IllegalStateException
+#+end_quote
+
+AndroidX Fragment 1.2+ 强制要求所有 Fragment 子类必须是 =public static=。非 static 内部类持有外部类隐式引用，无法通过无参构造器反射重建。
+
+#+begin_src java
+// 错误：非 static 内部类
+private class EditTimePickerFragment extends DialogFragment { ... }
+
+// 修复：改为 public static，数据通过 Bundle 传入
+public static class EditTimePickerFragment extends DialogFragment {
+    public static EditTimePickerFragment newInstance(int hour, int minute) {
+        EditTimePickerFragment f = new EditTimePickerFragment();
+        Bundle args = new Bundle();
+        args.putInt(&quot;hour&quot;, hour);
+        args.putInt(&quot;minute&quot;, minute);
+        f.setArguments(args);
+        return f;
+    }
+}
+#+end_src
+
+**影响范围**：4 个 Fragment 内部类（=TimeclockDialog.EditTimePickerFragment=、=DateTableRow= 的 3 个日期/时间选择器 Fragment）。
+
+** 坑 11：registerReceiver 必须指定 RECEIVER_EXPORTED/RECEIVER_NOT_EXPORTED
+
+#+begin_quote
+症状：OutlineActivity 启动时崩溃 SecurityException
+#+end_quote
+
+Android 13（API 33）要求调用 =registerReceiver()= 时必须指定 =RECEIVER_EXPORTED= 或 =RECEIVER_NOT_EXPORTED= 标志。项目中所有 =registerReceiver= 调用都需要加 API 级别判断：
+
+#+begin_src java
+if (Build.VERSION.SDK_INT &gt;= 33) {
+    registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+} else {
+    registerReceiver(receiver, filter);
+}
+#+end_src
+
+**影响范围**：3 处（=OutlineActivity=、=AgendaActivity=、=MobileOrgWidget=）。
+
+** 坑 12：危险权限的防御性编码——UI 层检查不够
+
+#+begin_quote
+症状：通过 ActionMode 菜单点击&quot;录音&quot;后，RecordingService 崩溃 setAudioSource failed
+#+end_quote
+
+新增的录音功能有两个 UI 入口：ActionMode 长按菜单和三点选项菜单。选项菜单路径做了 =RECORD_AUDIO= 权限检查，但 ActionMode 路径直接启动了 Service，跳过了权限检查。更关键的是，Service 本身对 =MediaRecorder.setAudioSource()= 没有做 try-catch，权限缺失时直接崩溃。
+
+这暴露了危险权限的两个常见疏漏：
+
+1. *每个 UI 入口都要独立检查权限*——不能假设用户只从特定路径进入
+2. *Service 必须防御性编码*——权限可能在 UI 检查和 Service 执行之间被用户撤销
+
+#+begin_src java
+// Service 中必须 try-catch 包裹硬件 API
+mediaRecorder = new MediaRecorder();
+try {
+    mediaRecorder.setAudioSource(MediaRecorder.AudioSource.DEFAULT);
+    mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS);
+    // ... prepare, start
+} catch (Exception e) {
+    releaseRecorder();
+    stopSelf();
+    return;
+}
+#+end_src
+
+** 坑 13：权限检查静默失败——用户点击按钮无反应
+
+#+begin_quote
+症状：长按节点后点击 Record 按钮，ActionMode 关闭了但什么都没发生
+#+end_quote
+
+ActionMode 路径使用 =checkCallingOrSelfPermission()= 检查录音权限，失败时只打印一条 Log.w 就 return 了，没有任何用户可见的反馈。用户看到的就是按钮点击无效。
+
+#+begin_src java
+// 错误：静默失败，用户看不到任何反馈
+if (PERMISSION_GRANTED != context.checkCallingOrSelfPermission(RECORD_AUDIO)) {
+    Log.w(&quot;Tag&quot;, &quot;permission not granted&quot;);
+    return;  // 用户：？？？
+}
+
+// 修复：委托给 Activity 的统一权限请求方法
+// OutlineActionMode 中：
+private void runRecordingService() {
+    if (context instanceof OutlineActivity) {
+        ((OutlineActivity) context).tryStartRecording(node.id);
+    }
+}
+
+// OutlineActivity.tryStartRecording() 统一处理：
+// 1. 检查 ContextCompat.checkSelfPermission()
+// 2. 已授权 → 直接启动 Service
+// 3. 未授权 → ActivityCompat.requestPermissions() 弹出系统对话框
+#+end_src
+
+#+begin_quote
+教训：(1) =checkCallingOrSelfPermission()= 不适合 UI 层权限检查——它是给 Binder IPC 用的，不是给按钮点击用的。(2) 多个 UI 入口需要同一权限时，应委托给同一个方法处理，避免重复逻辑和遗漏。
+#+end_quote
+
+** 坑 14：通知 Action 图标全部用了同一个图标
+
+#+begin_quote
+症状：录音通知右边显示两个一样的麦克风图标，分不清暂停和停止
+#+end_quote
+
+新建通知的 =NotificationCompat.Action= 时，暂停和停止按钮都用了 =R.drawable.ic_menu_record=（麦克风图标），没有为每个操作创建语义化的图标。
+
+#+begin_src java
+// 错误：两个按钮都是麦克风
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 麦克风
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_menu_record, ...);  // 也是麦克风
+
+// 修复：每个操作用自己的语义图标
+NotificationCompat.Action stopAction = new NotificationCompat.Action(
+    R.drawable.ic_media_stop, ...);   // ■ 方框
+NotificationCompat.Action pauseAction = new NotificationCompat.Action(
+    R.drawable.ic_media_pause, ...);  // ⏸ 双竖线
+#+end_src
+
+#+begin_quote
+教训：通知的每个 Action 按钮都应该有独立、语义清晰的图标。Material Design Icons 提供了标准的 pause、stop、play 等图标，直接复用即可。
+#+end_quote
+
+* 番茄钟超时无通知：通知渠道 importance 的&quot;静默覆盖&quot;
+
+**现象**：番茄钟时间到后，没有任何提示——无声音、无振动、无弹出通知。
+
+**根因**：Android 8+ 引入通知渠道（NotificationChannel）机制后，渠道的 importance 级别优先于 =notification.defaults=。原代码用 =IMPORTANCE_LOW= 创建了 =mobileorg_timeclock= 渠道，然后尝试用 =notification.defaults = Notification.DEFAULT_ALL= 触发声音和振动——但这在 =IMPORTANCE_LOW= 渠道下被静默忽略。更糟的是，复用了前台通知（ongoing）的 ID 来发送提醒，很多设备不会对已显示的 ongoing 通知重新触发声音。
+
+#+begin_src java
+// 旧代码：无效！LOW 渠道覆盖了 defaults
+notification.defaults = Notification.DEFAULT_ALL;
+mNM.notify(notificationID, notification);  // 复用前台通知 ID
+#+end_src
+
+**修复**：
+1. 创建独立的 =IMPORTANCE_HIGH= 渠道（=mobileorg_timeclock_timeout=）
+2. 发送独立的提醒通知（不同 ID、非 ongoing、=CATEGORY_ALARM=、=autoCancel=）
+3. 在 stop/cancel/destroy 时清理提醒通知
+
+#+begin_src java
+// 新代码：独立 HIGH 渠道 + 独立通知
+Compat.createNotificationChannelHigh(this, TIMEOUT_CHANNEL_ID,
+    &quot;Pomodoro Timer Alert&quot;, &quot;Alerts when pomodoro timer completes&quot;);
+NotificationCompat.Builder timeoutBuilder = new NotificationCompat.Builder(this, TIMEOUT_CHANNEL_ID)
+    .setSmallIcon(R.drawable.timeclock_icon)
+    .setContentTitle(&quot;🍅 番茄钟时间到！&quot;)
+    .setPriority(NotificationCompat.PRIORITY_HIGH)
+    .setCategory(NotificationCompat.CATEGORY_ALARM)
+    .setAutoCancel(true);
+mNM.notify(TIMEOUT_NOTIFICATION_ID, timeoutBuilder.build());
+#+end_src
+
+#+begin_quote
+教训：Android 8+ 上，=notification.defaults= 和 =priority= 在通知渠道面前形同虚设。永远不要用 =IMPORTANCE_LOW= 渠道发送需要声音/振动的提醒。前台通知（ongoing）不适合做提醒——用独立通知。
+#+end_quote
+
+* 同步按钮旋转不停：Menu 重建导致动画状态丢失
+
+**现象**：点击同步按钮后，旋转动画开始播放。同步完成后，按钮继续无限旋转。
+
+**根因**：=onResume()= 中调用了 =invalidateOptionsMenu()=（为了刷新番茄钟菜单项状态），这会导致 ActionBar/Toolbar 重建 Menu。Menu 重建后，=synchronizerMenuItem= 被重新赋值给新的 MenuItem（没有 actionView），而旧的带旋转动画的 ImageView 与新 MenuItem 失去了关联。当 =SYNC_DONE= 广播到达时，=synchronizerMenuItem.getActionView()= 返回 null，无法停止动画。此外，=synchronizerMenuItem= 本身也可能为 null（OptionsMenu 还没创建），导致 NPE。
+
+#+begin_src java
+// 旧代码：没有 null 安全，动画状态可能丢失
+android.view.View actionView = synchronizerMenuItem.getActionView();
+if (actionView != null) { actionView.clearAnimation(); }
+synchronizerMenuItem.setActionView(null);  // 可能 NPE!
+#+end_src
+
+**修复**：
+1. 添加 =SyncService.isSyncRunning= 静态标志，让 UI 可以检查同步状态
+2. 在 =onPrepareOptionsMenu()= 中自愈：同步中但动画丢失→恢复动画；同步完成但动画残留→清除动画
+3. =SYNC_DONE= handler 加 null 安全检查
+
+#+begin_src java
+// 自愈逻辑：每次 menu invalidation 都检查
+if (SyncService.isSyncRunning) {
+    if (syncItem.getActionView() == null) {
+        // 恢复旋转动画
+        syncItem.setActionView(refreshView);
+        refreshView.startAnimation(rotate);
+    }
+} else {
+    // 清除残留动画
+    if (syncItem.getActionView() != null) {
+        actionView.clearAnimation();
+    }
+    syncItem.setActionView(null);
+}
+#+end_src
+
+#+begin_quote
+教训：=invalidateOptionsMenu()= 会重建 Menu，任何通过 =setActionView()= 设置的 UI 状态都会丢失。如果 UI 状态依赖后台任务，必须在 =onPrepareOptionsMenu()= 中根据任务状态自愈，而不是只在广播回调中处理。同时，广播回调中引用 MenuItem 必须做 null 安全检查。
+#+end_quote
+
+** 坑 15：SCHEDULE_EXACT_ALARM 是特殊权限，新装默认未授予
+
+DEADLINE/SCHEDULED 提醒是后期加的功能。manifest 里声明了 =&lt;uses-permission android:name=&quot;android.permission.SCHEDULE_EXACT_ALARM&quot;/&gt;= ，代码里也调用 =AlarmManager.setExactAndAllowWhileIdle()=，初看没问题。
+
+实测时日志里出现：
+
+#+begin_example
+W MobileOrg: ReminderScheduler failed: java.lang.SecurityException:
+    Caller com.matburt.mobileorg needs to hold android.permission.SCHEDULE_EXACT_ALARM
+    or android.permission.USE_EXACT_ALARM to set exact alarms.
+#+end_example
+
+而且只在 sync 完成后抛，应用启动时不抛。原因有两条：
+
+1. *=SCHEDULE_EXACT_ALARM= 是特殊权限*（app-special access），不是普通 dangerous permission。manifest 声明只是&quot;有资格申请&quot;，实际是否生效要用户在系统设置里手动打开。**新安装的 app 默认未授予**。
+2. *=canScheduleExactAlarms()= 的 fallback 写错了*。原代码：
+   #+begin_src java
+   if (Build.VERSION.SDK_INT &gt;= 31 &amp;&amp; alarmManager.canScheduleExactAlarms()) {
+       alarmManager.setExactAndAllowWhileIdle(...);
+   } else if (Build.VERSION.SDK_INT &gt;= 23) {  // ← API 31+ 无权限也落到这里
+       alarmManager.setExactAndAllowWhileIdle(...);  // ← API 31+ 无权限仍抛 SecurityException
+   } else {
+       alarmManager.setExact(...);
+   }
+   #+end_src
+   作者误以为 =else if= 分支只覆盖 API 23-30，但 API 31+ 无权限时 =canScheduleExactAlarms()= 返回 false 也会落到这里。在 API 31+ 上，=setExactAndAllowWhileIdle()= 始终需要权限，不管 API 等级。
+
+为什么 onCreate 不抛？因为 onCreate 只调 =scheduleDailyOverview()=，那个方法自己写对了（无权限 fallback 到 =setWindow()=）。sync 完成后才调 =scheduleAll()=，里面的 =registerAlarm()= 写错了。这种&quot;同一文件两处相同模式，一处对一处错&quot;特别难发现——review 时容易下意识假定两处一致。
+
+**修复**：抽出决策纯函数 =chooseAlarmStrategy(apiLevel, canExact)=，让 =scheduleDailyOverview= 和 =registerAlarm= 共用，并加单测覆盖三个分支（API 31+ 有/无权限、API 23-30、API &lt; 23）。
+
+#+begin_quote
+教训：Android 12+ 上凡是用到 =setExact*= 系列的地方都要先检查 =canScheduleExactAlarms()=，无权限时只能 fallback 到 =setWindow()=。manifest 声明 ≠ 权限已授予，对特殊权限永远是两回事。同一个文件里相同模式的代码必须一致，最佳做法是抽公共函数。
+#+end_quote
+
+** 坑 16：Handler.postDelayed 在 Doze 下被推迟 25 分钟（前台服务也不例外）
+
+番茄钟计时用 =Handler.postDelayed(timeoutRunnable, 20min)= 调度一次性超时回调。之前在 CLAUDE.md 里自信地写下&quot;前台服务一直活着，所以 Handler 计时既简单又完美可靠&quot;。这句话错了。
+
+现象：用户选了 20 分钟番茄钟，倒计时到 =0:00= 之后又过了 30 多分钟，仍没有&quot;番茄钟已结束&quot;的提醒。通知栏倒计时一直显示 =0:00=。
+
+诊断日志（设备 MIUI/xaga）的关键证据：
+
+#+begin_example
+13:25:05  event=updateTick remaining=-1952     timedOut=false  ← 应该超时
+13:32:06  event=updateTick remaining=-422857   timedOut=false  ← 已超 7 分钟
+13:50:25  event=timeoutRunnableFired delayMs=1522254            ← 晚了 25 分 22 秒！
+#+end_example
+
+=delayMs= 是代码里预埋的诊断字段（=fireElapsed - timeoutTargetElapsed=），=1522254ms= = 25 分 22 秒。=timeoutRunnable= 本应在 13:25 触发，实际拖到 13:50。
+
+更明显的旁证是 =updateTick= 的时间间隔——它用 =postDelayed(this, 60000)= 自我续期，正常应严格 60 秒，但日志里前期变成了 349s、336s、157s、422s 这样的不规则间隔，直到设备被唤醒（用户点亮屏幕）后才恢复稳定 60 秒。这说明 =Handler= 消息队列被 Doze 整体卡住了。
+
+*根因*：前台服务保证进程不被杀，但不保证 CPU 不睡。设备进入 Doze 后，CPU 休眠，=Handler= 的 =MessageQueue= 停转，所有待派发的消息被推迟到系统维护窗口。标准 Android 会用维护窗口补发积压消息（所以 =updateRunnable= 在唤醒后能恢复），但厂商 ROM（MIUI/EMUI/ColorOS）的激进策略会让延迟变得不可控。一次性长延迟定时器（20 分钟）正好落在 Doze 区间，就被推迟到 25 分钟后才补发。
+
+修复方案没有用 =WakeLock=（番茄钟可能跑多个长轮次，全程持锁耗电不可接受），而是让周期性的 =updateTick=（60 秒、自我续期、已证明在唤醒后能恢复）兼作超时保底：
+
+#+begin_src java
+private void checkTimeoutFallback() {
+    // WORK 阶段：一次性 timeoutRunnable 可能被 Doze 推迟
+    if (pomodoroTimer.isRunning() &amp;&amp; !pomodoroTimer.isTimedOut()
+            &amp;&amp; pomodoroTimer.getRemainingMillis() &lt;= 0) {
+        handlePomodoroTimeout();
+        return;
+    }
+    // REST 阶段：一次性 restTimeoutRunnable 有同样的 Doze 暴露
+    if (pomodoroTimer.isResting()
+            &amp;&amp; pomodoroTimer.getRestRemainingMillis() &lt;= 0) {
+        handleRestTimeout();
+    }
+}
+#+end_src
+
+在 =updateRunnable.run()= 里每次 =updateTime()= 前调用。最坏情况延迟 = 设备唤醒后一个 tick（≤60 秒），远好于 25 分钟。=timeoutRunnable= 保留作为&quot;快速路径&quot;（Doze 没干扰时即时响应），=updateTick= 作为&quot;保底路径&quot;。
+
+顺带挖出一个*幂等性缺陷*：=handlePomodoroTimeout= 原本只检查 =if (!isRunning()) return=，但 =markTimeout()= 只设 =timedOut=true=，=running= 保持 =true=。于是保底触发后，延迟的 =timeoutRunnable= 补发时会第二次进入 =handlePomodoroTimeout=，重新播放闹铃、重新发通知。修复时给守卫加上 =|| isTimedOut()= 判断。
+
+#+begin_quote
+教训：不要相信&quot;前台服务的 Handler 计时完美可靠&quot;——进程活着不代表 CPU 醒着。任何一次性的长延迟 =Handler= 定时器，都必须有一个周期性自我续期的保底检测兜住超时逻辑；而超时处理函数必须做幂等（守卫检查的应该是&quot;已完成&quot;标志，而不是&quot;运行中&quot;标志，因为标记超时通常不改运行状态）。诊断字段（=delayMs=）要在怀疑系统行为时提前预埋，关键时刻一锤定音。
+#+end_quote
+
+* 经验总结
+
+** 1. 静默失效比崩溃更可怕
+
+Android 兼容性的最大敌人不是 =FATAL EXCEPTION=，而是功能静默消失。=android:showAsAction= 被忽略、隐式广播不送达、动画不播放——这些都不会出现在 logcat 里，只能靠人工测试发现。
+
+** 2. 全局搜索同类问题
+
+修了一个文件的 =showAsAction= 后，必须全局搜索所有同类问题。Android 迁移中的问题往往是同一模式在多处重复。我们用 =grep -r &quot;android:showAsAction&quot;= 一次性找到了 7 个文件。
+
+** 3. 生命周期配对调用
+
+=onCreate()= 中加 early return 时，必须检查 =onDestroy()= 是否使用了会被跳过的字段。Android 保证 =onDestroy()= 在 =stopSelf()= 后仍被调用。
+
+** 4. 编译通过≠运行正确
+
+compileSdk 升级后，很多废弃 API 仍然编译通过但运行时行为改变。需要逐个在目标设备上测试。
+
+** 5. 用 CI 构建而非本地构建
+
+全程通过 GitHub Actions 构建 APK，在真机上测试。本地环境和 CI 环境的差异可能导致遗漏问题。
+
+* Footnotes
+</description>
+<pubDate>2026-06-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/05/10/mobileorg-android：从-api-17-迁移到-api-34-的实战记录/index.html</guid>
+</item>
+<item>
+<title>TIL：被佩戴也被阅读的 vakana 珠子</title>
+<link>https://lujun9972.github.io/blog/2026/06/22/til：被佩戴也被阅读的-vakana-珠子/index.html</link>
+<description>马达加斯加有一种叫 vakana 的传统珠子，戴在身上不只是好看，也是一段被阅读的信息。每颗珠子有四个固定属性，串成串后能像 schema 一样记录事件、锚定时间、构造消息。这种&quot;既是装饰也是信息&quot;的双重身份，恰好和 Lisp 的 S-expression 类似。</description>
+<pubDate>2026-06-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/06/22/til：被佩戴也被阅读的-vakana-珠子/index.html</guid>
+</item>
+<item>
+<title>读：Python mock/patch 用法与陷阱</title>
+<link>https://lujun9972.github.io/blog/2026/06/13/读：python-mock-patch-用法与陷阱/index.html</link>
+<description>mock 测试看起来通过了，但 mock 可能根本没拦住调用。这篇文章讲清楚 mock/patch 的几个关键问题：怎么验证 mock 真的生效、patch 位置为什么决定成败、mock 还能用来制造碰撞、什么时候该放下 mock 换显式参数或适配器模式。</description>
+<pubDate>2026-06-22</pubDate>
+<guid>https://lujun9972.github.io/blog/2026/06/13/读：python-mock-patch-用法与陷阱/index.html</guid>
+</item>
 <item>
 <title>TIL：如何面试比自己强的人</title>
 <link>https://lujun9972.github.io/blog/2026/06/12/til：如何面试比自己强的人/index.html</link>
@@ -42,41 +932,6 @@
 <description>用 Python 标准库 smtplib 和 email 发送邮件的完整实操。从本地调试服务器到新浪邮箱真实发送，覆盖纯文本、HTML、附件、Reply-To 和 CSV 批量个性化。所有代码基于标准库，不依赖第三方邮件库。</description>
 <pubDate>2026-06-12</pubDate>
 <guid>https://lujun9972.github.io/blog/2026/06/12/用-python-发邮件：标准库从调试到批量发送/index.html</guid>
-</item>
-<item>
-<title>中心极限定理：为什么随机世界总会产生钟形曲线</title>
-<link>https://lujun9972.github.io/blog/2026/06/10/中心极限定理：为什么随机世界总会产生钟形曲线/index.html</link>
-<description>钟形曲线（正态分布）为什么在自然界中无处不在？这篇文章用 Python 代码模拟抛硬币和掷骰子，直观展示中心极限定理的威力：不管原始数据是什么形状，只要取足够多次的均值，结果就会趋近钟形曲线。文章还解释了 中心极限定理 在统计推断中的应用、68/95 法则以及它的边界。</description>
-<pubDate>2026-06-10</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/06/10/中心极限定理：为什么随机世界总会产生钟形曲线/index.html</guid>
-</item>
-<item>
-<title>TIL：lazy import 的具现化过程</title>
-<link>https://lujun9972.github.io/blog/2026/06/08/til：lazy-import-的具现化过程/index.html</link>
-<description>Python 3.15 的 lazy import 创建的是一个 lazy_import 对象，不是模块。它有个 .resolve() 方法可以手动拿到真实模块。调用之后 globals 里的 lazy import 不会自动消失，说明具现化其实就是一次赋值操作。</description>
-<pubDate>2026-06-09</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/06/08/til：lazy-import-的具现化过程/index.html</guid>
-</item>
-<item>
-<title>读：Boolean Thinking——当 true 和 false 不够用的时候</title>
-<link>https://lujun9972.github.io/blog/2026/06/09/读：boolean-thinking——当-true-和-false-不够用的时候/index.html</link>
-<description>程序员每天和 true/false 打交道，但&quot;非真即假&quot;并不是逻辑的全部。《The Case Against Boolean Thinking》这篇文章，从编程视角解释布尔思维(非黑即白思维)的局限性在于：真假并不绝对，用&quot;证明&quot;替代&quot;真假&quot;更有意义，存在非真非假的第三种可能。</description>
-<pubDate>2026-06-09</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/06/09/读：boolean-thinking——当-true-和-false-不够用的时候/index.html</guid>
-</item>
-<item>
-<title>读：为什么 Discord 把实验指标从 50 个砍到 15 个</title>
-<link>https://lujun9972.github.io/blog/2026/06/06/读：为什么-discord-把实验指标从-50-个砍到-15-个/index.html</link>
-<description>Discord 数据团队发现 A/B 测试中指标越多，越难检测到真实效果。原因是多重比较问题导致统计校正越来越严格。他们用 50000 次模拟实验验证了这个规律，再用 PCA 找出冗余指标，最终将默认指标从约 50 个削减到约 15 个，真阳性检出率提升约 45%。本文通俗解读背后的统计原理。</description>
-<pubDate>2026-06-07</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/06/06/读：为什么-discord-把实验指标从-50-个砍到-15-个/index.html</guid>
-</item>
-<item>
-<title>TIL 团队沟通的三条实操经验</title>
-<link>https://lujun9972.github.io/blog/2026/06/06/til-团队沟通的三条实操经验/index.html</link>
-<description>团队里&quot;说一遍&quot;远远不够。三条经验：重复到你自己都烦，用不同渠道传递不同粒度的细节，问&quot;你怎么想的&quot;而非&quot;清楚了吗&quot;。</description>
-<pubDate>2026-06-06</pubDate>
-<guid>https://lujun9972.github.io/blog/2026/06/06/til-团队沟通的三条实操经验/index.html</guid>
 </item>
 </channel>
 </rss>

@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>浏览器文件选择框弹不出来——xdg-desktop-portal 启动时序陷阱 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972, Claude" />
+  <meta name="keywords" content="异闻录,Linux,Chrome,Firefox,X11,systemd,xdg-desktop-portal,startx" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">浏览器文件选择框弹不出来——xdg-desktop-portal 启动时序陷阱</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orga97edfd">故障现象</a></li>
+<li><a href="#orgc8fea46">排查过程</a>
+<ul>
+<li><a href="#orge69d255">第一步：排除代码问题</a></li>
+<li><a href="#org67261a3">第二步：检查 portal 服务状态</a></li>
+<li><a href="#orga39fef1">第三步：为什么找不到 display？</a></li>
+<li><a href="#org9b061cf">第四步：为什么 portal-gtk 会这么早启动？</a></li>
+<li><a href="#org47ce261">第五步：D-Bus 激活绕过了时序保护</a></li>
+<li><a href="#org6ffaab7">第六步：发现 service unit 的设计缺陷</a></li>
+</ul>
+</li>
+<li><a href="#org210aa9d">根因分析（5 Whys）</a>
+<ul>
+<li><a href="#orga6c6484">Why #1：为什么文件选择框弹不出来？</a></li>
+<li><a href="#org5282b06">Why #2：为什么 portal-gtk 启动失败？</a></li>
+<li><a href="#orgb5c374e">Why #3：为什么 systemd user session 里没有 DISPLAY？</a></li>
+<li><a href="#org88eddd4">Why #4：为什么 portal-gtk 会在没有 DISPLAY 的时候被启动？</a></li>
+<li><a href="#org0f07c29">Why #5：为什么 unit 设计没有阻止这种情况？</a></li>
+<li><a href="#orgfe62faf">识别出的根因</a></li>
+</ul>
+</li>
+<li><a href="#org51c9e3f">解决方案</a>
+<ul>
+<li><a href="#org7b2c4fb">已采用的修复</a></li>
+<li><a href="#org7796735">理想的 upstream 修复</a></li>
+</ul>
+</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orga97edfd" class="outline-2">
+<h2 id="orga97edfd">故障现象</h2>
+<div class="outline-text-2" id="text-orga97edfd">
+<p>
+我在自己写的打字练习网站后台管理页面（AdminPage）上加了一个文件上传功能——点击按钮选择本地视频文件。代码写好后，点击按钮……什么也没发生。没有文件选择框，没有报错，没有反应。
+</p>
+
+<p>
+不只是 Chrome ，Firefox 也一样——点击按钮毫无反应。两个浏览器都弹不出文件选择框。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc8fea46" class="outline-2">
+<h2 id="orgc8fea46">排查过程</h2>
+<div class="outline-text-2" id="text-orgc8fea46">
+</div>
+<div id="outline-container-orge69d255" class="outline-3">
+<h3 id="orge69d255">第一步：排除代码问题</h3>
+<div class="outline-text-3" id="text-orge69d255">
+<p>
+我当时还没意识到问题的严重性，以为是前端代码的问题，先后尝试了四种不同的 CSS + JS 方案来触发 <code>&lt;input type</code>"file"&gt;= ：
+</p>
+
+<ol class="org-ol">
+<li><code>display:none</code> + JS <code>.click()</code> → 不弹</li>
+<li><code>clip:rect(0,0,0,0)</code> + JS <code>.click()</code> → 不弹</li>
+<li><code>&lt;label&gt;</code> + 离屏 input → 不弹</li>
+<li>透明 overlay 直接盖在按钮上（用户点的是真正的 <code>&lt;input&gt;</code> ） → 还是不弹！</li>
+</ol>
+
+<p>
+结果四种方案全部失败，而且两个浏览器都不行。
+</p>
+
+<ul class="org-ul">
+<li>只凭"多浏览器不行"→ 可能是代码 bug ，也可能是系统问题</li>
+<li>只凭"多方案不行"→ 可能是某个浏览器对所有方案都不兼容</li>
+<li><b>两者叠加</b> → 如果是代码 bug ，不可能四种方案全写错；如果是浏览器兼容性，不可能两个浏览器同时排斥所有方案。问题一定在更底层</li>
+</ul>
+
+<blockquote>
+<p>
+<b>小知识：Linux 下浏览器的文件选择框是谁弹出来的？</b>
+</p>
+
+<p>
+在 Windows 和 macOS 上，浏览器直接调用操作系统的原生文件对话框 API ，简单直接。
+</p>
+
+<p>
+但在 Linux 上，浏览器不自己画文件对话框。Chrome 和 Firefox 都通过一个叫 <code>xdg-desktop-portal</code> 的中间层来请求桌面环境弹出对话框。这个 portal 的设计初衷是让沙盒应用（Flatpak、Snap）能安全地访问系统资源，后来主流浏览器都采用了这套机制。
+</p>
+
+<p>
+流程是：
+</p>
+<pre class="example" id="org87cfad9">
+浏览器需要 file dialog
+  → 通过 D-Bus 询问 xdg-desktop-portal
+    → portal 找到当前桌面环境的后端（如 portal-gtk）
+      → 后端调用 GTK/Qt 弹出原生文件对话框
+        → 用户选择文件，结果传回浏览器
+</pre>
+
+<p>
+如果 portal 或它的后端挂了，浏览器需要"弹文件对话框"时就什么都做不了——而且不会报错，因为从浏览器的角度看，它只是发了一个 D-Bus 请求，没收到回复而已。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org67261a3" class="outline-3">
+<h3 id="org67261a3">第二步：检查 portal 服务状态</h3>
+<div class="outline-text-3" id="text-org67261a3">
+<div class="org-src-container">
+<pre class="src src-shell">systemctl --user status xdg-desktop-portal-gtk
+</pre>
+</div>
+
+<pre class="example" id="orgfef9dbe">
+× xdg-desktop-portal-gtk.service - Portal service (GTK/GNOME implementation)
+     Loaded: loaded (/usr/lib/systemd/user/xdg-desktop-portal-gtk.service; static)
+     Active: failed (Result: exit-code)
+     Process: 1277 ExecStart=/usr/lib/xdg-desktop-portal-gtk (code=exited, status=1/FAILURE)
+Main PID: 1277 (code=exited, status=1/FAILURE)
+
+6月 06 04:30 systemd[1277]: Started Portal service (GTK/GNOME implementation).
+6月 06 04:30 xdg-desktop-portal-gtk[1277]: cannot open display:
+6月 06 04:30 systemd[1277]: xdg-desktop-portal-gtk.service: Failed with result 'exit-code'.
+</pre>
+
+<p>
+<b>BINGO！</b> 服务失败了，错误信息是 <code>cannot open display:</code> ——它找不到显示服务器！这也解释了为什么 Chrome 和 Firefox 都弹不出文件选择框——它们依赖的是同一个已死掉的 portal 后端。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga39fef1" class="outline-3">
+<h3 id="orga39fef1">第三步：为什么找不到 display？</h3>
+<div class="outline-text-3" id="text-orga39fef1">
+<p>
+这个服务在开机时就尝试启动了（PID 1277 ，非常小的数字，说明是系统启动早期）。但我的系统是通过 <code>startx</code> 启动图形界面的：
+</p>
+
+<pre class="example" id="org14bb620">
+时间线：
+─────────────────────────────────────────────────────────→
+
+T1: 在 tty 输入用户名密码登录
+    │
+    ├─ systemd --user 启动（PID ~1277）
+    │   └─ xdg-desktop-portal-gtk.service 尝试启动
+    │       → 报错 "cannot open display:"
+    │       → 此时还没有 X11，DISPLAY 不存在！
+    │
+T2: 在 tty 里输入 startx
+    │
+    ├─ Xorg 启动 → DISPLAY=:0 出现
+    │   但只存在于 startx 的子进程环境中
+    │   systemd user session 仍然没有 DISPLAY
+    │
+T3: awesome WM 启动，桌面出现
+    │
+T4: 打开浏览器 → 需要 portal → portal 后端已挂 → 文件对话框弹不出来
+</pre>
+
+<p>
+问题出在 <b>启动时序</b> ：portal 服务在 X11 启动之前就尝试运行了，自然打不开 display 。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9b061cf" class="outline-3">
+<h3 id="org9b061cf">第四步：为什么 portal-gtk 会这么早启动？</h3>
+<div class="outline-text-3" id="text-org9b061cf">
+<p>
+查看它的 service unit ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">systemctl --user cat xdg-desktop-portal-gtk.service
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-conf">[<span class="org-type">Unit</span>]
+<span class="org-variable-name">Description</span>=Portal service (GTK/GNOME implementation)
+<span class="org-variable-name">PartOf</span>=graphical-session.target
+<span class="org-variable-name">After</span>=graphical-session.target
+
+[<span class="org-type">Service</span>]
+<span class="org-variable-name">Type</span>=dbus
+<span class="org-variable-name">BusName</span>=org.freedesktop.impl.portal.desktop.gtk
+<span class="org-variable-name">ExecStart</span>=/usr/lib/xdg-desktop-portal-gtk
+</pre>
+</div>
+
+<p>
+它声明了 <code>After=graphical-session.target</code> ，意思是"应该在图形会话准备好之后再启动"。但关键是—— <code>graphical-session.target</code> 在我的系统上 <b>从来没被激活过</b> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">systemctl --user is-active graphical-session.target
+<span class="org-comment-delimiter"># </span><span class="org-comment">inactive</span>
+</pre>
+</div>
+
+<blockquote>
+<p>
+<b>小知识：=graphical-session.target= 是谁激活的？</b>
+</p>
+
+<p>
+在 Linux 桌面的生态中，=graphical-session.target= 是一个 systemd target ，代表"图形用户会话已就绪"。它不是一个普通服务，而是一个 <b>里程碑标记</b> ，告诉其他依赖图形环境的服务"现在可以安全启动了"。
+</p>
+
+<p>
+正常情况下，谁负责激活它？
+</p>
+
+<ul class="org-ul">
+<li><b>GDM（GNOME Display Manager）</b> ：用户在图形登录界面输入密码后，GDM 启动 X11/Wayland ，然后通过 PAM 模块激活 <code>graphical-session.target</code></li>
+<li><b>SDDM（KDE）</b> 、*LightDM* 等：同理，显示管理器负责整个启动链路</li>
+</ul>
+
+<p>
+关键点：显示管理器保证 <code>先有图形环境，再激活 target</code> 。服务单元只需要声明 <code>After=graphical-session.target</code> 就能确保启动时 DISPLAY 已经存在。
+</p>
+
+<p>
+但如果你用 <code>startx</code> 启动桌面，没有显示管理器来激活这个 target ，它就一直是 <code>inactive</code> 。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org47ce261" class="outline-3">
+<h3 id="org47ce261">第五步：D-Bus 激活绕过了时序保护</h3>
+<div class="outline-text-3" id="text-org47ce261">
+<p>
+那 portal-gtk 是怎么被启动的呢？它是通过 D-Bus 自动激活的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.gtk.service
+</pre>
+</div>
+
+<pre class="example" id="orgf2b33ea">
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.gtk
+Exec=/usr/lib/xdg-desktop-portal-gtk
+SystemdService=xdg-desktop-portal-gtk.service
+</pre>
+
+<p>
+当主 portal 服务（=xdg-desktop-portal=）尝试通过 D-Bus 访问 GTK 后端时，D-Bus 守护进程发现这个服务没运行，就自动让 systemd 启动它。这个激活过程 <b>不受 <code>After=graphical-session.target</code> 约束</b> ，因为 systemd 认为这个 target 已经处于终态（inactive ），不需要等待。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：D-Bus 自动激活（D-Bus Activation）</b>
+</p>
+
+<p>
+D-Bus 有一个很方便的机制：当某个 D-Bus 服务名被请求但没有人提供时，D-Bus 守护进程会查找 <code>/usr/share/dbus-1/services/</code> 下的配置文件，找到对应的 <code>SystemdService</code> ，然后让 systemd 启动它。
+</p>
+
+<p>
+这意味着：即使一个服务没有被 enable ，只要它的 D-Bus 配置文件在，有其他程序请求它提供的服务时，它就会被自动拉起。这就是为什么 portal-gtk 虽然没有被手动 enable ，却在开机时就被启动了。
+</p>
+</blockquote>
+</div>
+</div>
+
+<div id="outline-container-org6ffaab7" class="outline-3">
+<h3 id="org6ffaab7">第六步：发现 service unit 的设计缺陷</h3>
+<div class="outline-text-3" id="text-org6ffaab7">
+<p>
+对比 GNOME 版的 portal service ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">systemctl --user cat xdg-desktop-portal-gnome.service
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-conf">[<span class="org-type">Unit</span>]
+<span class="org-variable-name">Description</span>=Portal service (GNOME implementation)
+<span class="org-variable-name">After</span>=graphical-session.target
+<span class="org-variable-name">Requisite</span>=graphical-session.target    &#8592; &#27880;&#24847;&#36825;&#34892;&#65281;
+<span class="org-variable-name">PartOf</span>=graphical-session.target
+
+[<span class="org-type">Service</span>]
+<span class="org-variable-name">Type</span>=dbus
+<span class="org-variable-name">BusName</span>=org.freedesktop.impl.portal.desktop.gnome
+<span class="org-variable-name">ExecStart</span>=/usr/lib/xdg-desktop-portal-gnome
+</pre>
+</div>
+
+<p>
+GNOME 版多了一行 <code>Requisite=graphical-session.target</code> ，意思是"如果 graphical-session.target 没激活，就 <b>拒绝启动</b> "。这是正确的防御措施——在纯 tty 环境下，GNOME portal 不会尝试启动，避免了无意义的失败。
+</p>
+
+<blockquote>
+<p>
+<b>小知识：=After= vs <code>Requisite</code> vs <code>PartOf</code> 的区别</b>
+</p>
+
+<p>
+systemd 的依赖指令很多，容易混淆：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">指令</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left"><code>After</code></td>
+<td class="org-left">排序约束：如果两者同时要启动，先启动目标单元</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>Requires</code></td>
+<td class="org-left">硬依赖：目标失败时，自己也跟着停</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>Requisite</code></td>
+<td class="org-left">门卫：目标没启动就直接拒绝启动自己（比 Requires 更严格）</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>PartOf</code></td>
+<td class="org-left">跟随：目标的 stop/restart 会传播给自己</td>
+</tr>
+
+<tr>
+<td class="org-left"><code>Wants</code></td>
+<td class="org-left">软依赖：建议启动目标，但目标失败了不影响自己</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+在本案中，GTK portal 只有 <code>After</code> 和 <code>PartOf</code> ，缺少 <code>Requisite</code> 。这导致在 graphical-session.target 未激活的情况下，D-Bus 激活仍然能把它拉起来，然后它去打开一个不存在的 display ，就崩溃了。
+</p>
+</blockquote>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org210aa9d" class="outline-2">
+<h2 id="org210aa9d">根因分析（5 Whys）</h2>
+<div class="outline-text-2" id="text-org210aa9d">
+</div>
+<div id="outline-container-orga6c6484" class="outline-3">
+<h3 id="orga6c6484">Why #1：为什么文件选择框弹不出来？</h3>
+<div class="outline-text-3" id="text-orga6c6484">
+<p>
+**回答**：=xdg-desktop-portal-gtk= 服务启动失败（=cannot open display:=），Chrome 和 Firefox 都依赖这个服务来弹出文件选择框。
+</p>
+
+<p>
+**证据**：=systemctl --user status xdg-desktop-portal-gtk= 显示 <code>failed (exit-code)</code> ，两个浏览器都无反应。
+</p>
+
+<p>
+---
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5282b06" class="outline-3">
+<h3 id="org5282b06">Why #2：为什么 portal-gtk 启动失败？</h3>
+<div class="outline-text-3" id="text-org5282b06">
+<p>
+**回答**：服务启动时 systemd user session 中不存在 <code>DISPLAY</code> 环境变量。没有 DISPLAY ，GTK 程序无法连接显示服务器。
+</p>
+
+<p>
+**证据**：错误日志 <code>cannot open display:</code> ；服务启动时间（PID 1277 ）早于 <code>startx</code> 执行时间。
+</p>
+
+<p>
+---
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb5c374e" class="outline-3">
+<h3 id="orgb5c374e">Why #3：为什么 systemd user session 里没有 DISPLAY？</h3>
+<div class="outline-text-3" id="text-orgb5c374e">
+<p>
+**回答**：因为用户通过 <code>startx</code> 启动图形界面。=systemd --user= 在 tty 登录时就启动了（那时没有 DISPLAY ），而 <code>startx</code> 在之后才创建 DISPLAY=:0 ，但这个变量只存在于 startx 的子进程环境中，不会自动传递给 systemd user session 。
+</p>
+
+<p>
+**证据**：=startx= 不像 GDM/SDDM 那样调用 <code>systemctl --user import-environment</code> 。
+</p>
+
+<p>
+---
+</p>
+</div>
+</div>
+
+<div id="outline-container-org88eddd4" class="outline-3">
+<h3 id="org88eddd4">Why #4：为什么 portal-gtk 会在没有 DISPLAY 的时候被启动？</h3>
+<div class="outline-text-3" id="text-org88eddd4">
+<p>
+**回答**：因为 D-Bus 自动激活机制绕过了 <code>After=graphical-session.target</code> 的排序约束。当 <code>graphical-session.target</code> 处于 <code>inactive</code> 状态时，=After= 指令不产生阻止效果——systemd 认为"不需要等待一个已经处于终态的单元"。
+</p>
+
+<p>
+**证据**：=graphical-session.target= 的状态是 <code>inactive (dead)</code> ，而 portal-gtk 仍然被 D-Bus 激活拉起了。
+</p>
+
+<p>
+---
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0f07c29" class="outline-3">
+<h3 id="org0f07c29">Why #5：为什么 unit 设计没有阻止这种情况？</h3>
+<div class="outline-text-3" id="text-org0f07c29">
+<p>
+**回答**：=xdg-desktop-portal-gtk.service= 缺少 <code>Requisite=graphical-session.target</code> 。对比 <code>xdg-desktop-portal-gnome.service</code> ，GNOME 版有 <code>Requisite</code> 保护（target 没激活就拒绝启动），而 GTK 版漏掉了这个防御。这是 upstream 的设计疏漏。
+</p>
+
+<p>
+**证据**：GNOME 版 unit 文件有 <code>Requisite=graphical-session.target</code> ，GTK 版没有。
+</p>
+
+<p>
+---
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgfe62faf" class="outline-3">
+<h3 id="orgfe62faf">识别出的根因</h3>
+<div class="outline-text-3" id="text-orgfe62faf">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">层级</th>
+<th scope="col" class="org-left">根因</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">直接</td>
+<td class="org-left">portal-gtk 因缺少 DISPLAY 启动失败</td>
+</tr>
+
+<tr>
+<td class="org-left">系统</td>
+<td class="org-left">startx 不像显示管理器那样将 DISPLAY 导入 systemd user session</td>
+</tr>
+
+<tr>
+<td class="org-left">设计</td>
+<td class="org-left">xdg-desktop-portal-gtk.service 缺少 Requisite=graphical-session.target</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org51c9e3f" class="outline-2">
+<h2 id="org51c9e3f">解决方案</h2>
+<div class="outline-text-2" id="text-org51c9e3f">
+</div>
+<div id="outline-container-org7b2c4fb" class="outline-3">
+<h3 id="org7b2c4fb">已采用的修复</h3>
+<div class="outline-text-3" id="text-org7b2c4fb">
+<p>
+在 <code>~/.xinitrc</code> 中添加两行，在 X11 启动后、窗口管理器启动前执行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#23558; DISPLAY &#20256;&#36882;&#32473; systemd user session
+</span>systemctl --user import-environment DISPLAY 2&gt;/dev/null
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#37325;&#26032;&#21551;&#21160; portal &#21518;&#31471;&#65288;&#29616;&#22312; DISPLAY &#24050;&#23384;&#22312;&#65289;
+</span>systemctl --user restart xdg-desktop-portal-gtk 2&gt;/dev/null
+</pre>
+</div>
+
+<blockquote>
+<p>
+<b>小知识：=systemctl --user import-environment= 是什么？</b>
+</p>
+
+<p>
+每个进程都有自己的环境变量副本。=startx= 启动的子进程（包括 awesome WM 、浏览器等）继承了 shell 的 <code>DISPLAY</code>:0 。但 <code>systemd --user</code> 实例是你在 tty 登录时就启动的，那时 <code>DISPLAY</code> 还不存在。
+</p>
+
+<p>
+<code>import-environment DISPLAY</code> 的作用是把当前 shell 的 <code>DISPLAY</code> 变量"导入"到 systemd user session 的环境中。这样 systemd 启动的所有用户服务就都能看到 <code>DISPLAY</code>:0 了。
+</p>
+</blockquote>
+
+<p>
+修改后完整的 <code>~/.xinitrc</code> 相关部分：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#23558; DISPLAY &#20256;&#36882;&#32473; systemd user session&#65292;&#35753; xdg-desktop-portal-gtk &#27491;&#24120;&#24037;&#20316;
+</span>systemctl --user import-environment DISPLAY 2&gt;/dev/null
+systemctl --user restart xdg-desktop-portal-gtk 2&gt;/dev/null
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">setup fcitx
+</span><span class="org-builtin">export</span> <span class="org-variable-name">GTK_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">QT_IM_MODULE</span>=fcitx5
+<span class="org-builtin">export</span> <span class="org-variable-name">XMODIFIERS</span>=<span class="org-string">"@im=fcitx5"</span>
+fcitx5 &amp;
+
+<span class="org-keyword">exec</span> awesome
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7796735" class="outline-3">
+<h3 id="org7796735">理想的 upstream 修复</h3>
+<div class="outline-text-3" id="text-org7796735">
+<p>
+<code>xdg-desktop-portal-gtk.service</code> 应该加上 <code>Requisite=graphical-session.target</code> ，与 GNOME 版保持一致：
+</p>
+
+<pre class="example" id="org2dd4059">
+[Unit]
+Description=Portal service (GTK/GNOME implementation)
+Requisite=graphical-session.target    ← 加上这一行
+PartOf=graphical-session.target
+After=graphical-session.target
+</pre>
+
+<p>
+这样在没有图形环境时，portal-gtk 不会尝试启动。等到 <code>.xinitrc</code> 中 <code>import-environment</code> 和 <code>restart</code> 执行时，它才能正常工作。
+</p>
+</div>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-06</span>
+    <span class="post-info">2026-06-22</span>
+    <a href="../../../../../tags/异闻录">异闻录</a> : <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/chrome">Chrome</a> : <a href="../../../../../tags/firefox">Firefox</a> : <a href="../../../../../tags/x11">X11</a> : <a href="../../../../../tags/systemd">systemd</a> : <a href="../../../../../tags/xdg-desktop-portal">xdg-desktop-portal</a> : <a href="../../../../../tags/startx">startx</a>
+    <span class="post-info">lujun9972, Claude</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm7b5n9 &lt;dot&gt; 5bm1vqshnmiejfeel0dii4uw1b &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972, Claude</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：Python mock/patch 用法与陷阱 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="mock 测试看起来通过了，但 mock 可能根本没拦住调用。这篇文章讲清楚 mock/patch 的几个关键问题：怎么验证 mock 真的生效、patch 位置为什么决定成败、mock 还能用来制造碰撞、什么时候该放下 mock 换显式参数或适配器模式。" />
+  <meta name="keywords" content="Python, Testing, Mock, pytest" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：Python mock/patch 用法与陷阱</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orge4417da">假绿测试, 测试通过但 mock 没干活</a></li>
+<li><a href="#org4061577">怎么证明 mock 真的拦住了</a></li>
+<li><a href="#org34ed420">patch 的位置决定成败</a></li>
+<li><a href="#org716e1b5">mock 的另一个用途, 制造碰撞</a></li>
+<li><a href="#org6dfcbf2">比 mock 更好的办法, 显式 override 参数</a></li>
+<li><a href="#org0cbaede">什么时候别用 mock</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://belderbos.dev/blog/python-mock-patch-verify-interception/">原文链接</a>（Bob Belderbos）
+</p>
+
+<p>
+我之前写过 <a href="Python中Mock第三方依赖的四种策略.html">Python Mock 第三方依赖的四种策略</a>, 讲怎么用 <code>patch</code> 和 <code>MagicMock</code> 替换不同类型的依赖。那篇文章讲的是「怎么 mock」, 但没回答几个更基本的问题, mock 到底生效了没有? patch 位置错了会怎样? 有些场景是不是根本不该用 mock? 这篇博文顺着这条线展开。
+</p>
+
+<div id="outline-container-orge4417da" class="outline-2">
+<h2 id="orge4417da">假绿测试, 测试通过但 mock 没干活</h2>
+<div class="outline-text-2" id="text-orge4417da">
+<p>
+文章从一个真实的 case 讲起。有个函数调用汇率 API 做货币转换，API 返回失败就抛出 <code>CurrencyConversionError</code> 。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> decimal <span class="org-keyword">import</span> Decimal
+
+<span class="org-keyword">class</span> <span class="org-type">CurrencyConversionError</span>(<span class="org-type">Exception</span>):
+    <span class="org-keyword">pass</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">convert_currency</span>(amount, from_currency, to_currency):
+    <span class="org-keyword">if</span> from_currency <span class="org-operator">==</span> to_currency:
+        <span class="org-keyword">return</span> amount
+    <span class="org-keyword">import</span> requests
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> requests.get(
+        f<span class="org-string">"https://v6.exchangerate-api.com/v6/KEY/pair/</span>{from_currency}<span class="org-string">/</span>{to_currency}<span class="org-string">"</span>
+    )
+    <span class="org-variable-name">data</span> <span class="org-operator">=</span> response.json()
+    <span class="org-keyword">if</span> data[<span class="org-string">"result"</span>] <span class="org-operator">!=</span> <span class="org-string">"success"</span>:
+        <span class="org-keyword">raise</span> CurrencyConversionError(f<span class="org-string">"</span>{data['error<span class="org-operator">-</span><span class="org-builtin">type</span>']}<span class="org-string">"</span>)
+    <span class="org-keyword">return</span> Decimal(<span class="org-builtin">str</span>(data[<span class="org-string">"conversion_rate"</span>])) <span class="org-operator">*</span> amount
+</pre>
+</div>
+
+<p>
+测试的逻辑是, 用无效货币码 <code>CTM</code> 调用 <code>convert_currency</code> ，期望它抛出 <code>CurrencyConversionError</code> 。测试用 <code>patch</code> 替换了 <code>requests.get</code> ，但 mock 配置的是一个 <b>成功</b> 的响应。
+</p>
+
+<p>
+问题来了, 如果 mock 真的拦住了请求，函数会正常返回，测试期望的异常不会抛出， <code>pytest.raises</code> 应该失败。但测试实际上 *通过了*。
+</p>
+
+<p>
+原因只有一个, mock 根本没拦住调用。真实 API 被请求了, 对无效货币码 <code>CTM</code> 返回了错误, 函数抛出了异常, <code>pytest.raises</code> 就通过了。测试之所以通过, 是因为真实 API 碰巧做了 mock 应该做的事, 跟 mock 一点关系都没有。
+</p>
+
+<p>
+这种「假绿」测试特别坑, 它给你的安全感是假的。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org4061577" class="outline-2">
+<h2 id="org4061577">怎么证明 mock 真的拦住了</h2>
+<div class="outline-text-2" id="text-org4061577">
+<p>
+第一反应大概是在 <code>requests.get</code> 之前加一行 <code>print("calling external api")</code> 。但 print 只能证明代码走到了那一行，不能区分是 mock 拦截了调用还是真实网络被触发了。
+</p>
+
+<p>
+<code>mock.assert_called_once()</code> 才管用。它检查 mock 对象是不是恰好被调用了一次。如果 <code>patch</code> 没拦住请求, mock 对象压根没被碰过, 断言直接挂掉。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> decimal <span class="org-keyword">import</span> Decimal
+<span class="org-keyword">from</span> unittest.mock <span class="org-keyword">import</span> patch, MagicMock
+<span class="org-keyword">import</span> requests
+
+<span class="org-keyword">class</span> <span class="org-type">CurrencyConversionError</span>(<span class="org-type">Exception</span>):
+    <span class="org-keyword">pass</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">convert_currency</span>(amount, from_currency, to_currency):
+    <span class="org-keyword">if</span> from_currency <span class="org-operator">==</span> to_currency:
+        <span class="org-keyword">return</span> amount
+    <span class="org-variable-name">response</span> <span class="org-operator">=</span> requests.get(
+        f<span class="org-string">"https://example.com/pair/</span>{from_currency}<span class="org-string">/</span>{to_currency}<span class="org-string">"</span>
+    )
+    <span class="org-variable-name">data</span> <span class="org-operator">=</span> response.json()
+    <span class="org-keyword">if</span> data[<span class="org-string">"result"</span>] <span class="org-operator">!=</span> <span class="org-string">"success"</span>:
+        <span class="org-keyword">raise</span> CurrencyConversionError(f<span class="org-string">"</span>{data['error<span class="org-operator">-</span><span class="org-builtin">type</span>']}<span class="org-string">"</span>)
+    <span class="org-keyword">return</span> Decimal(<span class="org-builtin">str</span>(data[<span class="org-string">"conversion_rate"</span>])) <span class="org-operator">*</span> amount
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29992; patch &#25318;&#25130; requests.get&#65292;&#37197;&#32622;&#19968;&#20010;&#22833;&#36133;&#21709;&#24212;
+</span><span class="org-variable-name">mock_get</span> <span class="org-operator">=</span> patch(<span class="org-string">"__main__.requests.get"</span>).start()
+mock_get.return_value.json.<span class="org-variable-name">return_value</span> <span class="org-operator">=</span> {
+    <span class="org-string">"result"</span>: <span class="org-string">"error"</span>,
+    <span class="org-string">"error-type"</span>: <span class="org-string">"unknown-code"</span>,
+}
+
+<span class="org-keyword">try</span>:
+    convert_currency(Decimal(<span class="org-string">"1.00"</span>), <span class="org-string">"CAD"</span>, <span class="org-string">"CTM"</span>)
+    <span class="org-builtin">print</span>(<span class="org-string">"ERROR: &#24212;&#35813;&#25243;&#20986;&#24322;&#24120;&#20294;&#27809;&#26377;"</span>)
+<span class="org-keyword">except</span> CurrencyConversionError <span class="org-keyword">as</span> e:
+    <span class="org-builtin">print</span>(f<span class="org-string">"&#25243;&#20986;&#20102; CurrencyConversionError: </span>{e}<span class="org-string">"</span>)
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20851;&#38190;&#65306;&#39564;&#35777; mock &#26159;&#21542;&#30495;&#30340;&#34987;&#35843;&#29992;&#20102;
+</span>mock_get.assert_called_once()
+<span class="org-builtin">print</span>(<span class="org-string">"assert_called_once &#36890;&#36807;&#65306;mock &#30830;&#23454;&#25318;&#25130;&#20102;&#35831;&#27714;"</span>)
+patch.stopall()
+</pre>
+</div>
+
+<pre class="example" id="org295a2d3">
+抛出了 CurrencyConversionError: unknown-code
+assert_called_once 通过：mock 确实拦截了请求
+</pre>
+
+<p>
+<code>assert_called_once()</code> 的逻辑很简单, 如果 mock 没被调用过, 说明 <code>patch</code> 没有拦住请求, 你的测试在依赖真实网络。如果 mock 被调用了恰好一次, 说明请求确实走了 mock。在「假绿」测试中加上这行断言后, 作者发现 mock 根本没被调用, 断言直接失败。问题出在, <code>patch</code> 的目标写错了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org34ed420" class="outline-2">
+<h2 id="org34ed420">patch 的位置决定成败</h2>
+<div class="outline-text-2" id="text-org34ed420">
+<p>
+为什么 mock 没拦住调用？因为 <code>patch</code> 的目标搞错了。<a href="Python中Mock第三方依赖的四种策略.html">前文</a>提到过「patch 的是引用位置」这个规则, 这里展开讲一个更容易踩的坑。
+</p>
+
+<p>
+<code>patch</code> 的规则是, patch 的目标是名字 <b>被使用的地方</b>, 而它最初在哪里定义的不重要。
+</p>
+
+<p>
+货币转换模块用 <code>import requests</code> 导入 <code>requests</code> 库，然后调用 <code>requests.get(...)</code> 。这时 <code>patch("mymodule.requests.get")</code> 能拦住调用，因为 <code>mymodule.requests</code> 和原始 <code>requests</code> 指向同一个模块对象。
+</p>
+
+<p>
+但如果模块改成 <code>from requests import get</code> ，情况就不同了。这时 <code>get</code> 成了模块里的一个 *局部名字*，和 <code>requests.get</code> 不再是同一个引用。你必须 patch <code>mymodule.get</code> 而不是 <code>requests.get</code> 。搞错了位置， mock 就拦截不到。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">import</span> requests
+<span class="org-keyword">from</span> requests <span class="org-keyword">import</span> get <span class="org-keyword">as</span> direct_get
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20004;&#20010;&#21517;&#23383;&#25351;&#21521;&#21516;&#19968;&#20010;&#20989;&#25968;&#23545;&#35937;
+</span><span class="org-builtin">print</span>(f<span class="org-string">"requests.get is direct_get: </span>{requests.get <span class="org-keyword">is</span> direct_get}<span class="org-string">"</span>)
+<span class="org-builtin">print</span>(<span class="org-string">"&#20294; patch &#26367;&#25442;&#30340;&#26159;&#25351;&#23450;&#21629;&#21517;&#31354;&#38388;&#37324;&#30340;&#24341;&#29992;&#65292;&#19981;&#26159;&#20840;&#23616;&#30340;"</span>)
+<span class="org-builtin">print</span>(<span class="org-string">'patch("module_a.requests.get") &#26367;&#25442; module_a &#30340; requests &#23646;&#24615;&#19978;&#30340; get'</span>)
+<span class="org-builtin">print</span>(<span class="org-string">'patch("module_b.get") &#26367;&#25442; module_b &#30340; get &#23646;&#24615;'</span>)
+<span class="org-builtin">print</span>(<span class="org-string">"&#25630;&#38169;&#20102;&#21629;&#21517;&#31354;&#38388;&#65292;mock &#23601;&#25318;&#25130;&#19981;&#21040;"</span>)
+</pre>
+</div>
+
+<pre class="example" id="orgfdba918">
+requests.get is direct_get: True
+但 patch 替换的是指定命名空间里的引用，不是全局的
+patch("module_a.requests.get") 替换 module_a 的 requests 属性上的 get
+patch("module_b.get") 替换 module_b 的 get 属性
+搞错了命名空间，mock 就拦截不到
+</pre>
+
+<p>
+这条规则为什么容易踩坑？因为 <code>import requests</code> 的情况下， <code>patch("module.requests.get")</code> 和 <code>patch("requests.get")</code> 恰好都能工作（两个名字指向同一个模块对象）。你以为随便 patch 哪个都行，等到代码改成 <code>from requests import get</code> 的那天， <code>patch("requests.get")</code> 就失效了，而你完全不知道。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org716e1b5" class="outline-2">
+<h2 id="org716e1b5">mock 的另一个用途, 制造碰撞</h2>
+<div class="outline-text-2" id="text-org716e1b5">
+<p>
+前面用 mock 替代了网络请求，但 mock 还有别的用处。文章里还举了一个 CRM（客户关系管理）系统的例子, 联系人用文件存储，每个联系人根据名字生成唯一编码。要测试「两个联系人生成相同编码时抛出 <code>FileExistsError</code> 」, 需要强制让两次调用产生相同的编码。
+</p>
+
+<p>
+正常情况下编码生成函数对不同名字会返回不同编码，所以你 patch 它强制固定返回值。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> pathlib <span class="org-keyword">import</span> Path
+<span class="org-keyword">from</span> unittest.mock <span class="org-keyword">import</span> patch
+<span class="org-keyword">import</span> tempfile
+
+<span class="org-keyword">def</span> <span class="org-function-name">next_code</span>(name):
+    <span class="org-doc">"""&#26681;&#25454;&#21517;&#23383;&#29983;&#25104;&#21807;&#19968;&#32534;&#30721;&#65288;&#31616;&#21270;&#29256;&#65289;"""</span>
+    <span class="org-keyword">return</span> name.lower().replace(<span class="org-string">" "</span>, <span class="org-string">""</span>)[:3] <span class="org-operator">+</span> <span class="org-string">"1"</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">create_contact</span>(name, contacts_dir):
+    <span class="org-variable-name">code</span> <span class="org-operator">=</span> next_code(name)
+    <span class="org-variable-name">path</span> <span class="org-operator">=</span> contacts_dir <span class="org-operator">/</span> f<span class="org-string">"</span>{code}<span class="org-string">.txt"</span>
+    <span class="org-keyword">if</span> path.exists():
+        <span class="org-keyword">raise</span> <span class="org-type">FileExistsError</span>(f<span class="org-string">"Contact </span>{code}<span class="org-string"> already exists"</span>)
+    path.write_text(f<span class="org-string">"name: </span>{name}<span class="org-string">"</span>)
+    <span class="org-keyword">return</span> code
+
+<span class="org-keyword">with</span> tempfile.TemporaryDirectory() <span class="org-keyword">as</span> tmpdir:
+    <span class="org-variable-name">contacts_dir</span> <span class="org-operator">=</span> Path(tmpdir)
+
+    <span class="org-keyword">with</span> patch(<span class="org-string">"__main__.next_code"</span>, return_value<span class="org-operator">=</span><span class="org-string">"jd1"</span>):
+        <span class="org-variable-name">code1</span> <span class="org-operator">=</span> create_contact(<span class="org-string">"Jane Doe"</span>, contacts_dir)
+        <span class="org-builtin">print</span>(f<span class="org-string">"&#31532;&#19968;&#27425;&#21019;&#24314;&#25104;&#21151;&#65292;&#32534;&#30721;: </span>{code1}<span class="org-string">"</span>)
+
+        <span class="org-keyword">try</span>:
+            create_contact(<span class="org-string">"Bob Smith"</span>, contacts_dir)
+            <span class="org-builtin">print</span>(<span class="org-string">"ERROR: &#24212;&#35813;&#25243;&#20986; FileExistsError"</span>)
+        <span class="org-keyword">except</span> <span class="org-type">FileExistsError</span> <span class="org-keyword">as</span> e:
+            <span class="org-builtin">print</span>(f<span class="org-string">"&#27491;&#30830;&#25243;&#20986; FileExistsError: </span>{e}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<pre class="example" id="org56a9d4d">
+第一次创建成功，编码: jd1
+正确抛出 FileExistsError: Contact jd1 already exists
+</pre>
+
+<p>
+patch 强制 <code>next_code</code> 对任何名字都返回 <code>jd1</code> ，所以两个不同的名字生成了相同的编码，触发了碰撞检测。注意 patch 目标同样是 <code>next_code</code> <b>被调用</b> 的地方。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6dfcbf2" class="outline-2">
+<h2 id="org6dfcbf2">比 mock 更好的办法, 显式 override 参数</h2>
+<div class="outline-text-2" id="text-org6dfcbf2">
+<p>
+后来文章作者发现 patch <code>next_code</code> 不是最优方案。给 <code>create_contact</code> 加一个 <code>code</code> 参数, 允许调用者直接指定编码, 就不需要 patch 任何东西了。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> pathlib <span class="org-keyword">import</span> Path
+<span class="org-keyword">import</span> tempfile
+
+<span class="org-keyword">def</span> <span class="org-function-name">next_code</span>(name):
+    <span class="org-keyword">return</span> name.lower().replace(<span class="org-string">" "</span>, <span class="org-string">""</span>)[:3] <span class="org-operator">+</span> <span class="org-string">"1"</span>
+
+<span class="org-keyword">def</span> <span class="org-function-name">create_contact</span>(name, contacts_dir, <span class="org-operator">*</span>, code<span class="org-operator">=</span><span class="org-constant">None</span>):
+    <span class="org-comment-delimiter"># </span><span class="org-comment">code &#21442;&#25968;&#21069;&#21152; * &#34920;&#31034; keyword-only&#65292;&#21482;&#33021;&#29992; code="xxx" &#20256;&#36882;
+</span>    <span class="org-comment-delimiter"># </span><span class="org-comment">&#38450;&#27490;&#35843;&#29992;&#32773;&#19981;&#23567;&#24515;&#22312;&#38169;&#35823;&#30340;&#20301;&#32622;&#20256;&#20102;&#19968;&#20010;&#20540;
+</span>    <span class="org-variable-name">code</span> <span class="org-operator">=</span> code <span class="org-keyword">if</span> code <span class="org-keyword">is</span> <span class="org-keyword">not</span> <span class="org-constant">None</span> <span class="org-keyword">else</span> next_code(name)
+    <span class="org-variable-name">path</span> <span class="org-operator">=</span> contacts_dir <span class="org-operator">/</span> f<span class="org-string">"</span>{code}<span class="org-string">.txt"</span>
+    <span class="org-keyword">if</span> path.exists():
+        <span class="org-keyword">raise</span> <span class="org-type">FileExistsError</span>(f<span class="org-string">"Contact </span>{code}<span class="org-string"> already exists"</span>)
+    path.write_text(f<span class="org-string">"name: </span>{name}<span class="org-string">"</span>)
+    <span class="org-keyword">return</span> code
+
+<span class="org-keyword">with</span> tempfile.TemporaryDirectory() <span class="org-keyword">as</span> tmpdir:
+    <span class="org-variable-name">contacts_dir</span> <span class="org-operator">=</span> Path(tmpdir)
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;&#19968;&#27425;&#35843;&#29992;&#65306;&#19981;&#25351;&#23450; code&#65292;&#29992; next_code &#33258;&#21160;&#29983;&#25104;
+</span>    <span class="org-variable-name">code1</span> <span class="org-operator">=</span> create_contact(<span class="org-string">"Jane Doe"</span>, contacts_dir)
+    <span class="org-builtin">print</span>(f<span class="org-string">"&#31532;&#19968;&#27425;&#21019;&#24314;&#25104;&#21151;&#65292;&#32534;&#30721;: </span>{code1}<span class="org-string">"</span>)
+
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#31532;&#20108;&#27425;&#35843;&#29992;&#65306;&#26174;&#24335;&#25351;&#23450;&#21644;&#31532;&#19968;&#27425;&#30456;&#21516;&#30340; code&#65292;&#21046;&#36896;&#30896;&#25758;
+</span>    <span class="org-keyword">try</span>:
+        create_contact(<span class="org-string">"Bob Smith"</span>, contacts_dir, code<span class="org-operator">=</span>code1)
+        <span class="org-builtin">print</span>(<span class="org-string">"ERROR: &#24212;&#35813;&#25243;&#20986; FileExistsError"</span>)
+    <span class="org-keyword">except</span> <span class="org-type">FileExistsError</span> <span class="org-keyword">as</span> e:
+        <span class="org-builtin">print</span>(f<span class="org-string">"&#27491;&#30830;&#25243;&#20986; FileExistsError: </span>{e}<span class="org-string">"</span>)
+</pre>
+</div>
+
+<pre class="example" id="org5319e88">
+第一次创建成功，编码: jan1
+正确抛出 FileExistsError: Contact jan1 already exists
+</pre>
+
+<p>
+测试通过公共接口（ <code>code</code> 参数）控制行为，不需要 patch 任何内部函数。第一次调用捕获自动生成的编码，第二次用同一个编码制造碰撞。
+</p>
+
+<p>
+这个做法有代价。给生产代码加一个纯粹为了测试方便的参数, mock 批评者管这叫「测试导致的设计损伤」（test-induced design damage）, 意思是你为了测试在生产代码里开了一个本不需要的口子。但作者觉得这里合理, 因为 <code>code</code> 参数同时也是实用功能, 手动指定编码可以用于数据导入或备份恢复。如果参数 <b>只</b> 为测试存在, 那还是保留 mock 比较好。
+</p>
+
+<p>
+注意这跟依赖注入不是一回事。依赖注入（dependency injection）是把函数的 <b>依赖本身</b> 传进来, 测试里换一个假实现。这里传的是依赖 <b>产出的值</b>, 更轻量, 原文称之为「显式 override」。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0cbaede" class="outline-2">
+<h2 id="org0cbaede">什么时候别用 mock</h2>
+<div class="outline-text-2" id="text-org0cbaede">
+<p>
+mock 的价值在于让你跑快速的单元测试, 不依赖外部服务。判断标准很简单, 测试需要环境变量或外部服务才能跑就是集成测试, 把依赖 mock 掉就变成了单元测试。但有时候答案不是「怎么用好 mock」, 而是别用 mock。
+</p>
+
+<p>
+每次 <code>patch("module.requests.get")</code> 都在写一个和导入路径强耦合的测试。你把 <code>import requests</code> 改成 <code>from requests import get</code> ，所有 patch 都会失效。测试在测实现细节，不是在测行为。
+</p>
+
+<p>
+文章推荐看 Harry Percival 的 PyCon 演讲「Stop Using Mocks」。核心建议是把外部调用封装到一个适配器类里，写一个内存中的假实现（fake），用依赖注入把假实现传给测试、真实实现传给生产代码。
+</p>
+
+<p>
+拿前面的货币转换函数举例, 适配器模式长这样
+</p>
+
+<div class="org-src-container">
+<pre class="src src-python"><span class="org-keyword">from</span> decimal <span class="org-keyword">import</span> Decimal
+
+<span class="org-keyword">class</span> <span class="org-type">RateProvider</span>:
+    <span class="org-doc">"""&#36866;&#37197;&#22120;&#25509;&#21475;: &#25226;&#27719;&#29575; API &#30340;&#35843;&#29992;&#23553;&#35013;&#36215;&#26469;"""</span>
+    <span class="org-keyword">def</span> <span class="org-function-name">get_rate</span>(<span class="org-keyword">self</span>, from_currency, to_currency):
+        <span class="org-keyword">raise</span> <span class="org-type">NotImplementedError</span>
+
+<span class="org-keyword">class</span> <span class="org-type">FakeRateProvider</span>(RateProvider):
+    <span class="org-doc">"""&#27979;&#35797;&#29992;&#30340;&#20551;&#23454;&#29616;: &#19981;&#30896;&#32593;&#32476;, &#36820;&#22238;&#22266;&#23450;&#20540;"""</span>
+    <span class="org-keyword">def</span> <span class="org-function-name">__init__</span>(<span class="org-keyword">self</span>, rate):
+        <span class="org-keyword">self</span>.<span class="org-variable-name">_rate</span> <span class="org-operator">=</span> rate
+    <span class="org-keyword">def</span> <span class="org-function-name">get_rate</span>(<span class="org-keyword">self</span>, from_currency, to_currency):
+        <span class="org-keyword">return</span> <span class="org-keyword">self</span>._rate
+
+<span class="org-keyword">def</span> <span class="org-function-name">convert_currency</span>(amount, rate_provider):
+    <span class="org-variable-name">rate</span> <span class="org-operator">=</span> rate_provider.get_rate(<span class="org-string">"CAD"</span>, <span class="org-string">"USD"</span>)
+    <span class="org-keyword">return</span> Decimal(<span class="org-builtin">str</span>(rate)) <span class="org-operator">*</span> amount
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27979;&#35797;&#37324;&#20256; fake, &#29983;&#20135;&#37324;&#20256;&#30495;&#23454;&#23454;&#29616;
+</span><span class="org-variable-name">fake</span> <span class="org-operator">=</span> FakeRateProvider(rate<span class="org-operator">=</span><span class="org-string">"0.75"</span>)
+<span class="org-variable-name">result</span> <span class="org-operator">=</span> convert_currency(Decimal(<span class="org-string">"100.00"</span>), fake)
+<span class="org-builtin">print</span>(f<span class="org-string">"&#36716;&#25442;&#32467;&#26524;: </span>{result}<span class="org-string">"</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#19981;&#38656;&#35201; patch &#20219;&#20309;&#19996;&#35199;</span>
+</pre>
+</div>
+
+<pre class="example" id="org2471690">
+转换结果: 75.0000
+</pre>
+
+<p>
+生产代码传一个真实调用 API 的 <code>RateProvider</code> 子类, 测试传 <code>FakeRateProvider</code> , 函数根本不知道 mock 的存在。
+</p>
+
+<p>
+那什么时候 mock 是对的？测试的范围小, 外部依赖就一个, 边界清楚, 这种场景 mock 就很合适。货币转换函数只有一个 <code>requests.get</code> 调用，mock 就是合适的工具。CRM 的 <code>next_code</code> 也是，虽然后来发现显式 override 更好。
+</p>
+
+<p>
+先想清楚要不要用 mock。决定用了, 就务必验证它真的生效, 假绿测试比没有测试更危险。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-13</span>
+    <span class="post-info">2026-06-22</span>
+    <a href="../../../../../tags/python">Python</a> : <a href="../../../../../tags/testing">Testing</a> : <a href="../../../../../tags/mock">Mock</a> : <a href="../../../../../tags/pytest">pytest</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm7b5n9 &lt;dot&gt; 5bm1vqshnmiejfeel0dii4uw1b &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
