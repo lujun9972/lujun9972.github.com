@@ -495,6 +495,52 @@ W MobileOrg: ReminderScheduler failed: java.lang.SecurityException:
 教训：Android 12+ 上凡是用到 =setExact*= 系列的地方都要先检查 =canScheduleExactAlarms()=，无权限时只能 fallback 到 =setWindow()=。manifest 声明 ≠ 权限已授予，对特殊权限永远是两回事。同一个文件里相同模式的代码必须一致，最佳做法是抽公共函数。
 #+end_quote
 
+** 坑 16：Handler.postDelayed 在 Doze 下被推迟 25 分钟（前台服务也不例外）
+
+番茄钟计时用 =Handler.postDelayed(timeoutRunnable, 20min)= 调度一次性超时回调。之前在 CLAUDE.md 里自信地写下"前台服务一直活着，所以 Handler 计时既简单又完美可靠"。这句话错了。
+
+现象：用户选了 20 分钟番茄钟，倒计时到 =0:00= 之后又过了 30 多分钟，仍没有"番茄钟已结束"的提醒。通知栏倒计时一直显示 =0:00=。
+
+诊断日志（设备 MIUI/xaga）的关键证据：
+
+#+begin_example
+13:25:05  event=updateTick remaining=-1952     timedOut=false  ← 应该超时
+13:32:06  event=updateTick remaining=-422857   timedOut=false  ← 已超 7 分钟
+13:50:25  event=timeoutRunnableFired delayMs=1522254            ← 晚了 25 分 22 秒！
+#+end_example
+
+=delayMs= 是代码里预埋的诊断字段（=fireElapsed - timeoutTargetElapsed=），=1522254ms= = 25 分 22 秒。=timeoutRunnable= 本应在 13:25 触发，实际拖到 13:50。
+
+更明显的旁证是 =updateTick= 的时间间隔——它用 =postDelayed(this, 60000)= 自我续期，正常应严格 60 秒，但日志里前期变成了 349s、336s、157s、422s 这样的不规则间隔，直到设备被唤醒（用户点亮屏幕）后才恢复稳定 60 秒。这说明 =Handler= 消息队列被 Doze 整体卡住了。
+
+*根因*：前台服务保证进程不被杀，但不保证 CPU 不睡。设备进入 Doze 后，CPU 休眠，=Handler= 的 =MessageQueue= 停转，所有待派发的消息被推迟到系统维护窗口。标准 Android 会用维护窗口补发积压消息（所以 =updateRunnable= 在唤醒后能恢复），但厂商 ROM（MIUI/EMUI/ColorOS）的激进策略会让延迟变得不可控。一次性长延迟定时器（20 分钟）正好落在 Doze 区间，就被推迟到 25 分钟后才补发。
+
+修复方案没有用 =WakeLock=（番茄钟可能跑多个长轮次，全程持锁耗电不可接受），而是让周期性的 =updateTick=（60 秒、自我续期、已证明在唤醒后能恢复）兼作超时保底：
+
+#+begin_src java
+private void checkTimeoutFallback() {
+    // WORK 阶段：一次性 timeoutRunnable 可能被 Doze 推迟
+    if (pomodoroTimer.isRunning() && !pomodoroTimer.isTimedOut()
+            && pomodoroTimer.getRemainingMillis() <= 0) {
+        handlePomodoroTimeout();
+        return;
+    }
+    // REST 阶段：一次性 restTimeoutRunnable 有同样的 Doze 暴露
+    if (pomodoroTimer.isResting()
+            && pomodoroTimer.getRestRemainingMillis() <= 0) {
+        handleRestTimeout();
+    }
+}
+#+end_src
+
+在 =updateRunnable.run()= 里每次 =updateTime()= 前调用。最坏情况延迟 = 设备唤醒后一个 tick（≤60 秒），远好于 25 分钟。=timeoutRunnable= 保留作为"快速路径"（Doze 没干扰时即时响应），=updateTick= 作为"保底路径"。
+
+顺带挖出一个*幂等性缺陷*：=handlePomodoroTimeout= 原本只检查 =if (!isRunning()) return=，但 =markTimeout()= 只设 =timedOut=true=，=running= 保持 =true=。于是保底触发后，延迟的 =timeoutRunnable= 补发时会第二次进入 =handlePomodoroTimeout=，重新播放闹铃、重新发通知。修复时给守卫加上 =|| isTimedOut()= 判断。
+
+#+begin_quote
+教训：不要相信"前台服务的 Handler 计时完美可靠"——进程活着不代表 CPU 醒着。任何一次性的长延迟 =Handler= 定时器，都必须有一个周期性自我续期的保底检测兜住超时逻辑；而超时处理函数必须做幂等（守卫检查的应该是"已完成"标志，而不是"运行中"标志，因为标记超时通常不改运行状态）。诊断字段（=delayMs=）要在怀疑系统行为时提前预埋，关键时刻一锤定音。
+#+end_quote
+
 * 经验总结
 
 ** 1. 静默失效比崩溃更可怕
