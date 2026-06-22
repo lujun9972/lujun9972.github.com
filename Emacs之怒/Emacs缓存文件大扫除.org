@@ -1,0 +1,337 @@
+#+TITLE: Emacs 缓存文件大扫除，用一个 alist 管住所有散落状态
+#+AUTHOR: lujun9972
+#+TAGS: Emacs之怒 :emacs:elisp:cache:
+#+DATE: [2026-06-22 一 10:00]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs 的缓存文件散落在 ~/.emacs.d 各处，bookmarks、auto-saves、recentf、tramp……想清不敢清，想管没头绪。本文介绍一种不用额外包的方案，用一个 alist 把所有缓存路径映射到统一目录，支持一键在「持久化」和「临时」模式间切换。
+
+打开你的 =~/.emacs.d= ，看看里面有什么。
+
+bookmarks、auto-saves、recentf、savehist、transient、tramp、url、multisession、image-dired、erc、rcirc……乱七八糟一堆文件。这些文件散落各处，想清不敢清，想管没头绪。
+
+Rahul M. Juliato 在 [[https://rahuljuliato.com/posts/emacs-cache-paths][Taming Emacs Cache and Temporary Files]] 一文中，给出了一套不依赖任何外部包的整理方案。核心思路是造三个 Elisp 组件，把所有这些缓存文件集中管起来，还能一键在「持久化写进配置目录」和「临时写进 =/tmp= 」之间切换。
+
+* 设计思路，一个 alist 驱动一切
+
+Emacs 内部有一堆变量控制各类缓存文件的存放位置。 =bookmark-default-file= 管书签存哪， =recentf-save-file= 管最近打开的文件列表存哪， =tramp-persistency-file-name= 管 TRAMP 的连接信息存哪，每个变量各自指向一个路径，默认散落在不同目录。
+
+这套方案怎么解决的？
+
+1. 定义一个 alist（关联列表，Elisp 里的 key-value 映射），把变量名映射到相对路径
+2. 一个辅助函数把 key 解析成绝对路径
+3. 另一个辅助函数在启动时自动创建所有需要的目录，相当于 =mkdir -p=
+4. 用 =use-package :custom= 把所有变量指向这些路径
+
+做完之后， =~/.emacs.d/cache/= 目录下整整齐齐装着所有缓存，想清空就 =rm -rf= ，想备份就整个目录打包。用 =M-x customize-variable= 切换根目录的话，还能在「持久化」和「临时」模式之间一键切换。
+
+* 组件一，可切换的根目录
+
+根目录的定义。跟直觉相反的是，这里用 =defcustom= 比 =defvar= 更合适。
+
+=defcustom= 是 Emacs 中专门定义「用户可配置选项」的宏。它和 =defvar= 最大的区别，是 =defcustom= 定义的变量会出现在 =M-x customize= 界面里，你可以图形化地修改，改完后值持久化到 =custom.el= 。这样一来，你不需要编辑 =init.el= 就能切换缓存位置。
+
+#+BEGIN_SRC emacs-lisp
+(defcustom my/cache-directory
+  (expand-file-name "cache/" user-emacs-directory)
+  "Base directory for Emacs cache files.
+All entries in `my/cache-paths' are resolved relative to this
+directory.  Choose one of the presets or supply any custom path.
+Changes take effect after restarting Emacs."
+  :type `(choice
+          (const     :tag "Inside Emacs config  (cache/ in user-emacs-directory)"
+                     ,(expand-file-name "cache/" user-emacs-directory))
+          (const     :tag "System temp          (/tmp/emacs-cache/)" "/tmp/emacs-cache/")
+          (directory :tag "Custom directory"))
+  :group 'my)
+#+END_SRC
+
+三个预设选项：
+- *config 内* （默认），缓存放 =~/.emacs.d/cache/= ，和配置放一起，持久化留存
+- */tmp* ，缓存放 =/tmp/emacs-cache/= ，重启即清空，适合录屏或测试
+- *自定义路径* ，随便指到哪
+
+注意默认值用的是 =user-emacs-directory= 而不是硬编码 =~/.emacs.d/= 。原因是 Emacs 29 引入了 =--init-directory= 命令行参数，你可以 =emacs --init-directory=/path/to/config= 这样启动 Emacs，不碰默认的 =~/.emacs.d= 。用 =user-emacs-directory= 锚定路径，缓存会跟着当前启动的配置走，所有配置就不会都往默认 =~/.emacs.d= 里写、互相踩脚了。
+
+最后还需要一个小补丁，重新加载 =custom-file= 。 =M-x customize= 修改后立即写入 =custom.el= ，重启时需要在 =init.el= 执行缓存相关配置之前读到新值：
+
+#+BEGIN_SRC emacs-lisp
+(when custom-file
+  (load custom-file 'noerror 'nomessage))
+#+END_SRC
+
+=when= 守卫是必要的，全新配置下 =custom-file= 为 =nil= ， =(load nil ...)= 会报类型错误直接中断启动。
+
+* 组件二，alist 作为唯一真相源
+
+第二个组件是一个 alist，用变量名作 key，相对路径作 value。整个方案里所有「什么东西该放哪」的信息都集中在这一处。
+
+#+BEGIN_SRC emacs-lisp
+(defvar my/cache-paths
+  '(
+    ;; 文件类
+    (bookmark-file               . "bookmarks")
+    (ielm-history-file-name      . "ielm-history.eld")
+    (project-list-file           . "projects")
+    (recentf-save-file           . "recentf")
+    (savehist-file               . "history")
+    (save-place-file             . "saveplace")
+    (transient-history-file      . "transient/history.el")
+    (transient-levels-file       . "transient/levels.el")
+    (transient-values-file       . "transient/values.el")
+    (tramp-persistency-file-name . "tramp")
+    (nsm-settings-file           . "network-security.data")
+    ;; 目录类（注意尾部斜杠）
+    (auto-saves                  . "auto-saves/")
+    (auto-saves-sessions         . "auto-saves/sessions/")
+    (multisession-directory      . "multisession/")
+    (url-configuration-directory . "url/")
+    (image-dired-dir             . "image-dired/")
+    (erc-log-channels-directory  . "erc/logs/")
+    (erc-image-cache-directory   . "erc/images/")
+    (rcirc-log-directory         . "rcirc/logs/"))
+  "Alist of (KEY . RELATIVE-PATH) for cache locations.
+RELATIVE-PATH is resolved against `my/cache-directory'.
+A trailing slash on RELATIVE-PATH marks the entry as a directory.")
+#+END_SRC
+
+约定很简单，value 以 =/= 结尾的是目录，否则是文件。后面的辅助函数会根据这个来区分要不要自动创建目录。
+
+我故意把 =tree-sitter/= 、 =eln-cache/= 、 =eshell/= 排除在外。 =tree-sitter= 和 =eln-cache= 的内容来自耗时较长的编译过程（语法树编译、本地代码编译），我希望清空缓存时它们能留下来。 =eshell= 里有我的命令历史和别名，更接近 dotfile 而不是临时状态。你的工作流可能不同，按需增减就行。
+
+* 组件三，两个辅助函数
+
+两个短函数，一个解析路径，一个创建目录。
+
+#+BEGIN_SRC emacs-lisp
+(defun my/cache--path (key)
+  "Return the absolute path for KEY in `my/cache-paths'."
+  (let ((rel (cdr (assq key my/cache-paths))))
+    (unless rel
+      (error "my/cache--path: Unknown key %S" key))
+    (expand-file-name rel my/cache-directory)))
+#+END_SRC
+
+=my/cache--path= 用 =assq= 查找 key。 =assq= 对 symbol key 用 =eq= 做比较（比 =assoc= 的 =equal= 更快）。 =unless= 分支不是摆设，如果你在 =:custom= 块里打错了变量名，没有这个错误检查的话，Emacs 会静默地把值设成 =nil= ，然后很多包在 =nil= 路径上写文件，坏得莫名其妙。
+
+#+BEGIN_SRC emacs-lisp
+(defun my/cache--ensure-dirs ()
+  "Create every directory referenced by `my/cache-paths'.
+Entries ending in `/' are created directly; other entries have their
+parent directory created."
+  (dolist (entry my/cache-paths)
+    (let* ((abs (my/cache--path (car entry)))
+           (dir (if (directory-name-p abs)
+                    abs
+                  (file-name-directory abs))))
+      (make-directory dir t))))
+
+(my/cache--ensure-dirs)
+#+END_SRC
+
+=my/cache--ensure-dirs= 在启动时跑一遍，确保所有需要的目录都存在。 =make-directory= 的第二个参数 =t= 相当于 =mkdir -p= ，所以 =transient/history.el= 会自动创建 =<cache>/transient/= 目录，哪怕 alist 里没单独列出它。
+
+* 接线，use-package :custom
+
+三个组件就位，该接线了。
+
+大部分缓存变量可以直接在 =use-package emacs= 的 =:custom= 块里设：
+
+#+BEGIN_SRC emacs-lisp
+(use-package emacs
+  :ensure nil
+  :custom
+  (bookmark-file               (my/cache--path 'bookmark-file))
+  (ielm-history-file-name      (my/cache--path 'ielm-history-file-name))
+  (project-list-file           (my/cache--path 'project-list-file))
+  (recentf-save-file           (my/cache--path 'recentf-save-file))
+  (savehist-file               (my/cache--path 'savehist-file))
+  (save-place-file             (my/cache--path 'save-place-file))
+  (transient-history-file      (my/cache--path 'transient-history-file))
+  (transient-levels-file       (my/cache--path 'transient-levels-file))
+  (transient-values-file       (my/cache--path 'transient-values-file))
+  (nsm-settings-file           (my/cache--path 'nsm-settings-file))
+  (multisession-directory      (my/cache--path 'multisession-directory))
+  (url-configuration-directory (my/cache--path 'url-configuration-directory))
+
+  ;; 个人偏好（与缓存路径无关）
+  (create-lockfiles            nil)
+  (make-backup-files           nil)
+  (auto-save-default           t))
+#+END_SRC
+
+最后三个设置和缓存路径无关，是我的个人偏好。关掉 lockfiles 和备份文件（前者会触发前端工具链的文件监听抖动），但保留 auto-save，毕竟 Emacs 崩溃时这是救命稻草。
+
+* 特殊变量处理
+
+=:custom= 块适合大部分变量，但有几种情况需要单独处理。
+
+** auto-save
+
+auto-save 用的不是单值变量，而是路径变换规则：
+
+#+BEGIN_SRC emacs-lisp
+(setq auto-save-list-file-prefix (my/cache--path 'auto-saves-sessions)
+      auto-save-file-name-transforms
+      `((".*" ,(my/cache--path 'auto-saves) t)))
+#+END_SRC
+
+=auto-save-list-file-prefix= 控制「待恢复文件列表」的存放位置（=M-x recover-session= 读的就是它）。 =auto-save-file-name-transforms= 是一个 =(REGEX REPLACEMENT UNIQUIFY)= 三元组列表，第三个元素 =t= （uniquify 标志）会把原始路径编码进文件名，这样两个同名的文件就不会在 auto-save 目录里互相覆盖了。
+
+** TRAMP 等延迟加载变量
+
+=use-package emacs= 的 =:custom= 块在启动时就执行了，但有些变量的定义来自后续才加载的包。包还没加载就去设它的变量，轻则无效，重则报错。遇到这种，把 =setopt= 放进对应包的 =:config= 块：
+
+#+BEGIN_SRC emacs-lisp
+(use-package tramp
+  :config
+  (setopt tramp-persistency-file-name (my/cache--path 'tramp-persistency-file-name)))
+#+END_SRC
+
+=setopt= 是 =setq= 的现代替代品，专门用于 =defcustom= 定义的变量。关键区别： =setopt= 会执行变量定义的 =:set= 函数（如果有的话）， =setq= 直接赋值跳过。 =tramp-persistency-file-name= 定义了 =:set= 函数来触发 TRAMP 内部重载，用 =setq= 会跳过这一步，导致 TRAMP 状态不一致。
+
+* 完整代码 + 最终效果
+
+所有组件拼在一起，就是这样：
+
+#+BEGIN_SRC emacs-lisp
+(defcustom my/cache-directory
+  (expand-file-name "cache/" user-emacs-directory)
+  "Base directory for Emacs cache files."
+  :type `(choice
+          (const     :tag "Inside Emacs config  (cache/ in user-emacs-directory)"
+                     ,(expand-file-name "cache/" user-emacs-directory))
+          (const     :tag "System temp          (/tmp/emacs-cache/)" "/tmp/emacs-cache/")
+          (directory :tag "Custom directory"))
+  :group 'my)
+
+(when custom-file
+  (load custom-file 'noerror 'nomessage))
+
+(defvar my/cache-paths
+  '((bookmark-file               . "bookmarks")
+    (ielm-history-file-name      . "ielm-history.eld")
+    (project-list-file           . "projects")
+    (recentf-save-file           . "recentf")
+    (savehist-file               . "history")
+    (save-place-file             . "saveplace")
+    (transient-history-file      . "transient/history.el")
+    (transient-levels-file       . "transient/levels.el")
+    (transient-values-file       . "transient/values.el")
+    (tramp-persistency-file-name . "tramp")
+    (nsm-settings-file           . "network-security.data")
+    (auto-saves                  . "auto-saves/")
+    (auto-saves-sessions         . "auto-saves/sessions/")
+    (multisession-directory      . "multisession/")
+    (url-configuration-directory . "url/")
+    (image-dired-dir             . "image-dired/")
+    (erc-log-channels-directory  . "erc/logs/")
+    (erc-image-cache-directory   . "erc/images/")
+    (rcirc-log-directory         . "rcirc/logs/"))
+  "Alist of (KEY . RELATIVE-PATH) for cache locations.")
+
+(defun my/cache--path (key)
+  "Return the absolute path for KEY in `my/cache-paths'."
+  (let ((rel (cdr (assq key my/cache-paths))))
+    (unless rel
+      (error "my/cache--path: Unknown key %S" key))
+    (expand-file-name rel my/cache-directory)))
+
+(defun my/cache--ensure-dirs ()
+  "Create every directory referenced by `my/cache-paths'."
+  (dolist (entry my/cache-paths)
+    (let* ((abs (my/cache--path (car entry)))
+           (dir (if (directory-name-p abs) abs
+                   (file-name-directory abs))))
+      (make-directory dir t))))
+
+(my/cache--ensure-dirs)
+
+(use-package emacs
+  :ensure nil
+  :custom
+  (bookmark-file               (my/cache--path 'bookmark-file))
+  (ielm-history-file-name      (my/cache--path 'ielm-history-file-name))
+  (project-list-file           (my/cache--path 'project-list-file))
+  (recentf-save-file           (my/cache--path 'recentf-save-file))
+  (savehist-file               (my/cache--path 'savehist-file))
+  (save-place-file             (my/cache--path 'save-place-file))
+  (transient-history-file      (my/cache--path 'transient-history-file))
+  (transient-levels-file       (my/cache--path 'transient-levels-file))
+  (transient-values-file       (my/cache--path 'transient-values-file))
+  (nsm-settings-file           (my/cache--path 'nsm-settings-file))
+  (multisession-directory      (my/cache--path 'multisession-directory))
+  (url-configuration-directory (my/cache--path 'url-configuration-directory))
+  (create-lockfiles            nil)
+  (make-backup-files           nil)
+  (auto-save-default           t)
+  :config
+  (setq auto-save-list-file-prefix (my/cache--path 'auto-saves-sessions)
+        auto-save-file-name-transforms
+        `((".*" ,(my/cache--path 'auto-saves) t))))
+
+(use-package tramp
+  :config
+  (setopt tramp-persistency-file-name (my/cache--path 'tramp-persistency-file-name)))
+#+END_SRC
+
+启动后， =~/.emacs.d/= 的目录结构会变成这样：
+
+#+BEGIN_EXAMPLE
+.
+├── cache
+│   ├── auto-saves
+│   │   └── sessions
+│   ├── erc
+│   │   ├── images
+│   │   └── logs
+│   ├── image-dired
+│   ├── multisession
+│   ├── rcirc
+│   │   └── logs
+│   ├── transient
+│   │   ├── history.el
+│   │   ├── levels.el
+│   │   └── values.el
+│   ├── url
+│   ├── bookmarks
+│   ├── history
+│   ├── ielm-history.eld
+│   ├── network-security.data
+│   ├── projects
+│   ├── recentf
+│   ├── saveplace
+│   └── tramp
+├── eln-cache
+│   └── 32_0_50-25c5b284
+├── eshell
+│   └── history
+├── init.el
+└── tree-sitter
+    ├── libtree-sitter-markdown-inline.dylib
+    └── libtree-sitter-markdown.dylib
+#+END_EXAMPLE
+
+所有缓存都在 =cache/= 下一个目录，想清就清，想留就留。 =eln-cache= 、 =eshell= 、 =tree-sitter= 是编译产出和 dotfile，不在 alist 管理范围内。
+
+* 新包接入，两行改动
+
+每当你开始用一个会产生缓存文件的新包，只需要两处改动：
+
+1. 在 =my/cache-paths= 里加一条映射
+2. 在 =use-package :custom= 里加一行
+
+下次重启时，目录自动创建，变量自动指向。
+
+用 =grep my/cache--path init.el= 就能列出所有 Emacs 写状态的位置，alist 告诉你是哪种状态。审计写入点，一行命令完事。
+
+* 与 no-littering 的对比
+
+原文提到，如果你不想自己维护这套配置，可以用 [[https://github.com/emacscollective/no-littering][no-littering]] 这个包。两种方案各有利弊：
+
+| 方案           | 优点                                       | 缺点                             |
+|----------------+--------------------------------------------+----------------------------------|
+| 自己维护 alist | 完全可控，零外部依赖，知道每个文件在干什么 | 新增包时需手动加映射             |
+| no-littering   | 开箱即用，覆盖面广，社区维护               | 多一个依赖，定制不如自己写的灵活 |
+
+如果你的包列表稳定、不经常增减，自己维护 alist 是更轻量的选择。如果经常尝试新包、不想费心记路径变量名，no-littering 省事。
