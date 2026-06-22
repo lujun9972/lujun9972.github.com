@@ -1,0 +1,64 @@
+#+TITLE: TIL: 在 Emacs 中使用 Harper 语法检查器
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: TIL Emacs 语法检查
+#+DATE: [2026-06-22 Mon]
+#+LANGUAGE: zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION:  Harper 是一个开源的本地英语语法检查器，可以作为 LSP 服务 集成到 Emacs 中。这篇 TIL 记录怎么装、怎么配。
+
+Harper 是一个开源的英语语法检查器，用 Rust 编写。它通过 Language Server Protocol（LSP）提供服务，装好 =harper-ls= 之后 Emacs 就能通过 eglot 接上
+它。
+
+和 Grammarly 最大的区别是 Harper 在本地运行，不把文本发到云端。不想开浏览器查语法、不想让 Grammarly 扫描私人邮件的，用这个正合适。虽然它不如 Grammarly 全面，日常拼写和语法检查够用了。
+
+* 安装 harper-ls
+
+Harper 官方主要支持 macOS（Homebrew）和 Arch Linux。Ubuntu 系有两个选择：
+
+** snap 安装（不推荐，版本严重滞后）
+
+#+begin_src sh
+sudo snap install harper --edge
+#+end_src
+
+这个 snap 包由第三方维护，目前还是 0.49，官方已经到 2.2.1 了。只是偶尔用一下还行，版本差这么多，bug 和功能缺失都少不了。
+
+** Cargo 安装（推荐）
+
+#+begin_src sh
+cargo install harper-ls
+#+end_src
+
+要装 Rust 环境，但至少拿到的是最新版。
+
+* Emacs 配置
+
+** 通过 eglot 集成
+
+#+begin_src elisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(org-mode . ("harper-ls" "--stdio"))))
+
+(setq-default eglot-workspace-configuration
+              '(:harper-ls (:dialect "American"
+                           :linters (:LongSentences :json-false
+                                     :AvoidCurses :json-false))))
+#+end_src
+
+配置说明，
+- 选择美式英语
+- 关闭长句子检查，Harper 会优先把长句标成"太长"，句子内部的其他错误（拼写、用词、语法）就被盖住了，改完长句才能看到
+- 关闭不当用语检查，Harper 会标记脏话等，大部分人不需要这个
+- 完整的 linter 选项见 https://writewithharper.com/docs/rules
+
+** snap 安装还需要加路径
+
+如果你用 snap 装的，Harper 不在标准 PATH 里，需要手动加一下，
+
+#+begin_src elisp
+(when (eq system-type 'gnu/linux)
+  (add-to-list 'exec-path "/snap/harper/current/bin"))
+#+end_src
+
+用 Cargo 装的不需要这步，=harper-ls= 已经在 PATH 里了。
