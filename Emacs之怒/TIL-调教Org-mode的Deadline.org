@@ -1,0 +1,64 @@
+#+TITLE: TIL-调教Org-mode的Deadline
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs Org-mode deadline
+#+DATE: [2026-06-22 Mon]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Org-mode 的 deadline 默认和 scheduled 任务长得一样，14 天的警告窗口又太短。这篇 TIL 分享两个改进技巧：用自定义 leaders 让 deadline 在 agenda 中一眼可见，把警告窗口扩展到 35 天，让截止日期不再措手不及。
+
+我之前不怎么碰 Org-mode 的 deadline。默认的 deadline 和 scheduled 任务在议程里看着差不多，14 天的警告窗口也经常让人感觉太短了。后来看到 [[https://whhone.com/posts/refining-org-mode-deadlines/][whhone 上这篇文章]]，试了两个调整，效果挺不错。
+
+作者的优先级顺序是，
+
+: Deadline + Priority > Schedule > TODO States
+: - Deadline + Priority 决定做什么、什么时候做
+: - Schedule 留给习惯和重复任务
+: - TODO States 备选 backlog
+
+具体两个技巧，
+
+*用自定义 leaders 让 deadline 一眼可见*
+
+默认的 scheduled 和 deadline 前缀很难区分。我的做法是缩短 scheduled 前缀，给 deadline 加 =🔴= 前缀，再调整排序让 deadline 排到最前面就行了。
+
+下面这段配置依赖 Org 和 Org-agenda 已加载，建议在 init.el 里放到 =(require 'org-agenda)= 之后：
+
+#+begin_src elisp
+(setq org-agenda-scheduled-leaders '("Sched" "S.%2dx"))
+(setq org-agenda-deadline-leaders '("🔴 0d" "🔴%2dd" "🔴-%1dd"))
+
+(defun my/org-agenda-repeater ()
+  "The repeater shown in org-agenda-prefix for agenda."
+  (let ((pom (org-get-at-bol 'org-marker)))
+    (if (or (org-get-scheduled-time pom) (org-get-deadline-time pom))
+        (format "%5s: " (or (org-get-repeat) ""))
+      "------------")))
+
+(setq org-agenda-prefix-format
+      '((agenda . " %i %-12:c%?-12t%s%(my/org-agenda-repeater)")))
+
+(setq org-agenda-sorting-strategy
+      '((agenda deadline-up habit-down time-up priority-down category-keep)))
+#+end_src
+
+改完再看 agenda，deadline 和 scheduled 已经彻底分开了。deadline 排在最上面，前面带着 =🔴= 前缀，紧急任务一眼就能跳出来。后面的 repeater 列（=+1d= 之类的）会显示任务的重复周期，重复任务和一次性任务也好区分。
+
+*把警告窗口从 14 天扩展到 35 天*
+
+默认 =org-deadline-warning-days= 是 14。但看到 deadline 时也就剩不到两周了，如果手头已经有安排，这点窗口期根本不够从容规划。
+
+改为 35 天（5 周），让重要截止日期提前一个月出现在议程里：
+
+#+begin_src elisp
+(setq org-deadline-warning-days 35)
+#+end_src
+
+对于小任务，可以在具体 DEADLINE 中用 =-3d= 覆盖默认警告周期，具体写法是
+
+#+begin_src org
+  : DEADLINE: <2026-06-19 Fri ++28d -3d>
+#+end_src
+
+其中 =++28d= 是每 28 天重复一次的周期标记（双加号表示错过不补追），=-3d= 是把该任务的警告提前期覆盖为 3 天。
+
+两个改动都不大，但 deadline 现在好用多了，一眼就能看清哪些任务要到期了。
