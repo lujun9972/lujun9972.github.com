@@ -10,26 +10,26 @@
 
 bookmarks、auto-saves、recentf、savehist、transient、tramp、url、multisession、image-dired、erc、rcirc……乱七八糟一堆文件。这些文件散落各处，想清不敢清，想管没头绪。
 
-Rahul M. Juliato 在 [[https://rahuljuliato.com/posts/emacs-cache-paths][Taming Emacs Cache and Temporary Files]] 一文中，给出了一套不依赖任何外部包的整理方案。核心思路是造三个 Elisp 组件，把所有这些缓存文件集中管起来，还能一键在「持久化写进配置目录」和「临时写进 =/tmp= 」之间切换。
+Rahul M. Juliato 在 [[https://rahuljuliato.com/posts/emacs-cache-paths][Taming Emacs Cache and Temporary Files]] 一文中，给出了一套不依赖任何外部包的整理方案，把所有这些缓存文件集中管起来。
 
 * 设计思路，一个 alist 驱动一切
 
-Emacs 内部有一堆变量控制各类缓存文件的存放位置。 =bookmark-default-file= 管书签存哪， =recentf-save-file= 管最近打开的文件列表存哪， =tramp-persistency-file-name= 管 TRAMP 的连接信息存哪，每个变量各自指向一个路径，默认散落在不同目录。
+Emacs 内部有一堆变量控制各类缓存文件的存放位置。比如 =bookmark-default-file= 管书签存哪， =recentf-save-file= 管最近打开的文件列表存哪， =tramp-persistency-file-name= 管 TRAMP 的连接信息存哪，等等。每个变量各自指向一个路径，默认散落在不同目录中。
 
-这套方案怎么解决的？
+为了解决这个问题，我们可以：
 
-1. 定义一个 alist（关联列表，Elisp 里的 key-value 映射），把变量名映射到相对路径
+1. 定义一个 alist，把变量名映射到相对路径
 2. 一个辅助函数把 key 解析成绝对路径
-3. 另一个辅助函数在启动时自动创建所有需要的目录，相当于 =mkdir -p=
+3. 另一个辅助函数在Emacs启动时自动创建所有需要的目录，相当于 =mkdir -p=
 4. 用 =use-package :custom= 把所有变量指向这些路径
 
-做完之后， =~/.emacs.d/cache/= 目录下整整齐齐装着所有缓存，想清空就 =rm -rf= ，想备份就整个目录打包。用 =M-x customize-variable= 切换根目录的话，还能在「持久化」和「临时」模式之间一键切换。
+这样一来， 我们可以把所有缓存文件放到一个目录中进行管理，想清空就 =rm -rf= ，想备份就整个目录打包。
 
-* 组件一，可切换的根目录
+* 一，先定义缓存文件存放的根目录
 
-根目录的定义。跟直觉相反的是，这里用 =defcustom= 比 =defvar= 更合适。
+这里用 =defcustom= ，不是 =defvar= 来定义根目录。
 
-=defcustom= 是 Emacs 中专门定义「用户可配置选项」的宏。它和 =defvar= 最大的区别，是 =defcustom= 定义的变量会出现在 =M-x customize= 界面里，你可以图形化地修改，改完后值持久化到 =custom.el= 。这样一来，你不需要编辑 =init.el= 就能切换缓存位置。
+=defcustom= 是 Emacs 中专门定义「用户可配置选项」的宏。它和 =defvar= 最大的区别，是 =defcustom= 定义的变量会出现在 =M-x customize= 界面里，你可以用图形化的方式进行修改，还能把值持久化到 =custom.el= 中。这样一来，你不需要手工修改配置文件就能切换缓存位置。
 
 #+BEGIN_SRC emacs-lisp
 (defcustom my/cache-directory
@@ -51,18 +51,16 @@ Changes take effect after restarting Emacs."
 - */tmp* ，缓存放 =/tmp/emacs-cache/= ，重启即清空，适合录屏或测试
 - *自定义路径* ，随便指到哪
 
-注意默认值用的是 =user-emacs-directory= 而不是硬编码 =~/.emacs.d/= 。原因是 Emacs 29 引入了 =--init-directory= 命令行参数，你可以 =emacs --init-directory=/path/to/config= 这样启动 Emacs，不碰默认的 =~/.emacs.d= 。用 =user-emacs-directory= 锚定路径，缓存会跟着当前启动的配置走，所有配置就不会都往默认 =~/.emacs.d= 里写、互相踩脚了。
+注意默认值用的是 =user-emacs-directory= 而不是硬编码 =~/.emacs.d/= 。原因是 Emacs 29 引入了 =--init-directory= 命令行参数，你可以 =emacs --init-directory=/path/to/config= 这样启动 Emacs 。用 =user-emacs-directory= 锚定路径，缓存会跟着当前启动的配置走，而不是死板的都往默认 =~/.emacs.d= 里写。
 
-最后还需要一个小补丁，重新加载 =custom-file= 。 =M-x customize= 修改后立即写入 =custom.el= ，重启时需要在 =init.el= 执行缓存相关配置之前读到新值：
+最后还需要一个小补丁，需要在 =init.el= 中指明重新加载 =custom-file= 。
 
 #+BEGIN_SRC emacs-lisp
 (when custom-file
   (load custom-file 'noerror 'nomessage))
 #+END_SRC
 
-=when= 守卫是必要的，全新配置下 =custom-file= 为 =nil= ， =(load nil ...)= 会报类型错误直接中断启动。
-
-* 组件二，alist 作为唯一真相源
+* 二，alist 作为唯一配置源
 
 第二个组件是一个 alist，用变量名作 key，相对路径作 value。整个方案里所有「什么东西该放哪」的信息都集中在这一处。
 
@@ -95,13 +93,13 @@ RELATIVE-PATH is resolved against `my/cache-directory'.
 A trailing slash on RELATIVE-PATH marks the entry as a directory.")
 #+END_SRC
 
-约定很简单，value 以 =/= 结尾的是目录，否则是文件。后面的辅助函数会根据这个来区分要不要自动创建目录。
+这里遵照 [[help:directory-name-p][directory-name-p]] 函数的约定，value 以 =/= 结尾的是目录，否则是文件。后面的辅助函数会根据这个来区分要不要自动创建目录。
 
-我故意把 =tree-sitter/= 、 =eln-cache/= 、 =eshell/= 排除在外。 =tree-sitter= 和 =eln-cache= 的内容来自耗时较长的编译过程（语法树编译、本地代码编译），我希望清空缓存时它们能留下来。 =eshell= 里有我的命令历史和别名，更接近 dotfile 而不是临时状态。你的工作流可能不同，按需增减就行。
+这里作者故意把 =tree-sitter/= 、 =eln-cache/= 、 =eshell/= 排除在外。因为 =tree-sitter= 和 =eln-cache= 的内容来自耗时较长的编译过程（语法树编译、本地代码编译），重新生成成本太大。 =eshell= 里的是命令历史和别名，更接近 dotfile，算不上临时状态。大家的工作流可能不同，按需增减就行。
 
-* 组件三，两个辅助函数
+* 三，两个辅助函数
 
-两个短函数，一个解析路径，一个创建目录。
+两个辅助函数，一个解析路径，一个创建目录。
 
 #+BEGIN_SRC emacs-lisp
 (defun my/cache--path (key)
@@ -112,7 +110,7 @@ A trailing slash on RELATIVE-PATH marks the entry as a directory.")
     (expand-file-name rel my/cache-directory)))
 #+END_SRC
 
-=my/cache--path= 用 =assq= 查找 key。 =assq= 对 symbol key 用 =eq= 做比较（比 =assoc= 的 =equal= 更快）。 =unless= 分支不是摆设，如果你在 =:custom= 块里打错了变量名，没有这个错误检查的话，Emacs 会静默地把值设成 =nil= ，然后很多包在 =nil= 路径上写文件，坏得莫名其妙。
+=my/cache--path= 用 =assq= 查找 key。 =assq= 对 symbol key 用 =eq= 做比较（比 =assoc= 的 =equal= 更快）。 =unless= 分支在你 =:custom= 块里打错了变量名的情况下给你错误提示。没有这个错误检查的话，Emacs 会静默地把值设成 =nil= ，然后很多包在 =nil= 路径上写文件，会出现莫名其妙的错误。
 
 #+BEGIN_SRC emacs-lisp
 (defun my/cache--ensure-dirs ()
@@ -131,9 +129,9 @@ parent directory created."
 
 =my/cache--ensure-dirs= 在启动时跑一遍，确保所有需要的目录都存在。 =make-directory= 的第二个参数 =t= 相当于 =mkdir -p= ，所以 =transient/history.el= 会自动创建 =<cache>/transient/= 目录，哪怕 alist 里没单独列出它。
 
-* 接线，use-package :custom
+* 拼接起来
 
-三个组件就位，该接线了。
+把三部分内容拼接起来就行了。
 
 大部分缓存变量可以直接在 =use-package emacs= 的 =:custom= 块里设：
 
@@ -153,14 +151,8 @@ parent directory created."
   (nsm-settings-file           (my/cache--path 'nsm-settings-file))
   (multisession-directory      (my/cache--path 'multisession-directory))
   (url-configuration-directory (my/cache--path 'url-configuration-directory))
-
-  ;; 个人偏好（与缓存路径无关）
-  (create-lockfiles            nil)
-  (make-backup-files           nil)
-  (auto-save-default           t))
+  )
 #+END_SRC
-
-最后三个设置和缓存路径无关，是我的个人偏好。关掉 lockfiles 和备份文件（前者会触发前端工具链的文件监听抖动），但保留 auto-save，毕竟 Emacs 崩溃时这是救命稻草。
 
 * 特殊变量处理
 
@@ -176,7 +168,7 @@ auto-save 用的不是单值变量，而是路径变换规则：
       `((".*" ,(my/cache--path 'auto-saves) t)))
 #+END_SRC
 
-=auto-save-list-file-prefix= 控制「待恢复文件列表」的存放位置（=M-x recover-session= 读的就是它）。 =auto-save-file-name-transforms= 是一个 =(REGEX REPLACEMENT UNIQUIFY)= 三元组列表，第三个元素 =t= （uniquify 标志）会把原始路径编码进文件名，这样两个同名的文件就不会在 auto-save 目录里互相覆盖了。
+=auto-save-list-file-prefix= 控制「待恢复文件列表」的存放位置（ =M-x recover-session= 读的就是它）。 =auto-save-file-name-transforms= 是一个 =(REGEX REPLACEMENT UNIQUIFY)= 三元组列表，第三个元素 =t= （uniquify 标志）会把原始路径编码进文件名，这样两个同名的文件就不会在 auto-save 目录里互相覆盖了。
 
 ** TRAMP 等延迟加载变量
 
@@ -188,7 +180,7 @@ auto-save 用的不是单值变量，而是路径变换规则：
   (setopt tramp-persistency-file-name (my/cache--path 'tramp-persistency-file-name)))
 #+END_SRC
 
-=setopt= 是 =setq= 的现代替代品，专门用于 =defcustom= 定义的变量。关键区别： =setopt= 会执行变量定义的 =:set= 函数（如果有的话）， =setq= 直接赋值跳过。 =tramp-persistency-file-name= 定义了 =:set= 函数来触发 TRAMP 内部重载，用 =setq= 会跳过这一步，导致 TRAMP 状态不一致。
+=setopt= 是 =setq= 的现代替代品，专门用于 =defcustom= 定义的变量。关键区别在于： =setopt= 会执行变量定义的 =:set= 函数（如果有的话）， =setq= 直接赋值则会跳过这一步。 =tramp-persistency-file-name= 定义了 =:set= 函数来触发 TRAMP 内部重载，用 =setq= 会跳过这一步，导致 TRAMP 状态不一致。
 
 * 完整代码 + 最终效果
 
@@ -314,20 +306,18 @@ auto-save 用的不是单值变量，而是路径变换规则：
 
 所有缓存都在 =cache/= 下一个目录，想清就清，想留就留。 =eln-cache= 、 =eshell= 、 =tree-sitter= 是编译产出和 dotfile，不在 alist 管理范围内。
 
-* 新包接入，两行改动
+* 新包接入，两行配置
 
 每当你开始用一个会产生缓存文件的新包，只需要两处改动：
 
 1. 在 =my/cache-paths= 里加一条映射
 2. 在 =use-package :custom= 里加一行
 
-下次重启时，目录自动创建，变量自动指向。
-
-用 =grep my/cache--path init.el= 就能列出所有 Emacs 写状态的位置，alist 告诉你是哪种状态。审计写入点，一行命令完事。
+下次重启时，目录自动创建，变量自动指向新地址。
 
 * 与 no-littering 的对比
 
-原文提到，如果你不想自己维护这套配置，可以用 [[https://github.com/emacscollective/no-littering][no-littering]] 这个包。两种方案各有利弊：
+原文提到，如果你不想自己维护这套配置，还可以用 [[https://github.com/emacscollective/no-littering][no-littering]] 这个包。两种方案各有利弊：
 
 | 方案           | 优点                                       | 缺点                             |
 |----------------+--------------------------------------------+----------------------------------|
