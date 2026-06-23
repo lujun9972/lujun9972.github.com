@@ -1,0 +1,73 @@
+#+TITLE: TIL：zombie memory cgroups 让 CPU 做无用功
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux, cgroups, 性能调优, 内核, 系统运维
+#+DATE: [2026-06-22 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Pinterest 工程团队花了三个月才发现一次 CPU 瓶颈的根因：zombie memory cgroups。进程退出但 cgroup 未被内核回收时，遍历这些废弃 cgroup 的系统调用会越来越慢，最终把单个 CPU 核占满。本文记录 zombie memory cgroups 的成因、检查方法（cgroup v1 和 v2）、以及清理方式。
+
+Pinterest 工程团队最近分享了一篇 [[https://medium.com/pinterest-engineering/finding-zombies-in-our-systems-a-real-world-story-of-cpu-bottlenecks-ea4722e552eb][CPU 瓶颈排查故事]]，花了三个月才找到根因。问题不在常规排查工具能发现的范围内，而是一个容易被忽略的内核机制： *zombie memory cgroups* 。进程退出后 cgroup 没被回收，残留的统计结构让内核反复做无用功，最终把 CPU 拖垮。
+
+这条 TIL 记录 zombie memory cgroups 的成因、检查方法和清理方式。
+
+* 什么是 zombie memory cgroups
+
+要理解 zombie memory cgroups，需要先知道 *memory cgroup* （内存控制组）是什么。cgroup 是 Linux 内核做资源隔离用的，Docker 和 Kubernetes 的资源限制都依赖它。memory cgroup 是其中负责内存隔离的那一类，每个 cgroup 跟踪自己下面进程的内存使用。
+
+内核在统计一个 cgroup 的 LRU 页面（最近最少使用页面，内核换页算法的基本单位）时，需要遍历所有 memory cgroup。 =mem_cgroup_nr_lru_pages= 这个系统调用就负责做这件事。
+
+*zombie memory cgroups* 指的是进程已经退出、cgroup 目录已经删掉，但内核里关于它的统计结构还没回收。cgroup 数量越多， =mem_cgroup_nr_lru_pages= 这个系统调用就越慢。几万个 zombie 堆积时，单次调用可能耗掉几百毫秒的 CPU，把单个核占满。
+
+内核不立即回收 cgroup 的原因是引用计数。一个 cgroup 可能有多个引用者（正在退出的进程、未释放的页面、其他内核子系统），内核需要等所有引用都释放后才能安全清理，这个过程涉及 RCU 同步和复杂的状态机。crashloop 的容器（每秒重启一次）会让 cgroup 创建速度远超回收速度，残留快速累积。
+
+在 Pinterest 的故障机器上，内核跟踪了 68680 个 memory cgroup，实际在用的只有 240 个。差值 68440 个全是 zombie。
+
+* 检查方法
+
+** cgroup v1（Pinterest 原文的写法）
+
+#+begin_src shell
+# 内核跟踪的 memory cgroup 数量（含 zombie）
+cat /proc/cgroups | grep memory | awk '{print $3}'
+# 实际在用的 memory cgroup 数量
+find /sys/fs/cgroup/memory/ -type d | wc -l
+#+end_src
+
+** 判断本机用的是哪个版本
+
+#+begin_src shell
+stat -fc %T /sys/fs/cgroup/
+#+end_src
+
+#+begin_example
+cgroup2fs
+#+end_example
+
+输出 =cgroup2fs= 就是 v2， =tmpfs= 就是 v1。
+
+** cgroup v2（2018 年起 Linux 内核默认支持）
+
+*cgroup v2* （systemd 244+ 默认启用）改动很大，所有控制器（cpu、memory、io 等）合并到统一层级， =/proc/cgroups= 不再有 =memory= 这种分控制器行， =/sys/fs/cgroup/memory/= 这个路径也不存在了。
+
+v2 下检查 zombie 的方法如下：
+
+#+begin_src shell
+# 内核里 cgroup 总数（含 zombie，统计所有控制器）
+cat /proc/cgroups | awk 'NR>1{sum+=$3} END{print sum}'
+
+# 当前文件系统里实际存在的 cgroup 目录数
+find /sys/fs/cgroup/ -type d | wc -l
+#+end_src
+
+#+begin_example
+925
+55
+#+end_example
+
+差值（925 - 55 = 870）就是 zombie 数量。本机是桌面笔记本，870 个残留不算多。生产服务器跑 Docker 或 Kubernetes 时，如果容器频繁创建销毁，这个差值会快速增加。
+
+* 清理方法
+
+清理 zombie 的方法是重启机器，或者重启占用 cgroup 的服务（kubelet、containerd、docker daemon）。
+
+我们可以先排查是不是有容器在 crashloop。Docker 环境用 =docker ps -a= 看有没有几秒前创建的容器；Kubernetes 环境看 =kubectl get pods= 有没有 CrashLoopBackOff 状态的 pod。找到泄漏源后停掉对应服务，再重启 cgroup 相关的 daemon，可以避免整机重启。
