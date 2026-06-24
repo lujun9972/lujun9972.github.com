@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：三种响应式算法的推拉权衡 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="响应式系统（电子表格、GUI 框架）面临四个核心约束，高效、细粒度、无毛刺、动态依赖。原文用三种算法分别应对这四个约束，分析了 push 和 pull 各自的根本缺陷，以及如何用 push-pull （先标记脏节点再按需重算）的方式来同时满足全部约束。" />
+  <meta name="keywords" content="reactivity, algorithm, push, pull" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：三种响应式算法的推拉权衡</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgc87c2a2">响应式系统的四个约束</a></li>
+<li><a href="#org611a291">Push 推式响应</a>
+<ul>
+<li><a href="#orgb8a6c69">效率问题</a></li>
+<li><a href="#org54c17a7">毛刺问题</a></li>
+</ul>
+</li>
+<li><a href="#org65dec01">Pull 拉式响应</a>
+<ul>
+<li><a href="#org64a916f">无毛刺</a></li>
+<li><a href="#org3912663">天然支持动态依赖</a></li>
+<li><a href="#org2bf64a6">浪费计算</a></li>
+</ul>
+</li>
+<li><a href="#org00efc8d">Push-Pull 推拉混合</a>
+<ul>
+<li><a href="#orge71002f">Push 阶段，标记脏节点</a></li>
+<li><a href="#orgf4f3d62">Pull 阶段，按需重算</a></li>
+<li><a href="#orgb258e7f">Push-Pull 为什么满足四个约束</a></li>
+</ul>
+</li>
+<li><a href="#org4e13071">总结</a></li>
+</ul>
+</div>
+</div>
+<p>
+Jonathan Frere 在 <a href="https://jonathan-frere.com/posts/reactivity-algorithms/">原文</a> 里把三种响应式算法（push、pull、push-pull）摆在一起比了个遍。为什么响应式系统的实现方式这么多，到底哪种好？这事得从四个约束的取舍说起。
+</p>
+
+<div id="outline-container-orgc87c2a2" class="outline-2">
+<h2 id="orgc87c2a2">响应式系统的四个约束</h2>
+<div class="outline-text-2" id="text-orgc87c2a2">
+<p>
+原文拿电子表格举例。表格里有输入单元格、中间计算单元格和输出单元格。某个输入一变，依赖它的所有单元格都得跟着变，这就是响应式。
+</p>
+
+<p>
+不过「跟着更新」只是最低要求。现实里的响应式系统往往还得满足四个约束。
+</p>
+
+<ol class="org-ol">
+<li>*高效（Efficient）*，每个单元格最多重算一次。已经算过的结果不丢弃，也不重复计算会被覆盖的中间值。</li>
+<li>*细粒度（Fine-grained）*，只更新真正受影响的单元格，没变的一律不动。</li>
+<li>*无毛刺（Glitchless）*，所有单元格同时更新，外部观察者看不到中间不一致的状态。原文举了个例子，相邻两个单元格一个存国家代码（UK、DE、BE），另一个存国家全称。如果更新过程中能看到代码已变、全称却还没跟着变，那就是出现了毛刺（glitch，指可观察到的瞬时不一致）。</li>
+<li>*动态依赖（Dynamic）*，依赖关系本身可以变化。比如 <code>IF(condition, B1)</code> 这样的条件公式，condition 为真时依赖 B1，为假时不依赖。B1 变了，但 condition 为假的公式不该被触发更新。</li>
+</ol>
+</div>
+</div>
+
+<div id="outline-container-org611a291" class="outline-2">
+<h2 id="org611a291">Push 推式响应</h2>
+<div class="outline-text-2" id="text-org611a291">
+<p>
+Push 算法的机制很直白。一个节点更新完，主动通知所有依赖它的节点，更新沿着依赖链一路推下去。大多数事件系统、流（stream）、observable 都是这个套路。promise/future/async-await 也能看成一次性的推式响应树，每个 <code>.then</code> 或 <code>await</code> 都是在监听上一步，初始 promise resolve 时把更新一路推到链尾。
+</p>
+
+<p>
+Push 最大的好处是天然满足 <b>细粒度</b> 。每次输入变化只通知真正依赖它的节点，别的节点压根不用知道发生了什么。适合输入频繁独立变化的场景（电子表格、GUI）。
+</p>
+
+<p>
+但 push 有两个核心问题。
+</p>
+</div>
+
+<div id="outline-container-orgb8a6c69" class="outline-3">
+<h3 id="orgb8a6c69">效率问题</h3>
+<div class="outline-text-3" id="text-orgb8a6c69">
+<p>
+设想下面这张依赖图。A 变了，B 依赖 A 和 C，C 也依赖 A，D 依赖 B 和 C。
+</p>
+
+
+<div id="org7dc6e72" class="figure">
+<p><img src="../../../../../assets/blog/2026/06/24/读：三种响应式算法的推拉权衡/fail-case.svg" alt="fail-case.svg" class="org-svg" />
+</p>
+</div>
+
+<p>
+A 变化时先通知 B 和 C。B 依赖 A 和 C，可这时 C 还没更新，B 可能先拿旧的 C 算一次。等 C 更新完再通知 B，B 只能重算，第一次的结果白扔了。D 更惨，A 才变了一次，D 可能收到三次更新通知。
+</p>
+
+<p>
+办法是按特定顺序更新。先更新 A，通知 B 和 C。B 发现自己还有另一个依赖 C 没动，先等着。C 更新完通知 B 和 D。B 看到两个依赖都就绪，更新，再通知 D。D 最后更新。这样每个节点只更新一次。
+</p>
+
+<p>
+要做到这点，算法需要看到整张依赖图，算出最优更新顺序。这个顺序叫 *拓扑排序（topological sort）*。它把图里的节点排成一个线性序列，每个节点在序列中只出现一次，而且排在它所有依赖的后面。比如 B 依赖 A 和 C，那 A 和 C 必须排在 B 前面。这样从头到尾走一遍，每个节点只访问一次，访问它的时候它依赖的节点都已经更新过了。
+</p>
+
+<p>
+不过这里有个根本矛盾。push 的价值在于每个节点只需掌握自己的直接依赖者，局部决策容易，全局分析难。系统一旦有了动态依赖（前面说的那种，依赖关系随运行时值变化，比如 <code>IF</code> 条件为真才依赖某个单元格），全局拓扑排序就变得昂贵甚至不可能。
+</p>
+</div>
+</div>
+<div id="outline-container-org54c17a7" class="outline-3">
+<h3 id="org54c17a7">毛刺问题</h3>
+<div class="outline-text-3" id="text-org54c17a7">
+<p>
+只要代码运行在第一个节点更新之后、最后一个节点更新之前，就可能看到不一致的中间状态。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org65dec01" class="outline-2">
+<h2 id="org65dec01">Pull 拉式响应</h2>
+<div class="outline-text-2" id="text-org65dec01">
+<p>
+把 push 的图反过来就是 pull。每个节点主动调用它的依赖来取值。更新自己之前得先让依赖更新，所以其实它就是 *一个递归的函数调用栈*。我调一个函数，函数内部按需调更多函数，最后返回结果。
+</p>
+
+<p>
+但纯函数调用还不算响应式，缺一个触发机制，也就是状态变化时怎么触发函数重跑。
+</p>
+
+<p>
+最简单的系统每次输入变化就重算一切。回到电子表格的例子就是，改一个单元格就把表格里所有单元格从头算一遍。遇到引用其他单元格（比如 =B8=）就先递归算 B8 的值，再接着算自己。最后所有单元格都更新到最新值。
+</p>
+
+<p>
+这种暴力重算有两个明显的好处。
+</p>
+</div>
+
+<div id="outline-container-org64a916f" class="outline-3">
+<h3 id="org64a916f">无毛刺</h3>
+<div class="outline-text-3" id="text-org64a916f">
+<p>
+每次输入变化只做一轮递归遍历，只要遍历过程中不改输入，所有节点看到的输入都是一致的。单线程运行时（比如 JavaScript）天生满足这点，因为递归遍历在调用栈上一口气跑完，中间没有别的代码能插进来修改输入。多线程环境下另一个线程可能恰好在你遍历到一半时改了输入，解决办法是加锁，遍历开始时锁住输入，遍历结束后解锁，其他想改输入的线程排队等锁释放就行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3912663" class="outline-3">
+<h3 id="org3912663">天然支持动态依赖</h3>
+<div class="outline-text-3" id="text-org3912663">
+<p>
+既然 pull 其实就是函数调用栈，条件调用（也就是条件依赖）就是写个 if 的事。不用维护订阅列表，需要哪个值就去取。
+</p>
+
+<p>
+但暴力 pull 有个大问题。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2bf64a6" class="outline-3">
+<h3 id="org2bf64a6">浪费计算</h3>
+<div class="outline-text-3" id="text-org2bf64a6">
+<p>
+A1 和 A2 都引用 B8 的话，一轮更新里 B8 会被算两次。一个解决办法是把算过的单元格缓存起来，后续引用直接用缓存值。但缓存失效又是一个难题。简单方案用 generation counter，每次改输入就清空全部缓存，一了百了但浪费多。复杂方案用 LRU 缓存（LRU 是最近最少使用策略，缓存满了先淘汰最久没访问的条目），但需要考虑两个问题。一是缓存设多大，太小命中率低老得重算，太大占内存。二是相等性判断，比如两个单元格引用的是同一个值但用了不同的对象引用，缓存怎么知道它们是同一个东西。两种方案也能混用，计算成本低的节点不缓存，计算成本高的节点上重型缓存策略。
+</p>
+
+<p>
+此外，暴力重算需要更新所有节点，可现实是大部分节点其实可能都没变。最好是只更新真正受影响的节点。但纯 pull 系统里，输入节点不知道谁依赖自己，没法判断影响范围。这是 pull 算法靠自己解不开的死结。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org00efc8d" class="outline-2">
+<h2 id="org00efc8d">Push-Pull 推拉混合</h2>
+<div class="outline-text-2" id="text-org00efc8d">
+<p>
+push 和 pull 各有硬伤。push 效率差又难避免毛刺，pull 不知道该更新谁。原文的第三种方案两边的好处都要，push 阶段干标记，pull 阶段干重算。
+</p>
+</div>
+
+<div id="outline-container-orge71002f" class="outline-3">
+<h3 id="orge71002f">Push 阶段，标记脏节点</h3>
+<div class="outline-text-3" id="text-orge71002f">
+<p>
+给每个节点加一个 *dirty 标志（脏标记）*，true 代表要重算，false 代表已经是最新。初始全是 false，整棵树干干净净。
+</p>
+
+<p>
+当某个输入节点变化，从它出发递归遍历下游节点，对每个节点做下面几件事。
+</p>
+
+<ol class="org-ol">
+<li>如果已经是 dirty，跳过（之前标记过了）。</li>
+<li>标记为 dirty。</li>
+<li>如果是输出节点（叶子节点），加入一个待更新列表。</li>
+<li>否则递归处理它的所有下游节点。</li>
+</ol>
+
+<p>
+遍历完会得到一棵 dirty 和 clean 节点混着的树，只有 dirty 节点需要更新。
+</p>
+
+<p>
+关键在于这个 push 阶段不关心访问顺序。纯 push 要拓扑排序，这里只要该标记的都标记到就行，顺序无所谓。所以算法简单，递归遍历加 dirty 检查就够了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf4f3d62" class="outline-3">
+<h3 id="orgf4f3d62">Pull 阶段，按需重算</h3>
+<div class="outline-text-3" id="text-orgf4f3d62">
+<p>
+现在知道哪些输出节点需要更新了（push 阶段收集的待更新列表）。对每个待更新的输出节点，执行和纯 pull 一样的递归拉取，但加两个检查。
+</p>
+
+<ol class="org-ol">
+<li>如果当前节点是 clean，直接返回缓存值。它不需要重算，因为不在任何变更输入的下游。</li>
+<li>如果当前节点是 dirty，重算，标记为 clean，缓存结果。</li>
+</ol>
+
+<p>
+pull 结束后，整棵树全部 clean，所有输出节点更新完毕。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgb258e7f" class="outline-3">
+<h3 id="orgb258e7f">Push-Pull 为什么满足四个约束</h3>
+<div class="outline-text-3" id="text-orgb258e7f">
+<p>
+一项一项对照。
+</p>
+
+<ul class="org-ul">
+<li>先说 *高效*。push 阶段每个节点最多访问一次（dirty 检查会跳过已经标记过的），pull 阶段同样每个节点最多重算一次（clean 检查用上缓存），整体是 O(n)，n 是受影响节点数。</li>
+<li><b>细粒度</b> 也靠得住，push 阶段精确收集了需要更新的节点列表，pull 阶段只重算这些节点，其余完全不动。</li>
+<li><b>无毛刺</b> 方面，重算发生在 pull 阶段，和纯 pull 一样，只要 pull 期间不改输入，就不会出现可观察的不一致。</li>
+<li><b>动态依赖</b> 呢，pull 天生支持（前面讲过）。push 阶段也不需要全局拓扑排序，每个节点只要维护直接上下游邻居列表，动态增删依赖很轻松。</li>
+</ul>
+
+<p>
+四个约束全满足，push-pull 的魅力就在这。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org4e13071" class="outline-2">
+<h2 id="org4e13071">总结</h2>
+<div class="outline-text-2" id="text-org4e13071">
+<p>
+原文比较的三种算法可以归到一张矩阵里。
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">算法</th>
+<th scope="col" class="org-left">高效</th>
+<th scope="col" class="org-left">细粒度</th>
+<th scope="col" class="org-left">无毛刺</th>
+<th scope="col" class="org-left">动态依赖</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Push</td>
+<td class="org-left">难（需拓扑排序）</td>
+<td class="org-left">天然满足</td>
+<td class="org-left">难（需全局同步）</td>
+<td class="org-left">与效率冲突</td>
+</tr>
+
+<tr>
+<td class="org-left">Pull</td>
+<td class="org-left">难（缓存失效）</td>
+<td class="org-left">不能（不知影响范围）</td>
+<td class="org-left">天然满足</td>
+<td class="org-left">天然满足</td>
+</tr>
+
+<tr>
+<td class="org-left">Push-Pull</td>
+<td class="org-left">O(n) 满足</td>
+<td class="org-left">满足</td>
+<td class="org-left">满足</td>
+<td class="org-left">满足</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+push 和 pull 各有两个天生短板，互相补不上。push-pull 用两阶段分离，把「谁需要更新」交给 push（补上 pull 不知影响范围的短板），把「怎么算」交给 pull（补上 push 效率和毛刺的短板）。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-24</span>
+    <span class="post-info">2026-06-24</span>
+    <a href="../../../../../tags/reactivity">reactivity</a> : <a href="../../../../../tags/algorithm">algorithm</a> : <a href="../../../../../tags/push">push</a> : <a href="../../../../../tags/pull">pull</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm7b5n9 &lt;dot&gt; wrt1uumabuyufaoiyhie0rxx1a &lt;dot&gt; yx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
