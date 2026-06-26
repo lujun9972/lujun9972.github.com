@@ -1,0 +1,390 @@
+#+TITLE: 读：File System Access API，浏览器原生读写本地文件
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: File System Access API, 浏览器, Web API, JavaScript
+#+DATE: [2026-06-25 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: CSS-Tricks 的这篇教程介绍了 File System Access API，让网页通过 JavaScript 直接读写用户本地文件。本文按原文结构梳理读、写、目录、删除四类操作，并补充原文最薄弱的部分：2026 年的真实浏览器支持现状。Firefox 把这个 API 标记为 harmful，Safari 也不支持，移动端全军覆没。生产环境几乎不可用，但 API 的设计思路和 handle 抽象值得了解。
+
+[[https://developer.mozilla.org/en-US/docs/Web/API/File_System_API][File System Access API]] 是一组 Web API，让网页通过 JavaScript 直接读写用户本地文件。以前网页只能用 ~<input type="file">~ 让用户选文件上传，选中后只能读内容，不能写回去。File System Access API 把这个能力补齐了，读和写都能做，还能列目录、删文件。不过目前只有 Chrome 系桌面浏览器支持，Firefox 和 Safari 都没有跟进，详见后文。
+
+CSS-Tricks 上有一篇 [[https://css-tricks.com/getting-started-with-the-file-system-access-api/][入门教程]] 按读、写、目录、删除四块讲核心 API。本文按原文结构梳理，顺便补上原文没展开的设计细节和 2026 年的浏览器支持现状。
+
+* 先拿一个能跑的页面
+
+不想一段段看代码的，可以先把下面这个 HTML 存成文件，起个本地服务器直接点按钮试。把代码存成 =demo.html=，然后在同目录下执行 =python3 -m http.server 8000=，浏览器打开 =http://localhost:8000/demo.html= 就行。
+
+为什么要起服务器？因为 File System Access API 只在安全上下文（HTTPS 或 localhost）里可用，直接双击 =.html= 文件走的是 =file://= 协议，API 会变成 =undefined=。
+
+#+begin_src html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>File System Access API 试试看</title>
+  <style>
+    body { font-family: sans-serif; max-width: 700px; margin: 40px auto; }
+    button { margin: 4px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+    pre { background: #f5f5f5; padding: 12px; white-space: pre-wrap; word-break: break-all; min-height: 100px; }
+  </style>
+</head>
+<body>
+  <h1>File System Access API 试试看</h1>
+  <p>需要 Chrome 或 Edge 105+，页面必须跑在 localhost 或 HTTPS 上（不能直接双击打开）。</p>
+  <div>
+    <button class="pick-file">读单个文件</button>
+    <button class="pick-multi">读多个文件</button>
+    <button class="pick-image">只选图片</button>
+    <button class="save-file">写新文件</button>
+    <button class="edit-file">改已有文件（覆盖）</button>
+    <button class="read-dir">列出目录</button>
+    <button class="del-file">删除文件</button>
+    <button class="del-entry">删除目录内条目</button>
+  </div>
+  <h3>输出</h3>
+  <pre id="output">点上面的按钮试试</pre>
+
+  <script>
+    const out = document.getElementById("output");
+    const log = (msg) => { out.textContent = msg; };
+
+    let fileHandle;
+
+    // 读单个文件
+    document.querySelector(".pick-file").onclick = async () => {
+      try {
+        [fileHandle] = await window.showOpenFilePicker();
+      } catch (err) {
+        log("取消了选择");
+        return;
+      }
+      const file = await fileHandle.getFile();
+      const content = await file.text();
+      log(
+        "文件名: " + file.name +
+        "\n大小: " + file.size + " 字节" +
+        "\n类型: " + file.type +
+        "\n最后修改: " + new Date(file.lastModified).toLocaleString() +
+        "\n\n--- 内容 ---\n" + content
+      );
+    };
+
+    // 读多个文件
+    document.querySelector(".pick-multi").onclick = async () => {
+      try {
+        const handles = await window.showOpenFilePicker({ multiple: true });
+        const results = await Promise.all(
+          handles.map(async (h) => {
+            const f = await h.getFile();
+            return "[" + f.name + "]\n" + await f.text();
+          })
+        );
+        log(results.join("\n\n---\n\n"));
+      } catch (err) {
+        log("取消了选择");
+      }
+    };
+
+    // 只选图片（限定文件类型）
+    document.querySelector(".pick-image").onclick = async () => {
+      try {
+        const handles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: "图片",
+            accept: { "image/jpeg": [".jpeg"], "image/png": [".png"] },
+          }],
+          excludeAcceptAllOption: true,
+        });
+        const names = handles.map(async (h) => (await h.getFile()).name);
+        log("选中的图片:\n" + (await Promise.all(names)).join("\n"));
+      } catch (err) {
+        log("取消了选择");
+      }
+    };
+
+    // 写新文件
+    document.querySelector(".save-file").onclick = async () => {
+      try {
+        const handle = await window.showSaveFilePicker({
+          types: [{ description: "文本文件", accept: { "text/plain": [".txt"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write("Hello World\n这是用 File System Access API 写入的内容。");
+        await writable.close();
+        log("已保存到: " + handle.name);
+      } catch (err) {
+        log("取消了保存");
+      }
+    };
+
+    // 改已有文件（覆盖）
+    document.querySelector(".edit-file").onclick = async () => {
+      try {
+        [fileHandle] = await window.showOpenFilePicker();
+        const writable = await fileHandle.createWritable();
+        await writable.write("文件内容已被替换。\n" + new Date().toLocaleString());
+        await writable.close();
+        log("已覆盖写入: " + fileHandle.name);
+      } catch (err) {
+        log("取消了选择");
+      }
+    };
+
+    // 列出目录
+    document.querySelector(".read-dir").onclick = async () => {
+      try {
+        const dirHandle = await window.showDirectoryPicker();
+        const entries = [];
+        for await (const entry of dirHandle.values()) {
+          entries.push(entry.kind + "\t" + entry.name);
+        }
+        log("目录: " + dirHandle.name + "\n\n" + entries.join("\n"));
+      } catch (err) {
+        log("取消了选择");
+      }
+    };
+
+    // 删除文件
+    document.querySelector(".del-file").onclick = async () => {
+      try {
+        const [handle] = await window.showOpenFilePicker();
+        await handle.remove();
+        log("已删除: " + handle.name);
+      } catch (err) {
+        log("取消了选择");
+      }
+    };
+
+    // 删除目录内条目
+    document.querySelector(".del-entry").onclick = async () => {
+      try {
+        const dirHandle = await window.showDirectoryPicker();
+        const name = prompt("输入要删除的文件或目录名:");
+        if (!name) { log("没输入名字"); return; }
+        try {
+          await dirHandle.removeEntry(name);
+          log("已删除: " + name);
+        } catch (e) {
+          // 可能是目录且有内容，尝试递归删
+          if (e.name === "InvalidModificationError") {
+            await dirHandle.removeEntry(name, { recursive: true });
+            log("已递归删除目录: " + name);
+          } else {
+            throw e;
+          }
+        }
+      } catch (err) {
+        log("取消了选择或文件不存在: " + err.message);
+      }
+    };
+  </script>
+</body>
+</html>
+#+end_src
+
+下面逐个讲每个操作背后的代码。
+
+* 动手之前得满足两个条件
+
+调用这组 API 有两个硬性前提。一是必须在安全上下文中，也就是 HTTPS 页面。localhost 是例外，浏览器把它当作安全的，方便本地开发调试。二是必须由用户主动触发，比如点击按钮。不能在页面加载时自动弹出文件选择框，也不能在定时器回调里偷偷调。
+
+这个限制是故意的，防止网页在用户不知情的情况下操作本地文件。下文所有代码示例都假设挂在一个按钮的 click 事件上，且需要在 Chrome 或 Edge 105+ 浏览器中执行（其他浏览器不支持，原因见后文）。
+
+* 读文件
+
+** 读单个文件
+
+不到十行代码就能读完一个文件。
+
+#+begin_src javascript
+let fileHandle;
+
+document.querySelector(".pick-file").onclick = async () => {
+  try {
+    [fileHandle] = await window.showOpenFilePicker();
+  } catch (err) {
+    // 用户点了取消，什么都不用做
+    return;
+  }
+
+  const file = await fileHandle.getFile();
+  const content = await file.text();
+
+  console.log(content);
+};
+#+end_src
+
+=window.showOpenFilePicker()= 弹出系统的文件选择框。注意等号左边的中括号，这个方法返回的是一个数组（哪怕只选了一个文件），这里用解构语法取第一个元素。
+
+拿到的 =fileHandle= 是一个 =FileSystemFileHandle= 对象，长这样。
+
+#+begin_example
+FileSystemFileHandle {kind: 'file', name: 'data.txt'}
+#+end_example
+
+=kind= 要么是 =file= 要么是 =directory=，=name= 是文件名。这个 handle 不直接包含文件内容，只是文件的一个引用。要拿内容，得先调 =getFile()= 得到 =File= 对象，再调 =text()= 读文本。 =getFile()= 返回的 =File= 对象还带几个元数据属性： =name= （文件名）、 =size= （字节数）、 =type= （MIME 类型）、 =lastModified= （最后修改时间的毫秒时间戳）。
+
+这里的设计是把 handle（引用）和 file（内容快照）分开了。 =getFile()= 每次调用都返回当前最新的文件状态，不会缓存第一次选中时的版本。用户要是在网页打开期间用其他程序改了文件，可以通过再调一次 =getFile()= 来拿到新内容。
+
+另外，handle 不会随页面刷新自动保留。想跨会话复用同一个文件引用，需要手动把 handle 存进 IndexedDB。
+
+** 读多个文件
+
+传一个 =multiple: true= 选项就能选多个文件。
+
+#+begin_src javascript
+const options = {
+  multiple: true,
+};
+
+document.querySelector(".pick-file").onclick = async () => {
+  const fileHandles = await window.showOpenFilePicker(options);
+
+  const allContent = await Promise.all(
+    fileHandles.map(async (handle) => {
+      const file = await handle.getFile();
+      return file.text();
+    })
+  );
+
+  console.log(allContent);
+};
+#+end_src
+
+还可以限定能选的文件类型。比如只接受 JPEG 图片。
+
+#+begin_src javascript
+const options = {
+  types: [
+    {
+      description: "Images",
+      accept: {
+        "image/jpeg": [".jpeg"],
+      },
+    },
+  ],
+  excludeAcceptAllOption: true,
+};
+#+end_src
+
+=excludeAcceptAllOption: true= 会去掉选择框里那个「所有文件」的选项，强制用户只能选指定类型。
+
+* 写文件
+
+** 写新文件
+
+#+begin_src javascript
+document.querySelector(".save-file").onclick = async () => {
+  const options = {
+    types: [
+      {
+        description: "Test files",
+        accept: {
+          "text/plain": [".txt"],
+        },
+      },
+    ],
+  };
+
+  const handle = await window.showSaveFilePicker(options);
+  const writable = await handle.createWritable();
+
+  await writable.write("Hello World");
+  await writable.close();
+};
+#+end_src
+
+=showSaveFilePicker()= 弹出的是另存为对话框，让用户选保存位置和文件名。拿到 handle 后，调 =createWritable()= 创建一个可写流，再用 =write()= 写内容，最后 =close()= 关闭流并落盘。
+
+=close()= 这一步不能漏。忘了调的话，内容可能还留在内存缓冲区里，没真正写到磁盘上。
+
+** 改已有文件
+
+把读和写拼起来就是改文件。
+
+#+begin_src javascript
+let fileHandle;
+
+document.querySelector(".pick-file").onclick = async () => {
+  [fileHandle] = await window.showOpenFilePicker();
+  const writable = await fileHandle.createWritable();
+
+  await writable.write("This is a new line");
+  await writable.close();
+};
+#+end_src
+
+这里有个原文没强调的坑。=write()= 是覆盖整个文件，不追加。上面的代码执行后，原文件的内容会被 ="This is a new line"= 完全替换掉。想追加的话，得先读出原内容，自己拼接后再写回去。
+
+* 目录和删除
+
+** 列出目录内容
+
+#+begin_src javascript
+document.querySelector(".read-dir").onclick = async () => {
+  const directoryHandle = await window.showDirectoryPicker();
+
+  for await (const entry of directoryHandle.values()) {
+    console.log(entry.kind, entry.name);
+  }
+};
+#+end_src
+
+=showDirectoryPicker()= 让用户选一个目录，返回的 =directoryHandle= 可以用 =for await...of= 遍历里面的条目。每个 =entry= 也有 =kind= 和 =name= ，输出大致是这样的。
+
+#+begin_example
+file data.txt
+file image.jpeg
+directory subdir
+#+end_example
+
+注意只列出顶层条目，不会递归到子目录。要递归得自己写遍历逻辑。
+
+** 删除文件和目录
+
+删选中的文件或目录，拿到 handle 后直接调 =remove()=。文件用 =showOpenFilePicker()= 拿 handle，目录用 =showDirectoryPicker()=，删除调用一样。
+
+#+begin_src javascript
+// 删文件
+const [fileHandle] = await window.showOpenFilePicker();
+await fileHandle.remove();
+
+// 删整个目录（连同里面所有内容）
+const directoryHandle = await window.showDirectoryPicker();
+await directoryHandle.remove();
+#+end_src
+
+删目录里的某个指定条目（而不是整个目录），用 =removeEntry()=。删子目录时如果里面有内容，必须加 ={ recursive: true }=，否则报错。
+
+#+begin_src javascript
+const directoryHandle = await window.showDirectoryPicker();
+
+// 删目录里的某个文件
+await directoryHandle.removeEntry("data.txt");
+
+// 递归删一个子目录（里面有内容时必须加 recursive: true）
+await directoryHandle.removeEntry('data', { recursive: true });
+#+end_src
+
+* 2026 年的浏览器支持现状
+
+原文的浏览器支持表没标日期。2026 年的真实情况是这样的。
+
+先看桌面端。Chrome 105+ 和 Edge 105+ 支持，Opera 也行（同为 Chromium 内核）。Firefox 从 2 到最新版全不支持，Mozilla 的官方立场把这个 API 标为 [[https://github.com/mozilla/standards-positions/issues/154][harmful]]，理由是让网页直接操作本地文件对用户安全风险太大。Safari 同样全版本不支持。
+
+移动端更惨，Chrome for Android、Safari on iOS、Samsung Internet、Firefox for Android 全不支持，手机上没有任何浏览器能用这组 API。
+
+#+begin_example
+数据来源：https://caniuse.com/native-filesystem-api（2026-06-25 查询）
+#+end_example
+
+这个支持现状直接决定了 File System Access API 目前不适合用于面向公众的生产环境。网页应用要是依赖这组 API，Firefox 用户、Safari 用户和所有手机用户都用不了。
+
+不过浏览器其实另开了一条路，[[https://web.dev/articles/origin-private-file-system][Origin Private File System]]（OPFS）。OPFS 让网页在一个沙盒内的虚拟文件系统中读写，不碰用户的真实文件系统。这个能力支持范围广得多（Firefox 111+、Safari 15.2+），因为不涉及访问用户真实文件，安全风险低得多。如果只是想在浏览器里存点数据，OPFS 比 File System Access API 更合适。
+
+* 我的评价
+
+这组 API 的设计本身是合理的。handle 和 file 分层、强制用户手势、强制 HTTPS、读写权限不随页面刷新自动保留，每个设计都在收紧网页碰本地文件这个危险操作的风险面。 =getFile()= 每次返回最新快照，不会缓存首次选择时的版本，这个细节也考虑到了文件被外部修改的场景。
+
+支持不全这个现实摆在这里。原文推荐了一个叫 [[https://github.com/jimmywarting/browser-fs-access][browser-fs-access]] 的 ponyfill（ponyfill 和 polyfill 的区别在于，polyfill 会往全局对象上补方法，ponyfill 只导出自己用的方法，不改全局环境），在不支持的浏览器里自动降级到传统的 =<input type="file">= 上传和 =<a download>= 下载。真要在项目里用这组 API，建议直接上这个库做兼容层，别裸调原生 API。
