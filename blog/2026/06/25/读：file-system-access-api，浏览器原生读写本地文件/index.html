@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：File System Access API，浏览器原生读写本地文件 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="CSS-Tricks 的这篇教程介绍了 File System Access API，让网页通过 JavaScript 直接读写用户本地文件。本文按原文结构梳理读、写、目录、删除四类操作，并补充原文最薄弱的部分：2026 年的真实浏览器支持现状。Firefox 把这个 API 标记为 harmful，Safari 也不支持，移动端全军覆没。生产环境几乎不可用，但 API 的设计思路和 handle 抽象值得了解。" />
+  <meta name="keywords" content="File System Access API, 浏览器, Web API, JavaScript" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：File System Access API，浏览器原生读写本地文件</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgafc8ccb">先拿一个能跑的页面</a></li>
+<li><a href="#orgd64bffa">动手之前得满足两个条件</a></li>
+<li><a href="#org37216db">读文件</a>
+<ul>
+<li><a href="#org5235dfe">读单个文件</a></li>
+<li><a href="#org33cb8a5">读多个文件</a></li>
+</ul>
+</li>
+<li><a href="#orga169349">写文件</a>
+<ul>
+<li><a href="#org8dd2340">写新文件</a></li>
+<li><a href="#org3b11379">改已有文件</a></li>
+</ul>
+</li>
+<li><a href="#org36f9068">目录和删除</a>
+<ul>
+<li><a href="#org86e1df9">列出目录内容</a></li>
+<li><a href="#org3374afa">删除文件和目录</a></li>
+</ul>
+</li>
+<li><a href="#org7ac44c5">2026 年的浏览器支持现状</a></li>
+<li><a href="#orgd8a61a1">我的评价</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://developer.mozilla.org/en-US/docs/Web/API/File_System_API">File System Access API</a> 是一组 Web API，让网页通过 JavaScript 直接读写用户本地文件。以前网页只能用 <code>&lt;input type="file"&gt;</code> 让用户选文件上传，选中后只能读内容，不能写回去。File System Access API 把这个能力补齐了，读和写都能做，还能列目录、删文件。不过目前只有 Chrome 系桌面浏览器支持，Firefox 和 Safari 都没有跟进，详见后文。
+</p>
+
+<p>
+CSS-Tricks 上有一篇 <a href="https://css-tricks.com/getting-started-with-the-file-system-access-api/">入门教程</a> 按读、写、目录、删除四块讲核心 API。本文按原文结构梳理，顺便补上原文没展开的设计细节和 2026 年的浏览器支持现状。
+</p>
+
+<div id="outline-container-orgafc8ccb" class="outline-2">
+<h2 id="orgafc8ccb">先拿一个能跑的页面</h2>
+<div class="outline-text-2" id="text-orgafc8ccb">
+<p>
+不想一段段看代码的，可以先把下面这个 HTML 存成文件，起个本地服务器直接点按钮试。把代码存成 <code>demo.html=，然后在同目录下执行 =python3 -m http.server 8000=，浏览器打开 =http://localhost:8000/demo.html</code> 就行。
+</p>
+
+<p>
+为什么要起服务器？因为 File System Access API 只在安全上下文（HTTPS 或 localhost）里可用，直接双击 <code>.html</code> 文件走的是 <code>file://</code> 协议，API 会变成 =undefined=。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-html">&lt;<span class="org-keyword">!DOCTYPE</span> html&gt;
+&lt;<span class="org-function-name">html</span> <span class="org-variable-name">lang</span>=<span class="org-string">"zh-CN"</span>&gt;
+&lt;<span class="org-function-name">head</span>&gt;
+  &lt;<span class="org-function-name">meta</span> <span class="org-variable-name">charset</span>=<span class="org-string">"UTF-8"</span>&gt;
+  &lt;<span class="org-function-name">title</span>&gt;<span class="org-underline"><span class="org-bold">File System Access API &#35797;&#35797;&#30475;</span></span>&lt;/<span class="org-function-name">title</span>&gt;
+  &lt;<span class="org-function-name">style</span>&gt;
+    body { font-family: sans-serif; max-width: 700px; margin: 40px auto; }
+    button { margin: 4px; padding: 8px 16px; cursor: pointer; font-size: 14px; }
+    pre { background: #f5f5f5; padding: 12px; white-space: pre-wrap; word-break: break-all; min-height: 100px; }
+  &lt;/<span class="org-function-name">style</span>&gt;
+&lt;/<span class="org-function-name">head</span>&gt;
+&lt;<span class="org-function-name">body</span>&gt;
+  &lt;<span class="org-function-name">h1</span>&gt;<span class="org-underline"><span class="org-bold">File System Access API &#35797;&#35797;&#30475;</span></span>&lt;/<span class="org-function-name">h1</span>&gt;
+  &lt;<span class="org-function-name">p</span>&gt;&#38656;&#35201; Chrome &#25110; Edge 105+&#65292;&#39029;&#38754;&#24517;&#39035;&#36305;&#22312; localhost &#25110; HTTPS &#19978;&#65288;&#19981;&#33021;&#30452;&#25509;&#21452;&#20987;&#25171;&#24320;&#65289;&#12290;&lt;/<span class="org-function-name">p</span>&gt;
+  &lt;<span class="org-function-name">div</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"pick-file"</span>&gt;&#35835;&#21333;&#20010;&#25991;&#20214;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"pick-multi"</span>&gt;&#35835;&#22810;&#20010;&#25991;&#20214;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"pick-image"</span>&gt;&#21482;&#36873;&#22270;&#29255;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"save-file"</span>&gt;&#20889;&#26032;&#25991;&#20214;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"edit-file"</span>&gt;&#25913;&#24050;&#26377;&#25991;&#20214;&#65288;&#35206;&#30422;&#65289;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"read-dir"</span>&gt;&#21015;&#20986;&#30446;&#24405;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"del-file"</span>&gt;&#21024;&#38500;&#25991;&#20214;&lt;/<span class="org-function-name">button</span>&gt;
+    &lt;<span class="org-function-name">button</span> <span class="org-variable-name">class</span>=<span class="org-string">"del-entry"</span>&gt;&#21024;&#38500;&#30446;&#24405;&#20869;&#26465;&#30446;&lt;/<span class="org-function-name">button</span>&gt;
+  &lt;/<span class="org-function-name">div</span>&gt;
+  &lt;<span class="org-function-name">h3</span>&gt;<span class="org-underline"><span class="org-italic">&#36755;&#20986;</span></span>&lt;/<span class="org-function-name">h3</span>&gt;
+  &lt;<span class="org-function-name">pre</span> <span class="org-variable-name">id</span>=<span class="org-string">"output"</span>&gt;&#28857;&#19978;&#38754;&#30340;&#25353;&#38062;&#35797;&#35797;&lt;/<span class="org-function-name">pre</span>&gt;
+
+  &lt;<span class="org-function-name">script</span>&gt;
+    const out = document.getElementById("output");
+    const log = (msg) =&gt; { out.textContent = msg; };
+
+    let fileHandle;
+
+    // &#35835;&#21333;&#20010;&#25991;&#20214;
+    document.querySelector(".pick-file").onclick = async () =&gt; {
+      try {
+        [fileHandle] = await window.showOpenFilePicker();
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+        return;
+      }
+      const file = await fileHandle.getFile();
+      const content = await file.text();
+      log(
+        "&#25991;&#20214;&#21517;: " + file.name +
+        "\n&#22823;&#23567;: " + file.size + " &#23383;&#33410;" +
+        "\n&#31867;&#22411;: " + file.type +
+        "\n&#26368;&#21518;&#20462;&#25913;: " + new Date(file.lastModified).toLocaleString() +
+        "\n\n--- &#20869;&#23481; ---\n" + content
+      );
+    };
+
+    // &#35835;&#22810;&#20010;&#25991;&#20214;
+    document.querySelector(".pick-multi").onclick = async () =&gt; {
+      try {
+        const handles = await window.showOpenFilePicker({ multiple: true });
+        const results = await Promise.all(
+          handles.map(async (h) =&gt; {
+            const f = await h.getFile();
+            return "[" + f.name + "]\n" + await f.text();
+          })
+        );
+        log(results.join("\n\n---\n\n"));
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+      }
+    };
+
+    // &#21482;&#36873;&#22270;&#29255;&#65288;&#38480;&#23450;&#25991;&#20214;&#31867;&#22411;&#65289;
+    document.querySelector(".pick-image").onclick = async () =&gt; {
+      try {
+        const handles = await window.showOpenFilePicker({
+          multiple: true,
+          types: [{
+            description: "&#22270;&#29255;",
+            accept: { "image/jpeg": [".jpeg"], "image/png": [".png"] },
+          }],
+          excludeAcceptAllOption: true,
+        });
+        const names = handles.map(async (h) =&gt; (await h.getFile()).name);
+        log("&#36873;&#20013;&#30340;&#22270;&#29255;:\n" + (await Promise.all(names)).join("\n"));
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+      }
+    };
+
+    // &#20889;&#26032;&#25991;&#20214;
+    document.querySelector(".save-file").onclick = async () =&gt; {
+      try {
+        const handle = await window.showSaveFilePicker({
+          types: [{ description: "&#25991;&#26412;&#25991;&#20214;", accept: { "text/plain": [".txt"] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write("Hello World\n&#36825;&#26159;&#29992; File System Access API &#20889;&#20837;&#30340;&#20869;&#23481;&#12290;");
+        await writable.close();
+        log("&#24050;&#20445;&#23384;&#21040;: " + handle.name);
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#20445;&#23384;");
+      }
+    };
+
+    // &#25913;&#24050;&#26377;&#25991;&#20214;&#65288;&#35206;&#30422;&#65289;
+    document.querySelector(".edit-file").onclick = async () =&gt; {
+      try {
+        [fileHandle] = await window.showOpenFilePicker();
+        const writable = await fileHandle.createWritable();
+        await writable.write("&#25991;&#20214;&#20869;&#23481;&#24050;&#34987;&#26367;&#25442;&#12290;\n" + new Date().toLocaleString());
+        await writable.close();
+        log("&#24050;&#35206;&#30422;&#20889;&#20837;: " + fileHandle.name);
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+      }
+    };
+
+    // &#21015;&#20986;&#30446;&#24405;
+    document.querySelector(".read-dir").onclick = async () =&gt; {
+      try {
+        const dirHandle = await window.showDirectoryPicker();
+        const entries = [];
+        for await (const entry of dirHandle.values()) {
+          entries.push(entry.kind + "\t" + entry.name);
+        }
+        log("&#30446;&#24405;: " + dirHandle.name + "\n\n" + entries.join("\n"));
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+      }
+    };
+
+    // &#21024;&#38500;&#25991;&#20214;
+    document.querySelector(".del-file").onclick = async () =&gt; {
+      try {
+        const [handle] = await window.showOpenFilePicker();
+        await handle.remove();
+        log("&#24050;&#21024;&#38500;: " + handle.name);
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;");
+      }
+    };
+
+    // &#21024;&#38500;&#30446;&#24405;&#20869;&#26465;&#30446;
+    document.querySelector(".del-entry").onclick = async () =&gt; {
+      try {
+        const dirHandle = await window.showDirectoryPicker();
+        const name = prompt("&#36755;&#20837;&#35201;&#21024;&#38500;&#30340;&#25991;&#20214;&#25110;&#30446;&#24405;&#21517;:");
+        if (!name) { log("&#27809;&#36755;&#20837;&#21517;&#23383;"); return; }
+        try {
+          await dirHandle.removeEntry(name);
+          log("&#24050;&#21024;&#38500;: " + name);
+        } catch (e) {
+          // &#21487;&#33021;&#26159;&#30446;&#24405;&#19988;&#26377;&#20869;&#23481;&#65292;&#23581;&#35797;&#36882;&#24402;&#21024;
+          if (e.name === "InvalidModificationError") {
+            await dirHandle.removeEntry(name, { recursive: true });
+            log("&#24050;&#36882;&#24402;&#21024;&#38500;&#30446;&#24405;: " + name);
+          } else {
+            throw e;
+          }
+        }
+      } catch (err) {
+        log("&#21462;&#28040;&#20102;&#36873;&#25321;&#25110;&#25991;&#20214;&#19981;&#23384;&#22312;: " + err.message);
+      }
+    };
+  &lt;/<span class="org-function-name">script</span>&gt;
+&lt;/<span class="org-function-name">body</span>&gt;
+&lt;/<span class="org-function-name">html</span>&gt;
+</pre>
+</div>
+
+<p>
+下面逐个讲每个操作背后的代码。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd64bffa" class="outline-2">
+<h2 id="orgd64bffa">动手之前得满足两个条件</h2>
+<div class="outline-text-2" id="text-orgd64bffa">
+<p>
+调用这组 API 有两个硬性前提。一是必须在安全上下文中，也就是 HTTPS 页面。localhost 是例外，浏览器把它当作安全的，方便本地开发调试。二是必须由用户主动触发，比如点击按钮。不能在页面加载时自动弹出文件选择框，也不能在定时器回调里偷偷调。
+</p>
+
+<p>
+这个限制是故意的，防止网页在用户不知情的情况下操作本地文件。下文所有代码示例都假设挂在一个按钮的 click 事件上，且需要在 Chrome 或 Edge 105+ 浏览器中执行（其他浏览器不支持，原因见后文）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org37216db" class="outline-2">
+<h2 id="org37216db">读文件</h2>
+<div class="outline-text-2" id="text-org37216db">
+</div>
+<div id="outline-container-org5235dfe" class="outline-3">
+<h3 id="org5235dfe">读单个文件</h3>
+<div class="outline-text-3" id="text-org5235dfe">
+<p>
+不到十行代码就能读完一个文件。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">let</span> <span class="org-variable-name">fileHandle</span>;
+
+document.querySelector(<span class="org-string">".pick-file"</span>).onclick = <span class="org-keyword">async</span> () =&gt; {
+  <span class="org-keyword">try</span> {
+    [fileHandle] = <span class="org-keyword">await</span> window.showOpenFilePicker();
+  } <span class="org-keyword">catch</span> (err) {
+    <span class="org-comment-delimiter">// </span><span class="org-comment">&#29992;&#25143;&#28857;&#20102;&#21462;&#28040;&#65292;&#20160;&#20040;&#37117;&#19981;&#29992;&#20570;
+</span>    <span class="org-keyword">return</span>;
+  }
+
+  <span class="org-keyword">const</span> <span class="org-variable-name">file</span> = <span class="org-keyword">await</span> fileHandle.getFile();
+  <span class="org-keyword">const</span> <span class="org-variable-name">content</span> = <span class="org-keyword">await</span> file.text();
+
+  console.log(content);
+};
+</pre>
+</div>
+
+<p>
+<code>window.showOpenFilePicker()</code> 弹出系统的文件选择框。注意等号左边的中括号，这个方法返回的是一个数组（哪怕只选了一个文件），这里用解构语法取第一个元素。
+</p>
+
+<p>
+拿到的 <code>fileHandle</code> 是一个 <code>FileSystemFileHandle</code> 对象，长这样。
+</p>
+
+<pre class="example" id="org0f2c173">
+FileSystemFileHandle {kind: 'file', name: 'data.txt'}
+</pre>
+
+<p>
+<code>kind</code> 要么是 <code>file</code> 要么是 <code>directory=，=name</code> 是文件名。这个 handle 不直接包含文件内容，只是文件的一个引用。要拿内容，得先调 <code>getFile()</code> 得到 <code>File</code> 对象，再调 <code>text()</code> 读文本。 <code>getFile()</code> 返回的 <code>File</code> 对象还带几个元数据属性： <code>name</code> （文件名）、 <code>size</code> （字节数）、 <code>type</code> （MIME 类型）、 <code>lastModified</code> （最后修改时间的毫秒时间戳）。
+</p>
+
+<p>
+这里的设计是把 handle（引用）和 file（内容快照）分开了。 <code>getFile()</code> 每次调用都返回当前最新的文件状态，不会缓存第一次选中时的版本。用户要是在网页打开期间用其他程序改了文件，可以通过再调一次 <code>getFile()</code> 来拿到新内容。
+</p>
+
+<p>
+另外，handle 不会随页面刷新自动保留。想跨会话复用同一个文件引用，需要手动把 handle 存进 IndexedDB。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org33cb8a5" class="outline-3">
+<h3 id="org33cb8a5">读多个文件</h3>
+<div class="outline-text-3" id="text-org33cb8a5">
+<p>
+传一个 <code>multiple: true</code> 选项就能选多个文件。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">const</span> <span class="org-variable-name">options</span> = {
+  multiple: <span class="org-constant">true</span>,
+};
+
+document.querySelector(<span class="org-string">".pick-file"</span>).onclick = <span class="org-keyword">async</span> () =&gt; {
+  <span class="org-keyword">const</span> <span class="org-variable-name">fileHandles</span> = <span class="org-keyword">await</span> window.showOpenFilePicker(options);
+
+  <span class="org-keyword">const</span> <span class="org-variable-name">allContent</span> = <span class="org-keyword">await</span> Promise.all(
+    fileHandles.map(<span class="org-keyword">async</span> (handle) =&gt; {
+      <span class="org-keyword">const</span> <span class="org-variable-name">file</span> = <span class="org-keyword">await</span> handle.getFile();
+      <span class="org-keyword">return</span> file.text();
+    })
+  );
+
+  console.log(allContent);
+};
+</pre>
+</div>
+
+<p>
+还可以限定能选的文件类型。比如只接受 JPEG 图片。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">const</span> <span class="org-variable-name">options</span> = {
+  types: [
+    {
+      description: <span class="org-string">"Images"</span>,
+      accept: {
+        <span class="org-string">"image/jpeg"</span>: [<span class="org-string">".jpeg"</span>],
+      },
+    },
+  ],
+  excludeAcceptAllOption: <span class="org-constant">true</span>,
+};
+</pre>
+</div>
+
+<p>
+<code>excludeAcceptAllOption: true</code> 会去掉选择框里那个「所有文件」的选项，强制用户只能选指定类型。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga169349" class="outline-2">
+<h2 id="orga169349">写文件</h2>
+<div class="outline-text-2" id="text-orga169349">
+</div>
+<div id="outline-container-org8dd2340" class="outline-3">
+<h3 id="org8dd2340">写新文件</h3>
+<div class="outline-text-3" id="text-org8dd2340">
+<div class="org-src-container">
+<pre class="src src-javascript">document.querySelector(<span class="org-string">".save-file"</span>).onclick = <span class="org-keyword">async</span> () =&gt; {
+  <span class="org-keyword">const</span> <span class="org-variable-name">options</span> = {
+    types: [
+      {
+        description: <span class="org-string">"Test files"</span>,
+        accept: {
+          <span class="org-string">"text/plain"</span>: [<span class="org-string">".txt"</span>],
+        },
+      },
+    ],
+  };
+
+  <span class="org-keyword">const</span> <span class="org-variable-name">handle</span> = <span class="org-keyword">await</span> window.showSaveFilePicker(options);
+  <span class="org-keyword">const</span> <span class="org-variable-name">writable</span> = <span class="org-keyword">await</span> handle.createWritable();
+
+  <span class="org-keyword">await</span> writable.write(<span class="org-string">"Hello World"</span>);
+  <span class="org-keyword">await</span> writable.close();
+};
+</pre>
+</div>
+
+<p>
+<code>showSaveFilePicker()</code> 弹出的是另存为对话框，让用户选保存位置和文件名。拿到 handle 后，调 <code>createWritable()</code> 创建一个可写流，再用 <code>write()</code> 写内容，最后 <code>close()</code> 关闭流并落盘。
+</p>
+
+<p>
+<code>close()</code> 这一步不能漏。忘了调的话，内容可能还留在内存缓冲区里，没真正写到磁盘上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3b11379" class="outline-3">
+<h3 id="org3b11379">改已有文件</h3>
+<div class="outline-text-3" id="text-org3b11379">
+<p>
+把读和写拼起来就是改文件。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">let</span> <span class="org-variable-name">fileHandle</span>;
+
+document.querySelector(<span class="org-string">".pick-file"</span>).onclick = <span class="org-keyword">async</span> () =&gt; {
+  [fileHandle] = <span class="org-keyword">await</span> window.showOpenFilePicker();
+  <span class="org-keyword">const</span> <span class="org-variable-name">writable</span> = <span class="org-keyword">await</span> fileHandle.createWritable();
+
+  <span class="org-keyword">await</span> writable.write(<span class="org-string">"This is a new line"</span>);
+  <span class="org-keyword">await</span> writable.close();
+};
+</pre>
+</div>
+
+<p>
+这里有个原文没强调的坑。=write()= 是覆盖整个文件，不追加。上面的代码执行后，原文件的内容会被 <code>"This is a new line"</code> 完全替换掉。想追加的话，得先读出原内容，自己拼接后再写回去。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org36f9068" class="outline-2">
+<h2 id="org36f9068">目录和删除</h2>
+<div class="outline-text-2" id="text-org36f9068">
+</div>
+<div id="outline-container-org86e1df9" class="outline-3">
+<h3 id="org86e1df9">列出目录内容</h3>
+<div class="outline-text-3" id="text-org86e1df9">
+<div class="org-src-container">
+<pre class="src src-javascript">document.querySelector(<span class="org-string">".read-dir"</span>).onclick = <span class="org-keyword">async</span> () =&gt; {
+  <span class="org-keyword">const</span> <span class="org-variable-name">directoryHandle</span> = <span class="org-keyword">await</span> window.showDirectoryPicker();
+
+  <span class="org-keyword">for</span> <span class="org-keyword">await</span> (<span class="org-keyword">const</span> <span class="org-variable-name">entry</span> <span class="org-keyword">of</span> directoryHandle.values()) {
+    console.log(entry.kind, entry.name);
+  }
+};
+</pre>
+</div>
+
+<p>
+<code>showDirectoryPicker()</code> 让用户选一个目录，返回的 <code>directoryHandle</code> 可以用 <code>for await...of</code> 遍历里面的条目。每个 <code>entry</code> 也有 <code>kind</code> 和 <code>name</code> ，输出大致是这样的。
+</p>
+
+<pre class="example" id="org9343985">
+file data.txt
+file image.jpeg
+directory subdir
+</pre>
+
+<p>
+注意只列出顶层条目，不会递归到子目录。要递归得自己写遍历逻辑。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org3374afa" class="outline-3">
+<h3 id="org3374afa">删除文件和目录</h3>
+<div class="outline-text-3" id="text-org3374afa">
+<p>
+删选中的文件或目录，拿到 handle 后直接调 <code>remove()=。文件用 =showOpenFilePicker()</code> 拿 handle，目录用 =showDirectoryPicker()=，删除调用一样。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-comment-delimiter">// </span><span class="org-comment">&#21024;&#25991;&#20214;
+</span><span class="org-keyword">const</span> [<span class="org-variable-name">fileHandle</span>] = <span class="org-keyword">await</span> window.showOpenFilePicker();
+<span class="org-keyword">await</span> fileHandle.remove();
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#21024;&#25972;&#20010;&#30446;&#24405;&#65288;&#36830;&#21516;&#37324;&#38754;&#25152;&#26377;&#20869;&#23481;&#65289;
+</span><span class="org-keyword">const</span> <span class="org-variable-name">directoryHandle</span> = <span class="org-keyword">await</span> window.showDirectoryPicker();
+<span class="org-keyword">await</span> directoryHandle.remove();
+</pre>
+</div>
+
+<p>
+删目录里的某个指定条目（而不是整个目录），用 =removeEntry()=。删子目录时如果里面有内容，必须加 ={ recursive: true }=，否则报错。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-javascript"><span class="org-keyword">const</span> <span class="org-variable-name">directoryHandle</span> = <span class="org-keyword">await</span> window.showDirectoryPicker();
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#21024;&#30446;&#24405;&#37324;&#30340;&#26576;&#20010;&#25991;&#20214;
+</span><span class="org-keyword">await</span> directoryHandle.removeEntry(<span class="org-string">"data.txt"</span>);
+
+<span class="org-comment-delimiter">// </span><span class="org-comment">&#36882;&#24402;&#21024;&#19968;&#20010;&#23376;&#30446;&#24405;&#65288;&#37324;&#38754;&#26377;&#20869;&#23481;&#26102;&#24517;&#39035;&#21152; recursive: true&#65289;
+</span><span class="org-keyword">await</span> directoryHandle.removeEntry(<span class="org-string">'data'</span>, { recursive: <span class="org-constant">true</span> });
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org7ac44c5" class="outline-2">
+<h2 id="org7ac44c5">2026 年的浏览器支持现状</h2>
+<div class="outline-text-2" id="text-org7ac44c5">
+<p>
+原文的浏览器支持表没标日期。2026 年的真实情况是这样的。
+</p>
+
+<p>
+先看桌面端。Chrome 105+ 和 Edge 105+ 支持，Opera 也行（同为 Chromium 内核）。Firefox 从 2 到最新版全不支持，Mozilla 的官方立场把这个 API 标为 <a href="https://github.com/mozilla/standards-positions/issues/154">harmful</a>，理由是让网页直接操作本地文件对用户安全风险太大。Safari 同样全版本不支持。
+</p>
+
+<p>
+移动端更惨，Chrome for Android、Safari on iOS、Samsung Internet、Firefox for Android 全不支持，手机上没有任何浏览器能用这组 API。
+</p>
+
+<pre class="example" id="org8957ea7">
+数据来源：https://caniuse.com/native-filesystem-api（2026-06-25 查询）
+</pre>
+
+<p>
+这个支持现状直接决定了 File System Access API 目前不适合用于面向公众的生产环境。网页应用要是依赖这组 API，Firefox 用户、Safari 用户和所有手机用户都用不了。
+</p>
+
+<p>
+不过浏览器其实另开了一条路，<a href="https://web.dev/articles/origin-private-file-system">Origin Private File System</a>（OPFS）。OPFS 让网页在一个沙盒内的虚拟文件系统中读写，不碰用户的真实文件系统。这个能力支持范围广得多（Firefox 111+、Safari 15.2+），因为不涉及访问用户真实文件，安全风险低得多。如果只是想在浏览器里存点数据，OPFS 比 File System Access API 更合适。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgd8a61a1" class="outline-2">
+<h2 id="orgd8a61a1">我的评价</h2>
+<div class="outline-text-2" id="text-orgd8a61a1">
+<p>
+这组 API 的设计本身是合理的。handle 和 file 分层、强制用户手势、强制 HTTPS、读写权限不随页面刷新自动保留，每个设计都在收紧网页碰本地文件这个危险操作的风险面。 <code>getFile()</code> 每次返回最新快照，不会缓存首次选择时的版本，这个细节也考虑到了文件被外部修改的场景。
+</p>
+
+<p>
+支持不全这个现实摆在这里。原文推荐了一个叫 <a href="https://github.com/jimmywarting/browser-fs-access">browser-fs-access</a> 的 ponyfill（ponyfill 和 polyfill 的区别在于，polyfill 会往全局对象上补方法，ponyfill 只导出自己用的方法，不改全局环境），在不支持的浏览器里自动降级到传统的 <code>&lt;input type</code>"file"&gt;= 上传和 <code>&lt;a download&gt;</code> 下载。真要在项目里用这组 API，建议直接上这个库做兼容层，别裸调原生 API。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-25</span>
+    <span class="post-info">2026-06-26</span>
+    <a href="../../../../../tags/file-system-access-api">File System Access API</a> : <a href="../../../../../tags/浏览器">浏览器</a> : <a href="../../../../../tags/web-api">Web API</a> : <a href="../../../../../tags/javascript">JavaScript</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmmklqx &lt;dot&gt; wiklwk3iotdefl0pdnei4uvb0d &lt;dot&gt; dx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
