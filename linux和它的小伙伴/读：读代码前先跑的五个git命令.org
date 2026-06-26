@@ -1,0 +1,152 @@
+#+TITLE: 读：读代码前先跑的五个 git 命令
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: git, code-review, diagnostic, legacy
+#+DATE: [2026-06-26 Fri]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 接手新代码库时别急着翻源代码。可以先用 5 个 git 命令从提交历史里看出项目健康状态：比如，哪里改得最多、谁是核心人物、bug 在哪扎堆、项目在加速还是在衰退、团队是不是天天救火。
+
+Ally Piechowski 在 [[https://piechowski.io/post/git-commands-before-reading-code/][The Git Commands I Run Before Reading Any Code]] 里说，接手一个新代码库，第一件事应该打开终端跑几个 git 命令，而不是急着翻代码。提交历史能告诉你这个项目谁建的、问题集中在哪、团队到底是在稳步交付还是在踩雷。
+
+这 5 个命令主体是 =git log= 和 =git shortlog= 配合 sort、uniq、grep 这些 Unix 文本工具，不用装额外东西。我拿自己的博客仓库跑了一遍，这个仓库有 10 年的提交历史，2200 多个 commit，跑出来的结果有些能猜到，有些确实没想到。
+
+* 1. 哪些文件改得最多
+
+#+begin_src shell
+git log --format=format: --name-only --since="1 year ago" | sort | uniq -c | sort -nr | head -20
+#+end_src
+
+原文建议从仓库的 =src/= 或 =app/= 目录下跑，不要从根目录跑。否则 lockfile、changelog、自动生成的文件会把列表占满，真正的业务代码反而排不上去。
+
+这个命令统计过去一年每个文件被多少个 commit 触及，按次数从多到少排序。排在最上面的，几乎总是团队里人人怕的那个文件，就是大家常说的"哦那个文件啊，没人敢碰"。
+
+高频改动本身不一定是坏事，可能只是开发比较活跃而已。但一个没人愿意负责的文件同时在频繁改动，那说明这个文件的代码质量已经差到拖慢所有人的进度了。每次改都是在补丁上叠补丁，一个小修改会波及到哪里完全不可预测，团队评估工期时会故意多报时间，因为他们知道改这个文件总会带出别的问题。
+
+我在自己的博客仓库上跑了这个命令（只摘录前几行有意义的条目）：
+
+#+begin_example
+    152 README.org
+     11 linux和它的小伙伴/在Linux上限制儿童使用电脑.org
+     10 linux和它的小伙伴/yes管道head发生了什么.org
+      9 编程之旅/MobileOrg-Android-从API-17迁移到API-34的实战记录.org
+      3 无主之地/读：为回答而听，还是为理解而听.org
+      ...
+#+end_example
+
+=README.org= 一年改了 152 次，远超第二名。这是博客的索引文件，每次新增或修改文章都要更新它，高改动是结构性的，不是质量问题。排在后面的 =在Linux上限制儿童使用电脑.org= （11 次）和 =yes管道head发生了什么.org= （10 次）倒是真实反映了创作过程中的反复打磨。
+
+原文建议把前 5 名和后面的 bug 聚类命令做交叉比对，同时出现在两个列表上的文件，就是那种"改得又多又老出 bug"的高风险区域。2005 年 Microsoft Research 的一项研究发现，用代码变更频率预测缺陷比用代码复杂度更准。
+
+* 2. 谁建的，谁还在维护
+
+#+begin_src shell
+git shortlog -sn --no-merges
+#+end_src
+
+这个命令按 commit 数量给贡献者排序。如果一个人占了 60% 以上，公交因子就很低。公交因子（bus factor）是指项目依赖的关键人数，少到走一个人项目就有危险的程度。
+
+原文还建议另跑一个 6 个月窗口的版本，看核心贡献者是否还在：
+
+#+begin_src shell
+git shortlog -sn --no-merges --since="6 months ago"
+#+end_src
+
+如果总榜第一名在 6 个月窗口里消失了，说明项目的核心人物已经离开。
+
+我的博客仓库跑出来是这样的（注意：上面原文的命令在这个仓库上静默返回空，实际输出需要用 =git shortlog -sn HEAD --no-merges=，后面会解释原因）：
+
+#+begin_example
+  1688 darksun
+   174 lujun9972
+   151 github-actions[bot]
+    10 DarkSun
+     1 Aborn Jiang
+#+end_example
+
+=darksun= 、 =lujun9972= 和 =DarkSun= 其实都是我，只是不同时期用了不同的 git 配置（大小写不同 + 不同机器上的用户名不同）。博客的公交因子是 1，但对个人博客来说不算问题。=github-actions[bot]= 的 151 个 commit 来自 GitHub Actions 自动部署流程。
+
+有一个坑值得提：原文写的命令 =git shortlog -sn --no-merges= 在 git 2.47 上静默返回空结果。=--no-merges= 需要放在 rev 参数后面，写成 =git shortlog -sn HEAD --no-merges= 才行。这种"不报错但什么都没给"的坑比直接报错更危险，你可能误以为仓库没有提交记录，然后跳过这一步。
+
+还有一个原文提到的限制：如果团队用 squash merge 工作流，=shortlog= 统计的是谁合并的 PR，不是谁写的代码。这种情况下数据会偏向"按合并按钮的人"，而不是真正的代码作者。在看数据之前，先问一下团队的合并策略。
+
+* 3. bug 在哪里扎堆
+
+#+begin_src shell
+git log -i -E --grep="fix|bug|broken" --name-only --format='' | sort | uniq -c | sort -nr | head -20
+#+end_src
+
+和第一个命令结构一样，加了 =--grep= 过滤出提交信息里带 fix、bug、broken 的 commit。把这些文件和第一名的变更热点交叉比对：同时出现在两个列表上的，就是"改得又多又老出 bug"的文件。它们被反复打补丁但从来没真正修好过。
+
+这个命令的效果取决于团队的提交信息质量。如果每次都写"update stuff"，过滤出来就是一团噪音。但即便只有一张粗略的 bug 分布图，也比两眼一抹黑强。
+
+我的博客仓库跑出来：
+
+#+begin_example
+      3 .travis.yml
+      3 generate_index.sh
+      1 sonarqube-verify.sh
+      1 Emacs之怒/MobileOrg的一个BUG.org
+      1 编程之旅/读：用 SonarQube 检测 Java 代码中的 Bug 和安全漏洞.org
+      1 编程之旅/读：别再手写边界用例了——让 Hypothesis 自动找 bug.org
+      ...
+#+end_example
+
+排在前面的是 CI 脚本（=.travis.yml=、=generate_index.sh=）和构建工具（=sonarqube-verify.sh=），合情合理。博客文章本身没有"bug"可修，会出 bug 的是自动构建和部署的脚本。后面几条是文章标题里本身就带"bug"字样的博文，属于关键词误匹配，不是真正的 bug 修复 commit。
+
+* 4. 项目在加速还是在衰退
+
+#+begin_src shell
+git log --format='%ad' --date=format:'%Y-%m' | sort | uniq -c
+#+end_src
+
+按月统计提交数量，看整个仓库历史。这个命令的输出需要看"形状"而不是具体数字。节奏稳定是健康的信号；某个月突然减半通常是人走了；6 到 12 个月的下降曲线说明团队在失速；周期性的波峰加沉寂期说明团队在批量发版而不是持续交付。
+
+原文作者说她给一个 CTO 看提交节奏图，对方说"那就是我们第二个资深工程师离职的时候"。
+
+我的博客仓库的提交节奏（完整输出有 70 多行，这里摘选关键节点）：
+
+#+begin_example
+      5 2016-01
+     49 2016-12
+     81 2018-12
+     97 2019-05
+     89 2019-09
+     83 2020-04
+     22 2020-08
+      2 2021-03
+      1 2023-02
+      2 2023-11
+    190 2026-04
+    201 2026-05
+     73 2026-06
+#+end_example
+
+这个曲线讲了一个清晰的故事。2016 年开张，2018 到 2019 年是写作活跃期，2019 年 5 月达到顶峰（97 个 commit）。2020 年开始下降，2021 到 2023 年几乎停更，2023 年 2 月只有 1 个 commit。然后 2026 年 4 月突然爆发出 190 个 commit，5 月更是 201 个，远超历史最高。
+
+2026 年的爆发对应的是 AI 编程工具进入我的工作流。=github-actions[bot]= 的 151 个 commit 也都是这个时期产生的，因为自动部署流程在这段时间搭了起来。
+
+* 5. 团队是不是在天天救火
+
+#+begin_src shell
+git log --oneline --since="1 year ago" | grep -iE 'revert|hotfix|emergency|rollback'
+#+end_src
+
+统计 revert、hotfix、emergency、rollback 这些关键词。一年里出现几次是正常的。但如果每两周就有一次，说明团队不信任自己的部署流程：测试不可靠、缺少预发布环境、或者回滚的代价太高。一条都没有也可能是信号，要么团队很稳，要么没人写规范的提交信息。
+
+我的博客仓库在过去一年只匹配到一条：
+
+#+begin_example
+1dd928a91 新TIL：解决 auto-revert 导致 PDF 闪烁的问题
+#+end_example
+
+这是个误匹配。这条 commit 是关于 Emacs 的 =auto-revert-mode= 的博客文章，不是代码回滚。实际的 revert 和 hotfix 是零。
+
+这个结果对个人博客来说很正常：没有部署流程就没有线上事故，没有线上事故就没有回滚。但也说明这个命令对没有正式部署流程的个人项目或小团队诊断价值有限。
+
+* 这五个命令值不值得跑
+
+原文说这五个命令两三分钟就能跑完。我的实际体验是，命令本身确实快，但解读输出需要你对项目有基本了解。比如看到 =README.org= 改了 152 次时，你得知道它是索引文件才能判断这不是质量问题。
+
+这五个命令更像一个"该往哪看"的指南，而不是一份诊断报告。它们不能告诉你代码写得好不好，但能告诉你哪些文件值得优先看、哪些地方可能藏着历史包袱、项目目前是上升期还是衰退期。接手新代码库的第一天，这比一头扎进代码里乱逛要有方向感得多。
+
+原文还推荐了两份值得深入阅读的资料：2005 年 Microsoft Research 的研究（代码变更频率比代码复杂度更能预测缺陷），以及 Adam Tornhill 的 *Your Code as a Crime Scene*（在变更频率基础上叠加复杂度分析，发展出完整的代码取证方法学）。如果你想把这几条命令升级成系统方法，可以从这两份资料入手。
