@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>100 行 C 代码拆解 traceroute 的 TTL 把戏 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="traceroute 天天用，但它怎么知道每一跳的 IP 地址？原理是 IP 包头部的 TTL 字段：每经过一个路由器就减一，到零时路由器丢弃包并发回 ICMP 错误。本文用约 100 行 C 代码从零实现一个 traceroute，逐步拆解 TTL 探测、ICMP 应答解析、计时和三次探测，并讨论 traceroute 输出的局限性。" />
+  <meta name="keywords" content="traceroute,网络,ICMP,TTL,C语言,Linux" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">100 行 C 代码拆解 traceroute 的 TTL 把戏</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org46620ad">traceroute 在做什么</a></li>
+<li><a href="#org1861230">核心原理：TTL 把戏</a></li>
+<li><a href="#org2c037d4">第一个探测</a></li>
+<li><a href="#orgaa5ff9b">ICMP 是什么</a></li>
+<li><a href="#org6985a7e">知道何时到达目标</a></li>
+<li><a href="#org3481ebb">加上计时</a></li>
+<li><a href="#org971bf3a">每跳三次探测</a></li>
+<li><a href="#orgc0d0072">和真正的 traceroute 对比</a></li>
+<li><a href="#org1e2e11c">traceroute 看不到的东西</a></li>
+<li><a href="#org37f3648">为什么有星号</a></li>
+<li><a href="#org27192a1">为什么需要 sudo</a></li>
+<li><a href="#org99eaf95">完整代码</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://tech.stonecharioteer.com/posts/2026/traceroute/">原文作者</a>和我一样，用了多年 traceroute 却从没想过它怎么知道每一跳的 IP 地址。原理其实很简单，用百来行 C 语言就能实现(原文用 Rust 实现，被我改写成C语言)。
+</p>
+
+<div id="outline-container-org46620ad" class="outline-2">
+<h2 id="org46620ad">traceroute 在做什么</h2>
+<div class="outline-text-2" id="text-org46620ad">
+<p>
+先看一下 traceroute 的典型输出。
+</p>
+
+<pre class="example" id="orgcd65e7d">
+$ traceroute -m 15 -w 2 8.8.8.8
+traceroute to 8.8.8.8 (8.8.8.8), 15 hops max, 60 byte packets
+ 1  DESKTOP-UTK6RNQ (172.30.208.1)  1.085 ms  1.066 ms  0.730 ms
+ 2  192.168.23.254 (192.168.23.254)  6.107 ms  5.933 ms  5.884 ms
+ 3  192.168.250.1 (192.168.250.1)  8.985 ms  8.976 ms  8.963 ms
+ 4  * * *
+ 5  14.216.139.1 (14.216.139.1)  8.100 ms  8.074 ms  8.028 ms
+ 6  14.147.147.138 (14.147.147.138)  14.214 ms  16.849 ms 14.147.147.130 (14.147.147.130)  9.348 ms
+ 7  14.147.147.133 (14.147.147.133)  8.598 ms  5.568 ms *
+ 8  * 219.132.200.237 (219.132.200.237)  8.044 ms 121.12.142.49 (121.12.142.49)  18.740 ms
+ 9  202.97.93.77 (202.97.93.77)  8.058 ms  202.97.93.45 (202.97.93.45)  8.071 ms  202.97.93.85 (202.97.93.85)  8.070 ms
+10  202.97.94.102 (202.97.94.102)  8.064 ms  202.97.12.37 (202.97.12.37)  8.206 ms  202.97.65.93 (202.97.65.93)  14.591 ms
+11  202.97.95.170 (202.97.95.170)  13.774 ms  13.748 ms  202.97.57.77 (202.97.57.77)  13.815 ms
+12  203.22.178.197 (203.22.178.197)  16.613 ms  16.607 ms  16.324 ms
+13  203.22.178.22 (203.22.178.22)  178.898 ms  178.892 ms  178.170 ms
+14  * * 203.131.250.82 (203.131.250.82)  187.172 ms
+15  * * *
+</pre>
+
+<p>
+每一行显示一跳的信息：序号、路由器 IP、三个延迟采样。星号（ <code>*</code> ）表示那一跳没有回应。
+</p>
+
+<p>
+注意，这条路径和后面我们自己实现的版本不同，15 跳也没走到 8.8.8.8。两次运行走了不同路线，后面的负载均衡一节会解释原因。
+</p>
+
+<p>
+traceroute 看着像在逐个询问路径上每个路由器的身份，其实不是。
+</p>
+
+<p>
+traceroute 从头到尾没问过谁。它干的是发送注定死在途中的数据包，然后听路由器怎么回报这个死讯。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1861230" class="outline-2">
+<h2 id="org1861230">核心原理：TTL 把戏</h2>
+<div class="outline-text-2" id="text-org1861230">
+<p>
+每个 IP 包的头部都有一个 TTL（Time To Live，生存时间）字段，初始值通常是 64。它的工作方式很简单。
+</p>
+
+<ul class="org-ul">
+<li>每经过一个路由器转发，TTL 减 1</li>
+<li>当某个路由器把 TTL 减到 0 时，它丢弃这个包，同时向发送方回一个 ICMP（Internet Control Message Protocol，互联网控制消息协议）「Time Exceeded」（超时）错误消息</li>
+<li>这个 ICMP 错误消息里包含了该路由器的 IP 地址</li>
+</ul>
+
+<p>
+traceroute 利用的就是这个机制：依次发送 TTL=1、TTL=2、TTL=3 的探测包。TTL=1 的包到第一个路由器就被丢弃并触发回报，TTL=2 的包到第二个路由器才被丢弃，以此类推。每个路由器在「杀死」探测包时，顺带就把自己暴露了。
+</p>
+
+<p>
+一句话总结就是，traceroute 发送的是设计好要死在每一跳的包，然后听死讯。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org2c037d4" class="outline-2">
+<h2 id="org2c037d4">第一个探测</h2>
+<div class="outline-text-2" id="text-org2c037d4">
+<p>
+原理清楚了，代码就不复杂。先用 C 写个最简版本，发送一个指定 TTL 的 UDP 包，等 ICMP 回应，提取回应者的 IP。
+</p>
+
+<p>
+为什么用 UDP 而不是 TCP？因为这些探测包本来就是设计好要死在途中的，不需要 TCP 的握手和可靠传输。资源消耗少。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-C"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;stdio.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;unistd.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/socket.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;arpa/inet.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/time.h&gt;</span>
+
+<span class="org-comment-delimiter">/* </span><span class="org-comment">&#21457;&#36865;&#19968;&#20010; TTL=ttl &#30340; UDP &#25506;&#27979;&#21253;&#65292;&#36820;&#22238;&#24212;&#31572;&#36335;&#30001;&#22120;&#30340; IP</span><span class="org-comment-delimiter"> */</span>
+<span class="org-comment-delimiter">/* </span><span class="org-comment">&#36820;&#22238; 0 &#34920;&#31034;&#36229;&#26102;&#65288;&#26080;&#24212;&#31572;&#65289;</span><span class="org-comment-delimiter"> */</span>
+<span class="org-type">uint32_t</span> <span class="org-function-name">probe</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">target</span>, <span class="org-type">int</span> <span class="org-variable-name">ttl</span>)
+{
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">UDP socket &#21457;&#36865;&#25506;&#27979;&#21253;&#65292;&#35774;&#32622; TTL &#26159;&#20851;&#38190;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-type">int</span> <span class="org-variable-name">send_sock</span> = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    setsockopt(send_sock, IPPROTO_IP, IP_TTL, &amp;ttl, <span class="org-keyword">sizeof</span>(ttl));
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#21407;&#22987; ICMP socket &#25509;&#25910;&#36335;&#30001;&#22120;&#30340;&#38169;&#35823;&#22238;&#25253;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">SOCK_RAW &#38656;&#35201; root &#26435;&#38480;&#12290;&#31995;&#32479;&#30340; traceroute &#38752; setuid &#20301;&#32469;&#36807;&#36825;&#20010;&#38480;&#21046;&#65292;&#21518;&#38754;&#20250;&#35299;&#37322;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-type">int</span> <span class="org-variable-name">recv_sock</span> = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    <span class="org-keyword">struct</span> <span class="org-type">timeval</span> <span class="org-variable-name">tv</span> = {.tv_sec = 2};
+    setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &amp;tv, <span class="org-keyword">sizeof</span>(tv));
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#24448;&#30446;&#26631; 33434 &#31471;&#21475;&#21457;&#19968;&#20010; 32 &#23383;&#33410;&#30340; UDP &#21253;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">33434 &#26159; Van Jacobson &#21407;&#29256; traceroute &#36873;&#30340;&#36215;&#22987;&#31471;&#21475;&#65292;&#27839;&#29992;&#33267;&#20170;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#36873;&#36825;&#20010;&#31471;&#21475;&#26159;&#22240;&#20026;&#20960;&#20046;&#27809;&#26377;&#26381;&#21153;&#30417;&#21548;&#23427;&#65292;&#30446;&#26631;&#20250;&#22238; ICMP Port Unreachable</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#22914;&#26524;&#30896;&#24039;&#26377;&#26381;&#21153;&#22312;&#21548;&#65292;&#30446;&#26631;&#27491;&#24120;&#25910;&#19979; UDP &#21253;&#65292;&#19981;&#20250;&#22238; ICMP&#65292;traceroute &#23601;&#19981;&#30693;&#36947;&#21040;&#20102;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">dest</span> = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = target,
+        .sin_port = htons(33434),
+    };
+    <span class="org-type">char</span> <span class="org-variable-name">payload</span>[32] = {0};
+    sendto(send_sock, payload, <span class="org-keyword">sizeof</span>(payload), 0,
+           (<span class="org-keyword">struct</span> <span class="org-type">sockaddr</span> *)&amp;dest, <span class="org-keyword">sizeof</span>(dest));
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#31561;&#24453; ICMP &#24212;&#31572;&#65288;2 &#31186;&#36229;&#26102;&#65289;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#21407;&#22987; socket &#19978; recv &#19968;&#27425;&#36820;&#22238;&#19968;&#20010;&#23436;&#25972;&#25968;&#25454;&#25253;&#65292;&#19981;&#20250;&#35835;&#21322;&#25130;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">buf</span>[512];
+    <span class="org-type">int</span> <span class="org-variable-name">n</span> = recv(recv_sock, buf, <span class="org-keyword">sizeof</span>(buf), 0);
+    close(send_sock);
+    close(recv_sock);
+
+    <span class="org-keyword">if</span> (n &lt; 20)
+        <span class="org-keyword">return</span> 0; <span class="org-comment-delimiter">/* </span><span class="org-comment">&#36229;&#26102;&#25110;&#25968;&#25454;&#21253;&#22826;&#30701;</span><span class="org-comment-delimiter"> */</span>
+
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#20174; IP &#22836;&#37096;&#25552;&#21462;&#28304; IP&#65288;&#23383;&#33410; 12-15&#65292;&#32593;&#32476;&#23383;&#33410;&#24207;&#65289;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">src_ip</span>;
+    memcpy(&amp;src_ip, buf + 12, 4);
+    <span class="org-keyword">return</span> src_ip;
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>(<span class="org-type">void</span>)
+{
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">target</span> = inet_addr(<span class="org-string">"8.8.8.8"</span>); <span class="org-comment-delimiter">/* </span><span class="org-comment">Google DNS</span><span class="org-comment-delimiter"> */</span>
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">ttl</span> = 1; ttl &lt;= 15; ttl++) {
+        <span class="org-type">uint32_t</span> <span class="org-variable-name">hop</span> = probe(target, ttl);
+        <span class="org-keyword">if</span> (hop == 0) {
+            printf(<span class="org-string">"%2d  *\n"</span>, ttl);
+        } <span class="org-keyword">else</span> {
+            <span class="org-keyword">struct</span> <span class="org-type">in_addr</span> <span class="org-variable-name">addr</span> = {.s_addr = hop};
+            printf(<span class="org-string">"%2d  %s\n"</span>, ttl, inet_ntoa(addr));
+        }
+    }
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+下面逐段说说关键部分。
+</p>
+
+<p>
+<code>socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)</code> 创建一个普通的 UDP socket。紧接着的 <code>setsockopt(..., IP_TTL, &amp;ttl, ...)</code> 是整个 traceroute 的核心，它把这个 socket 发出的所有包的 TTL 设为我们指定的值。
+</p>
+
+<p>
+<code>socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)</code> 创建第二个 socket，这次是原始 ICMP socket。它监听到达本机的所有 ICMP 包，包括路由器发回的「Time Exceeded」错误回报。=SOCK_RAW= 需要 root 权限，因为原始 socket 能嗅探任意网络流量。
+</p>
+
+<p>
+往端口 33434 发送 32 字节的空数据。数据内容无所谓，重要的是这个包带着我们设好的 TTL 往前跑。33434 端口没有服务监听，所以当包最终到达目标时，目标会回复 ICMP 「Port Unreachable」（端口不可达）而不是「Time Exceeded」，这恰好告诉 traceroute 「到了」。
+</p>
+
+<p>
+等待 ICMP 回应。原始 socket 收到的是完整的 IP 包（含 IP 头部），IP 头部的第 12 到 15 字节是源 IP 地址，直接提取出来就是回应路由器的地址。
+</p>
+
+<p>
+编译运行。
+</p>
+
+<pre class="example" id="org03710e1">
+$ gcc -o traceroute traceroute.c
+$ sudo ./traceroute
+ 1  172.30.208.1
+ 2  192.168.23.254
+ 3  192.168.250.1
+ 4  *
+ 5  27.44.88.1
+ 6  120.80.149.81
+ 7  *
+ 8  *
+ 9  *
+10  219.158.3.190
+11  202.77.23.30
+12  162.245.124.254
+13  203.131.241.220
+14  203.131.250.82
+15  *
+</pre>
+
+<p>
+能跑了。本地网关、运营商骨干网、国际出口都看得见。不过有两个问题，它不知道何时到达目标（一直跑到 TTL 15），而且每跳只有一次探测，没有延迟信息。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgaa5ff9b" class="outline-2">
+<h2 id="orgaa5ff9b">ICMP 是什么</h2>
+<div class="outline-text-2" id="text-orgaa5ff9b">
+<p>
+ICMP 全称 Internet Control Message Protocol（互联网控制消息协议）。它是互联网的「错误报告」协议，不搬运数据，只传递网络状态信息。
+</p>
+
+<p>
+你其实已经见过 ICMP 消息，只是可能没意识到。=ping= 报的「Destination Host Unreachable」（目标不可达）就是 ICMP Type 3。traceroute 依赖的「Time Exceeded」（超时）是 ICMP Type 11。
+</p>
+
+<p>
+ICMP 回应包在原始 socket 上收到的样子大概是这样。
+</p>
+
+<pre class="example" id="orgada488c">
+ 字节 0-11        字节 12-15      字节 16-19      字节 20
++---------------+--------------+--------------+--------+--------
+| IP 头部其他    | 源 IP 地址    | 目标 IP 地址  | ICMP   | ICMP
+| 字段（版本、   | (回应路由器   | (你的机器)    | Type   | 数据...
+| TTL、长度等）  |  的地址)      |              |        |
++---------------+--------------+--------------+--------+--------
+ \_____________________ IP 头部 (前 20 字节) _______/ \_ ICMP _/
+</pre>
+
+<p>
+整个 IP 头部占前 20 字节，其中字节 0-11 是版本、TTL、总长度等控制字段，字节 12-15 是源 IP，字节 16-19 是目标 IP。ICMP 消息从第 20 字节开始，第一个字节是类型码。我们这里忽略了 ICMP 类型，只从 IP 头部提取了源 IP，所以程序不知道什么时候到目标。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6985a7e" class="outline-2">
+<h2 id="org6985a7e">知道何时到达目标</h2>
+<div class="outline-text-2" id="text-org6985a7e">
+<p>
+traceroute 通过检查 ICMP 类型来确认是否到达目的地。Type 11（Time Exceeded）表示途中的路由器丢弃了包，Type 3（Destination Unreachable）表示到达了目标但目标没人监听那个端口。
+</p>
+
+<p>
+第一步，把 <code>uint32_t</code> 返回值换成一个能区分三种状态的结构。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> {
+    <span class="org-variable-name">PROBE_HOP</span>,       <span class="org-comment-delimiter">/* </span><span class="org-comment">Type 11&#65306;&#36229;&#26102;&#65292;&#36824;&#22312;&#36884;&#20013;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-variable-name">PROBE_REACHED</span>,   <span class="org-comment-delimiter">/* </span><span class="org-comment">Type 3&#65306;&#31471;&#21475;&#19981;&#21487;&#36798;&#65292;&#21040;&#36798;&#30446;&#26631;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-variable-name">PROBE_TIMEOUT</span>,   <span class="org-comment-delimiter">/* </span><span class="org-comment">&#26080;&#24212;&#31572;</span><span class="org-comment-delimiter"> */</span>
+} <span class="org-type">probe_type_t</span>;
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> {
+    <span class="org-type">probe_type_t</span> <span class="org-variable-name">type</span>;
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">ip</span>;
+} <span class="org-type">probe_result_t</span>;
+</pre>
+</div>
+
+<p>
+接着改 ICMP 解析部分。IP 头部的第一个字节的低 4 位是 IHL（Internet Header Length），乘以 4 得到头部长度。ICMP 类型紧跟在 IP 头部之后。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">ip_hdr_len</span> = (buf[0] &amp; 0x0f) * 4;  <span class="org-comment-delimiter">/* </span><span class="org-comment">&#36890;&#24120;&#20026; 20</span><span class="org-comment-delimiter"> */</span>
+<span class="org-keyword">if</span> (n &lt; ip_hdr_len + 1)
+    <span class="org-keyword">return</span> (probe_result_t){PROBE_TIMEOUT, 0};
+
+<span class="org-type">uint32_t</span> <span class="org-variable-name">src_ip</span>;
+memcpy(&amp;src_ip, buf + 12, 4);
+
+<span class="org-keyword">switch</span> (buf[ip_hdr_len]) {   <span class="org-comment-delimiter">/* </span><span class="org-comment">ICMP &#31867;&#22411;&#30721;</span><span class="org-comment-delimiter"> */</span>
+<span class="org-keyword">case</span> 11:  <span class="org-comment-delimiter">/* </span><span class="org-comment">Time Exceeded&#65306;&#36884;&#20013;&#30340;&#36335;&#30001;&#22120;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">return</span> (probe_result_t){PROBE_HOP, src_ip};
+<span class="org-keyword">case</span> 3:   <span class="org-comment-delimiter">/* </span><span class="org-comment">Destination Unreachable</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">if</span> (src_ip == target)
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_REACHED, src_ip};
+    <span class="org-comment-delimiter">/* </span><span class="org-comment">&#28304; IP &#19981;&#26159;&#30446;&#26631;&#65292;&#35828;&#26126;&#26159;&#36884;&#20013;&#26576;&#21488;&#26426;&#22120;&#21457;&#30340; Type 3</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-keyword">return</span> (probe_result_t){PROBE_HOP, src_ip};
+<span class="org-keyword">default</span>:
+    <span class="org-keyword">return</span> (probe_result_t){PROBE_TIMEOUT, 0};
+}
+</pre>
+</div>
+
+<p>
+注意 <code>case 3</code> 里的 <code>if (src_ip =</code> target)= 判断。第一版代码没做这个检查，只要收到 Type 3 就认为到达了目标。但实际运行时会发现，途中某些内网设备也会发 Type 3 消息，让你误以为到了。加上这个检查后，只有源 IP 和目标 IP 一致时才算真正到达。
+</p>
+
+<p>
+main 循环也跟着更新，到达后立即退出。这里用 <code>break</code> 只能跳出 <code>switch=，跳不出外面的 =for</code> 循环，所以加个标志位。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">reached</span> = 0;
+<span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">ttl</span> = 1; ttl &lt;= 15; ttl++) {
+    <span class="org-type">probe_result_t</span> <span class="org-variable-name">r</span> = probe(target, ttl);
+    <span class="org-keyword">switch</span> (r.type) {
+    <span class="org-keyword">case</span> PROBE_HOP:
+        printf(<span class="org-string">"%2d  %s\n"</span>, ttl, inet_ntoa((<span class="org-keyword">struct</span> <span class="org-type">in_addr</span>){r.ip}));
+        <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> PROBE_REACHED:
+        printf(<span class="org-string">"%2d  %s\n"</span>, ttl, inet_ntoa((<span class="org-keyword">struct</span> <span class="org-type">in_addr</span>){r.ip}));
+        reached = 1;
+        <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> PROBE_TIMEOUT:
+        printf(<span class="org-string">"%2d  *\n"</span>, ttl);
+        <span class="org-keyword">break</span>;
+    }
+    <span class="org-keyword">if</span> (reached)
+        <span class="org-keyword">break</span>;
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3481ebb" class="outline-2">
+<h2 id="org3481ebb">加上计时</h2>
+<div class="outline-text-2" id="text-org3481ebb">
+<p>
+真正的 traceroute 会显示每跳的往返时间（RTT）。实现起来不复杂，发送前记个时间戳，收到应答后算差值。
+</p>
+
+<p>
+需要增加 <code>#include &lt;time.h&gt;</code> 和在结构体中加一个字段。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> {
+    <span class="org-type">probe_type_t</span> <span class="org-variable-name">type</span>;
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">ip</span>;
+    <span class="org-type">double</span> <span class="org-variable-name">rtt_ms</span>;  <span class="org-comment-delimiter">/* </span><span class="org-comment">&#24448;&#36820;&#24310;&#36831;&#65292;&#27627;&#31186;</span><span class="org-comment-delimiter"> */</span>
+} <span class="org-type">probe_result_t</span>;
+</pre>
+</div>
+
+<p>
+在 <code>probe()</code> 函数中包裹计时。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-keyword">struct</span> <span class="org-type">timespec</span> <span class="org-variable-name">t_start</span>, <span class="org-variable-name">t_end</span>;
+<span class="org-function-name">clock_gettime</span>(CLOCK_MONOTONIC, &amp;t_start);
+<span class="org-function-name">sendto</span>(send_sock, payload, <span class="org-keyword">sizeof</span>(payload), 0,
+       (<span class="org-keyword">struct</span> <span class="org-type">sockaddr</span> *)&amp;dest, <span class="org-keyword">sizeof</span>(dest));
+<span class="org-comment-delimiter">/* </span><span class="org-comment">... recv &#36923;&#36753; ...</span><span class="org-comment-delimiter"> */</span>
+<span class="org-function-name">clock_gettime</span>(CLOCK_MONOTONIC, &amp;t_end);
+
+<span class="org-type">double</span> <span class="org-variable-name">rtt</span> = (t_end.tv_sec - t_start.tv_sec) * 1000.0
+           + (t_end.tv_nsec - t_start.tv_nsec) / 1e6;
+</pre>
+</div>
+
+<p>
+<code>clock_gettime(CLOCK_MONOTONIC, ...)</code> 用的是单调时钟。「单调」就是只增不减，不会被 NTP 校准或手动改时间往回拨，测时间间隔正好。如果用 =CLOCK_REALTIME=，系统时间一调，算出来的 RTT 就可能变成负数。
+</p>
+
+<p>
+加上计时后的输出。
+</p>
+
+<pre class="example" id="org276092c">
+$ sudo ./traceroute
+ 1  172.30.208.1   1.148 ms
+ 2  192.168.23.254  3.934 ms
+ 3  192.168.250.1  28.519 ms
+ 4  *
+ 5  27.44.88.1     11.272 ms
+ 6  120.80.149.81   7.925 ms
+ 7  *
+ 8  *
+ 9  *
+10  219.158.3.190  14.546 ms
+11  202.77.23.30   13.397 ms
+12  162.245.124.254 12.053 ms
+13  203.131.241.220 335.569 ms
+14  203.131.250.82 189.175 ms
+15  *
+</pre>
+
+<p>
+从第 6 跳的约 8 ms（运营商网络）到第 10 跳的约 14 ms（骨干网），延迟在慢慢爬。真正的跳变在第 13 跳：从 12 ms 飙到 335 ms，那就是数据包跨太平洋的时刻。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org971bf3a" class="outline-2">
+<h2 id="org971bf3a">每跳三次探测</h2>
+<div class="outline-text-2" id="text-org971bf3a">
+<p>
+traceroute 在每个 TTL 值上发送三个探测包，所以你看到每行有三个延迟值。发三个不是随便发的，有几个用处。
+</p>
+
+<p>
+*方差感知*。网络延迟是波动的，单次测量可能是异常值，三次测量能看到一致性。如果三个值分别是 10 ms、12 ms、11 ms，你知道这跳延迟稳定；如果是 5 ms、200 ms、8 ms，说明这跳拥堵或路径不稳定。
+</p>
+
+<p>
+*可靠性*。如果一次探测超时但另外两次收到回应，你仍然能看到这一跳。一个 <code>*</code> 混在真实数值中，意思是「不稳定」，不是「不存在」。
+</p>
+
+<p>
+*负载均衡检测*。如果同一个 TTL 值的三次探测收到了不同的 IP 地址，说明路径上存在负载均衡。原文作者最初用 <code>github.com</code> 作为目标时就遇到了这个问题，反复命中不同的负载均衡节点。
+</p>
+
+<p>
+代码上，只需在现有的 TTL 循环内加一层内循环。为了输出整洁，只在 IP 变化时才打印 IP，否则只打印时间。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-type">int</span> <span class="org-variable-name">reached</span> = 0;
+<span class="org-type">uint32_t</span> <span class="org-variable-name">last_ip</span> = 0;
+printf(<span class="org-string">"%2d  "</span>, ttl);
+<span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; 3; i++) {
+    <span class="org-type">probe_result_t</span> <span class="org-variable-name">r</span> = probe(target, ttl);
+    <span class="org-keyword">switch</span> (r.type) {
+    <span class="org-keyword">case</span> PROBE_HOP:
+    <span class="org-keyword">case</span> PROBE_REACHED:
+        <span class="org-keyword">if</span> (last_ip != r.ip) {
+            <span class="org-keyword">struct</span> <span class="org-type">in_addr</span> <span class="org-variable-name">addr</span> = {.s_addr = r.ip};
+            printf(<span class="org-string">"%s  "</span>, inet_ntoa(addr));
+            last_ip = r.ip;
+        }
+        printf(<span class="org-string">"%.3f ms  "</span>, r.rtt_ms);
+        <span class="org-keyword">if</span> (r.type == PROBE_REACHED)
+            reached = 1;
+        <span class="org-keyword">break</span>;
+    <span class="org-keyword">case</span> PROBE_TIMEOUT:
+        printf(<span class="org-string">"*  "</span>);
+        <span class="org-keyword">break</span>;
+    }
+}
+printf(<span class="org-string">"\n"</span>);
+<span class="org-keyword">if</span> (reached)
+    <span class="org-keyword">break</span>;
+</pre>
+</div>
+
+<p>
+运行效果。
+</p>
+
+<pre class="example" id="org5a66bc4">
+$ sudo ./traceroute 8.8.8.8
+ 1  172.30.208.1  1.148 ms  0.232 ms  0.169 ms
+ 2  192.168.23.254  3.934 ms  3.761 ms  2.850 ms
+ 3  192.168.250.1  28.519 ms  4.876 ms  5.607 ms
+ 4  *  *  *
+ 5  27.44.88.1  11.272 ms  7.522 ms  8.049 ms
+ 6  120.80.149.81  7.925 ms  120.80.149.73  12.396 ms  7.235 ms
+ 7  *  *  *
+ 8  *  *  219.158.103.218  11.132 ms
+ 9  *  *  219.158.24.138  10.484 ms
+10  219.158.3.190  14.546 ms  219.158.3.106  15.134 ms  219.158.3.190  19.326 ms
+11  202.77.23.30  13.397 ms  11.701 ms  12.370 ms
+12  162.245.124.254  12.053 ms  103.239.176.113  13.936 ms  103.239.176.109  14.021 ms
+13  203.131.241.220  335.569 ms  *  *
+14  203.131.250.82  189.175 ms  188.894 ms  196.809 ms
+15  *  *  *
+16  8.8.8.8  200.987 ms  183.870 ms  186.769 ms
+</pre>
+
+<p>
+开始像真正的 traceroute 了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgc0d0072" class="outline-2">
+<h2 id="orgc0d0072">和真正的 traceroute 对比</h2>
+<div class="outline-text-2" id="text-orgc0d0072">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">功能</th>
+<th scope="col" class="org-left">真正的 traceroute</th>
+<th scope="col" class="org-left">本文实现</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">TTL 递增</td>
+<td class="org-left">是</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">ICMP 类型检查</td>
+<td class="org-left">是</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">计时（RTT）</td>
+<td class="org-left">是</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">每跳三次探测</td>
+<td class="org-left">是</td>
+<td class="org-left">是</td>
+</tr>
+
+<tr>
+<td class="org-left">DNS 反向解析</td>
+<td class="org-left">是（如 =dns.google=）</td>
+<td class="org-left">否</td>
+</tr>
+
+<tr>
+<td class="org-left">端口递增</td>
+<td class="org-left">是（33434, 33435...）</td>
+<td class="org-left">否（固定 33434）</td>
+</tr>
+
+<tr>
+<td class="org-left">ICMP Echo 模式（=-I=）</td>
+<td class="org-left">是</td>
+<td class="org-left">否（仅 UDP）</td>
+</tr>
+
+<tr>
+<td class="org-left">TCP 模式（=-T=）</td>
+<td class="org-left">是</td>
+<td class="org-left">否</td>
+</tr>
+
+<tr>
+<td class="org-left">IPv6 支持</td>
+<td class="org-left">是（=traceroute6=）</td>
+<td class="org-left">否</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+真正的 traceroute 每次探测会递增目标端口（33434, 33435, 33436...），用来把 ICMP 应答匹配到具体的探测包，因为 ICMP 应答里包含了原始 UDP 包的头部。它还支持 TCP 模式（=-T=），对付 UDP 被防火墙拦截但 TCP 能通过的网络环境。原理都一样，设低 TTL，让包死在途中，读 ICMP 错误。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1e2e11c" class="outline-2">
+<h2 id="org1e2e11c">traceroute 看不到的东西</h2>
+<div class="outline-text-2" id="text-org1e2e11c">
+<p>
+到这一步，traceroute 的基本原理已经清楚了。不过别被它的输出骗了。输出里每跳有精确的 IP 和毫秒级延迟，看着像一张网络地图。但实际上这些 IP 可能不是真正的路径，延迟也可能不代表真实往返时间，有些路由器干脆隐身。地图谈不上，更像草图。下面是四条常见的误解。
+</p>
+
+<p>
+*非对称返回路径*。ICMP 错误消息从路由器返回你的机器时，走的不一定是去程的同一条路。网络路由是动态的，返回路径可能完全不同。traceroute 显示的是去程路径上每个路由器的 IP，但你不知道 ICMP 回复是怎么回来的。
+</p>
+
+<p>
+*MPLS 隧道*。MPLS（Multi-Protocol Label Switching，多协议标签交换）是运营商骨干网常用的技术。数据包可以在一个 MPLS 隧道中穿过多个路由器，但 traceroute 只看到隧道的入口和出口，中间的路由器被隐藏了。一行输出背后可能藏着十几个路由器。
+</p>
+
+<p>
+*负载均衡路径分裂*。同一个 TTL 的三次探测可能走完全不同的路径。很多运营商在骨干网入口部署 ECMP（Equal-Cost Multi-Path，等价多路径）路由，把流量分散到多条链路上。traceroute 显示的「路径」其实不是任何一个数据包真正走过的路，它是多次探测拼出来的混合产物。
+</p>
+
+<p>
+*ICMP 限速*。那些 <code>*</code> 不一定是死路由器。很多路由器为了节省 CPU 会降低 ICMP 消息的生成优先级，甚至直接丢弃 ICMP 回复。数据包正常穿过这些路由器，只是路由器懒得告诉你它在那儿。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org37f3648" class="outline-2">
+<h2 id="org37f3648">为什么有星号</h2>
+<div class="outline-text-2" id="text-org37f3648">
+<p>
+<code>*</code> 是 traceroute 输出里最让人犯迷糊的部分。这玩意到底在说什么？
+</p>
+
+<p>
+简单说， <code>*</code> 的意思是「这次探测没收到回应」，不代表「那里没东西」。具体原因有五种。
+</p>
+
+<ol class="org-ol">
+<li>*ICMP 限速*，路由器正常转发数据包，只是减少了 ICMP 回复的生成频率。这是最常见的原因。</li>
+<li>*防火墙拦截 ICMP*，路由器或前面的防火墙直接丢弃所有 ICMP 消息。企业和云防火墙经常这样做。</li>
+<li>*防火墙拦截 UDP 33434*，路由器在 TTL 还没减到 0 之前就丢弃了探测包，包根本没有机会「自然死亡」并触发回报。</li>
+<li>*超时*，路由器确实回复了，但回复在路上花了超过 2 秒（我们设的超时时间）。现代网络上很少见。</li>
+<li>*回复迷路*，ICMP 回复发出了，但走了另一条路，没能到达我们这。</li>
+</ol>
+
+<p>
+密码就在输出里，第 4 跳全是 <code>*</code> ，但第 5 跳又能看到路由器了。第 7 跳也是一样，全是 <code>*</code> ，数据包照样穿过它到达了后面的路由器。这说明那些「沉默」的路由器在正常转发数据包，只是不愿意回 ICMP。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org27192a1" class="outline-2">
+<h2 id="org27192a1">为什么需要 sudo</h2>
+<div class="outline-text-2" id="text-org27192a1">
+<p>
+每次运行都要加 <code>sudo</code> 很烦。系统的 <code>traceroute</code> 命令不需要 =sudo=，为什么我们的需要？
+</p>
+
+<p>
+因为我们的代码打开了一个 <code>SOCK_RAW</code> 类型的 ICMP socket 来直接读取原始网络数据。原始 socket 能嗅探到达本机的任意网络流量，这种操作内核只允许 root 干。
+</p>
+
+<p>
+系统的 <code>traceroute</code> 绕过了这个限制，靠的是安装时设置的 setuid 位。运行 <code>ls -la $(which traceroute)</code> 能看到类似 <code>-rwsr-xr-x</code> 的权限，那个 <code>s</code> 表示，不管谁来执行这个二进制，都以文件所有者（root）的权限跑。
+</p>
+
+<p>
+macOS 上还有第三种选择，内核允许非特权用户用 <code>SOCK_DGRAM</code> 类型的 ICMP socket（而不是 <code>SOCK_RAW=），功能受限，但跑个基本的 =ping</code> 和 traceroute 够了。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org99eaf95" class="outline-2">
+<h2 id="org99eaf95">完整代码</h2>
+<div class="outline-text-2" id="text-org99eaf95">
+<p>
+以下是最终版本，114 行 C 代码（含注释和空行）。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-c"><span class="org-preprocessor">#include</span> <span class="org-string">&lt;stdio.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;string.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;unistd.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;time.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/socket.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;netinet/in.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;arpa/inet.h&gt;</span>
+<span class="org-preprocessor">#include</span> <span class="org-string">&lt;sys/time.h&gt;</span>
+
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">TARGET_PORT</span>   33434
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">MAX_TTL</span>       30
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">PROBES_PER_HOP</span> 3
+<span class="org-preprocessor">#define</span> <span class="org-variable-name">RECV_TIMEOUT</span>   2  <span class="org-comment-delimiter">/* </span><span class="org-comment">&#31186;</span><span class="org-comment-delimiter"> */</span>
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">enum</span> {
+    <span class="org-variable-name">PROBE_HOP</span>,       <span class="org-comment-delimiter">/* </span><span class="org-comment">ICMP Type 11&#65306;&#36229;&#26102;&#65292;&#36884;&#20013;&#30340;&#36335;&#30001;&#22120;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-variable-name">PROBE_REACHED</span>,   <span class="org-comment-delimiter">/* </span><span class="org-comment">ICMP Type 3&#65306;&#31471;&#21475;&#19981;&#21487;&#36798;&#65292;&#21040;&#36798;&#30446;&#26631;</span><span class="org-comment-delimiter"> */</span>
+    <span class="org-variable-name">PROBE_TIMEOUT</span>,   <span class="org-comment-delimiter">/* </span><span class="org-comment">&#26080;&#24212;&#31572;</span><span class="org-comment-delimiter"> */</span>
+} <span class="org-type">probe_type_t</span>;
+
+<span class="org-keyword">typedef</span> <span class="org-keyword">struct</span> {
+    <span class="org-type">probe_type_t</span> <span class="org-variable-name">type</span>;
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">ip</span>;
+    <span class="org-type">double</span> <span class="org-variable-name">rtt_ms</span>;
+} <span class="org-type">probe_result_t</span>;
+
+<span class="org-keyword">static</span> <span class="org-type">probe_result_t</span> <span class="org-function-name">probe</span>(<span class="org-type">uint32_t</span> <span class="org-variable-name">target</span>, <span class="org-type">int</span> <span class="org-variable-name">ttl</span>)
+{
+    <span class="org-type">int</span> <span class="org-variable-name">send_sock</span> = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    setsockopt(send_sock, IPPROTO_IP, IP_TTL, &amp;ttl, <span class="org-keyword">sizeof</span>(ttl));
+
+    <span class="org-type">int</span> <span class="org-variable-name">recv_sock</span> = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    <span class="org-keyword">struct</span> <span class="org-type">timeval</span> <span class="org-variable-name">tv</span> = {.tv_sec = RECV_TIMEOUT};
+    setsockopt(recv_sock, SOL_SOCKET, SO_RCVTIMEO, &amp;tv, <span class="org-keyword">sizeof</span>(tv));
+
+    <span class="org-keyword">struct</span> <span class="org-type">sockaddr_in</span> <span class="org-variable-name">dest</span> = {
+        .sin_family = AF_INET,
+        .sin_addr.s_addr = target,
+        .sin_port = htons(TARGET_PORT),
+    };
+    <span class="org-type">char</span> <span class="org-variable-name">payload</span>[32] = {0};
+
+    <span class="org-keyword">struct</span> <span class="org-type">timespec</span> <span class="org-variable-name">t_start</span>, <span class="org-variable-name">t_end</span>;
+    clock_gettime(CLOCK_MONOTONIC, &amp;t_start);
+    sendto(send_sock, payload, <span class="org-keyword">sizeof</span>(payload), 0,
+           (<span class="org-keyword">struct</span> <span class="org-type">sockaddr</span> *)&amp;dest, <span class="org-keyword">sizeof</span>(dest));
+
+    <span class="org-type">unsigned</span> <span class="org-type">char</span> <span class="org-variable-name">buf</span>[512];
+    <span class="org-type">int</span> <span class="org-variable-name">n</span> = recv(recv_sock, buf, <span class="org-keyword">sizeof</span>(buf), 0);
+    clock_gettime(CLOCK_MONOTONIC, &amp;t_end);
+    close(send_sock);
+    close(recv_sock);
+
+    <span class="org-type">double</span> <span class="org-variable-name">rtt</span> = (t_end.tv_sec - t_start.tv_sec) * 1000.0
+               + (t_end.tv_nsec - t_start.tv_nsec) / 1e6;
+
+    <span class="org-keyword">if</span> (n &lt; 20)
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_TIMEOUT, 0, 0};
+
+    <span class="org-type">int</span> <span class="org-variable-name">ip_hdr_len</span> = (buf[0] &amp; 0x0f) * 4;
+    <span class="org-keyword">if</span> (n &lt; ip_hdr_len + 1)
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_TIMEOUT, 0, 0};
+
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">src_ip</span>;
+    memcpy(&amp;src_ip, buf + 12, 4);
+
+    <span class="org-keyword">switch</span> (buf[ip_hdr_len]) {
+    <span class="org-keyword">case</span> 11:
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_HOP, src_ip, rtt};
+    <span class="org-keyword">case</span> 3:
+        <span class="org-keyword">if</span> (src_ip == target)
+            <span class="org-keyword">return</span> (probe_result_t){PROBE_REACHED, src_ip, rtt};
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_HOP, src_ip, rtt};
+    <span class="org-keyword">default</span>:
+        <span class="org-keyword">return</span> (probe_result_t){PROBE_TIMEOUT, 0, 0};
+    }
+}
+
+<span class="org-type">int</span> <span class="org-function-name">main</span>(<span class="org-type">int</span> <span class="org-variable-name">argc</span>, <span class="org-type">char</span> *<span class="org-variable-name">argv</span>[])
+{
+    <span class="org-keyword">const</span> <span class="org-type">char</span> *<span class="org-variable-name">target_str</span> = (argc &gt; 1) ? argv[1] : <span class="org-string">"8.8.8.8"</span>;
+    <span class="org-type">uint32_t</span> <span class="org-variable-name">target</span> = inet_addr(target_str);
+
+    <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">ttl</span> = 1; ttl &lt;= MAX_TTL; ttl++) {
+        <span class="org-type">int</span> <span class="org-variable-name">reached</span> = 0;
+        <span class="org-type">uint32_t</span> <span class="org-variable-name">last_ip</span> = 0;
+        printf(<span class="org-string">"%2d  "</span>, ttl);
+
+        <span class="org-keyword">for</span> (<span class="org-type">int</span> <span class="org-variable-name">i</span> = 0; i &lt; PROBES_PER_HOP; i++) {
+            <span class="org-type">probe_result_t</span> <span class="org-variable-name">r</span> = probe(target, ttl);
+
+            <span class="org-keyword">switch</span> (r.type) {
+            <span class="org-keyword">case</span> PROBE_HOP:
+            <span class="org-keyword">case</span> PROBE_REACHED:
+                <span class="org-keyword">if</span> (last_ip != r.ip) {
+                    <span class="org-keyword">struct</span> <span class="org-type">in_addr</span> <span class="org-variable-name">addr</span> = {.s_addr = r.ip};
+                    printf(<span class="org-string">"%s  "</span>, inet_ntoa(addr));
+                    last_ip = r.ip;
+                }
+                printf(<span class="org-string">"%.3f ms  "</span>, r.rtt_ms);
+                <span class="org-keyword">if</span> (r.type == PROBE_REACHED)
+                    reached = 1;
+                <span class="org-keyword">break</span>;
+            <span class="org-keyword">case</span> PROBE_TIMEOUT:
+                printf(<span class="org-string">"*  "</span>);
+                <span class="org-keyword">break</span>;
+            }
+        }
+        printf(<span class="org-string">"\n"</span>);
+        <span class="org-keyword">if</span> (reached)
+            <span class="org-keyword">break</span>;
+    }
+    <span class="org-keyword">return</span> 0;
+}
+</pre>
+</div>
+
+<p>
+编译和运行。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-sh">gcc -o traceroute traceroute.c
+sudo ./traceroute 8.8.8.8
+</pre>
+</div>
+
+<p>
+参考资料：Van Jacobson 的<a href="https://github.com/KristianMikalsen/traceroute">原始 traceroute 实现</a>、<a href="https://www.rfc-editor.org/rfc/rfc792">RFC 792（ICMP 标准）</a>。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-29</span>
+    <span class="post-info">2026-07-01</span>
+    <a href="../../../../../tags/traceroute">traceroute</a> : <a href="../../../../../tags/网络">网络</a> : <a href="../../../../../tags/icmp">ICMP</a> : <a href="../../../../../tags/ttl">TTL</a> : <a href="../../../../../tags/c语言">C语言</a> : <a href="../../../../../tags/linux">Linux</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmmklqx &lt;dot&gt; cp2kj1zqiwluzlkaxfey11wpfg &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>

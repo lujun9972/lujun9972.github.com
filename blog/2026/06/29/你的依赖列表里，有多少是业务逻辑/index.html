@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>你的依赖列表里，有多少是业务逻辑 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="微服务应用把 web server、序列化、服务发现、配置管理、监控、重试、熔断等基础设施代码和业务逻辑混在同一个依赖文件里。本文分析这种混装带来的三个代价：改一个依赖全部重建、跨层打架、部署节奏绑架，以及解决方法。" />
+  <meta name="keywords" content="微服务,架构,耦合,基础设施" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">你的依赖列表里，有多少是业务逻辑</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgcfe3085">依赖列表里混了什么</a></li>
+<li><a href="#orgf2c4d87">代价一：改一个依赖，全部重建</a></li>
+<li><a href="#org17c804b">代价二：跨层打架</a></li>
+<li><a href="#org04d666e">代价三：部署节奏绑架</a></li>
+<li><a href="#org657c510">解决方法：分拆</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgcfe3085" class="outline-2">
+<h2 id="orgcfe3085">依赖列表里混了什么</h2>
+<div class="outline-text-2" id="text-orgcfe3085">
+<p>
+随便打开一个微服务项目的依赖文件。Java 的 <code>pom.xml</code> ，Go 的 <code>go.mod</code> ，Node 的 <code>package.json</code> ，都行。从头扫一遍，数一数里面有多少行是真正的业务逻辑。
+</p>
+
+<p>
+一个典型的 Java 微服务依赖列表大概长这样：
+</p>
+
+<ul class="org-ul">
+<li>Web 服务器（Tomcat、Netty、Undertow）</li>
+<li>序列化框架（Jackson、Gson）</li>
+<li>依赖注入容器（Spring、Guice）</li>
+<li>服务发现客户端（Eureka、Consul）</li>
+<li>健康检查端点</li>
+<li>配置管理（Spring Cloud Config、Consul KV）</li>
+<li>监控指标库（Micrometer、Dropwizard）</li>
+<li>日志框架（Logback、Log4j2）</li>
+<li>重试逻辑（Resilience4j）</li>
+<li>熔断器</li>
+<li>HTTP 客户端配置</li>
+</ul>
+
+<p>
+真正属于业务逻辑的依赖可能只占很少一部分。
+</p>
+
+<p>
+这些基础设施库本身不是问题，每一个都在解决真实的需求。问题在于它们和业务逻辑混在同一个依赖文件里，编译、打包、部署、打补丁，全都绑在一起。
+</p>
+
+<p>
+依赖文件不区分"这是业务依赖"还是"基础设施依赖"。在编译器看来，Spring 和你的订单计算逻辑没有区别，都是 classpath 上的 jar 包。
+</p>
+
+<p>
+这种不分类的混装，制造了三个层次的耦合代价。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orgf2c4d87" class="outline-2">
+<h2 id="orgf2c4d87">代价一：改一个依赖，全部重建</h2>
+<div class="outline-text-2" id="text-orgf2c4d87">
+<p>
+<code>go.mod</code> 和 <code>pom.xml</code> 、 <code>package.json</code> 有一个共同特征：依赖是一个扁平列表。你没法在里面标注"这几行是基础设施，那几行是业务"。
+</p>
+
+<p>
+后果是，任何一个基础设施依赖的变动，都会触发整个服务的重新编译和部署。
+</p>
+
+<p>
+升级语言运行时版本？每个服务都要重新构建和测试。换消息队列从 RabbitMQ 到 Kafka？每个用到消息的服务都要改代码、重新编译、重新部署。加一个可观测性工具，每个微服务都得更新依赖。换云厂商就更狠了，配置、SDK 调用、部署清单全部重写。
+</p>
+
+<p>
+这些变动不涉及一行业务逻辑代码。但因为基础设施依赖和业务依赖共享同一个编译产物，每个变动都波及每一个微服务。
+</p>
+
+<p>
+一个 Netty 的安全补丁，能迫使所有内嵌 web 服务器的服务全部重新构建。而在微服务架构里，几乎所有服务都内嵌了 web 服务器。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org17c804b" class="outline-2">
+<h2 id="org17c804b">代价二：跨层打架</h2>
+<div class="outline-text-2" id="text-org17c804b">
+<p>
+第二个问题更隐蔽。同一件事，比如路由请求或重试失败调用，框架在做，云平台 SDK 在做，容器编排工具也在做。多个层面同时插手同一件事，谁都觉得该听自己的。
+</p>
+
+<p>
+服务路由，Spring 框架想管，Kubernetes 的服务网格也想管。配置管理也一样，框架自己有一套，Consul KV 和 Kubernetes ConfigMap 又各有一套。重试逻辑更混乱，云厂商 SDK 内置了一套，Resilience4j 又来一套。到了熔断这块，框架的熔断器和服务网格的流量控制策略都觉得该听自己的。
+</p>
+
+<p>
+说白了这造成了架构层面的职责重叠。每一层都觉得某个跨模块的通用职责归自己管，但谁也没有完整的控制权。这类需求（服务发现、配置、重试、熔断）在软件工程里有个名字叫"横切关注点"（cross-cutting concern），就是指那些横跨多个业务模块、不属于任何一个具体功能的活儿。
+</p>
+
+<p>
+这种架构上的职责重叠加大了生产环境排查问题的难度。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org04d666e" class="outline-2">
+<h2 id="org04d666e">代价三：部署节奏绑架</h2>
+<div class="outline-text-2" id="text-org04d666e">
+<p>
+基础设施和业务逻辑共享同一个部署单元，就必须共享同一个部署节奏。
+</p>
+
+<p>
+部署单元是什么？Java 打出来的 fat-jar（把所有依赖塞进一个 jar 包），Go 编译出来的二进制，Node 打出来的 Docker 镜像。不管哪种形式，基础设施和业务逻辑都在同一个产物里。
+</p>
+
+<p>
+你的业务团队想上线一个新功能，但正好碰上安全团队要求打一个基础库的安全补丁。两件事不能同时做，因为它们改的是同一个部署产物。要么先上业务变更再打补丁，要么先打补丁再上业务变更。一方要等另一方。
+</p>
+
+<p>
+反过来，你想升级 Go 或 Java 的运行时版本，理应只影响基础设施层。但因为运行时被打包进了每个服务的部署单元，升级运行时意味着重新构建和测试每一个服务。
+</p>
+
+<p>
+部署单元的耦合直接转化为发布排期的耦合。团队的发布节奏不再由业务决定，而是被基础设施的变更频率拖着走。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org657c510" class="outline-2">
+<h2 id="org657c510">解决方法：分拆</h2>
+<div class="outline-text-2" id="text-org657c510">
+<p>
+解决这三个代价的方法就是让基础设施和业务逻辑不要共享部署单元。
+</p>
+
+<p>
+这个想法不新鲜。Java 历史上的几代技术都在做这件事：
+</p>
+
+<ul class="org-ul">
+<li>Applet 运行在浏览器提供的环境里</li>
+<li>Servlet 运行在应用服务器（Tomcat、Jetty）里</li>
+<li>EJB 运行在企业容器（JBoss、WebLogic）里</li>
+<li>OSGi 的模块运行在运行时框架（Eclipse Equinox）里</li>
+</ul>
+
+<p>
+每一代的做法都差不多：运行时负责网络、资源调度、生命周期这些基础设施的活儿，应用只管业务逻辑。
+</p>
+
+<p>
+fat-jar 加 Docker 的时代把这个分离丢掉了。Java 开始像 Go 一样把所有东西打成一个二进制，然后在容器编排平台上重新实现一遍运行时本来提供的基础设施管理。但容器编排平台做得并不一定比原来的应用服务器好。
+</p>
+
+<p>
+不管用什么技术实现，分拆的核心原则是：基础设施的变更（运行时版本、网络栈、监控工具）不需要动业务代码，反过来业务逻辑的变更（新功能、bug 修复）也不需要重新打包基础设施。两层可以各排各的发布计划，升级互不干扰，回滚也各管各的。
+</p>
+
+<p>
+当然这不是呼吁回到 EJB 时代。具体用什么工具实现分离那就是另一个问题了。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-29</span>
+    <span class="post-info">2026-07-01</span>
+    <a href="../../../../../tags/微服务">微服务</a> : <a href="../../../../../tags/架构">架构</a> : <a href="../../../../../tags/耦合">耦合</a> : <a href="../../../../../tags/基础设施">基础设施</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmmklqx &lt;dot&gt; cp2kj1zqiwluzlkaxfey11wpfg &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
