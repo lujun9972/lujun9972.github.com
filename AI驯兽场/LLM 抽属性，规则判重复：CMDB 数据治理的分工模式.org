@@ -1,0 +1,239 @@
+#+TITLE: LLM 抽属性，规则判重复：CMDB 数据治理的一种分工模式
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: CMDB, LLM, RAG, 数据治理, LangChain, Pydantic
+#+DATE: [2026-06-29 Mon]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: CMDB 里同一个配置项被登记多遍是运维常见痛点：web-server-01、WebServer01、nginx 生产服务器，运维知道是同一台，系统不知道。本文从工业库存搜索的 LLM 深度解析方案中提取一个可迁移的核心模式：让 LLM 负责从非结构化描述中抽取结构化属性，让规则层做确定性的重复判定。全文用 CMDB 例子走了一遍四阶段流水线（原始输入、类别感知 Schema 生成、LLM 解析、规则验证），补充了 Pydantic Schema 和 LangChain 结构化输出的示意代码。这个分工不只适用于 CMDB，工单分类、变更记录、日志解析等场景同样适用。
+
+* 问题：同一台机器登记了三遍
+
+CMDB（配置管理数据库）里存了各种 IT 资产：服务器、交换机、中间件、数据库等等。每个配置项有一条标识号，理论上应该是唯一可识别的。但实际操作中，同一个东西往往以多种面目出现：
+
+- =web-server-01=
+- =WebServer01=
+- =prod-web-01=
+- =nginx 生产服务器=
+
+运维一眼能看出这四条大概指向同一台机器。但 CMDB 不行，对系统来说这就是四个不同的配置项。
+
+产生这个问题的根源是标识字段靠手工录入，没有强制校验，录入的人来自不同团队、不同时期、遵循不同命名习惯。几百台机器、几个机房、几年的历史积累叠加起来，结果就是：数据有，但不好用。具体影响两个场景：
+
+- *搜索*：想查一台机器是不是已经在册，但不知道当时录的是哪个名字，导致查不到。
+- *去重*：新机器上线要录入 CMDB，搞不清是不是已经用别的名字登记过了，又建一条记录，重复越积越多。
+
+命名不一致只是 CMDB 数据混乱的一种形态。物理机和虚机的映射不清、CI 状态与实际不符、跨团队对同一台机器的定义不同，这些都是 CMDB 治理中的常见问题。本文聚焦命名不一致这一种，因为这种问题最适合让 LLM 从描述文本中提取属性来解决。
+
+* 传统方法为什么不够
+
+为了解决这个问题，有四种常见做法，但都不完美。
+
+精确匹配要求描述完全一致才算同一条。只有在录入纪律严格时管用，现实中做不到。
+
+正则和规则能识别"prod = 生产环境"、"web = Web 服务器"。这类做法安全、可解释，但规则数量会随团队规范和业务领域扩展而爆炸，覆盖漏洞很快出现。
+
+模糊匹配能处理拼写差异（=web-server-01= 和 =web-srever-01=），但管不了语义。它不知道"nginx 生产服务器"和"prod-web-01"指的是一类东西。
+
+语义搜索把每条描述转成向量，用向量距离找近邻，能抓住语义相似性。但 IT 数据有个特点：文本相似不代表功能等价。=web-server-01= 和 =web-server-02= 在语义空间里非常近，因为共享 "web-server" 这个大部分上下文，但一台跑生产一台跑测试，完全不可互换。语义搜索能帮你圈出候选，做不了最终的精确判定，还需要一层基于具体属性的比对。
+
+* 核心原则：LLM 抽属性，规则判重复
+
+这是整个方案的核心，用一句话概括就是： LLM 负责把非结构化文本变成结构化属性，规则层拿到结构化属性后做确定性的重复判定。
+
+之所以不让 LLM 直接判重，是因为 LLM 的判定不可控、不可审计、会变。今天给它两条记录问"是不是同一个"，它说"是"；明天同样两条，它可能说"不是"。生产系统不能接受这种波动。
+
+让 LLM 只做它擅长的事：理解"nginx 生产服务器，Dell R750，192.168.1.10，8 核 32G"这段话，提取出类型（服务器）、厂商（Dell）、型号（R750）、IP（192.168.1.10）、环境（生产）这些结构化字段。这一步 LLM 做得好，因为它天然能处理不一致的表述、缩写、乱序。
+
+规则层拿到结构化字段后，判定逻辑就是确定性的：IP 相同加型号相同，极可能重复。规则可解释、可审计、可调优，出错了能追溯到具体规则。
+
+这种分工还有一个好处：规则层的判定标准因组织而异，可以在不改 LLM 的前提下调整。A 公司认为 IP 相同才算重复，B 公司认为同型号加同机柜就算，各自维护自己的规则集即可。
+
+* 四阶段流水线
+
+讲清楚分工原则后，具体实现是一条四阶段流水线。原文用 LangChain 编排，下面用 CMDB 例子走一遍每个阶段。
+
+** 阶段一：原始描述加元数据
+
+输入不只是描述文本。CMDB 的配置项通常还有一些半结构化的元数据：CI 类型（如果已有分类）、归属团队、录入来源（人工录入、自动发现、监控同步）等。这些元数据不总是准确，但哪怕不完整也比没有强。比如"录入来源 = 自动发现"的记录，IP 地址通常比人工录入的可靠。
+
+** 阶段二：类别感知 Schema 生成
+
+CMDB 的配置项不是一个模子刻出来的。服务器、交换机、中间件、数据库关心的属性完全不同。硬塞进一个统一 Schema，要么得到一个巨大稀疏的表（每类只填几个字段，其余全空），要么得到一个过于泛化的结构（所有字段都叫 =attr1=、=attr2=，没法用）。
+
+解法是按类别生成 Schema：先确定 CI 类型（用元数据，或让 LLM 做一次轻量分类），再让 LLM 生成这个类型的属性模板。服务器关心 IP、型号、CPU、内存、机房；交换机关心端口数、背板带宽、VLAN 配置。最后用 RAG（检索增强，即从知识库检索相关内容注入到 LLM 上下文里）补充公司的属性字典：允许的环境标签、机房编号规范、型号命名约定。
+
+下面是一份用 Pydantic（Python 的数据验证库，用类定义数据结构）定义的服务器 Schema：
+
+#+begin_src python :exports code
+from enum import Enum
+from typing import Optional
+from pydantic import BaseModel, Field
+
+class Environment(str, Enum):
+    """环境标签，枚举值受约束"""
+    PRODUCTION = "生产"
+    STAGING = "预发"
+    TEST = "测试"
+
+class ServerCI(BaseModel):
+    """服务器配置项的结构化 Schema"""
+    ci_type: str = Field(description="配置项类型，固定为 '服务器'")
+    manufacturer: Optional[str] = Field(None, description="厂商：Dell、HP、华为")
+    model: Optional[str] = Field(None, description="型号：R750、DL380")
+    ip: Optional[str] = Field(None, description="IP 地址，IPv4 格式")
+    cpu_cores: Optional[int] = Field(None, description="CPU 核数")
+    memory_gb: Optional[int] = Field(None, description="内存大小（GB）")
+    environment: Optional[Environment] = Field(None, description="环境标签")
+    location: Optional[str] = Field(None, description="机房位置")
+#+end_src
+
+=Optional= 字段允许 LLM 在描述没提某个属性时返回 =None=，而不是硬编一个值。到这一步，你拿到的是一份按公司内部知识定制的类别专属 Schema。
+
+** 阶段三：LLM 解析
+
+Schema 定好后，解析就是把原始描述塞进这个结构。LLM 的任务是理解"nginx 生产服务器，192 机房，8 核 32G"，按服务器的 Schema 填出各个字段。
+
+两个实操难点。第一是缩写和内部黑话：每个公司都有一套缩写，=192 机房 = 可能特指北京 192 号机房，=prod= 是生产，=stg= 是预发，LLM 不可能天生知道这些。解法是用 RAG 把内部缩写表检索出来，注入到解析的上下文里。第二是标准对齐：同一个 Dell R750，有人写"R750"，有人写"PowerEdge R750"，有人写"Dell 750"，需要一份标准名到别名的映射让 LLM 归一化。
+
+输出必须是结构化的、类型正确的：数字就是数字（8 而不是"8 核"），枚举受约束（环境只能是生产、预发、测试之一），单位归一化。LangChain 的 =with_structured_output= 方法在底层保证这一点。运行下面的代码需要 =pip install langchain langchain-openai pydantic= 和一个 DeepSeek API key（=export DEEPSEEK_API_KEY=sk-...=）。
+
+#+begin_src python :exports both
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import os
+import json
+
+# DeepSeek 兼容 OpenAI 接口，换 base_url 和 model 即可
+llm = ChatOpenAI(
+    model="deepseek-chat",
+    temperature=0,
+    base_url="https://api.deepseek.com",
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+)
+# DeepSeek 不支持默认的 json_schema 方式，必须指定 method="function_calling"
+structured_llm = llm.with_structured_output(ServerCI, method="function_calling")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", """从 CMDB 配置项描述中提取结构化属性。
+
+内部缩写（必须遵循）：
+- prod / stg / test 对应 生产 / 预发 / 测试
+- 192 机房 = 北京 192 号机房
+- R750 = Dell PowerEdge R750
+
+规则：
+- 描述中未提及的字段填 None，禁止编造
+- 数值字段返回数字，不能带单位"""),
+    ("human", "{description}"),
+])
+
+chain = prompt | structured_llm
+
+# 同一台机器的两种写法
+for desc in ["nginx 生产服务器，192 机房，8 核 32G",
+             "prod-web-01, Dell R750, 10.0.1.5, 192机房, 8C32G"]:
+    result = chain.invoke({"description": desc})
+    print(json.dumps(result.model_dump(mode="json"), indent=2, ensure_ascii=False))
+#+end_src
+
+两条描述解析后的结构化结果（以下是一次典型运行的输出，LLM 输出的格式细节可能每次略有不同）：
+
+#+begin_example
+{
+  "ci_type": "服务器",
+  "manufacturer": null,
+  "model": null,
+  "ip": null,
+  "cpu_cores": 8,
+  "memory_gb": 32,
+  "environment": "生产",
+  "location": "北京 192 号机房"
+}
+{
+  "ci_type": "服务器",
+  "manufacturer": "Dell",
+  "model": "R750",
+  "ip": "10.0.1.5",
+  "cpu_cores": 8,
+  "memory_gb": 32,
+  "environment": "生产",
+  "location": "北京 192 号机房"
+}
+#+end_example
+
+两条写法差异很大的描述被归一化到相同的结构。第一条缺厂商、型号、IP，这些字段是 =null=，没编造。环境标签从"生产"和"prod"都映射到 = 生产=。"8 核 32G" 和 "8C32G" 都被正确提取为数字。这一步的产物就是规则层可以操作的确定结构。
+
+** 阶段四：规则验证
+
+解析完不代表能用，还需要一层验证和决策。
+
+要验证的东西通常是这些：IP 在合法网段内（防止 LLM 幻觉出不存在的地址）、端口在有效范围（1 到 65535）、环境标签在允许列表内、型号在采购系统已知的型号库里。验证不通过的，路由到人工审核队列。验证通过的，进入重复判定：规则层比较结构化属性，判定哪些记录指向同一个配置项。
+
+重复判定完全是规则驱动的，不涉及 LLM，LLM 的活已经干完了。规则判定为重复的记录，进入人工复核队列确认。
+
+下面是一个最简化的规则判定函数，展示确定性逻辑的样子：
+
+#+begin_src python :exports both
+def is_likely_duplicate(ci_a: ServerCI, ci_b: ServerCI) -> tuple[bool, str]:
+    """规则层：拿到两个结构化 CI，判定是否重复。
+    确定性函数，不涉及 LLM。"""
+    # 规则 1：IP 相同 = 极可能重复
+    if ci_a.ip and ci_a.ip == ci_b.ip:
+        return True, f"IP 相同（{ci_a.ip}）"
+    # 规则 2：两边都有型号 + 同型号 + 同机房 + 同环境 = 疑似重复
+    if (ci_a.model and ci_b.model
+            and ci_a.model == ci_b.model
+            and ci_a.location == ci_b.location
+            and ci_a.environment == ci_b.environment):
+        return True, f"同型号同机房同环境（{ci_a.model}/{ci_a.location}）"
+    return False, "无重复特征"
+
+# 场景：两条记录厂商型号都不同，但 IP 相同
+# 规则层只看结构化属性，IP 相同即判定为疑似重复
+r1 = ServerCI(ci_type="服务器", manufacturer="Dell", model="R750",
+              ip="10.0.1.5", cpu_cores=8, memory_gb=32,
+              environment=Environment.PRODUCTION, location="北京 192 号机房")
+r2 = ServerCI(ci_type="服务器", manufacturer="HP", model="DL380",
+              ip="10.0.1.5", cpu_cores=16, memory_gb=64,
+              environment=Environment.PRODUCTION, location="北京 192 号机房")
+
+print(is_likely_duplicate(r1, r2))
+#+end_src
+
+#+begin_example
+(True, 'IP 相同（10.0.1.5）')
+#+end_example
+
+两条记录厂商、型号、配置都不同，但 IP 相同，规则判定为疑似重复。这正是规则层的价值：基于结构化属性做确定性的、可追溯的判定，这个结果可以解释、可以复核。
+
+拿到结构化数据后，用场不止去重：
+
+- *多维度筛选*：按厂商、机房、环境、类型做组合查询，而不是只能搜描述关键字
+- *入库时拦截*：新建配置项时自动检查是否已有匹配项，在创建前就拦住重复
+- *数据质量报告*：统计多少配置项缺关键字段，量化治理进度
+- *下游自动化*：变更管理、容量规划都能基于干净的结构化数据来做
+
+* 两个常见失败模式
+
+** 幻觉
+
+LLM 会编。描述就三个字"测试机"，LLM 可能脑补出一套完整的属性。应对手段：严格 Schema 约束，必填字段缺失时报错而非编一个；用检索到的领域上下文锚定，减少自由发挥空间；确定性验证器拦截不合理值（IP 不合法、端口超范围）；低置信度结果路由到人工审核，而不是让流水线默默猜下去。
+
+** 数据质量门槛
+
+有些描述信息量太少，连人都判断不了。比如"交换机"两个字，没有型号、没有 IP、没有机房。这种不该指望 LLM 凭空补全，而应该把不确定显式存下来（必填字段留空，标注原因"原文信息不足"），路由到数据补全流程：查采购记录、查自动发现数据、问录入人。
+
+深度解析是决策支持，不是数据重建。原文缺的信息，LLM 变不出来。
+
+* 不只是 CMDB
+
+"LLM 提取结构，规则做决策"这个分工不只适用于 CMDB 去重。任何"非结构化文本要变结构化数据"的场景都适用：
+
+- 工单分类和路由（从工单描述里提取系统名、故障类型、影响范围，再按规则分派）
+- 变更记录结构化（从变更说明里提取受影响的 CI、变更类型、回滚方案）
+
+共性是：LLM 把模糊的文本变成精确的字段，规则层拿这些字段做能审计的决策。LLM 的不确定性被限制在"提取"这一步，决策的确定性由规则层保证。
+
+* 参考来源
+
+本文的核心方案和四阶段流水线结构提炼自 Andrey Chubin 发表在 DZone 的文章 [[https://dzone.com/articles/llm-deep-parsing-inventory-search][LLM-Powered Deep Parsing for Industrial Inventory Search]]，原文讲的是工业 ERP 库存场景，本文把场景迁移到 CMDB 并补充了代码示意。
