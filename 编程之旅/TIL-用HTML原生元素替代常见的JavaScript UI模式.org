@@ -1,0 +1,91 @@
+#+TITLE: TIL: 用 HTML 原生元素替代常见的 JavaScript UI 模式
+#+AUTHOR: lujun9972
+#+TAGS: HTML 前端 JavaScript
+#+DATE: [2026-07-09 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 手风琴、搜索建议、模态框、侧滑菜单——这些常见 UI 交互用原生 HTML 就能实现，不需要写 JavaScript。
+
+* 是什么
+
+很多前端页面加载了一大堆 JavaScript，就为了几个基础 UI 交互，比如手风琴展开收起、搜索框建议下拉、模态框弹窗、侧滑菜单。HTML 这几年陆续加了不少原生元素，这些功能已经不用 JS 了。
+
+* 怎么做
+
+** 手风琴展开/收起： =details= + =summary=
+
+用 =details= 和 =summary= 两个元素就能实现可展开/收缩的内容面板：
+
+#+begin_src html
+<details>
+  <summary>点击展开</summary>
+  这里是隐藏的内容，点击后显示。
+</details>
+#+end_src
+
+加 =open= 属性默认展开，加 =name= 属性还能让同名面板互斥，打开一个就自动关上其他的。
+
+#+begin_src html
+<details name="faq" open>
+  <summary>问题一</summary>
+  答案一
+</details>
+<details name="faq">
+  <summary>问题二</summary>
+  答案二
+</details>
+#+end_src
+
+** 搜索建议： =input= + =datalist=
+
+=text= 输入框关联一个 =datalist= ，输入时自动过滤选项：
+
+#+begin_src html
+<label for="browser">浏览器</label>
+<input type="text" list="browsers" id="browser" name="browser" autocomplete="off" />
+<datalist id="browsers">
+  <option value="Chrome">
+  <option value="Firefox">
+  <option value="Safari">
+</datalist>
+#+end_src
+
+** 模态框和弹出层： =popover= 属性
+
+不用 =display: none/block= 来回切换了，加个 =popover= 属性就行。有三种模式：
+
+- =auto= （默认）：轻点外部或按 =Esc= 关闭，打开时会自动关其他 =auto= 弹出层
+- =hint= ：轻点外部关闭，但不会关其他弹出层（Firefox 和 iOS 全系不支持）
+- =manual= ：只能手动关闭，不会自动关其他弹出层
+
+#+begin_src html
+<button popovertarget="my-popover">打开弹窗</button>
+<div popover id="my-popover">弹窗内容</div>
+#+end_src
+
+** 侧滑导航： =popover= + CSS
+
+利用弹出层的 =position: fixed= 默认定位，配合 CSS 的 =translate= 把它推到屏幕外，打开时再拉回来：
+
+#+begin_src css
+#menu {
+  margin: 0;
+  height: 100vh;
+  translate: -100vw;
+}
+#menu:popover-open {
+  translate: 0;
+}
+#menu::backdrop {
+  background: rgb(190 190 190 / 75%);
+}
+#+end_src
+
+* 注意事项
+
+- =datalist= 的 =option= 只提供建议值，用户仍然可以输入任意内容，不是表单验证
+- =popover= 默认居中定位，做侧滑菜单需要 =margin: 0= 覆盖
+- 不是所有浏览器都支持 =hint= 模式（Firefox、iOS 所有浏览器都不支持）
+- 移动端 =datalist= 的交互与桌面端不同，需测试后再决定是否使用
+
+能用原生 HTML 解决的问题就别上 JS，这样下载量小、复杂度也低。JS 留着处理那些 HTML 和 CSS 搞不定的事就好。
