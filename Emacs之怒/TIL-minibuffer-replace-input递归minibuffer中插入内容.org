@@ -1,0 +1,34 @@
+#+TITLE: TIL: minibuffer-replace-input——递归 minibuffer 中插入内容
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, TIL, minibuffer, Elisp
+#+DATE: [2026-07-13 Sun]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 在递归 minibuffer 中想把当前输入插回上一层，Emacs 没有内置命令。Omar 和 Daniel Mendler 一起写了一个 minibuffer-replace-input 函数解决这个问题。
+
+minibuffer 是可以递归的，在 =C-x C-f= 的 minibuffer 里按 =M-!= 执行 shell 命令，或在 =M-x= 里按 =C-h v= 查看变量帮助，都会打开内层 minibuffer。问题是输入区域属于内层，想把内层打的字搬到外层，Emacs 没有内置命令支持。
+
+Omar Antolin Camarena 在 [Emacs Chat 24](https://sachachua.com/blog/2026/05/karthik-s-notes-on-emacs-chat-24-omar-antolin-camarena/) 提到这个痛点，和 Daniel Mendler 一起写了解决方案：
+
+#+begin_src emacs-lisp
+(defun minibuffer-replace-input (&optional arg)
+  "Replace original minibuffer input.
+
+When a recursive minibuffer is active, insert the current string
+into the original minibuffer input.  With prefix ARG, replace it
+instead."
+  (interactive "P")
+  (when (and (minibufferp) (> (minibuffer-depth) 1))
+    (let* ((replacement (minibuffer-contents)))
+      (unwind-protect (minibuffer-quit-recursive-edit)
+        (run-at-time 0 nil
+                     (lambda (rep)
+                       (when arg (delete-minibuffer-contents))
+                       (insert rep)
+                       (pulse-momentary-highlight-one-line))
+                     replacement)))))
+#+end_src
+
+先用 =minibuffer-contents= 拿到当前输入，退出递归 minibuffer，再用 =run-at-time 0= 在下一个事件循环里插入到正确的位置。
+
+不带前缀参数时是追加，带前缀参数时是替换。插入后会短暂高亮一行。
