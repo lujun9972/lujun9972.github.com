@@ -1,0 +1,125 @@
+#+TITLE: 订阅语义与 Ack 边界：Pulsar 消息投递的设计逻辑
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Pulsar,消息中间件,Java,事件驱动,订阅语义,分布式系统
+#+DATE: [2026-06-25 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Pulsar 是一个消息中间件，设计思路和 Kafka 不同。本文从 Java 客户端的角度，解读 Pulsar 在消息分发（四种订阅语义）和消息投递保证（Ack 一致性边界）上的设计决策，以及 broker 与存储分离的架构意义。这些原理不绑定语言，对理解其他消息中间件同样有参考价值。
+
+消息怎么发出去，消息什么时候算处理完了，这两件事是消息中间件绕不开的。大多数系统把这两件事混在一起处理，Pulsar（Apache 旗下的分布式消息平台）则把它们拆成了两个独立的设计决策。
+
+下面用 Pulsar 官方 Java 客户端为例，看它在订阅模型和投递保证上是怎么设计的。代码是 Java，但讲的是原理，跟语言没关系。[[https://dzone.com/articles/event-driven-pipelines-pulsar-go][DZone 上的原文]] 用的是 Go，这里换成 Java，只聚焦设计逻辑。
+
+* 先说架构：broker 和 storage 为什么要分开
+
+Pulsar 在架构上做了一个不常见的选择，把消息路由和消息持久化拆成两层。broker 层负责接收消息、路由到订阅者、维护协议连接；BookKeeper（一个独立的分布式日志存储）负责把消息写到磁盘。
+
+为什么要拆？因为这两层增加和减少服务器的时机不一样。流量高峰时你需要更多的 broker 做路由，数据堆积时你需要更多的存储节点。合在一起的话，扩容一个维度必然连带另一个。Kafka 的做法是 broker 既路由又存储，broker 数量同时受限于计算能力和磁盘容量，两个维度互相绑死。
+
+理解了"路由和存储是分开的"，后面的订阅语义才有基础，broker 只管分发，不管消息存多久。存多久由 BookKeeper 的保留策略和订阅的 cursor（消费位置指针，记录消费者读到了哪里）共同决定。
+
+路由和存储分开之后，broker 到底怎么把消息分发给消费者？这就轮到订阅语义上场了。
+
+* 四种订阅语义：消息怎么分发
+
+大多数消息中间件只提供一种消费模型。Kafka 的消费者组（consumer group）把同一个 partition 的消息只投递给组内一个消费者，RabbitMQ 的工作队列在多个 worker 间轮询。Pulsar 提供了四种订阅类型，每种对应一种不同的分发约束。
+
+先看代码长什么样。创建一个消费者，核心就是指定订阅类型。
+
+#+begin_src java
+Consumer<String> consumer = client.newConsumer(Schema.STRING)
+    .topic("orders")
+    .subscriptionName("order-processor")
+    .subscriptionType(SubscriptionType.Shared)  // 换这一行切换语义
+    .subscribe();
+#+end_src
+
+四个选项是 =Exclusive= 、 =Shared= 、 =Failover= 、 =Key_Shared= ，下面逐个说。
+
+** Exclusive：独占订阅
+
+只有一个消费者能持有这个订阅。第二个消费者用同样的订阅名连接，broker 直接拒绝。好处是保证严格的消息顺序（先发的先消费），坏处是无法水平扩展。适合顺序敏感且吞吐量不高的场景，比如状态机状态流转。
+
+** Shared：共享订阅
+
+消息轮询分发给所有连着的消费者。消费者可以随时增减，broker 自动重新分配负载。这是吞吐量最高的模式，代价是消息顺序不保证（同一条消息可能先到消费者 A，下一条先到消费者 B）。适合无状态处理：发邮件通知、图片缩略图生成、日志写入。
+
+** Failover：主备订阅
+
+broker 选一个消费者当主，其余消费者连着但待命。主挂了，备用消费者立刻接管，消息顺序不乱。需要严格顺序又需要高可用的场景常用这个模式，比如金融交易处理。切换很快，因为备用消费者已经连着 broker，不用重新建立连接和认证。
+
+** Key_Shared：按键共享订阅
+
+带相同 key 的消息始终路由到同一个消费者。你可以水平扩展消费者数量，同一个 key 的消息仍然有序。这解决了"有状态处理需要扩展"的难题。举个例子：按用户 ID 聚合点击事件，只要给消息打上用户 ID 作为 key，多个消费者并行处理时同一个用户的事件不会乱序。
+
+#+begin_src java
+// 发送带 key 的消息
+producer.newMessage()
+    .key("user-42")           // 相同 key 始终去同一个消费者
+    .value("用户 42 的点击事件")
+    .send();
+#+end_src
+
+Key_Shared 的限制是消费者数量变动时，key 到消费者的映射会重新分配，短暂的乱序可能发生。适合消费者数量相对稳定的场景。
+
+四种订阅类型适合不同的场景， =Shared= 追求吞吐， =Exclusive= 保证顺序， =Failover= 追求顺序加高可用， =Key_Shared= 允许有状态处理的并行扩展。
+
+消息分发出去之后还没完。消费者拿到消息后，broker 怎么才知道这条消息可以删了？这就得靠 Ack 机制。
+
+* Ack 边界：什么时候算"处理完了"
+
+消费者收到消息后，得主动告诉 broker 这条消息处理完了，可以删了。这个动作叫 acknowledge（简称 ack）。
+
+#+begin_src java
+while (true) {
+    Message<String> msg = consumer.receive();
+    try {
+        processOrder(msg.getValue());
+        consumer.acknowledge(msg);  // 只有处理成功才确认
+    } catch (Exception e) {
+        consumer.negativeAcknowledge(msg);  // 处理失败，让 broker 重新投递
+    }
+}
+#+end_src
+
+关键就在 =receive()= 和 =acknowledge()= 之间那段代码，这是你的"处理窗口"。在这个窗口里做的事必须满足幂等条件。
+
+因为如果消费者在处理窗口里崩溃了（处理完了但还没来得及 ack），broker 会重新投递这条消息。如果你的处理逻辑不是幂等的（比如每次都往数据库里 INSERT 一条新记录），重新投递就会产生重复数据。
+
+这就是 at-least-once（至少投递一次）语义的代价，消息不会丢，但可能重复。Pulsar 默认就是这个语义，大多数消息中间件也一样，包括 Kafka。
+
+如果你需要 exactly-once（恰好投递一次）语义，Pulsar 支持事务性确认，ack 和下游写入在同一个事务里提交，要么都成功要么都失败。但事务有性能开销，代码复杂度也高。大多数场景用 at-least-once 加幂等处理就够了，没必要追求 exactly-once。
+
+除了逐条确认，Pulsar 还支持累积确认（cumulative ack），确认一条消息时会自动把这条之前的所有未确认消息一起确认了。
+
+#+begin_src java
+// 确认 msg 及其之前所有未确认的消息
+consumer.acknowledgeCumulative(msg);
+#+end_src
+
+累积确认适合"只关心最新进度"的场景，比如日志聚合。你不需要每条日志都 ack，只需要在处理到某个检查点时确认一次，之前的全部算处理完。
+
+ack 之后消息就能删了？不一定，broker 保留多久还得看 cursor 机制。
+
+* cursor 保留：消费者掉队了怎么办
+
+Kafka 用 offset（一个递增的数字，标记消费到了 topic 的第几条消息）记录消费位置，消息保留是 topic 级别的，默认按时间或大小淘汰。消费者如果处理慢了（跟不上消息产生的速度），下次可以从 offset 记录的位置继续，但超过保留期的消息已经被删了。
+
+Pulsar 的做法不同。每个订阅有一个独立的 cursor，broker 根据这个 cursor 决定从哪里开始投递。消费者掉队了（长时间没 ack），消息不会丢，cursor 停在最后一次 ack 的位置，消费者重新连上后从那里继续。
+
+差异的实际影响就在于"不同消费速度的订阅能不能互不干扰"。Pulsar 的消息保留是订阅级别的，同一个 topic 上可以有快订阅和慢订阅，各自维护自己的 cursor，慢的不影响快的。Kafka 的保留策略是 topic 级别的，所有消费者共享同一套日志，一个慢消费者如果需要的消息过了保留期被删掉了，就恢复不了了。
+
+这个差异在"消费者处理速度差异大"的场景下更明显。比如一个实时仪表盘（秒级消费）和一个离线分析任务（小时级消费）订阅同一个 topic，Pulsar 允许它们各按各的速度消费，互不影响，Kafka 中离线任务可能因为消息过了保留期而丢失中间状态。
+
+* 这些设计决策意味着什么
+
+说到底，Pulsar 的思路就是把消息中间件的几个关注点拆成独立可配置的决策。
+
+- 路由和存储分开（broker 加 BookKeeper）
+- 分发语义可选（四种订阅类型）
+- 投递保证可选（at-least-once 或 exactly-once）
+- 消息保留按订阅独立（cursor）
+
+记住这四个设计维度，以后碰上消息中间件选型，就知道从哪些角度去比了。Kafka 在某些维度上选得更简单（一种订阅模型、topic 级别保留），Pulsar 选得更灵活。灵活的代价是更多配置项和学习成本，换来的是更精确的控制。
+
+原文的 Go 示例项目（producer/consumer/monitor 三组件加 Prometheus 监控）展示了完整的工程搭建，有兴趣的可以到 [[https://github.com/shivik/apache-pulsar-demo][GitHub 仓库]] 看看。
