@@ -1,0 +1,1668 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>读：witr——从源码看 Linux 如何获取进程信息 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972" />
+  <meta name="description" content="通过阅读 witr 项目的 Go 源码，逐一讲解 Linux /proc 文件系统中用于获取进程信息的各个文件：stat、cmdline、exe、environ、fd、cgroup、net/tcp 等。每段源码配有等价 shell 命令，可在终端直接复现。" />
+  <meta name="keywords" content="Linux,/proc,进程,witr,Go,源码阅读" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">读：witr——从源码看 Linux 如何获取进程信息</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgca82bab">进程的身份信息</a>
+<ul>
+<li><a href="#orgd6a6c80"><i>proc</i>[pid]/stat 里装了什么</a></li>
+<li><a href="#org1dc23a5">启动时间的计算</a></li>
+<li><a href="#orgeb2e455">完整命令行：/proc/[pid]/cmdline</a></li>
+<li><a href="#orgf28eb60">进程的可执行文件路径</a></li>
+<li><a href="#orgc1b80a3">进程的运行用户</a></li>
+</ul>
+</li>
+<li><a href="#org23dd6b5">进程的来路</a>
+<ul>
+<li><a href="#orge8cbe00">祖先链追溯</a></li>
+<li><a href="#org12c2b28">工作目录</a></li>
+<li><a href="#org8c60441">Git 仓库检测</a></li>
+</ul>
+</li>
+<li><a href="#org70e7609">进程的网络足迹</a>
+<ul>
+<li><a href="#orgd8c9c2c">/proc/net 下的 socket 表</a></li>
+<li><a href="#orga5a9181">地址解析</a></li>
+<li><a href="#org1dca308">Dual-stack：=::= 隐含 <code>0.0.0.0</code></a></li>
+<li><a href="#org053ed23">从 socket inode 到 PID</a></li>
+<li><a href="#org1b7f8ad">端口→PID 的完整映射</a></li>
+</ul>
+</li>
+<li><a href="#org5c97b57">进程的归属</a>
+<ul>
+<li><a href="#org9aabdc1">容器检测：/proc/[pid]/cgroup</a></li>
+<li><a href="#org70a6b44">Snap/Flatpak 沙箱检测</a></li>
+<li><a href="#org65af137">docker-proxy 的特殊处理</a></li>
+<li><a href="#org9d50f7d">systemd 服务识别</a></li>
+<li><a href="#orgda5538b">systemd timer 调度信息</a></li>
+<li><a href="#org628b0fe">环境变量：/proc/[pid]/environ</a></li>
+</ul>
+</li>
+<li><a href="#org3a6d026">进程的健康与安全</a>
+<ul>
+<li><a href="#orgc992596">Linux Capabilities</a></li>
+<li><a href="#orga36d260">详细内存信息：/proc/[pid]/statm</a></li>
+<li><a href="#org415d8da">I/O 统计：/proc/[pid]/io</a></li>
+<li><a href="#orgc916065">打开的文件描述符</a></li>
+<li><a href="#org77fb112">FD 限制：/proc/[pid]/limits</a></li>
+<li><a href="#org279f19f">文件锁：/proc/locks 或 lslocks</a></li>
+<li><a href="#org1bed1f8">线程数</a></li>
+</ul>
+</li>
+<li><a href="#org11a461f">小结</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://github.com/pranshuparmar/witr">witr</a>（Why Is This Running）是个挺有意思的工具。它只回答一个问题：*这个进程为什么在运行？* 给它一个进程名、PID、端口号甚至文件路径，它能给出完整的因果链——从 PID 1 一路追到目标进程，顺便告诉你谁启动的、怎么启动的、有没有危险。
+</p>
+
+<p>
+能做到这些，全靠 Linux 的 <code>/proc</code> 文件系统。这篇文章就跟着 witr 的 <a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/process_linux.go">源码</a>，看看它是怎么从 <code>/proc</code> 里把进程信息一点点挖出来的。
+</p>
+
+<div id="outline-container-orgca82bab" class="outline-2">
+<h2 id="orgca82bab">进程的身份信息</h2>
+<div class="outline-text-2" id="text-orgca82bab">
+<p>
+witr 读取进程信息的入口是 <a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/process_linux.go"><code>process_linux.go</code></a> 里的 <code>ReadProcess</code> 函数。它的第一步就是读 <code>/proc/[pid]/stat</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">statPath := fmt.Sprintf("/proc/%d/stat", pid)
+stat, err := os.ReadFile(statPath)
+</pre>
+</div>
+</div>
+
+<div id="outline-container-orgd6a6c80" class="outline-3">
+<h3 id="orgd6a6c80"><i>proc</i>[pid]/stat 里装了什么</h3>
+<div class="outline-text-3" id="text-orgd6a6c80">
+<p>
+这个文件看起来是一行长文本，里面有几十个字段（具体数量取决于内核版本）。先用 shell 看一眼：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/1152/stat
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">1152 (emacs) S 578 1152 1152 0 -1 4194368 170800 306687 3141 2755 20150 1575 191 258 20 0 1 0 4216 713723904 107122 18446744073709551615 98319520526336 98319523324969 140736657481536 0 0 0 0 67112960 1535209215 1 0 0 17 7 0 0 0 0 0 98319523843024 98319531550712 98319932370944 140736657485873 140736657485888 140736657485888 140736657489897 0
+</pre>
+</div>
+
+<p>
+这就是 <code>/proc/[pid]/stat</code> 的原始格式。括号里是进程名，后面一堆数字。每个数字对应一个字段，完整定义在 <code>man 5 proc_pid_stat</code> 里（注意不是 <code>man 5 proc</code> ，那个只是索引页，详细字段说明在 <code>man 5 proc_pid_stat</code> ）。witr 感兴趣的几个字段是：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">字段编号</th>
+<th scope="col" class="org-left">名称</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">(2)</td>
+<td class="org-left">comm</td>
+<td class="org-left">进程名，括在 () 里</td>
+</tr>
+
+<tr>
+<td class="org-left">(3)</td>
+<td class="org-left">state</td>
+<td class="org-left">进程状态（见下表）</td>
+</tr>
+
+<tr>
+<td class="org-left">(4)</td>
+<td class="org-left">ppid</td>
+<td class="org-left">父进程 PID</td>
+</tr>
+
+<tr>
+<td class="org-left">(14)</td>
+<td class="org-left">utime</td>
+<td class="org-left">用户态 CPU 时间（ticks）</td>
+</tr>
+
+<tr>
+<td class="org-left">(15)</td>
+<td class="org-left">stime</td>
+<td class="org-left">内核态 CPU 时间（ticks）</td>
+</tr>
+
+<tr>
+<td class="org-left">(22)</td>
+<td class="org-left">starttime</td>
+<td class="org-left">进程启动时间（单位：clock ticks）</td>
+</tr>
+
+<tr>
+<td class="org-left">(24)</td>
+<td class="org-left">rss</td>
+<td class="org-left">常驻内存（页数）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+witr 的解析代码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// stat 格式很阴险，命令名包在 () 里，而且命令本身可能包含括号
+raw := string(stat)
+open := strings.Index(raw, "(")
+close := strings.LastIndex(raw, ")")
+
+comm := raw[open+1 : close]           // 字段 (2) comm
+fields := strings.Fields(raw[close+2:]) // 括号后面的字段
+// 注意：fields 数组从 ")" 之后开始编号，fields[N] 对应 procfs 字段 (N+3)
+
+ppid, _ := strconv.Atoi(fields[1])                     // fields[1] = 字段 (4) ppid
+state := processState(fields)                           // fields[0] = 字段 (3) state
+startTicks, _ := strconv.ParseInt(fields[19], 10, 64)  // fields[19] = 字段 (22) starttime
+utime, _ := strconv.ParseFloat(fields[11], 64)         // fields[11] = 字段 (14) utime
+stime, _ := strconv.ParseFloat(fields[12], 64)         // fields[12] = 字段 (15) stime
+rssPages, _ := strconv.ParseFloat(fields[21], 64)      // fields[21] = 字段 (24) rss
+</pre>
+</div>
+
+<p>
+注意它用 <code>LastIndex</code> 找右括号——因为进程名本身可能包含括号（比如 <code>a.out (deleted)</code> ）。
+</p>
+
+<p>
+state 字段 (3) 的完整取值（来自 <code>man 5 proc_pid_stat</code> ）：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">状态码</th>
+<th scope="col" class="org-left">含义</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">R</td>
+<td class="org-left">运行（Running）</td>
+</tr>
+
+<tr>
+<td class="org-left">S</td>
+<td class="org-left">可中断睡眠（Interruptible sleep）</td>
+</tr>
+
+<tr>
+<td class="org-left">D</td>
+<td class="org-left">不可中断睡眠（Uninterruptible disk sleep）</td>
+</tr>
+
+<tr>
+<td class="org-left">Z</td>
+<td class="org-left">僵尸（Zombie）</td>
+</tr>
+
+<tr>
+<td class="org-left">T</td>
+<td class="org-left">停止（Stopped，收到信号）</td>
+</tr>
+
+<tr>
+<td class="org-left">t</td>
+<td class="org-left">跟踪停止（Tracing stop，被 debugger 挂住）</td>
+</tr>
+
+<tr>
+<td class="org-left">I</td>
+<td class="org-left">空闲（Idle，Linux 4.14+，常见于内核线程）</td>
+</tr>
+
+<tr>
+<td class="org-left">X</td>
+<td class="org-left">死亡（Dead，极少见）</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+witr 只判断了 <code>Z</code> 和 <code>T</code> 两种异常状态，其余的视为 <code>healthy</code> 。
+</p>
+
+<p>
+除了状态码， <code>utime</code> 和 <code>stime</code> 也被用于健康检测。witr 把两者相加除以 <code>CLK_TCK</code> 得到总 CPU 时间（秒），超过 2 小时就标记为 <code>high-cpu</code> 。 <code>rssPages</code> 则乘以页大小算出常驻内存（MB），超过 1GB 标记为 <code>high-mem</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">totalCPU := (utime + stime) / clkTck
+if totalCPU &gt; 60*60*2 { // &gt;2h CPU time
+    health = "high-cpu"
+}
+
+memBytes := rssPages * pageSize
+memMB := memBytes / (1024 * 1024)
+if memMB &gt; 1024 { // &gt;1GB RSS
+    health = "high-mem"
+}
+</pre>
+</div>
+
+<p>
+注意 witr 的健康检查是串行覆盖的——如果进程同时是僵尸且 CPU 时间超 2 小时， <code>zombie</code> 会被 <code>high-cpu</code> 覆盖（因为后面的 <code>if</code> 不是 <code>else if</code> ）。
+</p>
+
+<p>
+用 shell 快速检查一个进程的 CPU 时间和内存：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-variable-name">rest</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\</span><span class="org-string">)).*'</span> /proc/1152/stat)
+<span class="org-comment-delimiter"># </span><span class="org-comment">utime=fields[11] (&#23383;&#27573;14), stime=fields[12] (&#23383;&#27573;15), rss=fields[21] (&#23383;&#27573;24)
+</span><span class="org-variable-name">tps</span>=$(<span class="org-sh-quoted-exec">getconf CLK_TCK</span>)
+<span class="org-variable-name">ps</span>=$(<span class="org-sh-quoted-exec">getconf PAGESIZE</span>)
+<span class="org-builtin">echo</span> <span class="org-string">"$rest"</span> | awk -v <span class="org-variable-name">tps</span>=$<span class="org-variable-name">tps</span> -v <span class="org-variable-name">ps</span>=$<span class="org-variable-name">ps</span> <span class="org-string">'{
+    total_cpu = ($12 + $13) / tps
+    rss_mb = $22 * ps / 1024 / 1024
+    printf "&#24635;CPU&#26102;&#38388;: %.0f &#31186; (%.1f &#20998;&#38047;)\n", total_cpu, total_cpu/60
+    printf "RSS: %.1f MB\n", rss_mb
+}'</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#24635;CPU&#26102;&#38388;: 214 &#31186; (3.6 &#20998;&#38047;)
+RSS: 418.4 MB
+</pre>
+</div>
+
+<p>
+等价的 shell 命令（同样用 lookbehind/lookahead，正确处理进程名中的括号）：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#25552;&#21462;&#36827;&#31243;&#21517;&#12289;&#29366;&#24577;&#12289;PPID
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#36827;&#31243;&#21517;&#65306;&#31532;&#19968;&#20010; ( &#21644;&#26368;&#21518;&#19968;&#20010; ) &#20043;&#38388;
+</span><span class="org-variable-name">comm</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\(</span><span class="org-string">).*(?=\))'</span> /proc/1152/stat)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29366;&#24577;&#21644; PPID&#65306;&#26368;&#21518;&#19968;&#20010; ) &#20043;&#21518;&#30340;&#23383;&#27573;
+</span><span class="org-variable-name">rest</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\</span><span class="org-string">)).*'</span> /proc/1152/stat)
+<span class="org-builtin">echo</span> <span class="org-string">"&#36827;&#31243;&#21517;: $comm"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"&#29366;&#24577;: $(</span><span class="org-sh-quoted-exec">echo $rest | awk '{print $1}'</span><span class="org-string">)"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"PPID: $(</span><span class="org-sh-quoted-exec">echo $rest | awk '{print $2}'</span><span class="org-string">)"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#36827;&#31243;&#21517;: emacs
+&#29366;&#24577;: S
+PPID: 578
+</pre>
+</div>
+</div>
+</div>
+
+
+<div id="outline-container-org1dc23a5" class="outline-3">
+<h3 id="org1dc23a5">启动时间的计算</h3>
+<div class="outline-text-3" id="text-org1dc23a5">
+<p>
+启动时间不是直接给的，而是一个从系统启动开始计算的 tick 数。witr 的换算方法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">startedAt := bootTime().Add(time.Duration(startTicks) * time.Second / time.Duration(ticksPerSecond()))
+</pre>
+</div>
+
+<p>
+三步：先拿到系统启动时间（boot time），再把 tick 数转换成秒，加上去。
+</p>
+
+<ul class="org-ul">
+<li><code>bootTime()</code> 读的是 <code>/proc/stat</code> 里的 <code>btime</code> 行（注意 <code>/proc/stat</code> 是系统级统计文件，不是 <code>/proc/[pid]/stat</code> ）</li>
+<li><code>ticksPerSecond()</code> 调的是 <code>sysconf(_SC_CLK_TCK)</code> ，Linux 上通常是 100</li>
+</ul>
+
+<p>
+先看看 <code>btime</code> 长什么样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep btime /proc/stat
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">btime 1749432718
+</pre>
+</div>
+
+<p>
+<code>1749432718</code> 就是系统启动时的 Unix 时间戳（秒）。
+</p>
+
+<p>
+用 shell 复现完整的启动时间计算：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#31995;&#32479;&#21551;&#21160;&#26102;&#38388;&#65288;&#31186;&#32423;&#26102;&#38388;&#25139;&#65289;
+</span><span class="org-variable-name">btime</span>=$(<span class="org-sh-quoted-exec">grep btime /proc/stat | awk '{print $2}'</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#24403;&#21069;&#36827;&#31243;&#30340; starttime&#65306;&#20808;&#21462;&#25324;&#21495;&#21518;&#30340;&#23383;&#27573;&#65292;&#20877;&#21462; fields[19]&#65288;&#23545;&#24212; procfs &#23383;&#27573; (22)&#65289;
+</span><span class="org-variable-name">rest</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\</span><span class="org-string">)).*'</span> /proc/$<span class="org-variable-name">$</span>/stat)
+<span class="org-variable-name">ticks</span>=$(<span class="org-sh-quoted-exec">echo "$rest" | awk '{print $20}'</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">ticks per second
+</span><span class="org-variable-name">tps</span>=$(<span class="org-sh-quoted-exec">getconf CLK_TCK</span>)
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#35745;&#31639;&#21551;&#21160;&#26102;&#38388;
+</span>date -d @$(<span class="org-sh-quoted-exec">(btime + ticks / tps</span>)) <span class="org-string">"+%Y-%m-%d %H:%M:%S"</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">2026-06-10 14:14:15
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgeb2e455" class="outline-3">
+<h3 id="orgeb2e455">完整命令行：/proc/[pid]/cmdline</h3>
+<div class="outline-text-3" id="text-orgeb2e455">
+<p>
+<code>stat</code> 里的进程名会被内核截断到 15 个字符。要看完整命令行，得读 <code>/proc/[pid]/cmdline</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+cmd := strings.ReplaceAll(string(cmdlineBytes), "\x00", " ")
+cmdline = strings.TrimSpace(cmd)
+</pre>
+</div>
+
+<p>
+这个文件的特别之处在于，参数之间用 <code>\0</code> （空字节）分隔，而不是空格。所以 witr 把 <code>\0</code> 替换成空格。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21407;&#22987;&#20869;&#23481;&#65288;&#29992; cat -v &#26174;&#31034;&#31354;&#23383;&#33410;&#20026; ^@&#65289;
+</span>cat -v /proc/1152/cmdline
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26367;&#25442;&#31354;&#23383;&#33410;&#21518;
+</span>tr <span class="org-string">'\0'</span> <span class="org-string">' '</span> &lt; /proc/1152/cmdline 
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">emacs^@--daemon^@---
+emacs --daemon 
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgf28eb60" class="outline-3">
+<h3 id="orgf28eb60">进程的可执行文件路径</h3>
+<div class="outline-text-3" id="text-orgf28eb60">
+<div class="org-src-container">
+<pre class="src src-go">// 通过符号链接获取可执行文件的完整路径
+exePath, _ := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">readlink /proc/$<span class="org-variable-name">$</span>/exe
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/usr/bin/bash
+</pre>
+</div>
+
+<p>
+这个符号链接还有一个隐藏用法：如果可执行文件在进程启动后被删除了，链接目标会以 = (deleted)= 结尾。witr 用这个检测可疑进程：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func isBinaryDeleted(pid int) bool {
+    exePath, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
+    if err != nil {
+        return false
+    }
+    return strings.HasSuffix(exePath, " (deleted)")
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgc1b80a3" class="outline-3">
+<h3 id="orgc1b80a3">进程的运行用户</h3>
+<div class="outline-text-3" id="text-orgc1b80a3">
+<p>
+witr 没有直接从 <code>/proc</code> 读 UID，而是通过文件系统间接获取：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func readUser(pid int) string {
+    path := "/proc/" + strconv.Itoa(pid)
+    info, err := os.Stat(path)
+    // ...
+    stat, ok := info.Sys().(*syscall.Stat_t)
+    uid := int(stat.Uid)
+    // 然后查 /etc/passwd 缓存映射 UID -&gt; 用户名
+}
+</pre>
+</div>
+
+<p>
+原理是 <code>/proc/[pid]</code> 目录的 owner 就是进程的 UID。 <code>os.Stat</code> 拿到文件的 <code>stat_t</code> 结构，从中取 <code>Uid</code> 字段，再去 <code>/etc/passwd</code> 查对应的用户名。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26041;&#27861;&#19968;&#65306;&#30475; /proc/[pid] &#30446;&#24405;&#30340; owner
+</span>stat -c <span class="org-string">'%U'</span> /proc/$<span class="org-variable-name">$</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26041;&#27861;&#20108;&#65306;&#30452;&#25509;&#30475; status &#25991;&#20214;&#37324;&#30340; Uid &#34892;
+</span>grep Uid /proc/$<span class="org-variable-name">$</span>/status
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">lujun9972
+Uid:    1000    1000    1000    1000
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org23dd6b5" class="outline-2">
+<h2 id="org23dd6b5">进程的来路</h2>
+<div class="outline-text-2" id="text-org23dd6b5">
+<p>
+"这个进程从哪来的？"——witr 的核心功能是构建从 init（PID 1）到目标进程的完整祖先链。
+</p>
+</div>
+
+<div id="outline-container-orge8cbe00" class="outline-3">
+<h3 id="orge8cbe00">祖先链追溯</h3>
+<div class="outline-text-3" id="text-orge8cbe00">
+<p>
+<a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/ancestry.go"><code>ancestry.go</code></a> 的实现很直接：从目标 PID 开始，反复读取 PPID，一直追溯到 PID 1：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func ResolveAncestry(pid int) ([]model.Process, error) {
+    var chain []model.Process
+    seen := make(map[int]bool) // 防环：subreaper 场景下 PPID 链理论上可能成环
+    current := pid
+
+    for current &gt; 0 {
+        if seen[current] { break }
+        seen[current] = true
+        p, err := ReadProcess(current)
+        if err != nil { break }
+        chain = append(chain, p)
+        if p.PPID == 0 || p.PID == 1 { break }
+        current = p.PPID  // 往上走一级
+    }
+    // 反转，让 PID 1 在最前面
+    for i, j := 0, len(chain)-1; i &lt; j; i, j = i+1, j-1 {
+        chain[i], chain[j] = chain[j], chain[i]
+    }
+    return chain, nil
+}
+</pre>
+</div>
+
+<p>
+用 shell 模拟这个过程。这里用 <code>grep -oP</code> 的 lookbehind/lookahead 来提取括号内的进程名——它匹配第一个 <code>(\</code> 和最后一个 <code>)\</code> 之间的内容，跟 Go 代码的 <code>FirstIndex("(")</code> + <code>LastIndex(")")</code> 行为一致：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20174;&#24403;&#21069; shell &#21521;&#19978;&#36861;&#28335;&#31062;&#20808;&#38142;
+</span><span class="org-variable-name">pid</span>=$<span class="org-variable-name">$</span>
+<span class="org-keyword">while</span> [ <span class="org-string">"$pid"</span> -gt 0 ]; <span class="org-keyword">do</span>
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#29992; lookbehind/lookahead &#25552;&#21462;&#25324;&#21495;&#20869;&#23481;&#65288;&#27491;&#30830;&#22788;&#29702;&#36827;&#31243;&#21517;&#20013;&#30340;&#25324;&#21495;&#65289;
+</span>    <span class="org-variable-name">comm</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\(</span><span class="org-string">).*(?=\))'</span> /proc/$<span class="org-variable-name">pid</span>/stat 2&gt;/dev/null)
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#21462;&#26368;&#21518;&#19968;&#20010; ) &#20043;&#21518;&#30340;&#31532;&#20108;&#20010;&#23383;&#27573;&#65288;PPID&#65289;
+</span>    <span class="org-variable-name">ppid</span>=$(<span class="org-sh-quoted-exec">grep -oP '(?&lt;=\</span><span class="org-string">)).*'</span> /proc/$<span class="org-variable-name">pid</span>/stat 2&gt;/dev/null | awk <span class="org-string">'{print $2}'</span>)
+    <span class="org-builtin">echo</span> <span class="org-string">"$comm (pid $pid)"</span>
+    [ <span class="org-string">"$pid"</span> = <span class="org-string">"1"</span> ] &amp;&amp; <span class="org-keyword">break</span>
+    <span class="org-variable-name">pid</span>=$<span class="org-variable-name">ppid</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">bash (pid 135892)
+bash (pid 135889)
+python3 (pid 135883)
+emacs (pid 3666)
+emacs (pid 2203)
+bash (pid 2193)
+systemd (pid 1653)
+systemd (pid 1)
+</pre>
+</div>
+
+<p>
+这就是 witr 输出中 "Why It Exists" 那行的数据来源。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org12c2b28" class="outline-3">
+<h3 id="org12c2b28">工作目录</h3>
+<div class="outline-text-3" id="text-org12c2b28">
+<div class="org-src-container">
+<pre class="src src-go">cwd, cwdErr := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid))
+</pre>
+</div>
+
+<p>
+<code>/proc/[pid]/cwd</code> 是一个符号链接，指向进程的当前工作目录。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">readlink /proc/$<span class="org-variable-name">$</span>/cwd
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">/home/lujun9972/github/witr
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org8c60441" class="outline-3">
+<h3 id="org8c60441">Git 仓库检测</h3>
+<div class="outline-text-3" id="text-org8c60441">
+<p>
+拿到工作目录后，witr 会向上最多查找 10 层，看有没有 <code>.git</code> 目录：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func detectGitInfo(cwd string) (string, string) {
+    searchDir := cwd
+    for depth := 0; depth &lt; 10; depth++ {
+        gitDir := filepath.Join(searchDir, ".git")
+        if fi, err := os.Stat(gitDir); err == nil &amp;&amp; fi.IsDir() {
+            gitRepo := filepath.Base(searchDir)           // 仓库名 = 目录名
+            head, _ := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+            headStr := strings.TrimSpace(string(head))
+            if strings.HasPrefix(headStr, "ref: ") {
+                ref := strings.TrimPrefix(headStr, "ref: ")
+                gitBranch = strings.TrimPrefix(ref, "refs/heads/")
+            }
+            return gitRepo, gitBranch
+        }
+        parent := filepath.Dir(searchDir)
+        if parent == searchDir { break }
+        searchDir = parent
+    }
+    return "", ""
+}
+</pre>
+</div>
+
+<p>
+核心就是读 <code>.git/HEAD</code> 文件。这个文件要么直接是一个 commit hash（detached HEAD），要么是一个 <code>ref:</code> 引用指向分支名。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat .git/HEAD
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">ref: refs/heads/main
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org70e7609" class="outline-2">
+<h2 id="org70e7609">进程的网络足迹</h2>
+<div class="outline-text-2" id="text-org70e7609">
+</div>
+<div id="outline-container-orgd8c9c2c" class="outline-3">
+<h3 id="orgd8c9c2c">/proc/net 下的 socket 表</h3>
+<div class="outline-text-3" id="text-orgd8c9c2c">
+<p>
+witr 的网络信息获取在 <a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/net_linux.go"><code>net_linux.go</code></a> 里。它读取四个文件：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">parse("/proc/net/tcp", "TCP", false)
+parse("/proc/net/tcp6", "TCP6", true)
+parse("/proc/net/udp", "UDP", false)
+parse("/proc/net/udp6", "UDP6", true)
+</pre>
+</div>
+
+<p>
+这里有个工程细节：=ResolveAncestry= 每走一步 PPID 都调用 <code>ReadProcess</code> ，而 <code>ReadProcess</code> 里会调 <code>readSocketsCached()</code> 解析这四个文件。一个祖先链走 8-10 步，就要解析 8-10 次。witr 用了一个 2 秒 TTL 的缓存（=socketCacheTTL = 2 * time.Second= ）避免重复解析——ancestry walk 通常在毫秒内完成，缓存不会过期导致数据不一致。
+</p>
+
+<p>
+每个文件的格式都差不多。先看看 <code>/proc/net/tcp</code> 长什么样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/net/tcp | head -5
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">sl  local_address rem_address   st tx_queue rx_queue tr tm-&gt;when retrnsmt   uid  timeout inode
+ 0: 0100007F:1A0B 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 23826 1 0000000000000000 100 0 0 10 0
+ 1: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 25084 1 0000000000000000 100 0 0 10 0
+ 2: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 35761 1 0000000000000000 100 0 0 10 0
+</pre>
+</div>
+
+<p>
+关键字段：
+</p>
+<ul class="org-ul">
+<li><code>local_address</code> ：本地地址和端口，十六进制，格式是 <code>IP:Port</code> 。比如 <code>0100007F:1A0B</code> 就是 <code>127.0.0.1:6667</code></li>
+<li><code>st</code> ：socket 状态，十六进制。 <code>0A</code> = LISTEN</li>
+<li><code>inode</code> ： <code>fields[9]</code> （0-indexed），socket 的 inode 号。这个是关联到进程的桥梁</li>
+</ul>
+
+<p>
+witr 用一个映射表把状态码转成可读名称：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">var stateMap = map[string]string{
+    "01": "ESTABLISHED", "02": "SYN_SENT", "03": "SYN_RECV",
+    "04": "FIN_WAIT1",   "05": "FIN_WAIT2", "06": "TIME_WAIT",
+    "07": "CLOSE",       "08": "CLOSE_WAIT", "09": "LAST_ACK",
+    "0A": "LISTEN",      "0B": "CLOSING",
+}
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orga5a9181" class="outline-3">
+<h3 id="orga5a9181">地址解析</h3>
+<div class="outline-text-3" id="text-orga5a9181">
+<p>
+十六进制地址的解析有个坑。IPv4 地址在 <code>/proc/net/tcp</code> 里是小端序存储的。比如 <code>0100007F</code> 要倒过来读： <code>7F 00 00 01</code> ，就是 <code>127.0.0.1</code> 。
+</p>
+
+<p>
+witr 的解析代码：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func parseAddr(raw string, ipv6 bool) (string, int) {
+    parts := strings.Split(raw, ":")
+    portHex := parts[1]
+    port, _ := strconv.ParseInt(portHex, 16, 32)
+    ipHex := parts[0]
+    b, _ := hex.DecodeString(ipHex)
+    // IPv4: 小端序，4 字节倒序
+    ip := strconv.Itoa(int(b[3])) + "." +
+        strconv.Itoa(int(b[2])) + "." +
+        strconv.Itoa(int(b[1])) + "." +
+        strconv.Itoa(int(b[0]))
+    return ip, int(port)
+}
+</pre>
+</div>
+
+<p>
+IPv6 更复杂—— <code>/proc/net/tcp6</code> 里的地址是以 4 个 32 位小端序组存储的，每组内部要倒序。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1dca308" class="outline-3">
+<h3 id="org1dca308">Dual-stack：=::= 隐含 <code>0.0.0.0</code></h3>
+<div class="outline-text-3" id="text-org1dca308">
+<p>
+读 <code>/proc/net/tcp6</code> 时你会发现一个现象：有些进程只监听 <code>::</code> （IPv6 any-address），没有 <code>0.0.0.0</code> 的条目。但 IPv4 流量照样能连进来。
+</p>
+
+<p>
+这是因为 Linux 默认开启了 dual-stack：一个 <code>::</code> 监听同时接受 IPv4 和 IPv6 连接。控制开关是 <code>/proc/sys/net/ipv6/bindv6only</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/sys/net/ipv6/bindv6only
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">0
+</pre>
+</div>
+
+<p>
+值为 0（默认）表示 dual-stack 开启，=::= 隐含 <code>0.0.0.0</code> 。值为 1 表示 IPv6 和 IPv4 独立，=::= 只接受 IPv6。
+</p>
+
+<p>
+witr 在 <code>process_linux.go</code> 里做了对应的合成：如果 dual-stack 开启、进程监听了 <code>::</code> 且没有显式的 <code>0.0.0.0</code> 监听，就补一个 IPv4 条目：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">dualStackAllowed := isDualStackEnabled()
+
+for _, inode := range inodes {
+    if s, ok := sockets[inode]; ok {
+        procSockets = append(procSockets, s)
+        // 如果 :: 监听且没有显式 0.0.0.0，合成隐式的 IPv4 映射
+        if dualStackAllowed &amp;&amp; s.State == "LISTEN" &amp;&amp; s.Address == "::" &amp;&amp;
+           !ipv4Listeners[s.Port] {
+            v4 := s
+            v4.Address = "0.0.0.0"
+            v4.Protocol = strings.TrimSuffix(s.Protocol, "6")
+            procSockets = append(procSockets, v4)
+        }
+    }
+}
+</pre>
+</div>
+
+<p>
+这不是 <code>/proc/net/tcp</code> 直接给出的数据，而是 witr 根据内核参数做的推断。对于回答"这个端口对外暴露了吗？"这类问题，这个补全很关键。
+</p>
+
+<p>
+用 shell 快速验证一下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#35299;&#26512; /proc/net/tcp &#20013;&#30340;&#22320;&#22336;&#21644;&#31471;&#21475;
+</span>awk <span class="org-string">'NR&gt;1 {
+    split($2, addr, ":")
+    # &#35299;&#26512;&#31471;&#21475;
+    cmd = "printf %d 0x" addr[2]
+    cmd | getline port; close(cmd)
+    # &#35299;&#26512; IPv4 &#22320;&#22336;&#65288;&#23567;&#31471;&#24207;&#65289;
+    hex = addr[1]
+    ip = ""
+    for (i = 6; i &gt;= 0; i -= 2) {
+        byte = substr(hex, i+1, 2)
+        cmd = "printf %d 0x" byte
+        cmd | getline n; close(cmd)
+        ip = ip (ip=="" ? "" : ".") n
+    }
+    printf "%s:%d (state=%s)\n", ip, port, $4
+}'</span> /proc/net/tcp | head -5
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org053ed23" class="outline-3">
+<h3 id="org053ed23">从 socket inode 到 PID</h3>
+<div class="outline-text-3" id="text-org053ed23">
+<p>
+知道哪个端口在监听还不够，还得知道是哪个进程。桥梁是 <code>/proc/[pid]/fd/</code> 目录——进程每打开一个 socket，这里就多一个符号链接 <code>socket:[inode]</code> 。
+</p>
+
+<p>
+witr 的做法：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// 遍历 /proc/[pid]/fd/ 下的所有 fd
+fdPath := fmt.Sprintf("/proc/%d/fd", pid)
+fds, _ := os.ReadDir(fdPath)
+for _, fd := range fds {
+    link, _ := os.Readlink(fmt.Sprintf("%s/%s", fdPath, fd.Name()))
+    if strings.HasPrefix(link, "socket:[") {
+        inode := strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]")
+        // 用 inode 去 socket 表里查地址和端口
+    }
+}
+</pre>
+</div>
+
+<p>
+shell 复现：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#30475;&#30475;&#24403;&#21069;&#36827;&#31243;&#25171;&#24320;&#20102;&#21738;&#20123; socket
+</span>ls -l /proc/$<span class="org-variable-name">$</span>/fd 2&gt;/dev/null | grep socket | head -5
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25552;&#21462; inode &#21495;
+</span>readlink /proc/$<span class="org-variable-name">$</span>/fd/3 2&gt;/dev/null
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 3 -&gt; socket:[23826]
+---
+socket:[23826]
+</pre>
+</div>
+
+<p>
+拿着这个 inode <code>23826</code> 去 <code>/proc/net/tcp</code> 里找，就能知道这个 socket 监听在哪个地址和端口上。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1b7f8ad" class="outline-3">
+<h3 id="org1b7f8ad">端口→PID 的完整映射</h3>
+<div class="outline-text-3" id="text-org1b7f8ad">
+<p>
+witr 在 <a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/net_linux.go"><code>ListOpenPorts()</code></a> 里做了完整映射：先解析所有 socket 表，再遍历所有 <code>/proc/[pid]/fd/</code> 做 inode 匹配。用 bash 模拟：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">&#21015;&#20986;&#25152;&#26377; LISTEN &#29366;&#24577;&#30340;&#31471;&#21475;&#21644;&#23545;&#24212;&#30340; PID
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#20808;&#26500;&#24314; inode &#8594; &#31471;&#21475;&#26144;&#23556;&#34920;&#65288;&#29992; awk &#31934;&#30830;&#21462;&#31532; 10 &#21015; inode&#65292;&#36991;&#20813;&#35823;&#21305;&#37197;&#65289;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#27880;&#24847;&#65306;&#29992; &lt; &lt;(...) &#36827;&#31243;&#26367;&#25442;&#32780;&#38750;&#31649;&#36947;&#65292;&#21542;&#21017; while &#22312;&#23376; shell &#20013;&#65292;&#25968;&#32452;&#19981;&#20250;&#34987;&#22635;&#20805;
+</span><span class="org-builtin">declare</span> -A inode_port
+<span class="org-keyword">for</span> f<span class="org-keyword"> in</span> /proc/net/tcp /proc/net/tcp6; <span class="org-keyword">do</span>
+    <span class="org-keyword">while </span><span class="org-builtin">read</span> inode port; <span class="org-keyword">do</span>
+        <span class="org-variable-name">inode_port</span>[$<span class="org-variable-name">inode</span>]=$<span class="org-variable-name">port</span>
+    <span class="org-keyword">done</span> &lt; &lt;(awk <span class="org-string">'NR&gt;1 &amp;&amp; $4=="0A" {
+        split($2, addr, ":")
+        printf "%s %d\n", $10, strtonum("0x" addr[2])
+    }'</span> <span class="org-string">"$f"</span>)
+<span class="org-keyword">done</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#36941;&#21382;&#25152;&#26377;&#36827;&#31243;&#30340; fd&#65292;&#21305;&#37197; socket inode
+</span><span class="org-keyword">for</span> pid<span class="org-keyword"> in</span> $(<span class="org-sh-quoted-exec">ls /proc | grep -E '^[0-9]+$'</span>); <span class="org-keyword">do</span>
+    <span class="org-keyword">for</span> fd<span class="org-keyword"> in</span> /proc/$<span class="org-variable-name">pid</span>/fd/*; <span class="org-keyword">do</span>
+        <span class="org-variable-name">link</span>=$(<span class="org-sh-quoted-exec">readlink "$fd" 2&gt;/dev/null</span>) || <span class="org-keyword">continue</span>
+        <span class="org-keyword">if</span> [[ <span class="org-string">"$link"</span> == socket:<span class="org-string">\[</span>*<span class="org-string">\]</span> ]]; <span class="org-keyword">then</span>
+            <span class="org-variable-name">inode</span>=${<span class="org-variable-name">link</span>#socket:[}
+            <span class="org-variable-name">inode</span>=${<span class="org-variable-name">inode</span>%]}
+            <span class="org-keyword">if</span> [[ -n <span class="org-string">"${inode_port[$inode]}"</span> ]]; <span class="org-keyword">then</span>
+                <span class="org-builtin">echo</span> <span class="org-string">"PID=$pid  PORT=${inode_port[$inode]}  INODE=$inode"</span>
+            <span class="org-keyword">fi</span>
+        <span class="org-keyword">fi</span>
+    <span class="org-keyword">done</span>
+<span class="org-keyword">done</span> 2&gt;/dev/null | sort -t= -k3 -n | uniq | head -10
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5c97b57" class="outline-2">
+<h2 id="org5c97b57">进程的归属</h2>
+<div class="outline-text-2" id="text-org5c97b57">
+</div>
+<div id="outline-container-org9aabdc1" class="outline-3">
+<h3 id="org9aabdc1">容器检测：/proc/[pid]/cgroup</h3>
+<div class="outline-text-3" id="text-org9aabdc1">
+<p>
+witr 通过 <code>/proc/[pid]/cgroup</code> 判断进程是否跑在容器里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">cgroupFile := fmt.Sprintf("/proc/%d/cgroup", pid)
+cgroupData, _ := os.ReadFile(cgroupFile)
+cgroupStr := string(cgroupData)
+
+switch {
+case strings.Contains(cgroupStr, "docker"):
+    container = "docker"
+case strings.Contains(cgroupStr, "podman"), strings.Contains(cgroupStr, "libpod"):
+    container = "podman"
+case strings.Contains(cgroupStr, "kubepods"):
+    container = "kubernetes"
+case strings.Contains(cgroupStr, "containerd"):
+    container = "containerd"
+case strings.Contains(cgroupStr, "colima"):
+    container = "colima"
+}
+</pre>
+</div>
+
+<p>
+看看这个文件长什么样：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/$<span class="org-variable-name">$</span>/cgroup
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">0::/user.slice/user-1000.slice/session-2.scope
+</pre>
+</div>
+
+<p>
+如果跑在 Docker 容器里，你会看到类似这样的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-org">12:cpuset:/docker/abc123def456...
+1:name=systemd:/docker/abc123def456...
+</pre>
+</div>
+
+<p>
+注意上面是 cgroup v1 的格式（每行一个子系统），而你本机的 <code>0::/user.slice/...</code> 是 cgroup v2 格式（统一层级）。在 cgroup v2 下，Docker 容器的路径变成类似 <code>0::/system.slice/docker-abc123.scope</code> ，但路径里仍然包含 <code>docker</code> 关键字，所以 witr 的 <code>strings.Contains</code> 匹配在两种格式下都能工作。
+</p>
+
+<p>
+cgroup 路径里的 <code>docker/</code> 、 <code>libpod/</code> 、 <code>kubepods/</code> 就是容器运行时的指纹。
+</p>
+
+<p>
+拿到容器 ID 后，witr 会调用对应的 CLI 获取容器名：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// 用 docker inspect 拿容器名和 compose 信息
+cmd := exec.CommandContext(ctx, "docker", "inspect", id,
+    "--format", "{{.Name}}|{{index .Config.Labels \"com.docker.compose.project\"}}|{{index .Config.Labels \"com.docker.compose.service\"}}")
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org70a6b44" class="outline-3">
+<h3 id="org70a6b44">Snap/Flatpak 沙箱检测</h3>
+<div class="outline-text-3" id="text-org70a6b44">
+<p>
+如果 cgroup 没匹配到任何容器，witr 还会检查环境变量——Snap 和 Flatpak 沙箱不走 cgroup，而是在环境变量里留指纹：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">if container == "" {
+    for _, e := range env {
+        if strings.HasPrefix(e, "SNAP_NAME=") {
+            container = "snap: " + e[len("SNAP_NAME="):]
+        }
+        if strings.HasPrefix(e, "FLATPAK_ID=") {
+            container = "flatpak: " + e[len("FLATPAK_ID="):]
+        }
+    }
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26816;&#26597;&#24403;&#21069;&#36827;&#31243;&#26159;&#21542;&#22312; Snap &#25110; Flatpak &#27801;&#31665;&#20013;
+</span>tr <span class="org-string">'\0'</span> <span class="org-string">'\n'</span> &lt; /proc/$<span class="org-variable-name">$</span>/environ | grep -E <span class="org-string">'SNAP_NAME=|FLATPAK_ID='</span>
+</pre>
+</div>
+
+<p>
+如果输出为空说明不在沙箱里。Snap 安装的应用（比如 <code>code</code> 编辑器）会带 <code>SNAP_NAME</code> 变量。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org65af137" class="outline-3">
+<h3 id="org65af137">docker-proxy 的特殊处理</h3>
+<div class="outline-text-3" id="text-org65af137">
+<p>
+Docker 在发布端口时，会启动 <code>docker-proxy</code> 进程做端口转发。这个进程的 cgroup 路径里没有容器 ID，但它实际上是容器网络的一部分。witr 对 <code>docker-proxy</code> 做了特殊处理：从命令行参数中提取 <code>-container-ip</code> 的值，然后通过 <code>docker network inspect bridge</code> 反查容器名。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// docker-proxy 命令行长这样：
+// docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 8080 -container-ip 172.17.0.2 -container-port 80
+func resolveDockerProxyContainer(cmdline string) string {
+    // 从 cmdline 中提取 -container-ip 参数
+    parts := strings.Fields(cmdline)
+    for i, part := range parts {
+        if part == "-container-ip" &amp;&amp; i+1 &lt; len(parts) {
+            containerIP = parts[i+1]
+        }
+    }
+    // 用 docker network inspect bridge 查 IP 对应的容器名
+    out, _ := exec.Command("docker", "network", "inspect", "bridge",
+        "--format", "{{range .Containers}}{{.Name}}:{{.IPv4Address}}{{end}}").Output()
+    // 匹配 containerIP → 容器名
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475; docker-proxy &#30340;&#21629;&#20196;&#34892;&#21442;&#25968;
+</span>ps aux | grep docker-proxy | head -3
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25163;&#21160;&#26597; bridge &#32593;&#32476;&#20013; IP &#19982;&#23481;&#22120;&#21517;&#30340;&#23545;&#24212;&#20851;&#31995;
+</span>docker network inspect bridge --format <span class="org-string">'{{range .Containers}}{{.Name}}:{{.IPv4Address}}{{"\n"}}{{end}}'</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org9d50f7d" class="outline-3">
+<h3 id="org9d50f7d">systemd 服务识别</h3>
+<div class="outline-text-3" id="text-org9d50f7d">
+<p>
+witr 用两种方式找进程所属的 systemd service：
+</p>
+
+<ol class="org-ol">
+<li>从 cgroup 路径提取 unit 名称</li>
+<li>用 <code>systemctl status &lt;pid&gt;</code> 反查</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-go">// 方法一：从 /proc/[pid]/cgroup 提取 .service 或 .scope
+func getUnitNameFromCgroup(pid int) string {
+    data, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+    for _, line := range strings.Split(string(data), "\n") {
+        parts := strings.SplitN(line, ":", 3)
+        path := parts[2]
+        pathParts := strings.Split(path, "/")
+        for i := len(pathParts) - 1; i &gt;= 0; i-- {
+            if strings.HasSuffix(pathParts[i], ".service") ||
+               strings.HasSuffix(pathParts[i], ".scope") {
+                return pathParts[i]
+            }
+        }
+    }
+    return ""
+}
+
+// 方法二：systemctl status 按PID查
+svcOut, _ := exec.Command("systemctl", "status", fmt.Sprintf("%d", pid)).CombinedOutput()
+</pre>
+</div>
+
+<p>
+拿到 unit 名称后，witr 会查询服务描述、配置文件路径和重启次数：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// 一次性查询多个属性
+props := []string{"Description", "FragmentPath", "SourcePath", "NRestarts"}
+cmd := exec.Command("systemctl", "show", "-p", "Description", "-p", "FragmentPath",
+    "-p", "NRestarts", "--", unitName)
+</pre>
+</div>
+
+<p>
+等价 shell：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#20174; cgroup &#33719;&#21462; unit &#21517;&#31216;
+</span>cat /proc/$<span class="org-variable-name">$</span>/cgroup
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#29992; systemctl &#25353; PID &#26597;&#26381;&#21153;
+</span>systemctl status $<span class="org-variable-name">$</span> 2&gt;/dev/null | head -5
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#35810;&#26381;&#21153;&#23646;&#24615;
+</span>systemctl show -p Description -p FragmentPath -p NRestarts session-2.scope 2&gt;/dev/null
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgda5538b" class="outline-3">
+<h3 id="orgda5538b">systemd timer 调度信息</h3>
+<div class="outline-text-3" id="text-orgda5538b">
+<p>
+如果服务是被 timer 触发的，witr 会额外查 timer 的调度计划：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// 检查是否有对应的 .timer unit
+timerUnit := strings.TrimSuffix(unitName, ".service") + ".timer"
+props := querySystemdProperties(
+    []string{"TimersCalendar", "TimersMonotonic", "LastTriggerUSec", "NextElapseUSecRealtime"},
+    timerUnit,
+)
+</pre>
+</div>
+
+<p>
+这就是为什么 witr 能输出类似 "every 1h, last: 2h ago, next: in 5min" 这样的调度信息。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org628b0fe" class="outline-3">
+<h3 id="org628b0fe">环境变量：/proc/[pid]/environ</h3>
+<div class="outline-text-3" id="text-org628b0fe">
+<div class="org-src-container">
+<pre class="src src-go">envBytes, _ := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+for _, e := range strings.Split(string(envBytes), "\x00") {
+    if e != "" { env = append(env, e) }
+}
+</pre>
+</div>
+
+<p>
+和 <code>cmdline</code> 一样，变量之间用 <code>\0</code> 分隔。读环境变量有两个用途：
+</p>
+<ol class="org-ol">
+<li>显示进程的运行环境（ <code>--env</code> 参数）</li>
+<li>检测 SSH 来源（ <code>SSH_CLIENT</code> 变量）、Snap 沙箱（ <code>SNAP_NAME</code> ）、LD_PRELOAD 注入等</li>
+</ol>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#26597;&#30475;&#36827;&#31243;&#29615;&#22659;&#21464;&#37327;&#65288;&#27880;&#24847;&#26435;&#38480;&#38480;&#21046;&#65289;
+</span>tr <span class="org-string">'\0'</span> <span class="org-string">'\n'</span> &lt; /proc/$<span class="org-variable-name">$</span>/environ | head -10
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">SHELL=/bin/bash
+SESSION_MANAGER=local/unix:@/tmp/.ICE-unix/1752,unix/unix:/tmp/.ICE-unix/1752
+QT_ACCESSIBILITY=1
+COLORTERM=truecolor
+XDG_CONFIG_DIRS=/etc/xdg
+...
+</pre>
+</div>
+
+<p>
+注意：读 <code>/proc/[pid]/environ</code> 需要 ptrace 读权限（=PTRACE_MODE_READ_FSCREDS= ）。同 UID 的进程一般可以互读，不同 UID 则需要 root。权限不够时会报 <code>Permission denied</code> ，而非返回空内容。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org3a6d026" class="outline-2">
+<h2 id="org3a6d026">进程的健康与安全</h2>
+<div class="outline-text-2" id="text-org3a6d026">
+</div>
+<div id="outline-container-orgc992596" class="outline-3">
+<h3 id="orgc992596">Linux Capabilities</h3>
+<div class="outline-text-3" id="text-orgc992596">
+<p>
+普通进程如果有危险 capability（比如 <code>CAP_SYS_ADMIN</code> ），可能是个安全风险。witr 从 <code>/proc/[pid]/status</code> 读取：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">func ReadCapabilities(pid int) []string {
+    data, _ := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
+    for _, line := range strings.Split(string(data), "\n") {
+        if strings.HasPrefix(line, "CapEff:\t") {
+            hex := strings.TrimSpace(strings.TrimPrefix(line, "CapEff:"))
+            return decodeCapabilities(hex)
+        }
+    }
+    return nil
+}
+</pre>
+</div>
+
+<p>
+<code>CapEff:</code> 后面是一个 64 位的十六进制掩码，每一位对应一个 capability。比如第 21 位是 <code>CAP_SYS_ADMIN</code> 。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep CapEff /proc/$<span class="org-variable-name">$</span>/status
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">CapEff: 0000000000000000
+</pre>
+</div>
+
+<p>
+全零说明没有额外 capability（普通用户正常情况）。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga36d260" class="outline-3">
+<h3 id="orga36d260">详细内存信息：/proc/[pid]/statm</h3>
+<div class="outline-text-3" id="text-orga36d260">
+<p>
+verbose 模式下，witr 读取更详细的内存数据：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// statm 的 7 个字段：total resident shared text lib data dirty
+if statmData, err := os.ReadFile(fmt.Sprintf("/proc/%d/statm", pid)); err == nil {
+    fields := strings.Fields(string(statmData))
+    pageSize := uint64(os.Getpagesize())
+    total, _ := strconv.ParseUint(fields[0], 10, 64)   // 虚拟内存（页）
+    resident, _ := strconv.ParseUint(fields[1], 10, 64) // 常驻内存（页）
+    memInfo.VMS = total * pageSize
+    memInfo.RSS = resident * pageSize
+}
+</pre>
+</div>
+
+<p>
+所有值都是页数，要乘以页大小（通常 4096 字节）才是实际字节数。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-builtin">echo</span> <span class="org-string">"&#39029;&#22823;&#23567;: $(</span><span class="org-sh-quoted-exec">getconf PAGESIZE</span><span class="org-string">) &#23383;&#33410;"</span>
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+cat /proc/$<span class="org-variable-name">$</span>/statm
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25163;&#21160;&#35745;&#31639;&#65306;&#31532;&#20108;&#21015;&#65288;resident&#65289;&#215; &#39029;&#22823;&#23567;
+</span>awk -v <span class="org-variable-name">ps</span>=$(<span class="org-sh-quoted-exec">getconf PAGESIZE</span>) <span class="org-string">'{printf "RSS: %.1f MB\n", $2*ps/1024/1024}'</span> /proc/$<span class="org-variable-name">$</span>/statm
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">&#39029;&#22823;&#23567;: 4096 &#23383;&#33410;
+---
+1062 1056 525 19 0 320 0
+---
+RSS: 4.2 MB
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org415d8da" class="outline-3">
+<h3 id="org415d8da">I/O 统计：/proc/[pid]/io</h3>
+<div class="outline-text-3" id="text-org415d8da">
+<div class="org-src-container">
+<pre class="src src-go">if ioData, err := os.ReadFile(fmt.Sprintf("/proc/%d/io", pid)); err == nil {
+    // 读取 read_bytes, write_bytes, syscr, syscw 四个指标
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">cat /proc/$<span class="org-variable-name">$</span>/io
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">rchar: 1692823
+wchar: 259304
+syscr: 1610
+syscw: 300
+read_bytes: 0
+write_bytes: 0
+cancelled_write_bytes: 0
+</pre>
+</div>
+
+<ul class="org-ul">
+<li><code>rchar/wchar</code> ：进程读写过的总字节数（包括缓存命中）</li>
+<li><code>read_bytes/write_bytes</code> ：实际从磁盘读写的字节数</li>
+<li><code>syscr/syscw</code> ：read/write 系统调用的次数</li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-orgc916065" class="outline-3">
+<h3 id="orgc916065">打开的文件描述符</h3>
+<div class="outline-text-3" id="text-orgc916065">
+<div class="org-src-container">
+<pre class="src src-go">fdDir, _ := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+fdCount = len(fdDir)
+for _, fdEntry := range fdDir {
+    linkTarget, _ := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, fdEntry.Name()))
+    fileDescs = append(fileDescs, fmt.Sprintf("%s -&gt; %s", fdEntry.Name(), linkTarget))
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">fd &#25968;&#37327;
+</span>ls /proc/$<span class="org-variable-name">$</span>/fd | wc -l
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#21069; 10 &#20010; fd &#30340;&#25351;&#21521;
+</span>ls -l /proc/$<span class="org-variable-name">$</span>/fd | head -10
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">5
+---
+total 0
+lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 0 -&gt; /dev/pts/3
+lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 1 -&gt; /dev/pts/3
+lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 2 -&gt; /dev/pts/3
+lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 3 -&gt; socket:[23826]
+lrwx------ 1 lujun9972 lujun9972 64 Jun  9 10:32 4 -&gt; anon_inode:[eventpoll]
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org77fb112" class="outline-3">
+<h3 id="org77fb112">FD 限制：/proc/[pid]/limits</h3>
+<div class="outline-text-3" id="text-org77fb112">
+<p>
+光知道开了多少 fd 还不够，还得知道上限是多少。witr 从 <code>/proc/[pid]/limits</code> 读 <code>Max open files</code> 行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">data, _ := os.ReadFile(fmt.Sprintf("/proc/%d/limits", pid))
+for _, line := range strings.Split(string(data), "\n") {
+    if strings.HasPrefix(line, "Max open files") {
+        fields := strings.Fields(line)
+        // fields[3] = soft limit
+    }
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep <span class="org-string">"Max open files"</span> /proc/$<span class="org-variable-name">$</span>/limits
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Max open files            1048576              1048576             files
+</pre>
+</div>
+
+<p>
+三个数字分别是 soft limit、hard limit 和单位名称。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org279f19f" class="outline-3">
+<h3 id="org279f19f">文件锁：/proc/locks 或 lslocks</h3>
+<div class="outline-text-3" id="text-org279f19f">
+<p>
+witr 还会检查进程持有哪些文件锁。优先用 <code>lslocks</code> 命令，找不到时回退到解析 <code>/proc/locks</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-go">// /proc/locks 的每行格式：
+// ID: TYPE  ACCESS  PID  DEVICE:INODE  START  END
+// 例如: 1: FLOCK ADVISORY WRITE 1234 08:01:5678 0 EOF
+for _, line := range strings.Split(string(lockedFileData), "\n") {
+    fields := strings.Fields(line)
+    lockPid := fields[4]       // 持有锁的 PID
+    deviceInode := fields[5]   // 设备号:inode号
+    if lockPid == pidStr {
+        result = append(result, deviceInode)
+    }
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter"># </span><span class="org-comment">&#29992; lslocks &#26597;&#30475;&#36827;&#31243;&#30340;&#25991;&#20214;&#38145;
+</span>lslocks -o PATH,TYPE,MODE,PID | head -10
+<span class="org-builtin">echo</span> <span class="org-string">"---"</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25110;&#32773;&#30452;&#25509;&#30475; /proc/locks
+</span>head -5 /proc/locks
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org1bed1f8" class="outline-3">
+<h3 id="org1bed1f8">线程数</h3>
+<div class="outline-text-3" id="text-org1bed1f8">
+<div class="org-src-container">
+<pre class="src src-go">if statusData, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid)); err == nil {
+    for _, line := range strings.Split(string(statusData), "\n") {
+        if strings.HasPrefix(line, "Threads:") {
+            threadCount, _ = strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "Threads:")))
+        }
+    }
+}
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-shell">grep Threads /proc/$<span class="org-variable-name">$</span>/status
+</pre>
+</div>
+
+<div class="org-src-container">
+<pre class="src src-org">Threads:        1
+</pre>
+</div>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org11a461f" class="outline-2">
+<h2 id="org11a461f">小结</h2>
+<div class="outline-text-2" id="text-org11a461f">
+<p>
+witr 能回答"这个进程为什么在运行"，靠的不是什么黑魔法，而是一个个 <code>/proc</code> 文件的拼图：
+</p>
+
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">问题</th>
+<th scope="col" class="org-left">数据源</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">进程叫什么？命令行是什么？</td>
+<td class="org-left"><code>/proc/[pid]/stat</code> , <code>cmdline</code></td>
+</tr>
+
+<tr>
+<td class="org-left">谁启动的？</td>
+<td class="org-left"><code>stat</code> 的 PPID 字段，递归追溯</td>
+</tr>
+
+<tr>
+<td class="org-left">什么时候启动的？</td>
+<td class="org-left"><code>stat</code> 的 starttime + <code>btime</code></td>
+</tr>
+
+<tr>
+<td class="org-left">在哪个目录运行的？</td>
+<td class="org-left"><code>/proc/[pid]/cwd</code> 符号链接</td>
+</tr>
+
+<tr>
+<td class="org-left">在监听什么端口？</td>
+<td class="org-left"><code>/proc/net/tcp</code> + <code>fd/</code> 的 inode</td>
+</tr>
+
+<tr>
+<td class="org-left">跑在容器里吗？</td>
+<td class="org-left"><code>/proc/[pid]/cgroup</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Snap/Flatpak 沙箱？</td>
+<td class="org-left"><code>/proc/[pid]/environ</code> 里的环境变量</td>
+</tr>
+
+<tr>
+<td class="org-left">docker-proxy 转发给谁？</td>
+<td class="org-left"><code>cmdline</code> 的 <code>-container-ip</code> + <code>docker network inspect</code></td>
+</tr>
+
+<tr>
+<td class="org-left">属于哪个 systemd 服务？</td>
+<td class="org-left">cgroup 路径 + <code>systemctl show</code></td>
+</tr>
+
+<tr>
+<td class="org-left">环境变量是什么？</td>
+<td class="org-left"><code>/proc/[pid]/environ</code></td>
+</tr>
+
+<tr>
+<td class="org-left">有什么特权？</td>
+<td class="org-left"><code>/proc/[pid]/status</code> 的 CapEff</td>
+</tr>
+
+<tr>
+<td class="org-left">内存用了多少？</td>
+<td class="org-left"><code>/proc/[pid]/statm</code></td>
+</tr>
+
+<tr>
+<td class="org-left">磁盘 I/O 多少？</td>
+<td class="org-left"><code>/proc/[pid]/io</code></td>
+</tr>
+
+<tr>
+<td class="org-left">打开了哪些文件？</td>
+<td class="org-left"><code>/proc/[pid]/fd/</code> + readlink</td>
+</tr>
+
+<tr>
+<td class="org-left">FD 上限是多少？</td>
+<td class="org-left"><code>/proc/[pid]/limits</code> 的 Max open files</td>
+</tr>
+
+<tr>
+<td class="org-left">持有哪些文件锁？</td>
+<td class="org-left"><code>lslocks</code> 或 <code>/proc/locks</code></td>
+</tr>
+
+<tr>
+<td class="org-left">线程数？</td>
+<td class="org-left"><code>/proc/[pid]/status</code> 的 Threads</td>
+</tr>
+</tbody>
+</table>
+
+<p>
+<code>man 5 proc_pid_stat</code> 有这些字段的完整文档。注意还有个 <code>/proc/[pid]/status</code> 文件，它是 <code>stat</code> 的人可读替代——很多字段都有标签（如 <code>VmRSS:</code> 、 <code>CapEff:</code> 、 <code>Threads:</code> ），不用解析裸数字。witr 用它读 capabilities 和线程数。
+</p>
+
+<p>
+witr 的 <a href="https://github.com/pranshuparmar/witr/blob/main/internal/proc/">源码目录</a> 是一份很好的实战索引——当你想知道某个进程信息怎么取，直接去看 witr 是怎么读的就行。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-06-09</span>
+    <span class="post-info">2026-07-16</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/-proc">/proc</a> : <a href="../../../../../tags/进程">进程</a> : <a href="../../../../../tags/witr">witr</a> : <a href="../../../../../tags/go">Go</a> : <a href="../../../../../tags/源码阅读">源码阅读</a>
+    <span class="post-info">lujun9972</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm5mmn9 &lt;dot&gt; dn0g2ckx25rehpuuvwnhmw14qg &lt;dot&gt; xx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
