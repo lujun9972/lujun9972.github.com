@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>EMCP：让 AI agent 操控 Emacs 的 MCP 服务器 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="EMCP 是一个用 Emacs Lisp 写的 MCP 服务器，让 Claude Code、Codex 这类 AI agent 通过标准协议操作 Emacs：查文档、找定义、读 buffer、执行代码、发按键。这篇博文覆盖从安装配置到用 emcp-def* 宏自己造工具的完整路径，中间穿插 Profile 权限体系和安全确认机制的设计说明。" />
+  <meta name="keywords" content="Emacs, MCP, AI-agent, LLM" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">EMCP：让 AI agent 操控 Emacs 的 MCP 服务器</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org323dfc7">这是什么</a></li>
+<li><a href="#org06854f2">安装</a>
+<ul>
+<li><a href="#org560911e">agent-shell</a></li>
+<li><a href="#org0283b38">Claude Code、Codex 这类非 Emacs 客户端</a></li>
+<li><a href="#org319bdc7">gptel（暂时有坑）</a></li>
+</ul>
+</li>
+<li><a href="#orgd8e316b">Profile：给 agent 的能力分级</a>
+<ul>
+<li><a href="#org7877836">inspect：只看不动</a></li>
+<li><a href="#org38928af">develop：能看也能摸</a></li>
+<li><a href="#orga638467">full-control：完全控制</a></li>
+<li><a href="#org075ceef">怎么选</a></li>
+</ul>
+</li>
+<li><a href="#org0c0849d">安全机制：给 AI 的权力装刹车</a>
+<ul>
+<li><a href="#orga1a8b4f">人工确认</a></li>
+<li><a href="#org898f152">确认模式</a></li>
+<li><a href="#org1f33097">为什么 <code>send-keys</code> 的决策不缓存</a></li>
+</ul>
+</li>
+<li><a href="#org5053bf5">自建工具</a>
+<ul>
+<li><a href="#org12375fc">=emcp-deftool=：声明一个工具</a></li>
+<li><a href="#org6a92d16">=emcp-defresource=：定义资源</a></li>
+<li><a href="#org5a049a2">=emcp-defprompt=：定义提示语</a></li>
+<li><a href="#org9ac3979">异步支持</a></li>
+</ul>
+</li>
+<li><a href="#orgd9e3c80">Profile 管理</a>
+<ul>
+<li><a href="#org66078e2">自定义组件的其他玩法</a></li>
+</ul>
+</li>
+<li><a href="#org46f863a">最后说两句</a></li>
+</ul>
+</div>
+</div>
+
+<div id="outline-container-org323dfc7" class="outline-2">
+<h2 id="org323dfc7">这是什么</h2>
+<div class="outline-text-2" id="text-org323dfc7">
+<p>
+MCP 是 Anthropic 搞的一套协议（Model Context Protocol，模型上下文协议），目标是给 LLM 和外部工具之间定一个标准接口。你可以把它理解成 AI 版的 LSP：LSP 让编辑器和语言服务器说话，MCP 让 AI agent 和工具服务器说话。MCP 主要定义了三种核心能力，供 AI 模型使用：
+</p>
+
+<ul class="org-ul">
+<li>资源 (Resources)：类似于文件或数据库记录等"只读"的数据，为AI提供上下文信息。</li>
+<li>工具 (Tools)：AI模型可以执行的"函数"或"操作"，比如搜索、发送邮件、修改文件等。</li>
+<li>提示 (Prompts)：预定义的模板或指令，帮助用户更好地与AI交互</li>
+</ul>
+
+<p>
+EMCP 就是跑在 Emacs 里的一个 MCP 服务器，它能把 Emacs 的能力包装成 MCP 工具暴露给外面的 AI agent。大模型可以通过 AI agent 做如下事情：
+</p>
+
+<ul class="org-ul">
+<li>查 Emacs 函数的文档和定义</li>
+<li>搜索和阅读 Info 手册</li>
+<li>变更配置</li>
+<li>执行任意 Elisp 代码</li>
+<li>发送按键序列，等于让 agent 替你敲键盘</li>
+<li>截图当前 Emacs 界面</li>
+</ul>
+
+<p>
+Emacs 自带了一套自省（self-introspection）机制，这使得Emacs 特别适合被 agent 操控：
+</p>
+<ul class="org-ul">
+<li><code>apropos</code> 能正则搜所有符号</li>
+<li><code>describe-function</code> 能拿任何函数的文档</li>
+<li><code>find-function</code> 能跳到源码定义。</li>
+</ul>
+
+<p>
+这些功能本来就是给人用的，现在正好喂给 agent。这使得 Emacs 几十年的积累直接成了 agent 的知识库。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org06854f2" class="outline-2">
+<h2 id="org06854f2">安装</h2>
+<div class="outline-text-2" id="text-org06854f2">
+<p>
+EMCP 在 MELPA 上，用 <code>use-package</code> 配合 <code>elpaca</code> 装一行搞定：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> emcp
+  <span class="org-builtin">:ensure</span> t)
+</pre>
+</div>
+
+<p>
+不想走 MELPA 也可以直接从仓库装，用 <code>package-vc-install</code> 加 recipe：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp <span class="org-builtin">:fetcher</span> git <span class="org-builtin">:url</span> <span class="org-string">"https://codeberg.org/martenlienen/emcp"</span>)
+</pre>
+</div>
+
+<p>
+装完之后需要告诉你的 AI 客户端去哪连 EMCP。不同客户端配置方式不一样，挑三种典型的说。
+</p>
+</div>
+
+<div id="outline-container-org560911e" class="outline-3">
+<h3 id="org560911e">agent-shell</h3>
+<div class="outline-text-3" id="text-org560911e">
+<p>
+agent-shell 是 Emacs 里的 AI agent 运行时。EMCP 官方推荐用它，集成最顺。把 EMCP 加到 <code>agent-shell-mcp-servers</code> 里：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'agent-shell-mcp-servers
+             '((name . <span class="org-string">"emcp"</span>)
+               (type . <span class="org-string">"http"</span>)
+               (headers . ())
+               (url . (<span class="org-keyword">lambda</span> ()
+                        (<span class="org-keyword">require</span> '<span class="org-constant">emcp</span>)
+                        (<span class="org-keyword">let</span> ((server (emcp-start emcp-default-profile)))
+                          (emcp-server-url server))))))
+</pre>
+</div>
+
+<p>
+URL 用 lambda 动态生成，因为端口号在启动时才确定。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org0283b38" class="outline-3">
+<h3 id="org0283b38">Claude Code、Codex 这类非 Emacs 客户端</h3>
+<div class="outline-text-3" id="text-org0283b38">
+<p>
+Claude Code 和 Codex 不在 Emacs 里跑，无法动态获取动态地址。解决办法是把端口号写死，再启动 EMCP。
+</p>
+
+<p>
+先设端口：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> emcp-http-port 38913)
+</pre>
+</div>
+
+<p>
+然后启动 EMCP 服务器。可以在 Emacs 里 <code>M-x emcp-start</code> 手动启动，也可以放进 init.el 自动启动：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">use-package</span> emcp
+  <span class="org-builtin">:ensure</span> t
+  <span class="org-builtin">:config</span>
+  (<span class="org-keyword">setq</span> emcp-http-port 38913)
+  (emcp-start emcp-default-profile))
+</pre>
+</div>
+
+<p>
+服务跑起来之后，在命令行注册：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell">claude mcp add --transport http emcp http://127.0.0.1:38913/mcp
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org319bdc7" class="outline-3">
+<h3 id="org319bdc7">gptel（暂时有坑）</h3>
+<div class="outline-text-3" id="text-org319bdc7">
+<p>
+gptel 是 Emacs 里的另一个 LLM 客户端，作者 karthink。理论上这样配就行：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> mcp-hub-servers
+      `((<span class="org-string">"emcp"</span> . (<span class="org-builtin">:url</span> ,(emcp-server-url (emcp-start emcp-default-profile))))))
+</pre>
+</div>
+
+<p>
+但截至 2026 年 6 月，gptel 依赖的 <a href="https://github.com/lizqwerscott/mcp.el">mcp.el</a> 只支持 MCP 协议的 2024-11-05 和 2025-03-26 版本，而 EMCP 实现的是 2025-11-25 版本。协议版本对不上，暂时用不了。等 mcp.el 更新。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd8e316b" class="outline-2">
+<h2 id="orgd8e316b">Profile：给 agent 的能力分级</h2>
+<div class="outline-text-2" id="text-orgd8e316b">
+<p>
+EMCP 内置了三个 Profile（能力配置文件），从低到高分别是 inspect、develop、full-control。这三个是 EMCP 默认提供的，你也可以自己定义新的 Profile（后面会讲怎么定义）。
+</p>
+</div>
+
+<div id="outline-container-org7877836" class="outline-3">
+<h3 id="org7877836">inspect：只看不动</h3>
+<div class="outline-text-3" id="text-org7877836">
+<p>
+最保守的一档。agent 能做如下事情：
+</p>
+
+<ul class="org-ul">
+<li><code>apropos</code>:用正则搜 Emacs 符号</li>
+<li><code>describe</code>:查任意符号的文档</li>
+<li><code>find-definition</code>:跳到函数或变量的源码定义</li>
+<li><code>find-references</code>:找所有引用某个符号的地方</li>
+<li><code>info-search</code>:搜 Info 手册索引</li>
+<li><code>/screenshot</code> ：这是一个提示语（prompt），不是工具。提示语由用户主动触发（在 agent 对话框里打 <code>/screenshot</code> 命令），工具由 agent 自己决定何时调用。inspect 档里 agent 不能自己要截图，只能等你主动给它看。</li>
+</ul>
+
+<p>
+还有一个资源模板 <code>info://{manual}/{node}</code> ，agent 可以按这个格式读取 Info 手册内容。比如 agent 想查 Emacs 手册里 Dired 的章节，就访问 <code>info://emacs/Dired</code> ，EMCP 会把对应节点的文本返回给它。 <code>{manual}</code> 是手册名（如 emacs、elisp）， <code>{node}</code> 是章节名。
+</p>
+
+<p>
+这一档相当于给 agent 一本 Emacs 说明书。它问什么你都能让它自己查，但它改不了你的环境。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org38928af" class="outline-3">
+<h3 id="org38928af">develop：能看也能摸</h3>
+<div class="outline-text-3" id="text-org38928af">
+<p>
+在 inspect 基础上加了几个能力：
+</p>
+
+<ul class="org-ul">
+<li><code>get-variable</code> / <code>set-variable</code>:读写 Emacs 变量的值</li>
+<li><code>screenshot</code>:agent 主动截图（和 inspect 里的 <code>/screenshot</code> 不一样，这个是 agent 自己决定什么时候截）</li>
+</ul>
+
+<p>
+这一档适合开发场景。agent 不仅能查文档，还能读你当前变量的值来理解你的配置，看截图来理解你的界面状态。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga638467" class="outline-3">
+<h3 id="orga638467">full-control：完全控制</h3>
+<div class="outline-text-3" id="text-orga638467">
+<p>
+develop 基础上加上两个有破坏力的工具：
+</p>
+
+<ul class="org-ul">
+<li><code>eval</code>:执行任意 Elisp 代码</li>
+<li><code>send-keys</code>:发送按键序列，等于替你敲键盘</li>
+</ul>
+
+<p>
+出于安全起见，这两个工具每次调用都要用户确认。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org075ceef" class="outline-3">
+<h3 id="org075ceef">怎么选</h3>
+<div class="outline-text-3" id="text-org075ceef">
+<ul class="org-ul">
+<li>inspect 适合：你只想让 agent 帮你查 Emacs 相关的信息（某个函数怎么用、某个变量的含义），不需要它碰你的环境。</li>
+<li>develop 适合：你让 agent 帮你改配置、看截图来理解你当前的 Emacs 状态。</li>
+<li>full-control 适合：你让 agent 帮你写Elisp代码、测试代码、操作界面，需要它执行代码或替你按键。</li>
+</ul>
+
+<p>
+配置默认 profile：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> emcp-default-profile 'develop)
+</pre>
+</div>
+
+<p>
+设成 nil（默认值）的话每次启动问你选哪个。 <code>emcp-default-profile</code> 设了之后还能临时换： <code>C-u M-x emcp-start</code> 会再问你一次。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org0c0849d" class="outline-2">
+<h2 id="org0c0849d">安全机制：给 AI 的权力装刹车</h2>
+<div class="outline-text-2" id="text-org0c0849d">
+<p>
+<code>eval</code> 和 <code>send-keys</code> 这两个工具的问题很明显：一个能执行任意代码，一个能模拟键盘输入。放权给 agent 之后怎么防止它干坏事？
+</p>
+
+<p>
+EMCP 的方案分两层：第一层是每次执行危险操作前弹出确认缓冲区让你审核；第二层是当你信任某个 agent 之后，可以把确认模式改成自动接受，省得每次都手动确认。
+</p>
+</div>
+
+<div id="outline-container-orga1a8b4f" class="outline-3">
+<h3 id="orga1a8b4f">人工确认</h3>
+<div class="outline-text-3" id="text-orga1a8b4f">
+<p>
+每次 agent 调用 <code>eval</code> 或 <code>send-keys</code> ，EMCP 会弹一个确认缓冲区，把代码或按键序列摆出来让你选择是否执行。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org898f152" class="outline-3">
+<h3 id="org898f152">确认模式</h3>
+<div class="outline-text-3" id="text-org898f152">
+<p>
+每次确认的时候你可以临时选择"本次接受"或"本次拒绝"。但如果你和某个 agent 合作了一阵，每次都点接受很烦，EMCP 允许你把确认行为设成自动模式：
+</p>
+
+<ul class="org-ul">
+<li><code>ask</code>:每次都问（默认）</li>
+<li><code>accept</code>:全部接受，不问（信任模式）</li>
+<li><code>reject</code>:全部拒绝，不问（不信任模式）</li>
+</ul>
+
+<p>
+注意这个模式是为了减少操作摩擦，不是安全防线。安全防线是人工确认本身：即使设成 accept 模式，你也可以随时改回 ask 或 reject。
+</p>
+
+<p>
+我们可以通过 <code>M-x emcp-session-manager</code> 命令切换策略。一个 session 就是一个 agent 和 EMCP 的一次连接。比如你同时开了两个 Claude Code 终端，一个在 ~/project-a 目录，一个在 ~/project-b 目录，它们就是两个 session。session manager 里能看到每个 session 是从哪个目录连过来的、用的什么 profile、当前确认模式是什么，并且可以在里面修改每个 session 的确认模式。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org1f33097" class="outline-3">
+<h3 id="org1f33097">为什么 <code>send-keys</code> 的决策不缓存</h3>
+<div class="outline-text-3" id="text-org1f33097">
+<p>
+<code>send-keys</code> 的注释里写了一句"Decisions are not cached across calls"。即使你上次接受了 <code>C-x C-s=（保存），下次 agent 再发 =C-x C-s</code> 你还得确认。
+</p>
+
+<p>
+原因是按键的效果完全取决于当前环境。同样的 <code>C-x C-s</code> ，在普通 buffer 里是保存文件，在 minibuffer 里可能是确认输入，在某个特殊 mode 里可能是触发别的命令。你上次接受 <code>C-x C-s</code> 的决策不能指导下一次，因为下一次的环境可能完全不同。
+</p>
+
+<p>
+<code>eval</code> 没有这个限制，因为代码执行的结果相对可预测（同样一段代码在同一个 Emacs 里跑，行为一致）。所以 <code>eval</code> 可以走自动模式， <code>send-keys</code> 必须逐次确认。
+</p>
+
+<p>
+这个逻辑其实很简单，工具调用要不要逐次确认，得看它的行为是否依赖调用时的上下文。如果依赖（像按键），就得逐次确认。如果不依赖（像纯代码执行），可以走批量策略。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org5053bf5" class="outline-2">
+<h2 id="org5053bf5">自建工具</h2>
+<div class="outline-text-2" id="text-org5053bf5">
+<p>
+EMCP 内置了十来个工具，覆盖了查文档、看状态、执行代码这几类常见需求。但 Emacs 的能力五花八门，如何把这些能力暴露给 agent 使用呢？
+</p>
+
+<p>
+EMCP 提供了以下三个宏来帮助我们自定义：
+</p>
+
+<ul class="org-ul">
+<li><code>emcp-deftool</code>:定义工具</li>
+<li><code>emcp-defresource</code>:定义资源</li>
+<li><code>emcp-defprompt</code>:定义提示语</li>
+</ul>
+
+<p>
+这三个宏是 EMCP 最有意思的部分。它们把 MCP 协议里的概念映射成了 Emacs Lisp 的声明式写法，你不需要手写 JSON-RPC 的消息格式，只需要按宏的参数格式填空。
+</p>
+</div>
+
+<div id="outline-container-org12375fc" class="outline-3">
+<h3 id="org12375fc">=emcp-deftool=：声明一个工具</h3>
+<div class="outline-text-3" id="text-org12375fc">
+<p>
+<code>emcp-deftool</code> 的基本结构：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-deftool &#24037;&#20855;&#31526;&#21495;&#21517;
+    ((&#21442;&#25968;1 <span class="org-string">"&#21442;&#25968;1&#30340;&#25551;&#36848;"</span>)
+     (&#21442;&#25968;2 <span class="org-string">"&#21442;&#25968;2&#30340;&#25551;&#36848;"</span> <span class="org-builtin">:type</span> <span class="org-string">"integer"</span> <span class="org-builtin">:default</span> 10))
+  <span class="org-string">"&#24037;&#20855;&#30340; docstring&#12290;"</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"agent&#35843;&#29992;&#30340;&#21517;&#23383;"</span>
+  <span class="org-comment-delimiter">;; </span><span class="org-comment">&#36825;&#37324;&#20889;&#24037;&#20855;&#36923;&#36753;&#65292;&#36820;&#22238; MCP &#26684;&#24335;&#30340; alist
+</span>  `((content . [((type . <span class="org-string">"text"</span>)
+                 (text . ,&#32467;&#26524;)))])))
+</pre>
+</div>
+
+<p>
+看一个 README 里的例子，一个列出所有 buffer 的工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-deftool my-tool-list-buffers ()
+  <span class="org-string">"List all open buffers with their file paths and major modes."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"list-buffers"</span>
+  (<span class="org-keyword">let</span> ((lines (mapcar (<span class="org-keyword">lambda</span> (buf)
+                         (format <span class="org-string">"%s\t%s\t%s"</span>
+                                 (buffer-name buf)
+                                 (<span class="org-keyword">or</span> (buffer-file-name buf) <span class="org-string">""</span>)
+                                 (buffer-local-value 'major-mode buf)))
+                       (buffer-list))))
+    `((content . [((type . <span class="org-string">"text"</span>)
+                   (text . ,(string-join lines <span class="org-string">"\n"</span>)))]))))
+</pre>
+</div>
+
+<p>
+这个工具没有参数，直接遍历 <code>(buffer-list)</code> 拼成文本返回。agent 调用 <code>list-buffers</code> 就能拿到你当前所有打开的 buffer 名字、文件路径和主 mode。
+</p>
+
+<p>
+参数这块值得展开说一下。参数有两种写法：
+</p>
+
+<ul class="org-ul">
+<li>必填参数:比如 <code>(buffer ...)</code></li>
+<li>可选参数: 通过 <code>:default</code> 设置了默认值，比如 <code>(precision ... :default 12)</code></li>
+</ul>
+
+<p>
+参数还支持 <code>:type</code>,指定 JSON schema 类型，默认是 <code>"string"</code> 。这对 agent 理解参数含义有帮助：agent 看到 <code>:type "integer"</code> 就知道该传数字而不是字符串。
+</p>
+
+<p>
+看一个带参数的例子，README 里的计算器工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-deftool my-tool-calc
+    ((expression <span class="org-string">"Algebraic expression to evaluate, e.g. sqrt(2*pi)."</span>)
+     (precision <span class="org-string">"Number of significant digits."</span> <span class="org-builtin">:type</span> <span class="org-string">"integer"</span> <span class="org-builtin">:default</span> 12))
+  <span class="org-string">"Evaluate an algebraic expression with calc."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"calc"</span>
+  (<span class="org-keyword">let</span> ((calc-internal-prec precision))
+    `((content . [((type . <span class="org-string">"text"</span>)
+                   (text . ,(calc-eval expression)))]))))
+</pre>
+</div>
+
+<p>
+<code>expression</code> 是必填的，=precision= 是可选的（有 =:default 12=）。agent 看到 schema 之后就知道该怎么调。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6a92d16" class="outline-3">
+<h3 id="org6a92d16">=emcp-defresource=：定义资源</h3>
+<div class="outline-text-3" id="text-org6a92d16">
+<p>
+资源是 agent 可以读取的数据。有两种：静态资源和模板资源。
+</p>
+
+<p>
+静态资源的 URI 是固定的，比如读 <code>*scratch*</code> buffer：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-defresource my-resource-scratch <span class="org-string">"emacs://buffer/*scratch*"</span>
+  <span class="org-string">"Read the *scratch* buffer."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"scratch"</span>
+  <span class="org-builtin">:mime-type</span> <span class="org-string">"text/plain"</span>
+  (<span class="org-keyword">let</span> ((text (<span class="org-keyword">with-current-buffer</span> <span class="org-string">"*scratch*"</span>
+                (buffer-substring-no-properties (point-min) (point-max)))))
+    `((contents . [((uri . ,uri)
+                    (mimeType . <span class="org-string">"text/plain"</span>)
+                    (text . ,text))]))))
+</pre>
+</div>
+
+<p>
+模板资源的 URI 里有 <code>{param}</code> 占位符，agent 按格式填参数来读不同的资源。参数会自动绑定到 body 里同名的变量：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-defresource my-resource-buffer <span class="org-string">"emacs://buffer/{name}"</span>
+  <span class="org-string">"Read a buffer by name."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"buffer"</span>
+  <span class="org-builtin">:mime-type</span> <span class="org-string">"text/plain"</span>
+  (<span class="org-keyword">if-let*</span> ((buf (get-buffer name)))
+      (<span class="org-keyword">let</span> ((text (<span class="org-keyword">with-current-buffer</span> buf
+                    (buffer-substring-no-properties (point-min) (point-max)))))
+        `((contents . [((uri . ,uri)
+                        (mimeType . <span class="org-string">"text/plain"</span>)
+                        (text . ,text))])))
+    (<span class="org-warning">error</span> <span class="org-string">"Buffer %s does not exist"</span> name)))
+</pre>
+</div>
+
+<p>
+注意 <code>name</code> 这个变量没有在任何地方声明，它直接从 URI 模板的 <code>{name}</code> 里提取出来绑定的。agent 访问 <code>emacs://buffer/init.el</code> 的时候， <code>name</code> 的值就是 <code>"init.el"</code> 。这个自动绑定是模板资源的核心便利。
+</p>
+
+<p>
+除了模板参数，body 里还有三个隐含变量：
+</p>
+
+<ul class="org-ul">
+<li><code>uri</code> ：agent 请求的完整 URI。比如 agent 请求 <code>emacs://buffer/init.el</code> ，=uri= 的值就是 <code>"emacs://buffer/init.el"</code> 。上面的代码里就用到了这个变量。</li>
+<li><code>server</code> ：EMCP 服务器对象，可以用来访问服务器的内部状态。</li>
+<li><code>session</code> ：当前 agent 的连接信息，可以用来区分不同 agent 的请求。</li>
+</ul>
+
+<p>
+这三个变量大部分时候用不到，但需要的时候不用自己绑定。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org5a049a2" class="outline-3">
+<h3 id="org5a049a2">=emcp-defprompt=：定义提示语</h3>
+<div class="outline-text-3" id="text-org5a049a2">
+<p>
+提示语是用户触发的对话模板。你在 AI agent 的界面里（比如 Claude Code 的对话框）打 <code>/review-buffer</code> ，agent 就会把 prompt 生成的消息注入当前对话。这里的"客户端"指的是 agent 应用程序（Claude Code、agent-shell 等），不是大模型本身。
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-defprompt my-prompt-review-buffer
+    ((buffer <span class="org-string">"Name of the buffer to review"</span> <span class="org-builtin">:default</span> nil))
+  <span class="org-string">"Review the contents of an Emacs buffer."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"review-buffer"</span>
+  (<span class="org-keyword">let*</span> ((buf (<span class="org-keyword">or</span> (<span class="org-keyword">and</span> buffer (get-buffer buffer))
+                  (current-buffer)))
+         (text (<span class="org-keyword">with-current-buffer</span> buf
+                 (buffer-substring-no-properties (point-min) (point-max)))))
+    `((messages . [((role . <span class="org-string">"user"</span>)
+                    (content . ((type . <span class="org-string">"text"</span>)
+                                (text . ,(format <span class="org-string">"Review this code:\n\n%s"</span> text)))))]))))
+</pre>
+</div>
+
+<p>
+这个 prompt 把指定 buffer 的内容塞进一条 user 消息里，让 agent 去审查。 <code>buffer</code> 参数是可选的（有 <code>:default nil</code> ），不传的话默认用当前 buffer。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org9ac3979" class="outline-3">
+<h3 id="org9ac3979">异步支持</h3>
+<div class="outline-text-3" id="text-org9ac3979">
+<p>
+有些操作不能立刻返回结果，比如跑一个 shell 命令要等进程结束。这时候加 <code>:async t</code> ，body 里就不写返回值了，改成调用 <code>send-result</code> 或 <code>send-error</code> ：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(emcp-deftool my-tool-shell
+    ((command <span class="org-string">"Shell command to run"</span>))
+  <span class="org-string">"Run a shell command asynchronously."</span>
+  <span class="org-builtin">:name</span> <span class="org-string">"shell"</span>
+  <span class="org-builtin">:async</span> t
+  (<span class="org-keyword">let</span> ((buf (generate-new-buffer <span class="org-string">" *emcp-shell*"</span>)))
+    (set-process-sentinel
+     (start-process-shell-command <span class="org-string">"emcp-shell"</span> buf command)
+     (<span class="org-keyword">lambda</span> (proc _event)
+       (<span class="org-keyword">let</span> ((output (<span class="org-keyword">with-current-buffer</span> (process-buffer proc)
+                       (buffer-string))))
+         (kill-buffer (process-buffer proc))
+         (<span class="org-keyword">if</span> (zerop (process-exit-status proc))
+             (send-result `((content . [((type . <span class="org-string">"text"</span>) (text . ,output)))]))
+           (send-error -1 (format <span class="org-string">"Exit %d"</span> (process-exit-status proc))
+                       `((output . ,output)))))))))
+</pre>
+</div>
+
+<p>
+异步模式在三个宏上的用法一样：加 <code>:async t=，用 =send-result</code> 和 <code>send-error</code> 回调返回。同步模式用返回值，异步模式用回调函数。这个设计让处理网络请求、进程等待、用户确认这类延迟操作变得自然。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgd9e3c80" class="outline-2">
+<h2 id="orgd9e3c80">Profile 管理</h2>
+<div class="outline-text-2" id="text-orgd9e3c80">
+<p>
+EMCP 用 <code>emcp-profiles</code> 变量管理所有 Profile。这是一个 alist，每个条目是 <code>(名称 . 属性列表)</code> 的结构。三个内置 Profile 就是这个变量的默认值。
+</p>
+
+<p>
+<code>:include</code> 属性是 Profile 管理的关键：它让一个 Profile 继承另一个 Profile 的所有组件。develop 通过 <code>:include (inspect)</code> 继承了 inspect 的全部工具，再加上自己的额外工具。full-control 同理继承 inspect 和 develop。这就是为什么三个 Profile 是递进关系。
+</p>
+
+<p>
+你可以定义自己的 Profile。比如你用 <code>emcp-deftool</code> 写了一个自定义工具 <code>my-tool-recent-files</code> ，想基于 develop 加上这个工具：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(add-to-list 'emcp-profiles
+             '(my-dev . (<span class="org-builtin">:description</span> <span class="org-string">"Develop + recent files."</span>
+                          <span class="org-builtin">:include</span> (develop)
+                          <span class="org-builtin">:tools</span> (my-tool-recent-files))))
+</pre>
+</div>
+
+<p>
+这个 <code>my-dev</code> Profile 继承 develop 的全部能力（develop 又继承 inspect），再加上你自定义的 <code>recent-files</code> 工具。
+</p>
+
+<p>
+把默认 Profile 切到自定义的：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-emacs-lisp">(<span class="org-keyword">setq</span> emcp-default-profile 'my-dev)
+</pre>
+</div>
+
+<p>
+用 <code>M-x emcp-reload</code> 重新加载配置。之后连上来的 agent 就能用新 Profile 了。
+</p>
+
+<p>
+Profile 的完整属性列表：
+</p>
+
+<ul class="org-ul">
+<li><code>:description</code> ：Profile 的文字描述，选择时会显示</li>
+<li><code>:include</code> ：要继承的其他 Profile 名称列表（递归继承）</li>
+<li><code>:prompts</code> ：提示语列表</li>
+<li><code>:resources</code> ：资源列表</li>
+<li><code>:tools</code> ：工具列表</li>
+</ul>
+
+<p>
+每个列表里的元素是你用 <code>emcp-defprompt</code> / <code>emcp-defresource</code> / <code>emcp-deftool</code> 定义的符号名，或者内置组件的符号名（如 <code>emcp-tools-apropos</code> ）。
+</p>
+</div>
+
+<div id="outline-container-org66078e2" class="outline-3">
+<h3 id="org66078e2">自定义组件的其他玩法</h3>
+<div class="outline-text-3" id="text-org66078e2">
+<p>
+同样的思路可以造很多工具：
+</p>
+
+<ul class="org-ul">
+<li>读 <code>*Messages*</code> buffer 帮 agent 理解最近的操作</li>
+<li>列出当前所有 project（配合 <code>project.el</code> ）</li>
+<li>读 <code>org-agenda</code> 的内容让 agent 知道你的待办</li>
+<li>查询 <code>bookmark-alist</code> 的书签列表</li>
+</ul>
+
+<p>
+每个都是十几行 Elisp 的事。EMCP 的宏把 MCP 协议的复杂性藏起来了，你只管写 Emacs 逻辑，返回值用 alist 包一下就行。
+</p>
+
+<p>
+如果你写了有用的工具，作者欢迎提 pull request 加进内置组件里。
+</p>
+</div>
+</div>
+</div>
+
+<div id="outline-container-org46f863a" class="outline-2">
+<h2 id="org46f863a">最后说两句</h2>
+<div class="outline-text-2" id="text-org46f863a">
+<p>
+EMCP 让 AI agent 真正操控了 Emacs，而不只是在旁边看代码。它之所以能做到这件事，是因为 Emacs 本来就自带了一整套自省能力（ <code>apropos</code> 能搜所有符号、 <code>describe</code> 能查任何函数的文档、 <code>info</code> 能读手册），EMCP 只需要把这些现成能力用 MCP 协议包装一层暴露给 agent，不需要从零开始给 agent 写查询接口。
+</p>
+
+<p>
+三个 <code>emcp-def*</code> 宏把 MCP 协议的概念映射到了 Elisp 的声明式写法里。用 Emacs 程序员最熟悉的方式（def 宏 + docstring + 关键字参数）来定义 MCP 组件。写一个 MCP 工具的体验和写一个 <code>defun</code> 几乎一样。
+</p>
+
+<p>
+如果你在找一种让 AI agent 真正参与你的 Emacs 工作流的方式，EMCP 值得一试。
+</p>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-07-06</span>
+    <span class="post-info">2026-07-16</span>
+    <a href="../../../../../tags/emacs">Emacs</a> : <a href="../../../../../tags/mcp">MCP</a> : <a href="../../../../../tags/ai-agent">AI-agent</a> : <a href="../../../../../tags/llm">LLM</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervm5mmn9 &lt;dot&gt; afbk53mwdokuzembgeyxeplq0b &lt;dot&gt; ex &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
