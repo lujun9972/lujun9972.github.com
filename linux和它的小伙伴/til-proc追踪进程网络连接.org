@@ -1,0 +1,131 @@
+#+TITLE: 用 /proc/pid/fd 追踪进程网络连接
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Linux, 网络, /proc, 调试
+#+DATE: [2026-07-22 周三]
+#+LANGUAGE: zh-CN
+#+OPTIONS: H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: 不装任何工具，用 /proc 文件系统查看进程的网络连接。
+
+[[https://www.tecmint.com/find-process-using-bandwidth-linux/][这篇文章]] 介绍了如何用 /proc 文件系统追踪进程的网络连接。不需要安装任何工具，任何 Linux 系统都能用。
+
+* 原理
+
+/proc 是 Linux 内核暴露的虚拟文件系统，每个进程的网络连接都会以 socket 文件形式出现在 =/proc/<pid>/fd= 下。
+
+* 场景一：已知端口，找进程
+
+1. 从 =/proc/net/tcp= 找到端口对应的 inode 号
+2. 用 inode 号反查是哪个进程持有这个 socket
+
+完整的脚本如下：
+
+#+begin_src shell :tangle /tmp/find_pid_by_port.sh
+#!/bin/bash
+# 用法: ./find_pid_by_port.sh <十六进制端口>
+# 示例: ./find_pid_by_port.sh 2328  (查找端口 9000)
+
+HEX_PORT=$1
+
+if [ -z "$HEX_PORT" ]; then
+  echo "用法: $0 <十六进制端口>"
+  echo "示例: $0 2328  # 查找端口 9000"
+  exit 1
+fi
+
+# 步骤1: 从 /proc/net/tcp 找到端口对应的 inode（只找 LISTEN 状态）
+INODE=$(awk -v port="$HEX_PORT" '$2 ~ ":"port"$" && $4 == "0A" {print $10}' /proc/net/tcp)
+
+if [ -z "$INODE" ]; then
+  echo "未找到端口 $((16#$HEX_PORT)) 的监听连接"
+  exit 1
+fi
+
+echo "端口 $((16#$HEX_PORT)) 对应 inode: $INODE"
+
+# 步骤2: 遍历所有进程的 fd，找到指向该 inode 的 socket
+for pid_dir in /proc/[0-9]*/; do
+  pid=$(basename "$pid_dir")
+  for fd in "$pid_dir"fd/*; do
+    link=$(readlink "$fd" 2>/dev/null)
+    if [ "$link" = "socket:[$INODE]" ]; then
+      comm=$(cat "$pid_dir/comm" 2>/dev/null || echo "unknown")
+      echo "PID: $pid ($comm)"
+      break
+    fi
+  done
+done
+#+end_src
+
+* 场景二：已知 PID，查看所有连接
+
+#+begin_src shell :tangle /tmp/show_pid_connections.sh
+#!/bin/bash
+# 用法: ./show_pid_connections.sh <PID>
+
+PID=$1
+
+if [ -z "$PID" ]; then
+  echo "用法: $0 <PID>"
+  exit 1
+fi
+
+if [ ! -d "/proc/$PID" ]; then
+  echo "进程 $PID 不存在"
+  exit 1
+fi
+
+echo "=== 进程 $PID 的所有网络连接 ==="
+echo ""
+
+# 收集该进程所有 socket 的 inode
+INODES=$(ls -la /proc/$PID/fd 2>/dev/null | grep -oP 'socket:\[\K[0-9]+' | sort -u)
+
+if [ -z "$INODES" ]; then
+  echo "未找到网络连接"
+  exit 0
+fi
+
+# 从 /proc/net/tcp 和 tcp6 中查找这些 inode 的详细信息
+for inode in $INODES; do
+  # TCP4
+  LINE=$(awk -v ino="$inode" '$10 == ino {print $0}' /proc/net/tcp 2>/dev/null)
+  if [ -n "$LINE" ]; then
+    LOCAL=$(echo "$LINE" | awk '{print $2}')
+    REMOTE=$(echo "$LINE" | awk '{print $3}')
+    STATE=$(echo "$LINE" | awk '{print $4}')
+    
+    # 解析十六进制地址
+    L_IP=$(echo "$LOCAL" | cut -d: -f1 | sed 's/\(.\{2\}\)/0x\1 /g' | xargs printf "%d.%d.%d.%d")
+    L_PORT=$((16#$(echo "$LOCAL" | cut -d: -f2)))
+    R_IP=$(echo "$REMOTE" | cut -d: -f1 | sed 's/\(.\{2\}\)/0x\1 /g' | xargs printf "%d.%d.%d.%d")
+    R_PORT=$((16#$(echo "$REMOTE" | cut -d: -f2)))
+    
+    echo "TCP4  $L_IP:$L_PORT -> $R_IP:$R_PORT  state=$STATE"
+  fi
+done
+#+end_src
+
+输出示例：
+
+#+begin_example
+=== 进程 12345 的所有网络连接 ===
+
+TCP4  0.0.0.0:80 -> 0.0.0.0:0  state=0A
+TCP4  10.0.2.15:22 -> 192.168.1.5:54322  state=01
+TCP4  10.0.2.15:443 -> 203.0.113.45:9000  state=01
+#+end_example
+
+state 值含义：=0A= 是 LISTEN，=01= 是 ESTABLISHED，=06= 是 TIME_WAIT。
+
+> **为什么要用 inode？** 因为 =/proc/<pid>/net/tcp= 是系统全局视图，每个进程都能看到所有 TCP 连接。如果直接 grep 每个进程的 net/tcp，会全部命中。正确方法是：先从全局 =/proc/net/tcp= 找到 inode（内核给 socket 的唯一编号），再遍历进程的 =/proc/<pid>/fd= 找到哪个文件描述符指向这个 inode。
+
+* 常见端口的十六进制对照
+
+| 十进制 | 十六进制 |
+|--------|----------|
+| 80 | 0050 |
+| 443 | 01BB |
+| 8080 | 1F90 |
+| 3000 | 0BB8 |
+| 5000 | 1388 |
+| 9000 | 2328 |
