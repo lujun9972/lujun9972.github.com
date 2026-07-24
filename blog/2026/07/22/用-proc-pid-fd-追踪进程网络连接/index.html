@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <title>用 /proc/pid/fd 追踪进程网络连接 - 暗无天日</title>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta name="author" content="lujun9972,Claude Code" />
+  <meta name="description" content="不装任何工具，用 /proc 文件系统查看进程的网络连接。" />
+  <meta name="keywords" content="Linux, 网络, /proc, 调试" />
+  <meta name="theme-color" content="#FAFAF7">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Source+Sans+3:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../../../../media/css/org-src-fontify.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/kdComment.css" type="text/css">
+  <link rel="stylesheet" href="../../../../../media/css/main.css" type="text/css">
+  <script async type="text/javascript"
+          src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  </script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/gitalk@1/dist/gitalk.min.js"></script>
+</head>
+
+  <body class="container">
+<header class="masthead">
+  <h1 class="masthead-title"><a href="../../../../../">暗无天日</a></h1>
+  <p>=============&gt;DarkSun的个人博客</p>
+  <nav class="site-nav">
+    <ul class="trigger">
+            <li><a href="../../../../../years/">Years</a></li>
+            <li><a href="../../../../../tags/">Tags</a></li>
+            <li><a href="../../../../../authors/">Authors</a></li>
+            <li><a href="../../../../../about/">About</a></li>
+            <li><a href="https://github.com/lujun9972/lujun9972.github.com">Github</a></li>
+            <li><a href="../../../../../rss.xml">RSS</a></li>
+    </ul>
+  </nav>
+  <form method="get" id="searchform" action="http://www.google.com/search">
+      <input type="text" class="field" name="q" id="s" placeholder="Search...">
+      <input type="hidden" name="as_sitesearch" value="lujun9972.github.io">
+  </form>
+</header>
+
+<div>
+<article class="post">
+<h1 class="title">用 /proc/pid/fd 追踪进程网络连接</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>&#30446;&#24405;</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#org76bc99f">原理</a></li>
+<li><a href="#orga31cf0f">场景一：已知端口，找进程</a></li>
+<li><a href="#orgda6b36b">场景二：已知 PID，查看所有连接</a></li>
+<li><a href="#org6136237">常见端口的十六进制对照</a></li>
+</ul>
+</div>
+</div>
+<p>
+<a href="https://www.tecmint.com/find-process-using-bandwidth-linux/">这篇文章</a> 介绍了如何用 /proc 文件系统追踪进程的网络连接。不需要安装任何工具，任何 Linux 系统都能用。
+</p>
+
+<div id="outline-container-org76bc99f" class="outline-2">
+<h2 id="org76bc99f">原理</h2>
+<div class="outline-text-2" id="text-org76bc99f">
+<p>
+/proc 是 Linux 内核暴露的虚拟文件系统，每个进程的网络连接都会以 socket 文件形式出现在 <code>/proc/&lt;pid&gt;/fd</code> 下。
+</p>
+</div>
+</div>
+
+<div id="outline-container-orga31cf0f" class="outline-2">
+<h2 id="orga31cf0f">场景一：已知端口，找进程</h2>
+<div class="outline-text-2" id="text-orga31cf0f">
+<ol class="org-ol">
+<li>从 <code>/proc/net/tcp</code> 找到端口对应的 inode 号</li>
+<li>用 inode 号反查是哪个进程持有这个 socket</li>
+</ol>
+
+<p>
+完整的脚本如下：
+</p>
+
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#29992;&#27861;: ./find_pid_by_port.sh &lt;&#21313;&#20845;&#36827;&#21046;&#31471;&#21475;&gt;
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#31034;&#20363;: ./find_pid_by_port.sh 2328  (&#26597;&#25214;&#31471;&#21475; 9000)
+</span>
+<span class="org-variable-name">HEX_PORT</span>=$<span class="org-variable-name">1</span>
+
+<span class="org-keyword">if</span> [ -z <span class="org-string">"$HEX_PORT"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#29992;&#27861;: $0 &lt;&#21313;&#20845;&#36827;&#21046;&#31471;&#21475;&gt;"</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#31034;&#20363;: $0 2328  # &#26597;&#25214;&#31471;&#21475; 9000"</span>
+  <span class="org-keyword">exit</span> 1
+<span class="org-keyword">fi</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27493;&#39588;1: &#20174; /proc/net/tcp &#25214;&#21040;&#31471;&#21475;&#23545;&#24212;&#30340; inode&#65288;&#21482;&#25214; LISTEN &#29366;&#24577;&#65289;
+</span><span class="org-variable-name">INODE</span>=$(<span class="org-sh-quoted-exec">awk -v port="$HEX_PORT" '$2 ~ ":"port"$" &amp;&amp; $4 == "0A" {print $10}' /proc/net/tcp</span>)
+
+<span class="org-keyword">if</span> [ -z <span class="org-string">"$INODE"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#26410;&#25214;&#21040;&#31471;&#21475; $(</span><span class="org-sh-quoted-exec">(16#$HEX_PORT</span><span class="org-string">)) &#30340;&#30417;&#21548;&#36830;&#25509;"</span>
+  <span class="org-keyword">exit</span> 1
+<span class="org-keyword">fi</span>
+
+<span class="org-builtin">echo</span> <span class="org-string">"&#31471;&#21475; $(</span><span class="org-sh-quoted-exec">(16#$HEX_PORT</span><span class="org-string">)) &#23545;&#24212; inode: $INODE"</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#27493;&#39588;2: &#36941;&#21382;&#25152;&#26377;&#36827;&#31243;&#30340; fd&#65292;&#25214;&#21040;&#25351;&#21521;&#35813; inode &#30340; socket
+</span><span class="org-keyword">for</span> pid_dir<span class="org-keyword"> in</span> /proc/[0-9]*/; <span class="org-keyword">do</span>
+  <span class="org-variable-name">pid</span>=$(<span class="org-sh-quoted-exec">basename "$pid_dir"</span>)
+  <span class="org-keyword">for</span> fd<span class="org-keyword"> in</span> <span class="org-string">"$pid_dir"</span>fd/*; <span class="org-keyword">do</span>
+    <span class="org-variable-name">link</span>=$(<span class="org-sh-quoted-exec">readlink "$fd" 2&gt;/dev/null</span>)
+    <span class="org-keyword">if</span> [ <span class="org-string">"$link"</span> = <span class="org-string">"socket:[$INODE]"</span> ]; <span class="org-keyword">then</span>
+      <span class="org-variable-name">comm</span>=$(<span class="org-sh-quoted-exec">cat "$pid_dir/comm" 2&gt;/dev/null || echo "unknown"</span>)
+      <span class="org-builtin">echo</span> <span class="org-string">"PID: $pid ($comm)"</span>
+      <span class="org-keyword">break</span>
+    <span class="org-keyword">fi</span>
+  <span class="org-keyword">done</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+</div>
+</div>
+
+<div id="outline-container-orgda6b36b" class="outline-2">
+<h2 id="orgda6b36b">场景二：已知 PID，查看所有连接</h2>
+<div class="outline-text-2" id="text-orgda6b36b">
+<div class="org-src-container">
+<pre class="src src-shell"><span class="org-comment-delimiter">#</span><span class="org-comment">!/bin/</span><span class="org-keyword">bash</span><span class="org-comment">
+</span><span class="org-comment-delimiter"># </span><span class="org-comment">&#29992;&#27861;: ./show_pid_connections.sh &lt;PID&gt;
+</span>
+<span class="org-variable-name">PID</span>=$<span class="org-variable-name">1</span>
+
+<span class="org-keyword">if</span> [ -z <span class="org-string">"$PID"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#29992;&#27861;: $0 &lt;PID&gt;"</span>
+  <span class="org-keyword">exit</span> 1
+<span class="org-keyword">fi</span>
+
+<span class="org-keyword">if</span> [ <span class="org-negation-char">!</span> -d <span class="org-string">"/proc/$PID"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#36827;&#31243; $PID &#19981;&#23384;&#22312;"</span>
+  <span class="org-keyword">exit</span> 1
+<span class="org-keyword">fi</span>
+
+<span class="org-builtin">echo</span> <span class="org-string">"=== &#36827;&#31243; $PID &#30340;&#25152;&#26377;&#32593;&#32476;&#36830;&#25509; ==="</span>
+<span class="org-builtin">echo</span> <span class="org-string">""</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#25910;&#38598;&#35813;&#36827;&#31243;&#25152;&#26377; socket &#30340; inode
+</span><span class="org-variable-name">INODES</span>=$(<span class="org-sh-quoted-exec">ls -la /proc/$PID/fd 2&gt;/dev/null | grep -oP 'socket:\[\K[0-9]+' | sort -u</span>)
+
+<span class="org-keyword">if</span> [ -z <span class="org-string">"$INODES"</span> ]; <span class="org-keyword">then</span>
+  <span class="org-builtin">echo</span> <span class="org-string">"&#26410;&#25214;&#21040;&#32593;&#32476;&#36830;&#25509;"</span>
+  <span class="org-keyword">exit</span> 0
+<span class="org-keyword">fi</span>
+
+<span class="org-comment-delimiter"># </span><span class="org-comment">&#20174; /proc/net/tcp &#21644; tcp6 &#20013;&#26597;&#25214;&#36825;&#20123; inode &#30340;&#35814;&#32454;&#20449;&#24687;
+</span><span class="org-keyword">for</span> inode<span class="org-keyword"> in</span> $<span class="org-variable-name">INODES</span>; <span class="org-keyword">do</span>
+  <span class="org-comment-delimiter"># </span><span class="org-comment">TCP4
+</span>  <span class="org-variable-name">LINE</span>=$(<span class="org-sh-quoted-exec">awk -v ino="$inode" '$10 == ino {print $0}' /proc/net/tcp 2&gt;/dev/null</span>)
+  <span class="org-keyword">if</span> [ -n <span class="org-string">"$LINE"</span> ]; <span class="org-keyword">then</span>
+    <span class="org-variable-name">LOCAL</span>=$(<span class="org-sh-quoted-exec">echo "$LINE" | awk '{print $2}'</span>)
+    <span class="org-variable-name">REMOTE</span>=$(<span class="org-sh-quoted-exec">echo "$LINE" | awk '{print $3}'</span>)
+    <span class="org-variable-name">STATE</span>=$(<span class="org-sh-quoted-exec">echo "$LINE" | awk '{print $4}'</span>)
+    
+    <span class="org-comment-delimiter"># </span><span class="org-comment">&#35299;&#26512;&#21313;&#20845;&#36827;&#21046;&#22320;&#22336;
+</span>    <span class="org-variable-name">L_IP</span>=$(<span class="org-sh-quoted-exec">echo "$LOCAL" | cut -d: -f1 | sed 's/\(.\{2\}\</span><span class="org-string">)/0x\1 /g'</span> | xargs printf <span class="org-string">"%d.%d.%d.%d"</span>)
+    <span class="org-variable-name">L_PORT</span>=$(<span class="org-sh-quoted-exec">(16#$(echo "$LOCAL" | cut -d: -f2</span>)))
+    <span class="org-variable-name">R_IP</span>=$(<span class="org-sh-quoted-exec">echo "$REMOTE" | cut -d: -f1 | sed 's/\(.\{2\}\</span><span class="org-string">)/0x\1 /g'</span> | xargs printf <span class="org-string">"%d.%d.%d.%d"</span>)
+    <span class="org-variable-name">R_PORT</span>=$(<span class="org-sh-quoted-exec">(16#$(echo "$REMOTE" | cut -d: -f2</span>)))
+    
+    <span class="org-builtin">echo</span> <span class="org-string">"TCP4  $L_IP:$L_PORT -&gt; $R_IP:$R_PORT  state=$STATE"</span>
+  <span class="org-keyword">fi</span>
+<span class="org-keyword">done</span>
+</pre>
+</div>
+
+<p>
+输出示例：
+</p>
+
+<pre class="example" id="org185c9ff">
+=== 进程 12345 的所有网络连接 ===
+
+TCP4  0.0.0.0:80 -&gt; 0.0.0.0:0  state=0A
+TCP4  10.0.2.15:22 -&gt; 192.168.1.5:54322  state=01
+TCP4  10.0.2.15:443 -&gt; 203.0.113.45:9000  state=01
+</pre>
+
+<p>
+state 值含义：=0A= 是 LISTEN，=01= 是 ESTABLISHED，=06= 是 TIME_WAIT。
+</p>
+
+<p>
+&gt; <b><b>为什么要用 inode？</b></b> 因为 <code>/proc/&lt;pid&gt;/net/tcp</code> 是系统全局视图，每个进程都能看到所有 TCP 连接。如果直接 grep 每个进程的 net/tcp，会全部命中。正确方法是：先从全局 <code>/proc/net/tcp</code> 找到 inode（内核给 socket 的唯一编号），再遍历进程的 <code>/proc/&lt;pid&gt;/fd</code> 找到哪个文件描述符指向这个 inode。
+</p>
+</div>
+</div>
+
+<div id="outline-container-org6136237" class="outline-2">
+<h2 id="org6136237">常见端口的十六进制对照</h2>
+<div class="outline-text-2" id="text-org6136237">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-right" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-right">十进制</th>
+<th scope="col" class="org-left">十六进制</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-right">80</td>
+<td class="org-left">0050</td>
+</tr>
+
+<tr>
+<td class="org-right">443</td>
+<td class="org-left">01BB</td>
+</tr>
+
+<tr>
+<td class="org-right">8080</td>
+<td class="org-left">1F90</td>
+</tr>
+
+<tr>
+<td class="org-right">3000</td>
+<td class="org-left">0BB8</td>
+</tr>
+
+<tr>
+<td class="org-right">5000</td>
+<td class="org-left">1388</td>
+</tr>
+
+<tr>
+<td class="org-right">9000</td>
+<td class="org-left">2328</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+
+</article>
+</div>
+
+<div>
+  <div class="post-meta">
+    <span class="post-info">2026-07-22</span>
+    <span class="post-info">2026-07-24</span>
+    <a href="../../../../../tags/linux">Linux</a> : <a href="../../../../../tags/网络">网络</a> : <a href="../../../../../tags/-proc">/proc</a> : <a href="../../../../../tags/调试">调试</a>
+    <span class="post-info">lujun9972,Claude Code</span>
+  </div>
+  <script src="../../../../../media/js/jquery-2.1.3.min.js"></script>
+  <script src="../../../../../media/js/md5.min.js"></script>
+  <link href="https://yiyechat.com/open-source/build/content-static/css/main.css" rel="stylesheet">
+  <script src="https://yiyechat.com/open-source/build/content-static/js/main.js"></script>
+  <section>
+      <div id="gitalk-container"></div>
+      <script type="text/javascript">
+       var gitalk = new Gitalk({
+           clientID: 'fdcb5d9da3f4acb4862c',
+           clientSecret: 'dd0a16312a206782cb7669dcec5e96874ab48170',
+           repo: 'lujun9972.github.com',
+           owner: 'lujun9972',
+           admin: ['lujun9972'],
+           id: md5(location.pathname),
+           distractionFreeMode: false
+       })
+       gitalk.render('gitalk-container')
+      </script>
+  </section>
+  <script src="../../../../../media/js/kdComment.js"></script>
+      <script>
+       var _hmt = _hmt || [];
+       (function() {
+           var hm = document.createElement("script");
+           hm.src = "https://hm.baidu.com/hm.js?7bac4fd0247f69c27887e0d4e3aee41e";
+           var s = document.getElementsByTagName("script")[0];
+           s.parentNode.insertBefore(hm, s);
+       })();
+      </script>
+  <footer class="footer">
+    <p>Generated by <a href="http://www.gnu.org/software/emacs/">Emacs</a> 29.x(<a href="http://orgmode.org">Org mode</a> 9.x)</p>
+    <p>
+      Copyright &copy; 2014 - <span id="footerYear"></span> <a href="mailto:runner &lt;at&gt; runnervmvrwv9 &lt;dot&gt; rn5ojblx3kyetnb5uov1o2ecdd &lt;dot&gt; bx &lt;dot&gt; internal &lt;dot&gt; cloudapp &lt;dot&gt; net">lujun9972,Claude Code</a>
+      &middot;
+      Powered by <a href="https://github.com/emacs-china/EGO" target="_blank">EGO</a>
+      &middot;
+      Themed with <a href="https://github.com/kuangdash/emacs_love" target="_blank">emacs_love</a>
+    </p>
+    <p>
+      <a href="http://creativecommons.org/licenses/by-sa/3.0/" rel="license"><img src="https://licensebuttons.net/l/by-sa/3.0/88x31.png" style="border-width:0" alt="Creative Commons License" class="center"></a>
+    </p>
+    <script type="text/javascript">document.getElementById("footerYear").innerHTML = (new Date()).getFullYear();</script>
+  </footer>
+</div>
+
+  </body>
+</html>
