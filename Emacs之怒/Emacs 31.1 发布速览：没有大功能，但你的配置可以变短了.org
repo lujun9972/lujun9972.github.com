@@ -1,0 +1,190 @@
+#+TITLE: Emacs 31.1 发布速览：没有大功能，但你的配置可以变短了
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,Emacs31,tree-sitter
+#+DATE: [2026-08-25 Tue]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs 31.1 于 2026 年 8 月 24 日正式发布。这一版找不出一个能单独当卖点的特性，主线是把散落在第三方包和各家配置里的胶水代码吸收进核心：tree-sitter 零配置化、终端支持 child frame、补全体验对齐现代编辑器。本文综合官方公告、Mastering Emacs 的 NEWS 全解读和 Rahul Juliato 的实战预览，筛出最值得关注的特性和升级注意事项。
+
+
+Emacs 31.1 于 2026 年 8 月 24 日正式发布，[[https://lists.gnu.org/archive/html/emacs-devel/2026-08/msg00760.html][官方公告]] 由 Sean Whitton 发在 emacs-devel 邮件列表。[[https://irreal.org/blog/?p=14036][Irreal]] 第一时间转发了这条消息，并顺带提醒了一个花絮，公告里的下载地址少写了一段路径，Eli Zaretskii 随后在[[https://lists.gnu.org/archive/html/emacs-devel/2026-08/msg00764.html][回帖]]里勘误。照抄公告里的 URL 会得到一个 404，正确的下载步骤见文末附录。
+
+* 没有招牌特性，但值得升级
+
+Mickey Petersen 在 [[https://www.masteringemacs.org/article/whats-new-in-emacs-311][What's New in Emacs 31.1]] 里开门见山地说，这一版找不出哪个特性能单独当卖点，原计划的新垃圾回收器推迟到了 Emacs 32。
+
+但31.1依然值得升级。31.1 包揽了很多第三方包的内容，Rahul M. Juliato 在 [[https://rahuljuliato.com/posts/emacs-31-around-the-corner][发布前的预览文]]里说，他几个月来一直在追踪 emacs-31 分支 ，每次核心收录了一个他手工维护的功能，他就在自己的配置里删掉一段代码。看着配置一天天变短，是他的日常乐趣之一。
+
+* 终端党的福音
+
+先说对我这种常年 =emacs -nw= 的人最实际的变化。
+
+=xterm-mouse-mode= 在兼容的终端里默认开启了。以前终端里想用鼠标点菜单、点 buffer 切换，得自己开这个 minor mode；现在支持的终端直接就能用。代价是鼠标事件被 Emacs 接管之后，没法再像往常那样用鼠标在终端窗口里划选文字、靠终端自己的复制粘贴快捷键操作了，复制粘贴得改走 Emacs 的键位（ =M-w= 复制、 =C-y= 粘贴）。不习惯的话把 =M-x xterm-mouse-mode= 关掉即可。
+
+更大的变化是child frame。child frame 是浮在主窗口上面的小窗框，GUI 下 Corfu 的候选弹窗、Posframe 的浮层都是用它实现的。31.1 把 child frame 支持带到了终端，于是这些包在 =-nw= 下也能正常工作了，配套还有个 =tty-tip-mode= 可以在终端显示 tooltip。Corfu 和 Posframe 的较新版本已经会自动探测终端child frame能力。终端体验这回是实打实上了一个台阶。
+
+另外终端的 24 位真彩色支持也换了更通用的 terminfo 能力（ =setrgbf= / =setrgbb= ），比老的 =setf24= 覆盖面更广。
+
+* tree-sitter 从劝退到零配置
+
+tree-sitter 是一个把源码解析成语法树的工具库，改动代码时只需要重新解析变化的部分，不用整个文件重来，速度快到足以支撑实时语法高亮和结构化编辑，比老式的正则匹配方式又快又准。但它装 grammar（语法定义文件）太折腾，导致在 Emacs 里推广一直不太顺利。你得手工往 =treesit-language-source-alist= 里填 git 仓库地址、挑对 commit 版本，还得本地有 C 编译器，一步不对就编译失败。Mickey 对这套流程的评价是「对每个人都是糟糕透顶的体验」。
+
+31.1 加了两个开关。
+
+#+begin_src emacs-lisp
+(setopt treesit-auto-install-grammar 'always)
+(setopt treesit-enabled-modes t)
+#+end_src
+
+=treesit-enabled-modes= 设为 =t= 之后，凡是官方提供了 tree-sitter 版本的 major mode 都会自动改用 tree-sitter 版本；打开某个 mode 时如果 grammar 缺失， =treesit-auto-install-grammar= 让 Emacs 直接替你下载编译，取值还可以是 ='ask= （每次问一下）或 ='ask-dir= （顺便问装到哪个目录）。以前 =treesit-auto= 第三方包干的事，现在核心自己干了。但要注意自动安装不是免编译，它还是要联网拉源码现场编译，git 和 C 编译器这两个前提依然得有。
+
+这样一来配置可以精简不少了。比如 Rahul 的配置里原本有这样一行。
+
+#+begin_src emacs-lisp
+(add-to-list 'treesit-language-source-alist
+             '(typescript "https://github.com/tree-sitter/tree-sitter-typescript"
+                          "master" "typescript/src"))
+#+end_src
+
+现在不需要了。 TypeScript、TSX、Rust、TOML 这些语言的 grammar 源现在内建在对应的 mode 里，这类手工登记全部可以扔掉。
+
+这里还有一个坑要留意，自动安装的 grammar 不按 CPU 架构分目录。如果你在 x86_64 台式机和 arm64 笔记本之间共享同一份 Emacs 配置目录，两台机器编出来的 =.so= 会互相覆盖，另一台加载就报错。多机用户要么分开配置目录，要么固定用 ='ask-dir= 手动指定位置。
+
+* 补全系统向现代编辑器看齐
+
+minibuffer 补全改动很大，核心目标是让原生的 =*Completions*= 缓冲区更现代化。
+
+#+begin_src emacs-lisp
+(setopt completion-eager-display t)
+(setopt completion-eager-update t)
+(setopt minibuffer-visible-completions 'up-down)
+#+end_src
+
+=completion-eager-display= 让 minibuffer 一打开就把候选列表亮出来，不用等 TAB； =completion-eager-update= 是边打字边刷新候选。 =minibuffer-visible-completions= 设为 ='up-down= 后，可以用上下方向键在可见候选间移动选中项，左右方向键照旧移动光标。M-<UP> 和 M-<DOWN> 则更进一步，除了选中候选列表中的某一项，还会把它回填到 minibuffer 输入处显示出来，此时按 RET 就直接以这项作为最终输入。这一套组合下来，原生补全的手感和 Corfu 这类弹出式补全器已经很接近了。
+
+flex 模糊匹配算法也整个重写了，排序更聪明。比如搜「scope」，=elisp-scope-= 开头的函数会稳稳排在 =dos-codepage= 这种风马牛不相及的结果前面，老算法经常把这种垃圾排前面。
+
+=minibuffer-completion-auto-choose= 被 M-<UP>/M-<DOWN> 这套新机制取代了，默认值改成了 nil。如果你之前依赖它的行为，升级后要重新调一下。
+
+* 窗口布局命令族
+
+新加了一组命令，能像翻转图片一样对整个窗口布局做旋转、镜像和横竖转换，不用再一个个窗口拆了重分。
+
+| 命令 | 默认按键 | 效果 |
+|------+----------+------|
+| =window-layout-transpose= | =C-x w t= | 所有横切变竖切，竖切变横切 |
+| =window-layout-rotate-clockwise= | =C-x w r <RIGHT>= | 整个布局顺时针旋转 |
+| =window-layout-flip-leftright= | =C-x w f <LEFT>= | 左右镜像翻转 |
+| =window-layout-flip-topdown= | =C-x w f <DOWN>= | 上下镜像翻转 |
+
+这些操作只改变窗口的排列位置，每个窗口里显示的 buffer 保持不变，不会乱跳。比如三窗格布局摆好了想让编辑窗换到另一边，以前只能拆了重分，现在一键搞定。
+
+配套还有个 =split-window-preferred-direction= 。以前 =display-buffer= 弹新窗口永远先试竖切，屏幕宽的话新窗口挤成一条缝。现在默认按帧的宽高比决定先横切还是竖切，宽屏横切、窄屏竖切，也可以手动固定成 ='vertical= 或 ='horizontal= 。
+
+* user-lisp 目录：23 年的土办法进了核心
+
+如果你的 Emacs 配置目录下有个 =user-lisp/= 子目录，里面的 el 文件会被递归字节编译、抓取 autoload、加入 =load-path= 。
+
+以前这件事要自己在 init.el 里写十几行遍历加更新的代码，Mickey 说他自己把同一段代码复制粘贴了 23 年。不想启用这个能力可以把 =user-lisp-auto-scrape= 设为 nil，还有个 =M-x prepare-user-lisp= 命令，随时可以手动触发一遍刚才说的扫描处理。
+
+* 一批消灭胶水代码的开关
+
+剩下的改进比较琐碎，集中列一下。
+
+#+begin_src emacs-lisp
+(setopt kill-region-dwim 'emacs-word)
+;; 没有活动区域时 C-w 向前删一个词，而不是报 "the mark is not active"
+
+(setopt exchange-point-and-mark-highlight-region nil)
+;; C-x C-x 交换点位和标记后不再强制点亮区域，键盘宏党狂喜
+
+(setopt eldoc-help-at-pt t)
+;; 光标下的符号直接在 echo area 显示帮助，不用手动调 help 命令
+
+(setopt view-lossage-auto-refresh t)
+;; C-h l 变成实时按键监视器，演示或录屏时观众能看到你敲了什么
+
+(setopt native-comp-async-on-battery-power nil)
+;; 没插电源时不跑 native-comp 后台编译（把 Elisp 编译成机器码的耗时任务），笔记本电池保住了
+
+(setopt mode-line-collapse-minor-modes t)
+;; mode line 上密密麻麻的 minor mode 标签折叠成一个按钮，也可指定列表控制谁藏谁显
+#+end_src
+
+还有几个值得一提的变化， =customize-face= 设置字体时字体名能补全了，不用再猜字体串怎么拼； =describe-variable= 发现某变量必须用 =setopt= 才生效时会主动提示你； =delete-pair= 删掉括号后会 push mark， =C-x C-x= 一下就能看到刚删的范围。
+
+* unexec 移除：一个时代结束
+
+这条对日常使用没影响，但值得记一笔。
+
+Emacs 的启动流程一直很特别。刚编译出来的 =temacs= 只是个裸程序，里面只有 C 语言写成的核心和一个 Elisp 解释器，那些用 Elisp 写成的标准库都还没装进去；要把这些库全部加载进内存才能得到可用的 Emacs，而这个过程慢得没法用。几十年前的解法是把加载完的内存映像直接 dump 成可执行文件。这个叫 unexec 的技术依赖一堆 glibc 的私有内部实现。后来 glibc 不再保证这些接口稳定，Daniel Colascione 于是写了 portable dumper 来替代，从 Emacs 27 开始成为默认，unexec 则被标记废弃。
+
+31.1 里 unexec 的代码彻底删掉了。普通用户全程无感，不过一个从 80 年代延续至今的实现方式就此谢幕，说一句「时代结束」不算夸张。
+
+* 实战视角：提前用上 Emacs 31 的人怎么说
+
+Rahul 的文章最大的价值在于他是真的拿这些特性日用了几个月，罗列特性倒在其次。除了前文的 tree-sitter，他的删除清单上还有这几项。
+
+markdown-ts-mode 进了核心。这是个实验性的 Markdown 主模式，Rahul 本人就是发起者（后来 Stéphane Marks 加入共同维护）。它有三个卖点:
++ 按键和编辑手感贴近 Org，会用 Org 的人不用重新学；
++ 围栏代码块里的内容会用对应语言的真实 major mode 做语法高亮，比如 Markdown 里嵌的 elisp 代码块，里面的 Emacs Lisp 代码是有颜色区分的真高亮，而不是一整块单色的等宽文字；
++ 图片链接直接在 buffer 里渲染出来。
+但要注意， =markdown-ts-mode= 没挂进 =auto-mode-alist= ，要 =M-x load-library RET markdown-ts-mode= 手动加载后才能开；加载完在 Markdown buffer 里执行 =M-x markdown-ts-mode= 即可启用。Eglot 也跟进了一步，把 =eglot-documentation-renderer= 配成 ='markdown-ts-view-mode= 就能让 LSP 悬停文档带格式渲染。
+
+VC 方面， =vc-dir-auto-hide-up-to-date= 设为 ='revert= 后，刷新 =vc-dir= 缓冲区会自动把没有改动的文件藏起来。 =vc-dir= 是 Emacs 内建的版本控制目录状态视图，相当于在 Emacs 里看 git status。Rahul 为此手写的「刷新再加隐藏」两连击 hack code 于是光荣退役了。
+
+最有故事性的一个变化是 xref 缓冲区可以直接编辑了。xref 是 Emacs 内建的交叉引用查找结果缓冲区，以前只能看不能改，批量改名得绕道 grep。今年 3 月 Rahul 给 bug#80616 提了个补丁，想把 xref 结果导出成 grep 缓冲区再编辑。维护者 Dmitry Gutov 反问了一个更尖锐的问题，你要的到底是导出通道，还是 xref 自己能编辑？几天后 Dmitry 写出了 =xref-edit-mode= ，在 xref 缓冲区里按 =e= 直接进入编辑状态，跨行修改都行，改完后 =C-c C-c= 确认。Rahul 的原方案作为可选命令收录但没有默认绑定，他自己现在也用 Dmitry 的版本。一个提案换来一个更好的方案，这个过程本身就是 Emacs 社区运作方式的样本。
+
+顺带一提， =term= 吞行的老毛病修了。以前在 =ansi-term= 里跑 htop 或 nethack，全屏程序一重绘就花屏丢行。现在正常了，又少了一个开外部终端模拟器的理由。
+
+* 升级注意事项
+
+有几个变化可能影响现有环境，升级留意一下。
+
+- 14个 =font-lock-*-face= 变量废弃了。先补两个背景概念：face 是 Emacs 里控制文字外观的命名样式（注释用什么颜色、字符串用什么颜色，各是一个 face）；而这次废弃的是与这些 face 同名的变量，不是 face 本身。所以用 =M-x customize-face= 改过颜色的配置完全不受影响，普通用户可以无视这条。只有当你在自己的 Elisp 代码里用到了这些同名变量（比如写在 font-lock 规则里）才需要动：把变量名前面加个引号，写成 ='font-lock-string-face= 的形式，让代码直接引用 face 名字本身，而不是去查这个即将失效的变量。
+- 编译安装 Emacs 时，不再附带生成自带的那个老 =ctags= 命令了。TAGS 用户装 [[https://ctags.io/][Universal Ctags]] 去，或者临时用 =etags --ctags= 过渡。（不知道 TAGS 是什么的读者不用管这条。）
+- =site-start.el= 改到了用户的 early-init.el 之前加载，系统管理员可以在更早的时机定制东西。单用户机器基本无感。
+- =read-multiple-choice= 和 =map-y-or-n-p= 改用 minibuffer 读单个字符回答。y-or-n 类提示的行为有细微变化，习惯旧交互的留意一下。
+- 以 daemon 方式启动时，启动期警告现在会在第一个 client frame 上弹出 =*Warnings*= 缓冲区。Mickey 对此的评价是「被诅咒的特性」，他觉得小题大做的警告不该烦 daemon 用户；也有人觉得早就该显示了，见仁见智。
+
+* 附录：下载与验签
+
+公告原文的 URL 少了 =/gnu/= 一段，勘误后的地址形如 =https://ftpmirror.gnu.org/gnu/emacs/...= 。不过这个镜像重定向服务偶尔抽风（写本文验证时它正返回 502），所以下面的命令直接用主站 =ftp.gnu.org= ，这个地址实测可用。
+
+#+begin_src sh
+curl -O https://ftp.gnu.org/gnu/emacs/emacs-31.1.tar.xz
+curl -O https://ftp.gnu.org/gnu/emacs/emacs-31.1.tar.xz.sig
+gpg --verify emacs-31.1.tar.xz.sig
+#+end_src
+
+#+RESULTS:
+
+验签报公钥不存在的话，先导入签名密钥（指纹 =8DC2487E51ABDD90B5C4753F0F56D0553B6D411B= ）。
+
+#+begin_src sh
+gpg --keyserver keyring.debian.org --recv-keys \
+    8DC2487E51ABDD90B5C4753F0F56D0553B6D411B
+#+end_src
+
+#+RESULTS:
+
+也可以直接核对 SHA256 校验和。
+
+#+begin_example
+SHA256 (emacs-31.1.tar.xz)
+1da5790d9580c81932b5bf700633114468da7b3412d69faa767daebf974f4586
+SHA256 (emacs-31.1.tar.gz)
+3cad7fd1466c0e24867df8d2609da3ac75abc90d7c4c0175e410e9be46d4092a
+#+end_example
+
+部分镜像同步有延迟，下载不完整就重试一两次，这是发布日的常规操作。
+
+验签通过后就是标准构建流程，解压压缩包进目录，跑 =./configure && make && sudo make install= ；不想自己编译的等发行版仓库更新即可。
+
+完整的变更清单在 NEWS 文件里，装好后 =C-h n= 直接看，或者浏览 [[https://git.savannah.gnu.org/cgit/emacs.git/tree/etc/NEWS?h=emacs-31][在线版本]]。
+
+* 延伸阅读
+
+- [[https://www.masteringemacs.org/article/whats-new-in-emacs-311][What's New in Emacs 31.1]]（Mastering Emacs），NEWS 全文注释级解读，本文特性细节的主要来源
+- [[https://rahuljuliato.com/posts/emacs-31-around-the-corner][Emacs 31 Is Around the Corner]]（Rahul M. Juliato），实战视角，文中配置片段均来自他的 Emacs Solo 配置
+- [[https://irreal.org/blog/?p=14036][Emacs 31.1]]（Irreal），发布消息与镜像同步情况的旁证
