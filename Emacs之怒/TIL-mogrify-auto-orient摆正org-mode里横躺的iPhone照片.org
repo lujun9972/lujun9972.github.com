@@ -1,0 +1,73 @@
+#+TITLE: TIL：mogrify -auto-orient——一条命令摆正 org-mode 里横躺的 iPhone 照片
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs,Org-mode,Linux,ImageMagick,EXIF
+#+DATE: [2026-08-26 Wed]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: iPhone 竖拍照片放进 org-mode 后总是横躺显示。根源是相机传感器物理横置，竖拍靠 EXIF 方向标记做软件补偿，而 org 的内联图片根本不读这个标记。ImageMagick 的 mogrify -auto-orient 能把像素真正转正，配合 dwim-shell-command 还能接进 Dired 工作流。本文附完整的实测过程。
+
+看到一篇 [[https://taonaw.com/2026/06/03/correcting-photo-orientation-for-orgmode.html][Correcting photo orientation for Org-mode]]，作者碰到个冷门问题，iPhone 拍的照片在 Linux 的 org-mode 里查看时永远是横的，竖拍的也横着。
+
+** 为什么照片会横躺
+
+手机相机传感器在机身里是物理横着装的（受镜头模组排布限制），原始输出的画面天生横向。你竖着握手机拍照时，手机自己检测到姿态，往照片的 EXIF 元数据里写一个方向标记（Orientation），意思是「看图的软件请把我顺时针转 90 度再显示」。所以竖拍能看，靠的是软件在补偿硬件设计的先天不足。
+
+这套补偿有个前提，看图的软件得主动去读标记才肯转。Emacs 这边的情况有点分裂。用 C-x C-f 直接打开一张照片（进入 image-mode）没问题，Emacs 27 起就会按 EXIF 数据自动转正。但 org-mode 的内联图片显示（org-display-inline-images）走的是另一条路，直接调 create-image 把文件贴进 buffer，全程不碰 EXIF。我在本机 Emacs 30.1 上翻了 org.el 的编译产物，连 exif 这个字符串都搜不到，坐实了这件事。原文作者用的 Journelly（一款把日记条目渲染成 org 文件的 Emacs 应用）恰好就是把照片内联贴在条目里，所以竖拍照片在他屏幕上全躺平了。
+
+** 一条命令修好
+
+ImageMagick 是 Linux 下最常用的命令行图像处理套件，里面有个 mogrify 命令，特点是直接在原文件上动手，改完原文件就被覆盖了，不生成新文件。它带个 -auto-orient 选项，官方文档说会读取并重置 EXIF 方向标记，再按标记把图做相应的 90 度旋转。
+
+光说不练假把式。我先造一张模拟 iPhone 的测试图，像素 400x300 横向排列，EXIF Orientation 写成 6，也就是要顺时针转 90 度才是正的。先看看初始状态。
+
+#+begin_src shell
+identify -format "%f: %wx%h, orientation=%[EXIF:*Orientation]\n" demo.jpg
+#+end_src
+
+#+begin_example
+demo.jpg: 400x300, orientation=exif:Orientation=6
+#+end_example
+
+跑完修复再看同一个文件。
+
+#+begin_src shell
+mogrify -auto-orient demo.jpg
+identify -format "%f: %wx%h, orientation=%[EXIF:*Orientation]\n" demo.jpg
+#+end_src
+
+#+begin_example
+demo.jpg: 300x400, orientation=exif:Orientation=1
+#+end_example
+
+前后一比，变化有两处。像素从 400x300 转成了 300x400，说明图像数据真的被旋转了；方向标记从 6 重置回了 1（即「无需旋转」）。从此以后不管什么软件来看这张图都是正的，它不再指望看图程序去读元数据做好事。
+
+批量处理就是普通的 shell 通配符。
+
+#+begin_src shell
+mogrify -auto-orient *.jpg
+#+end_src
+
+不过要留意，mogrify 是直接覆盖原文件的，改坏了没后悔药。对不可再生的照片，稳妥的招法是换 ImageMagick 家族的另一个命令 convert，用法一样，区别是它不碰原文件，把转正结果写进新文件：
+
+#+begin_src shell
+convert -auto-orient 原图.jpg 转正后.jpg
+#+end_src
+
+改完记得回 org 里按 ~C-c C-x C-M-v~ （即 org-redisplay-inline-images）重刷一遍内联图片，已经贴进 buffer 的旧图不会自己更新。
+
+** 接进 Emacs 工作流
+
+原文作者用 dwim-shell-command 把这步包成了一个交互函数。这是个 Emacs 扩展，能把任意 shell 命令包装成批量操作，对 Dired 里标记的文件挨个执行。封装后的代码长这样。
+
+#+begin_src elisp
+(defun jtr/dwim-image-auto-orient ()
+  "Auto-orient images based on EXIF data using mogrify."
+  (interactive)
+  (dwim-shell-command-on-marked-files
+   "Auto-orient images"
+   "mogrify -auto-orient '<<f>>'"
+   :utils "mogrify"
+   :silent-success t))
+#+end_src
+
+模板串里的 =<<f>>= 是占位符，实际执行时会替换成你在 Dired 里标记的每一个文件名。=:utils "mogrify"= 声明这条命令依赖哪个外部工具，系统里没装 mogrify 会提前报错拦下，不至于跑到一半莫名失败。至于最后的 =:silent-success t=，纯属体感优化，mogrify 成功时本来就不吐任何输出，可 dwim-shell-command 默认还是要给输出弹个 buffer。加上这个参数，成功后就安安静静回到 Dired，不打断节奏。
