@@ -1,0 +1,113 @@
+#+TITLE: TIL: 补全变建议——completing-read 的候选集可以是个函数
+#+AUTHOR: lujun9972, Claude Code
+#+TAGS: Emacs, consult, completing-read, AI, TIL
+#+DATE: [2026-08-28 Fri]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Charlie Holland 在 Emacs completion 系列第六篇提出 ISR（Incremental Suggesting Read）：补全候选不再字面匹配输入，而是按语义检索或由 LLM 现场生成。支撑这一切的只是 completing-read 的一个老特性：候选集参数可以是个函数。本文记录这个概念、一个用 gptel 让 LLM 现场生成同义词候选的例子、consult 的异步版本，以及两个现成的生态实例。
+
+读 Charlie Holland 的 [[https://www.chiply.dev/post-incremental-suggesting-read][Beyond ICR: Incremental 'Suggesting' Read in Emacs]] ，学到一个小而关键的机制， =completing-read= 的候选集参数不一定是列表，可以是个函数。就这一个特性，补全就能变成建议，按意思搜笔记，甚至让 LLM 现场生成答案。
+
+* 从补全到建议
+
+先对齐术语。 =completing-read= 是 Emacs 最基础的交互原语之一，弹出一个提示符，给出候选列表，你输入关键字筛选，回车选中一个。ICR（Incremental Completing Read，增量补全读取）没什么神秘的，就是把输入和筛选绑在一起，每敲一个键，候选列表立刻重新过滤。
+
+原文提出 ISR（Incremental Suggesting Read，增量建议读取），和 ICR 只差一个地方。
+
+- ICR 的候选是 *字面匹配* 你输入内容的字符串（输入 =con= ，候选里就有 =consult= ）
+- ISR 的候选是 *按意思推断* 出来的建议（输入「上周那篇讲字体高亮的笔记」，候选是语义相近的 org 文件，哪怕文件名里一个相关字都没有）
+
+ISR 的建议有两个来源。
+
+1. *语义检索* ，在你的真实数据（笔记、邮件、代码）里按意思搜，按语义接近程度排序。典型做法是 embedding 搜索，把文字转成一串数字（向量），意思越接近的文本，向量之间的距离越近。
+2. *生成合成* ，候选本来不存在，由 LLM 根据你的输入现场写出来。这时你的输入其实就是 prompt。
+
+从认知负担的角度看，这个跳跃不小。ICR 已经把「凭空回忆完整名字」降成了「从列表里认出目标」，ISR 更进一步，连准确的片段都不用给，给个大概意思或者直接问个问题就行。原文把 ICR 的目标比作「到达目的地」，ISR 则是「探索和发现」。
+
+* 为什么现有机制直接能用
+
+关键在于， =completing-read= 的候选集参数本来就允许传函数。Emacs 会把你的输入交给这个函数，函数返回什么，候选列表就是什么。至于函数内部是在做 embedding 搜索还是在调 LLM API， =completing-read= 完全不关心。
+
+所以 ICR 时代打磨出来的整套体验原封不动地搬到 ISR 上，肌肉记忆零成本沿用。原文特别点名 =consult= 包（社区流行的补全框架），它就是为「从后端动态取候选」设计的，天然适合干这事。
+
+* 代码长什么样
+
+先看最小版本，用 gptel（Emacs 的 LLM 客户端包）把「生成合成」跑起来，输入一个词，让 LLM 现场生成同义词当候选。
+
+#+BEGIN_SRC emacs-lisp
+;; 把 DeepSeek 注册成 gptel 后端
+(setq gptel-backend
+      (gptel-make-openai "DeepSeek"
+        :host "api.deepseek.com"
+        :key "sk-你的key"          ; 别把真实 key 提交到公开仓库
+        :models '(deepseek-v4-flash))
+      gptel-model 'deepseek-v4-flash)
+
+(defvar my-synonym-cache nil)
+
+(defun my-synonyms--fetch (word)
+  ;; 问 LLM 要同义词，按行拆成候选
+  ;; 网络出问题时 30 秒后放弃返回 nil，不至于把 minibuffer 卡死
+  (let (response done (deadline (+ (float-time) 30)))
+    (gptel-request
+        (format "给出中文词「%s」的5个同义词，每行一个，不要解释" word)
+      :callback (lambda (r _info)
+                  (setq response r done t)))
+    (while (and (not done) (< (float-time) deadline))
+      (accept-process-output nil 0.2))
+    (and response (split-string response "\n+" t))))
+
+(defun my-synonyms--collection (string pred action)
+  ;; 候选集函数，LLM 现场生成同义词当候选，缓存让同一个词只问一次
+  ;; 空输入不问 LLM，metadata/boundaries 之类的元数据询问也不问
+  (if (or (< (length string) 2)
+          (and action (not (eq action t))))
+      nil
+    (or (cdr (assoc string my-synonym-cache))
+        (cdr (assoc string
+                    (push (cons string (my-synonyms--fetch string))
+                          my-synonym-cache))))))
+
+(defun my-synonyms-read ()
+  (interactive)
+  (completing-read "输入一个词，LLM 帮你找同义词: " #'my-synonyms--collection))
+#+END_SRC
+
+=my-synonyms--collection= 就是那个候选集函数，三个参数的签名是 Emacs 规定死的（手册里叫 programmed completion）。有个实测发现的坑，补全机制第一步会用 =action=t= 问「这条输入算不算精确匹配」，这一问也得用列表回答，返回非空就算通过，不然它直接认定没有候选，根本走不到取候选那步。上面这套就是完整的「生成合成」，候选本来不存在，是 LLM 看着你的输入现写的，ISR 和 ICR 的分界线就在这里。把 =my-synonyms--fetch= 换成 embedding 搜索，「语义检索」版也就有了， =completing-read= 那一行原样不动。
+
+实际跑 =M-x my-synonyms-read= 有个容易踩的误解，裸 =completing-read= 只在你要求补全的时候才问候选集函数，纯打字不会触发它，你只会觉得「怎么没反应」。输入「快乐」后按 TAB，卡一两秒，LLM 返回的候选就出来了（每次运行的词不完全一样，下面是一次真实运行的结果）。
+
+#+begin_example
+("高兴" "愉悦" "欢喜" "开心" "快活")
+#+end_example
+
+想边打字边出候选，开 =icomplete-mode= ，它会把你敲的每个输入喂给候选集函数并实时展示建议。这时问题也暴露了，每换一个输入都同步等 LLM 返回，minibuffer 一卡一两秒。真正的 ISR 得靠 consult 的异步管线，也就是原文的版本。 =chiply-isr--search= 是作者自己的 embedding 搜索函数，原文没贴实现，完整模块公开在他的 Emacs 配置仓库里，作者自述只为演示而写，不建议直接用。
+
+#+BEGIN_SRC emacs-lisp
+(defun chiply-isr--collection (input)
+  ;; 对输入做 embedding 搜索，把每条结果整理成 (显示文本 . 文件路径) 的形式
+  (mapcar (lambda (r)
+            (cons (format "%-22s  %s"
+                          (file-name-nondirectory (alist-get 'filename r))
+                          (alist-get 'chunk_text r))
+                  (alist-get 'filename r)))
+          (chiply-isr--search input)))
+
+(defun chiply-isr-semantic-read ()
+  (interactive)
+  (find-file
+   (consult--read
+    (consult--dynamic-collection #'chiply-isr--collection
+      :min-input 3 :debounce 0.3)
+    :prompt "Suggesting read (by meaning): "
+    :lookup #'consult--lookup-cdr
+    :require-match t :sort nil)))
+#+END_SRC
+
+结构上只有两层。
+
+- =chiply-isr--collection= 就是那个候选集函数，拿输入去搜，把每条结果整理成 =(显示文本 . 文件路径)= 的 cons cell。它和普通补全的唯一区别，是返回语义搜索结果而不是字符匹配结果。
+- =consult--dynamic-collection= 把它包装成动态候选源。 =:min-input 3= 表示至少输入 3 个字符才开始搜， =:debounce 0.3= 表示停手 0.3 秒后才真正发起搜索。最后 =consult--read= 负责弹出选择界面，选中后 =find-file= 打开对应文件。
+
+注意 =consult--read= 和 =consult--dynamic-collection= 都是 consult 包的内部函数（名字带双横线），不是 Emacs 内置的，跑这段代码前得先装好 consult。
+
