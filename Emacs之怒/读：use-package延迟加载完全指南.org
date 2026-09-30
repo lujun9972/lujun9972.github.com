@@ -1,0 +1,241 @@
+#+TITLE: 读：use-package延迟加载完全指南
+#+AUTHOR: lujun9972,Claude Code
+#+TAGS: Emacs, use-package, 启动优化, 性能
+#+DATE: [2026-09-10 Thu]
+#+LANGUAGE:  zh-CN
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+#+DESCRIPTION: Emacs 启动慢，多半是包被立即加载拖的。本文解读 James Cherti 的 use-package 延迟加载指南：内容涉及 require 与 autoload 两种加载方式的差别、:commands/:bind/:hook/:mode 四个隐式延迟触发器、:init 块让 :defer 失效的陷阱与修复、:demand 和 :after 的适用场景，以及 featurep、use-package-report、benchmark-init 三层验证工具。把包的加载推迟到第一次真正使用，是控制启动时间最有效的手段。
+
+James Cherti 在 [[https://www.jamescherti.com/emacs-startup-defer-use-package-performance/][他的博客]] 写了一篇启动优化指南，主题是 use-package 的延迟加载，讲怎么让包推迟到第一次真正用到的时候再加载。本文把这篇指南完整解读一遍。
+
+* Emacs 启动为什么变慢
+
+Emacs 启动变慢的原因不止一种，包的立即加载是最常见的原因之一。use-package 是 Emacs 配置的事实标准宏，把安装、配置、按键绑定写进同一个声明。一个不带任何加载选项的声明：
+
+#+begin_src emacs-lisp
+(use-package kirigami)
+#+end_src
+
+（kirigami 是原文用的示意包名，下同。）
+
+默认情况下，这样的声明会在初始化时立即加载包，效果等同于：
+
+#+begin_src emacs-lisp
+(require 'kirigami)
+#+end_src
+
+=require= 的职责是确保某个 feature 已经就位，没有就当场加载。一个包这么做没什么感觉，几十个包都这么干，加载和执行代码的时间累加起来，启动就被拖慢了。
+
+* autoload：延迟加载的底层机制
+
+延迟加载的底层机制是 autoload（自动加载），只登记函数名，不加载定义它的文件，等第一次调用时才真正加载：
+
+#+begin_src emacs-lisp
+(autoload 'kirigami-global-mode "kirigami" "Global mode for Kirigami." t)
+#+end_src
+
+这行代码把 kirigami-global-mode 登记成一个 autoload 函数，并注明它的定义在 kirigami 库里（第二个参数）。之后执行 =M-x kirigami-global-mode= ，Emacs 先加载 kirigami 库，再调用真正的函数。包的加载成本就这样推迟到了第一次实际使用。autoload 不是零成本，登记名字、维护登记表都要花时间，但跟加载整个包相比可以忽略。
+
+* 显式延迟：:defer 关键字
+
+use-package 里能显式控制加载时机的关键字是 =:defer= 。
+
+** :defer t：往往多余
+
+#+begin_src emacs-lisp
+(use-package kirigami
+  :defer t)
+#+end_src
+
+它的作用是阻止启动时加载。但原文特别提醒，显式写 =:defer t= 多数时候是多余的。
+
+因为 =:defer t= 只推迟加载，但不会设置任何触发 autoload 的时机。常见的触发时机可以由 =:commands= 、 =:bind= 、 =:hook= 、 =:mode= 这四个关键字来设置，而这些关键字都会让 use-package 隐式带上 :defer t，不用自己写。
+
+** :defer 数字参数：空闲加载，不推荐
+
+数字参数表示让包在 Emacs 空闲指定秒数后加载：
+
+#+begin_src emacs-lisp
+(use-package kirigami
+  :defer 20)
+#+end_src
+
+这听起来是个折中方案，既躲过了启动时的加载，又保证包迟早会被用上。但这实际有两个坑。一是 idle timer 触发时如果加载的包过大，会阻塞事件循环，界面会发生卡顿。再就是多个包都用 idle timer 延迟时，可能在同一次空闲期内顺序触发多个包的加载，加重卡顿。所以原文的建议很明确，别用数字参数，用显式触发器。
+
+* 隐式延迟：四个触发关键字（推荐）
+
+与其到处手动加 =:defer t= ，不如换成会自动生成 autoload 的触发关键字。四个关键字分工不同，共同点是包只在真正被用到时才加载：
+
+- =:commands= ：为指定的交互命令生成 autoload，执行命令（比如 M-x）时加载
+- =:bind= ：把按键绑定到命令，按下按键时加载
+- =:hook= ：把函数挂到 hook 上，事件触发时加载
+- =:mode= ：把文件名模式注册进 auto-mode-alist，打开匹配文件时加载
+
+** 按文件类型加载
+
+#+begin_src emacs-lisp
+(use-package markdown-mode
+  :mode ("\\.md\\'" . markdown-mode))
+#+end_src
+
+打开 .md 文件才加载 markdown-mode， =:mode= 已经自带延迟，不用再写 =:defer t= 。
+
+** 按键触发
+
+#+begin_src emacs-lisp
+(use-package embark
+  :bind
+  (("C-." . embark-act)
+   ("C-;" . embark-dwim)
+   ("C-h B" . embark-bindings)))
+#+end_src
+
+embark 不会马上加载，要等到按下其中某个组合键才会加载。
+
+** 命令触发
+
+不想占全局按键，只通过 M-x 调用的话，用 =:commands= ：
+
+#+begin_src emacs-lisp
+(use-package embark
+  :commands (embark-act
+             embark-dwim
+             embark-bindings))
+#+end_src
+
+** 事件触发
+
+outline-indent 是一个基于缩进做代码折叠的包。我们可以配置成打开 Python 或 YAML 文件时才加载并激活：
+
+#+begin_src emacs-lisp
+(use-package outline-indent
+  :commands (outline-indent-minor-mode
+             outline-indent-backward-same-level
+             outline-indent-forward-same-level)
+  :hook ((python-mode . outline-indent-minor-mode)
+         (python-ts-mode . outline-indent-minor-mode)
+         (yaml-ts-mode . outline-indent-minor-mode))
+  :custom
+  (outline-indent-ellipsis " ▼"))
+#+end_src
+
+打开 python-mode、python-ts-mode、yaml-ts-mode 任一种模式的 buffer 时，会加载包，激活折叠模式；用 M-x 手动调用 =:commands= 里列出的三个命令，同样会触发加载。分工是这样的： =:commands= 给列出的命令登记 autoload，保证 M-x 调用能触发加载； =:hook= 把 outline-indent-minor-mode 挂到三个 hook 上，打开文件时 hook 运行、调用这个函数，同样触发加载。这两类关键字都会让 use-package 隐式带上 =:defer t= ，不用自己写。
+
+* :init 块的陷阱
+
+=:init= 块里的代码在包加载之前求值。在里面调用 autoload 函数会立即触发加载， =:defer t= 没有意义：
+
+#+begin_src emacs-lisp
+(use-package kirigami
+  :defer t
+  :custom
+  (kirigami-show-menu-bar t)
+  (kirigami-show-context-menu t)
+  :init
+  (kirigami-global-mode 1))
+#+end_src
+
+虽然声明了 =:defer t= ，但 =:init= 里的 =(kirigami-global-mode 1)= 会触发 autoload，包照样在初始化期间被加载。
+
+=:init= 该放的是包加载前就必须就位的设置；依赖包函数的调用应该放进 =:config= （包加载之后才执行），或者用 =:hook= 等某个事件发生时再调用。还有一个 =:preface= 块，它不仅在包加载前执行，并且在字节编译时也会执行，所以适合放 defvar 声明、辅助宏、declare-function 这类给字节编译器看、用来消除编译警告的代码。
+
+** 解法：挂到 after-init-hook
+
+上面 ：init 陷阱例子里想要的效果如果是 kirigami-global-mode 尽早激活，但又不想在 init 期间（Emacs 启动、读取配置文件的那个阶段）加载包，标准解法是借助 =after-init-hook= ：
+
+#+begin_src emacs-lisp
+(use-package kirigami
+  :custom
+  (kirigami-show-menu-bar t)
+  (kirigami-show-context-menu t)
+  :hook (after-init . kirigami-global-mode))
+#+end_src
+
+after-init-hook 在整个 init 文件求值完毕后运行。
+
+* :demand t 和 :after
+
+** :demand t：强制立即加载
+
+少数包必须马上生效，比如主题。这时可以用 =:demand t= 强制加载：
+
+#+begin_src emacs-lisp
+(use-package tomorrow-night-deepblue-theme
+  :demand t
+  :config
+  (load-theme 'tomorrow-night-deepblue t))
+#+end_src
+
+如果声明里同时有 =:demand t= 和 =:defer t= （或触发关键字）， =:demand t= 优先。
+
+** :after：等依赖就位
+
+=:after= 把初始化推迟到指定包全部加载完成之后，其适合两类场景，一类是加载增强某个包的扩展包，一类是把两个工具连接起来的桥接包：
+
+#+begin_src emacs-lisp
+(use-package embark-consult
+  :after (embark consult))
+#+end_src
+
+embark-consult 是连接 embark 和 consult（两者都是 Emacs 补全生态的常用包）的桥接包。这样声明后，启动期间它不会被加载，直到 embark 和 consult 都加载完才轮到它。
+
+* 全局延迟 use-package-always-defer：不推荐
+
+#+begin_src emacs-lisp
+(setq use-package-always-defer t)
+#+end_src
+
+这个变量让所有声明默认带上 =:defer t= 。原文明确不推荐，理由是不少包需要在启动时立即执行。例如主题包要立即加载以改变上色，内置的 server 需要立即加载才能让 emacsclient 连得上，还有的包靠全局 hook 工作，加载时把自己的函数挂到全局钩子上，之后每次相应事件发生 Emacs 都会调用它。这些包被推迟加载后 Emacs 不会有明显的报错信息，但包没有生效，你得逐个排查哪里坏了，再到处补 =:demand t= 。保持默认、按需显式延迟，加载状态更可控。
+
+* 验证与调试
+
+** 检查包是否已加载：featurep
+
+#+begin_src emacs-lisp
+(featurep 'kirigami)
+#+end_src
+
+featurep 检查一个 feature 是否已加载，已加载返回 t，未加载返回 nil。改完延迟配置后，可以用它验证包是不是真的没在启动时加载。
+
+#+begin_example
+nil
+#+end_example
+
+** 四个实用变量
+
+#+begin_src emacs-lisp
+;; 宏展开更精简，字节编译后文件更小，性能略有提升
+(setq use-package-expand-minimally t)
+
+;; 加载事件记录到 *Messages* buffer，用于验证延迟包是否按预期加载
+(setq use-package-verbose t)
+
+;; 让 imenu（Emacs 内置的符号跳转功能）能识别 use-package 声明，
+;; M-x imenu 后可以直接跳到某个包的配置块
+(setq use-package-enable-imenu-support t)
+#+end_src
+
+还有一个 =use-package-hook-name-suffix= ：默认情况下， =:hook= 写 =(python-mode . xxx)= 会自动补全成 python-mode-hook；设为 nil 可以关掉自动补全，从此必须写全 hook 名。
+
+* 性能测试三兄弟
+
+优化要靠数据说话，原文给了三样工具来帮我们进行性能测试。
+
+第一个是内置的 =emacs-init-time= ，但原文认为它停表停得太早，init 文件跑完就结束计数，首帧渲染和后续启动处理没算进去，作者为此还另写了一篇文章讲更准确的测法（见文末链接）。
+
+第二个是 use-package 自带的统计。在 use-package 加载之后、各声明求值之前设置：
+
+#+begin_src emacs-lisp
+(setq use-package-compute-statistics t)
+#+end_src
+
+重启 Emacs 后执行 =M-x use-package-report= ，会得到一个表格 buffer，列出每个声明各阶段的耗时。
+
+第三个是第三方包 benchmark-init（MELPA 上有）。它跟踪整个启动过程里每个文件的加载时间和函数执行时间，能直接看到时间花在哪。
+
+* 参考链接
+
+- 原文：[[https://www.jamescherti.com/emacs-startup-defer-use-package-performance/][Optimizing Emacs Startup - Guide to Deferred Package Loading with use-package]]
+- 原文推荐：[[https://www.jamescherti.com/measuring-emacs-startup-time/][Measuring Emacs startup time]]，比 emacs-init-time 更准确的启动时间测法
+- [[https://elpa.gnu.org/packages//doc/use-package.html][use-package 官方文档]]
+- 相关：[[https://www.jamescherti.com/emacs-why-use-setq-instead-setopt/][Why setq beats setopt]]，原文的相关文章
