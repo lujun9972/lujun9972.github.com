@@ -1,0 +1,74 @@
+#+TITLE: 双开Anki实例
+#+AUTHOR: lujun9972
+#+TAGS: linux和它的小伙伴
+#+DATE: [2026-10-07 三 10:48]
+#+LANGUAGE:  zh-CN
+#+STARTUP:  inlineimages
+#+OPTIONS:  H:6 num:nil toc:t \n:nil ::t |:t ^:nil -:nil f:t *:t <:nil
+
+今天想一边让程序通过 AnkiConnect 往某个 profile 里写卡片，一边自己开另一个 profile 复习，结果直接撞墙了。
+
+#+begin_src shell
+  anki -p DarkSun
+#+end_src
+
+#+begin_example
+Already running; reusing existing instance.
+#+end_example
+
+* Anki 的单实例锁是怎么实现的
+
+翻了一下 Anki 26.09 的源码，实现出奇地简单。Anki 启动时会尝试监听一个 =QLocalServer= （Linux 上对应一个 =Unix domain socket= 文件），谁监听成功谁就是第一个实例。这个监听名存在 =KEY= 变量里。
+
+#+begin_src python
+  KEY = (
+      os.environ.get("ANKI_SINGLE_INSTANCE_KEY")
+      or f"anki{checksum(getpass.getuser())}"
+  )
+#+end_src
+
+=KEY= 本身只是个字符串， =QLocalServer.listen(KEY)= 会拿它当名字创建 socket 文件。注意 Qt 对不以 =/= 开头的名字统一拼在临时目录下（ =QDir::tempPath()= ，即 =$TMPDIR= 或 =/tmp= ），所以实际文件是 =/tmp/anki<sha1(用户名)>= ，我这台机器上就有这么一个。
+
+#+begin_example
+/tmp/anki9b629a041570194fef7e04bc12a7ff6c2fed6ca2
+#+end_example
+
+用 =ss -xlp | grep anki= 可以直接看到。
+
+#+begin_example
+u_str LISTEN 0  50  /tmp/anki9b629a041570194fef7e04bc12a7ff6c2fed6ca2  users:(("anki",pid=181806,fd=9))
+#+end_example
+
+从这段代码能读出两个关键点。
+
++ 默认监听名只由 *Linux 用户名* 决定，和 base 目录、profile 都无关。同一个用户下无论开多少个不同 base、不同 profile 的 Anki，都算同一个实例。
++ 官方特意留了 =ANKI_SINGLE_INSTANCE_KEY= 环境变量作为逃生门。
+
+* 解决方法：给第二个实例换个锁名
+
+给第二个实例换个锁名就行。
+
+#+begin_src shell
+  ANKI_SINGLE_INSTANCE_KEY=anki-review anki -p DarkSun
+#+end_src
+
+写成 alias 放进 =~/.bashrc= 更省事。
+
+#+begin_src shell
+  alias anki-review='ANKI_SINGLE_INSTANCE_KEY=anki-review anki -p DarkSun'
+#+end_src
+
+* 多实例共存的几个注意点
+
+** collection 锁是 profile 级的
+
+不同 profile 之间的 collection 和 media 互不干扰，（ =~/.local/share/Anki2/<profile>/= ）。但 *同一个 profile 不能被两个实例同时打开* ，会报 =collection is locked= 。
+
+** 带独占资源的插件会冲突
+
+两个实例共享同一个 =addons21= 目录，插件代码和配置都是同一份。凡是占用「一次只能被一个进程持有」这类资源的插件，第二个实例都会撞上同样的冲突，比如 AnkiConnect 绑默认的 8765 端口，启动二个实例时就会提示冲突；而纯界面增强类插件（比如 review_heatmap）没有这类资源，双开毫无影响。
+
+撞上冲突时可能弹个报错，不影响 Anki 本体和复习，忽略就行。不过插件这边有两处共享状态要留意。
+
++ *千万别去禁用冲突的插件*。插件启用状态也是共享的，禁用后正在提供 API 服务的那份 Anki 一旦重启，外部程序就断联了。
++ 插件配置同样是共享的，端口没法 per-instance 指定，真需要第二个 API 端口，就得给第二个实例单独一个 =-b= base 目录。
